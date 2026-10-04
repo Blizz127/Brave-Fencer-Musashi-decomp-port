@@ -19,6 +19,18 @@
       "recovery": "c",
       "optimization": "-O2",
       "source_sha256": "fe54e82ba5ccfd0720da3f72d022febe8510a568c65fede72a8650ed6cb39c2f"
+    },
+    {
+      "name": "func_8017D730",
+      "region": "main_0012",
+      "vram": 2149046064,
+      "size": 1304,
+      "source": "src/overlays/main_0012/8017d730.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "rodata_base": 2149073044,
+      "source_sha256": "7e627a331bb593e31b1d8c9907c75dac4bf0999299f44b0dfddecb1d7966aa31"
     }
   ]
 }
