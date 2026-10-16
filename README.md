@@ -5,8 +5,18 @@ SLUS-00726). You play from **your own disc**; no game data or BIOS is included.
 The current runtime is **hybrid**: compiled host code plus a CPU interpreter.
 The fully native port remains a development goal.
 
-> **Public r38 — 2026-10-02:** Linux x86_64 is available. Forest rendering
-> fixes and isolated inn save/cold Continue checks passed.
+> **Newest test build — r47, 2026-10-16 (prerelease):** Linux x86_64 is available now in
+> [bfm-r47-8f8176c8c](https://github.com/Blizz127/brave-fencer-musashi-decomp-port/releases/tag/bfm-r47-8f8176c8c)
+> (`bfm-r47-8f8176c8c-linux-x86_64.tar.gz`). It is r41 plus the game's VSync
+> wait running as native code. It is still a hybrid test build: it passed boot
+> tests, but the full route, speed and handheld checks were not run. A Windows
+> x64 build of r47 is being tested and will be added to the same prerelease
+> when it passes; until then the Windows download is r44 (below).
+>
+> **Latest stable release — r38, 2026-10-02:** Linux x86_64. Forest rendering
+> fixes and isolated inn save/cold Continue checks passed. The instructions
+> below use r38.
+>
 > **Windows x64 test build — 2026-10-05:** `bfm-r44-c427ee546-windows-x64.zip`
 > is available in the [bfm-r41-3634893fe](https://github.com/Blizz127/brave-fencer-musashi-decomp-port/releases/tag/bfm-r41-3634893fe) test prerelease. It has been
 > validated under Wine only, not on real Windows. The same prerelease also has
@@ -49,6 +59,12 @@ Put a `.cue`/`.bin` dump of **your own USA SLUS-00726 disc** in
 Keep all referenced tracks together. One-bin and per-track dumps work; a
 2048-byte `.iso` does not. A file picker is offered when available, or set
 `BFM_DISC="/path/to/your/game.cue"` when launching.
+
+To try the r47 test build instead, use `bfm-r47-8f8176c8c-linux-x86_64.tar.gz`
+and the `SHA256SUMS` from the
+[r47 release page](https://github.com/Blizz127/brave-fencer-musashi-decomp-port/releases/tag/bfm-r47-8f8176c8c)
+in the same steps, and run `bfm-r47-8f8176c8c/launch.sh`. Its `launch.sh`
+turns the native VSync wait on; `MUSASHI_VSYNC_WAIT=off` runs the r41 wait.
 
 For Steam Deck/Game Mode, add `launch.sh` as a non-Steam game and keep Steam
 Input enabled. Preserve earlier version folders and back up saves after
