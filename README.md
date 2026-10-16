@@ -5,19 +5,19 @@ SLUS-00726). You play from **your own disc**; no game data or BIOS is included.
 The current runtime is **hybrid**: compiled host code plus a CPU interpreter.
 The fully native port remains a development goal.
 
-> **Newest test build — r47, 2026-10-16 (prerelease):** Linux x86_64 is available now in
+> **Newest test build — r47, 2026-10-16 (prerelease):** Linux x86_64 and Windows x64 are available now in
 > [bfm-r47-8f8176c8c](https://github.com/Blizz127/brave-fencer-musashi-decomp-port/releases/tag/bfm-r47-8f8176c8c)
-> (`bfm-r47-8f8176c8c-linux-x86_64.tar.gz`). It is r41 plus the game's VSync
-> wait running as native code. It is still a hybrid test build: it passed boot
-> tests, but the full route, speed and handheld checks were not run. A Windows
-> x64 build of r47 is being tested and will be added to the same prerelease
-> when it passes; until then the Windows download is r44 (below).
+> (`bfm-r47-8f8176c8c-linux-x86_64.tar.gz`, `bfm-r47-81c5dbd03-windows-x64.zip`).
+> It is r41 plus the game's VSync wait running as native code. It is still a
+> hybrid test build: it passed boot tests, but the full route, speed and
+> handheld checks were not run. The Windows build has run under Wine only, not
+> on real Windows.
 >
 > **Latest stable release — r38, 2026-10-02:** Linux x86_64. Forest rendering
 > fixes and isolated inn save/cold Continue checks passed. The instructions
 > below use r38.
 >
-> **Windows x64 test build — 2026-10-05:** `bfm-r44-c427ee546-windows-x64.zip`
+> **Previous Windows x64 test build — r44, 2026-10-05:** `bfm-r44-c427ee546-windows-x64.zip`
 > is available in the [bfm-r41-3634893fe](https://github.com/Blizz127/brave-fencer-musashi-decomp-port/releases/tag/bfm-r41-3634893fe) test prerelease. It has been
 > validated under Wine only, not on real Windows. The same prerelease also has
 > a newer Linux r41 test build. Whole-game completion and full graphics/audio
@@ -76,6 +76,11 @@ Download `bfm-r44-c427ee546-windows-x64.zip` and `SHA256SUMS` from the
 [bfm-r41-3634893fe](https://github.com/Blizz127/brave-fencer-musashi-decomp-port/releases/tag/bfm-r41-3634893fe) release page. This build was cross-compiled for
 Windows 10/11 x64 and has run **only under Wine**. It has not been tested on
 real Windows hardware. Its native-lane function set is the same as Linux r41.
+
+The newer r47 Windows test build, `bfm-r47-81c5dbd03-windows-x64.zip`, installs
+the same way from the
+[r47 release page](https://github.com/Blizz127/brave-fencer-musashi-decomp-port/releases/tag/bfm-r47-8f8176c8c);
+its hash is in `SHA256SUMS-windows-x64` there. It has also run only under Wine.
 
 1. Optional: check the download in PowerShell with
    `Get-FileHash bfm-r44-c427ee546-windows-x64.zip -Algorithm SHA256`. Compare
