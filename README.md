@@ -5,7 +5,22 @@ SLUS-00726). You play from **your own disc**; no game data or BIOS is included.
 The current runtime is **hybrid**: compiled host code plus a CPU interpreter.
 The fully native port remains a development goal.
 
-> **Newest test build — r47, 2026-10-16 (prerelease):** Linux x86_64 and Windows x64 are available now in
+> **Source update — 2026-10-29 (decompilation only, no new build):** 1,340
+> more owner-authored functions in `src/` (300 main-executable, 1,040 scene
+> overlay), each independently re-derived from the retail disassembly and
+> rebuilt byte-exact against the retail code with the pinned compiler. See
+> [EXCLUDED.md](EXCLUDED.md) ("2026-10-29 source update") and
+> [SCANS.md](SCANS.md) for what was added, what was held back and the scans.
+> These files are decompilation progress: the published builds do not compile
+> them natively unless they are on `config/lane_own_code_allow.txt`, and the
+> runtime is unchanged. The newest public test build is still
+> [bfm-r55-ba90b87ad](https://github.com/Blizz127/brave-fencer-musashi-decomp-port/releases/tag/bfm-r55-ba90b87ad)
+> (2026-10-20, prerelease, Linux x86_64), a **hybrid** build in which code that
+> is not converted runs on the built-in CPU interpreter. Work toward a fully
+> native runtime continues privately as development diagnostics: it is not
+> playable, and nothing here claims a native or complete port.
+>
+> **Earlier test build — r47, 2026-10-16 (prerelease):** Linux x86_64 and Windows x64 are available now in
 > [bfm-r47-8f8176c8c](https://github.com/Blizz127/brave-fencer-musashi-decomp-port/releases/tag/bfm-r47-8f8176c8c)
 > (`bfm-r47-8f8176c8c-linux-x86_64.tar.gz`, `bfm-r47-81c5dbd03-windows-x64.zip`).
 > It is r41 plus the game's VSync wait running as native code. It is still a

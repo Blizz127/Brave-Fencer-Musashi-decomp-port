@@ -118,3 +118,41 @@ Scrubbed in place (content kept, local specifics replaced):
 disc extract (README.md, "Build from source"). Matching tools and many tests
 also need the decompiled sources, the retail disassembly, a BIOS or your disc
 files; they skip or fail when those are absent.
+
+## 2026-10-29 source update
+
+**Added to `src/`:** 1,340 owner clean-room re-derivations: 300 in
+`src/main/` and 1,040 in `src/overlays/` (`main_0012` 444, `sc02_0035` 280,
+`sc02_0031` 176, `main_0010` 60, `main_0003` 37, `sc01_0000` 23,
+`main_0015` 20). They were taken from private commit `6c8685e001` with
+`git archive` (committed content only). Each file met every condition:
+
+- its registry origin is an owner re-derivation from the retail disassembly
+  (asm, own m2c output and owner headers only; the upstream decompilation was
+  not consulted);
+- it lies outside the Sony library ranges of `config/psyq_ranges.txt`;
+- it carries no upstream marker (`Druthulu`, `vendor`, `bfm-decomp`,
+  `derived verbatim`), no inline assembly and no references to local paths or
+  tooling;
+- it rebuilds byte-exact against the retail code (`tools/verify_registry.py`
+  with the pinned gcc-2.7.2-psx / maspsx toolchain, against this repository's
+  `include/` headers);
+- `tools/check_no_retail_data.py` and `tools/check_no_m2c_text.py` report
+  nothing.
+
+The new files are decompilation progress. Release builds compile only the
+functions on `config/lane_own_code_allow.txt` natively; everything else still
+runs on the interpreter. This update changes no build.
+
+**Held back from this update:**
+
+| Files | Reason |
+|---|---|
+| 23 clean-room sources | Their header comments name private tooling runs or local paths. They will be published after those comments are rewritten. |
+| 3 clean-room sources (including `src/main/80010178.c`) | They contain inline MIPS assembly for the startup scratch-stack switch, the same class as the excluded `include/retail_scratch_call.h`. |
+| 8 clean-room sources using GTE macros | They need a newer `include/gte_ops.h` than this repository has. They will be published with that header in a later port-source update. |
+| `provenance/matches.json` and the clean-room drafts' tool state | Unchanged from section 4. |
+| Port runtime, tools, tests and docs changed since the first snapshot | Not part of this decompilation update. Development native-runtime code (including re-implementations of Sony library routines from retail instructions), proof tools that embed retail instruction words, and agent working notes stay private under sections 2, 3 and 6. A reviewed port-source update will follow separately. |
+
+Sections 1-6 above still apply to everything else: upstream-derived, unclear-origin
+and Sony library code remains excluded.

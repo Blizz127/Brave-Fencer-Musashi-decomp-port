@@ -241,3 +241,49 @@ None of them matched a retail run above.
 `pc_port/spu_voice_core.h` and `pc_port/spu_reverb_core.h` carry the SPU
 Gaussian interpolation table and the reverb FIR taps as documented by
 PSX-SPX. These are hardware constants and do not match the disc or the BIOS.
+
+## 2026-10-29 source update (1,340 added `src/` files)
+
+The added files were scanned on their own; the files already published were
+covered by the scans above.
+
+**Result: 0 retail data runs, 0 Psy-Q/Sony hits, 0 secrets or personal data,
+1,340/1,340 byte-exact.**
+
+```
+$ python3 tools/retail_guard.py --stage <added files> --exe extracted/disc/files/SLUS_007.26 \
+    --extracted extracted/disc/files --extracted extracted/overlays \
+    --extracted extracted/pac --extracted extracted/sc01 \
+    --run-source <each of the nine .CD archives, MUSA.ID, SYSTEM.CNF, license_data.dat> \
+    --run-source <BIOS>/scph5500.bin --run-source <BIOS>/openbios.bin --run-bytes 32
+retail_guard: 1340 files checked, 0 problem(s)
+
+$ python3 tools/retail_guard.py --stage <added files> --exe extracted/disc/files/SLUS_007.26 \
+    --run-source <each of the 882 decoded overlay/PAC/SC01/model files> --run-bytes 32
+retail_guard: 1340 files checked, 0 problem(s)
+
+$ python3 tools/verify_registry.py --registry <the 1,348 candidate entries>   # pinned gcc-2.7.2-psx + maspsx
+1340/1348 registry entries re-verified   # the 8 others need a newer include/gte_ops.h and are held (EXCLUDED.md)
+$ python3 tools/check_no_retail_data.py --registry <same>
+checked 1348 sources: 0 carry retail data, 8 failed to build   # the same 8, held
+$ python3 tools/check_no_m2c_text.py <the 1,348 candidates>
+m2c check: 1348 files, 0 lines with m2c macro text
+```
+
+A text scan of the added files checked for:
+- runs of 8 or more numeric literals (word, halfword, byte and decimal lists);
+- hex strings;
+- Sony copyright strings and SDK header includes;
+- Psy-Q origin markers;
+- GitHub, AWS and bearer tokens, and private-key blocks;
+- emails, IPv4 addresses, home and `~/` paths, and local tool and agent names.
+
+It found nothing except three zero-initializer lists in `src/main/8002c410.c`.
+These are not data.
+
+Build check: the default configuration (`-DMUSASHI_WITH_PSYCROSS=OFF`)
+produced the same configure output for the previous public tree and the
+updated tree, and the updated tree built every default target without
+errors. The default build does not compile `src/`. The PsyCross
+configuration was not run: both trees stop at the same missing-PsyCross
+message until `tools/fetch_toolchains.sh` is run.
