@@ -179,7 +179,7 @@ static const BfmPlatBindingTarget targets[] = {
     PAD_TARGETS("p2", 1, KEYS2),
     {"hotkey.fast_forward", 0, 1, BFM_HOTKEY_FAST_FORWARD, "key:tab"},
     {"hotkey.console", 0, 1, BFM_HOTKEY_CONSOLE, "key:`"},
-    {"hotkey.cheat_menu", 0, 1, BFM_HOTKEY_CHEAT_MENU, "key:f1"},
+    {"hotkey.cheat_menu", 0, 1, BFM_HOTKEY_CHEAT_MENU, ""},   /* F1 is the dev menu help key */
     {"hotkey.pause", 0, 1, BFM_HOTKEY_PAUSE, "key:pause"},
     {"hotkey.screenshot", 0, 1, BFM_HOTKEY_SCREENSHOT, "key:f12"},
     {"hotkey.quit", 0, 1, BFM_HOTKEY_QUIT, ""}

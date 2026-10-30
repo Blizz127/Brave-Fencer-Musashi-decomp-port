@@ -38,7 +38,18 @@ static int open_disc(void) {
     }
     if (!cfg_copy.disc_path[0]) return BFM_PLAT_OK;     /* no disc: headless/tools */
     if (cfg_copy.disc_validate) {
-        if (bfm_plat_disc_validate(cfg_copy.disc_path, &disc_check) != BFM_PLAT_OK) {
+        const char *validate_path = cfg_copy.disc_path;
+        char cue_path[sizeof cfg_copy.disc_path];
+        if (strcmp(cfg_copy.storage, "pinned") == 0) {
+            const char *bar = strchr(cfg_copy.disc_path, '|');
+            size_t length;
+            if (!bar || bar == cfg_copy.disc_path || !bar[1]) return BFM_PLAT_INVALID;
+            length = (size_t)(bar - cfg_copy.disc_path);
+            memcpy(cue_path, cfg_copy.disc_path, length);
+            cue_path[length] = '\0';
+            validate_path = cue_path;
+        }
+        if (bfm_plat_disc_validate(validate_path, &disc_check) != BFM_PLAT_OK) {
             bfm_plat_disc_check_describe(&disc_check, msg, sizeof msg);
             bfm_plat_mods_log("disc", 0, msg);
             return BFM_PLAT_INVALID;
@@ -85,6 +96,14 @@ static void output_from_config(BfmPlatOutput *o) {
     o->vsync = cfg_copy.vsync;
 }
 
+/* Close operations also accept subsystems that never opened. */
+static void close_partial_init(void) {
+    bfm_plat_disc_close();
+    bfm_plat_input_close();
+    bfm_plat_audio_close();
+    bfm_plat_renderer_close();
+}
+
 int bfm_plat_init(const BfmPlatConfig *cfg) {
     BfmPlatOutput out;
     int r;
@@ -94,21 +113,21 @@ int bfm_plat_init(const BfmPlatConfig *cfg) {
     bfm_plat_register_builtin_backends();
     output_from_config(&out);
     r = bfm_plat_renderer_open(cfg_copy.renderer, &out, NULL);
-    if (r != BFM_PLAT_OK) return r;
+    if (r != BFM_PLAT_OK) { close_partial_init(); return r; }
     if (bfm_plat_renderer_set_output(&out) == BFM_PLAT_UNSUPPORTED &&
         cfg_copy.widescreen_mode == BFM_WIDESCREEN_ANAMORPHIC && cfg_copy.widescreen) {
         bfm_plat_mods_log("port", 1, "renderer cannot stretch: anamorphic widescreen falls back to hor+");
         cfg_copy.widescreen_mode = BFM_WIDESCREEN_HOR_PLUS;
     }
     r = bfm_plat_audio_open(cfg_copy.audio, NULL);
-    if (r != BFM_PLAT_OK) return r;
+    if (r != BFM_PLAT_OK) { close_partial_init(); return r; }
     r = bfm_plat_input_open(cfg_copy.input, NULL);
-    if (r != BFM_PLAT_OK) return r;
+    if (r != BFM_PLAT_OK) { close_partial_init(); return r; }
     bfm_plat_timing_init();
     bfm_plat_timing_set_fast_forward_speed(cfg_copy.fast_forward_speed);
     bfm_plat_memcard_set_dir(cfg_copy.save_dir);
     r = open_disc();
-    if (r != BFM_PLAT_OK) return r;
+    if (r != BFM_PLAT_OK) { close_partial_init(); return r; }
     bfm_plat_mods_set_config_getter(config_lookup);
 #ifdef BFM_PLAT_WITH_PNG
     bfm_plat_texture_png_register();

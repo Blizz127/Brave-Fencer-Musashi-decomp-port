@@ -38,6 +38,9 @@ typedef struct BfmPlatCheatState {
 void bfm_plat_console_init(BfmPlatConfig *config);
 void bfm_plat_console_shutdown(void);
 
+/* 1 only with BFM_DEV_MENU=1 and not BFM_CHEATS=0; registration and poke
+ * refuse otherwise. */
+int bfm_plat_legacy_cheats_allowed(void);
 int bfm_plat_cheat_register(const BfmCheat *cheat, int owner_mod);
 /* Copies name/description into console-owned storage (for cheats.ini). */
 int bfm_plat_cheat_register_copy(const BfmCheat *cheat, int owner_mod);

@@ -52,6 +52,17 @@ int32_t bfm_plat_widescreen_sx(const BfmPlatWidescreen *ws, int32_t sx,
 void bfm_plat_widescreen_window(const BfmPlatWidescreen *ws, int height,
                                 int *width);
 
+/* Where a presenter draws the displayed image in a win_w x win_h window:
+ * vp = {x, y, w, h}, centred (so the same rect from either origin).
+ * Fit (src_h <= 0): the largest rect of the image aspect that fits, with
+ * black bars. Integer (src_h > 0, the display height in lines): the
+ * largest whole multiple k of src_h whose width k * src_h * aspect
+ * (rounded) also fits, so each display line covers exactly k window lines;
+ * a window below 1x falls back to fit. aspect <= 0 means 4:3; a window
+ * without area gives an empty rect. */
+void bfm_plat_present_viewport(int win_w, int win_h, double aspect, int src_h,
+                               int vp[4]);
+
 /* ---- The game's GTE projection state ----------------------------------
  * Hook sites at the libgte setters (bfm_plat_hook_sites.c) record what the
  * game programs, so renderers and plugins can read it:

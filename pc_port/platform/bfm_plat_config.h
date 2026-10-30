@@ -12,6 +12,9 @@
  *              internal_scale, window_width, window_height, fullscreen,
  *              frame_rate (30|60), vsync, screenshot_dir,
  *              dither (auto | on | off; auto = PS1 dither at 1x only),
+ *              msaa (0 | 2 | 4 | 8; gl renderer only: multisampled scene and
+ *              VRAM targets, clamped to what the GPU supports; 0 = off, the
+ *              default, and then the renderer is exactly the single-sample one),
  *              gpu (cpu | bfm_plat: native_boot's GPU ports rasterise on the
  *              CPU, or feed bfm_plat_gpu_bridge -> the renderer backend)
  *   [timing]   fast_forward_speed (x real speed, 0 = uncapped),
@@ -63,6 +66,8 @@ typedef struct BfmPlatConfig {
     int frame_rate;          /* 30 (retail pacing) or 60 (interpolated) */
     int vsync;
     int dither;              /* BFM_DITHER_AUTO / _OFF / _ON (gl renderer) */
+    int msaa;                /* 0 = off, else 2 / 4 / 8 samples (gl renderer); the
+                                renderer clamps it to the GPU's limit */
     int gpu_path;            /* BFM_GPU_CPU / BFM_GPU_BFM_PLAT */
     char screenshot_dir[BFM_PLAT_PATH_MAX];
     /* timing */
@@ -129,5 +134,16 @@ int bfm_plat_config_save_file(const BfmPlatConfig *cfg, const char *path);
 
 /* Output aspect (numerator/denominator). */
 void bfm_plat_config_aspect(const BfmPlatConfig *cfg, int *num, int *den);
+
+/* Sets one "key = value" in [section] of the INI file at path, keeping
+ * every other line (comments, order, unknown sections): the first matching
+ * key in the section is replaced and later duplicates there are dropped;
+ * a missing key is added after the section's last entry, a missing section
+ * at the end of the file. Creates the file and its directories when
+ * missing; writes path.tmp and renames it over path. Names are [a-z0-9_.-];
+ * values have no line break, ';' or '#'. Returns BFM_PLAT_OK,
+ * BFM_PLAT_INVALID or BFM_PLAT_ERROR (I/O). */
+int bfm_plat_config_write_key(const char *path, const char *section,
+                              const char *key, const char *value);
 
 #endif

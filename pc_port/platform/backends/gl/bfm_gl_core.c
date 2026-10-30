@@ -152,15 +152,18 @@ uint16_t bfm_gl_sample(const BfmGlVram *v, uint16_t tpage, uint16_t clut,
 
 static int round_i(double x) { return (int)floor(x + 0.5); }
 
+/* The PS1's integer modulation, (texel5 * colour8) >> 7 clamped to 31, as
+ * the 8-bit value an RGBA8 target holds for that 5-bit channel (the gl
+ * fragment shader writes c5 / 31; reading it back >> 3 gives c5). */
 void bfm_gl_modulate(uint16_t texel, int r, int g, int b, int raw,
                      uint8_t out[3]) {
     int c[3], i;
     c[0] = r; c[1] = g; c[2] = b;
     for (i = 0; i < 3; i++) {
-        double t = (double)((texel >> (5 * i)) & 31) / 31.0;
-        double o = raw ? t : t * (double)c[i] / 128.0;
-        if (o > 1.0) o = 1.0;
-        out[i] = (uint8_t)round_i(o * 255.0);
+        int t = (texel >> (5 * i)) & 31;
+        int o = raw ? t : (t * c[i]) >> 7;
+        if (o > 31) o = 31;
+        out[i] = (uint8_t)round_i(o * 255.0 / 31.0);
     }
 }
 
@@ -189,22 +192,33 @@ BfmGlBlendState bfm_gl_blend_state(int mode) {
     s.equation = BFM_GL_FUNC_ADD;
     s.src = s.dst = BFM_GL_ONE;
     s.constant = 1.0f;
+    s.src_mul = 8;
+    s.src_shift = 0;
+    s.dst_factor = 1.0f;
     switch (mode & 3) {
-    case 0:  /* 0.5 * F + 0.5 * B */
-        s.src = s.dst = BFM_GL_CONSTANT_COLOR;
-        s.constant = 0.5f;
+    case 0:  /* (B + F) >> 1: 4F + B * 127/255 */
+        s.src_mul = 4;
+        s.dst_factor = 127.0f / 255.0f;
         break;
-    case 1:  /* F + B */
+    case 1:  /* B + F: 8F + B */
         break;
-    case 2:  /* B - F */
+    case 2:  /* B - F: B - 8F */
         s.equation = BFM_GL_FUNC_REVERSE_SUBTRACT;
         break;
-    default: /* 0.25 * F + B */
-        s.src = BFM_GL_CONSTANT_COLOR;
-        s.constant = 0.25f;
+    default: /* B + (F >> 2): 8(F >> 2) + B */
+        s.src_shift = 2;
         break;
     }
     return s;
+}
+
+int bfm_gl_blend_byte(const BfmGlBlendState *s, int back8, int f) {
+    double src = (double)(s->src_mul * (f >> s->src_shift));
+    double dst = back8 * (double)s->dst_factor;
+    double o = s->equation == BFM_GL_FUNC_REVERSE_SUBTRACT ? dst - src : src + dst;
+    if (o < 0.0) o = 0.0;
+    if (o > 255.0) o = 255.0;
+    return round_i(o);
 }
 
 uint16_t bfm_gl_blend_emulate(const BfmGlBlendState *s, uint16_t back,
@@ -212,18 +226,9 @@ uint16_t bfm_gl_blend_emulate(const BfmGlBlendState *s, uint16_t back,
     uint16_t out = 0;
     int i;
     for (i = 0; i < 3; i++) {
-        /* dst: what an RGBA8 target holds for a 5-bit value; src: shader
-         * output (float) */
-        double b = (double)round_i(((back >> (5 * i)) & 31) * 255.0 / 31.0) / 255.0;
-        double f = (double)((front >> (5 * i)) & 31) / 31.0;
-        double sf = s->src == BFM_GL_CONSTANT_COLOR ? s->constant : 1.0;
-        double df = s->dst == BFM_GL_CONSTANT_COLOR ? s->constant : 1.0;
-        double o = s->equation == BFM_GL_FUNC_REVERSE_SUBTRACT
-                       ? b * df - f * sf : f * sf + b * df;
-        int q;
-        if (o < 0.0) o = 0.0;
-        if (o > 1.0) o = 1.0;
-        q = round_i(o * 255.0) >> 3;   /* stored RGB8, read back as 5-bit */
+        /* dst: the byte an opaque write of a 5-bit value leaves (c5 / 31) */
+        int b8 = round_i(((back >> (5 * i)) & 31) * 255.0 / 31.0);
+        int q = bfm_gl_blend_byte(s, b8, (front >> (5 * i)) & 31) >> 3;
         out |= (uint16_t)(q << (5 * i));
     }
     return out;
@@ -243,6 +248,16 @@ int bfm_gl_dither5(int c8, int x, int y) {
     if (c < 0) c = 0;
     if (c > 255) c = 255;
     return c >> 3;
+}
+
+/* ---- MSAA ---------------------------------------------------------------- */
+
+int bfm_gl_msaa_effective(int requested, int max_samples) {
+    int n = requested < max_samples ? requested : max_samples, p = 2;
+    if (n < 2) return 0;               /* off, "1x", or a GPU without multisampling */
+    if (n > 16) n = 16;
+    while (p * 2 <= n) p *= 2;         /* the largest of 2, 4, 8, 16 that fits */
+    return p;
 }
 
 /* ---- HD replacements ----------------------------------------------------- */
@@ -359,6 +374,8 @@ void bfm_gl_repl_coords(const BfmGlReplacement *r, uint16_t tpage, float u,
 /* ---- batching --------------------------------------------------------- */
 
 static void tiles_clean(BfmGlBatch *b, const BfmPlatRect *r);
+static void resolve_area(BfmGlBatch *b, int x0, int y0, int x1, int y1);
+static void copy_to_scene(BfmGlBatch *b, int i, const BfmPlatRect *r);
 
 void bfm_gl_batch_init(BfmGlBatch *b) {
     memset(b, 0, sizeof *b);
@@ -427,12 +444,39 @@ static int scene_claim(BfmGlBatch *b, int x, int y) {
         for (i = 1; i < BFM_GL_SCENE_SLOTS; i++)
             if (b->scene[i].stamp < b->scene[pick].stamp) pick = i;
     }
-    if (b->scene[pick].used) tiles_forget(b, BFM_GL_TARGET_SCENE0 + pick);
+    if (b->scene[pick].used) {
+        /* the evicted slot's pixels exist only in its target: mirror first */
+        resolve_area(b, b->scene[pick].x, b->scene[pick].y, b->scene[pick].x + b->disp.w,
+                     b->scene[pick].y + b->disp.h);
+        tiles_forget(b, BFM_GL_TARGET_SCENE0 + pick);
+    }
     b->scene[pick].used = 1;
     b->scene[pick].x = x;
     b->scene[pick].y = y;
     b->scene[pick].stamp = ++b->tick;
+    /* The slot starts as a copy of VRAM, so a tile it only partly redraws
+     * (the game's per-frame clear can leave border rows alone) resolves to
+     * the right pixels. Pixels of that area still in another target go to
+     * the mirror first; the copy then executes after that resolve. */
+    if (!b->overlay) {
+        BfmPlatRect r;
+        r.x = (int16_t)x; r.y = (int16_t)y; r.w = b->disp.w; r.h = b->disp.h;
+        resolve_area(b, x, y, x + b->disp.w, y + b->disp.h);
+        copy_to_scene(b, pick, &r);
+    }
     return pick;
+}
+
+/* Every rendered tile of the used scene slots into the mirror. Run the
+ * batch before changing the display size: the slot targets are reallocated
+ * for the new size and would lose their pixels. */
+void bfm_gl_batch_resolve_scenes(BfmGlBatch *b) {
+    int i;
+    if (!b || b->overlay) return;
+    for (i = 0; i < BFM_GL_SCENE_SLOTS; i++)
+        if (b->scene[i].used)
+            resolve_area(b, b->scene[i].x, b->scene[i].y, b->scene[i].x + b->disp.w,
+                         b->scene[i].y + b->disp.h);
 }
 
 void bfm_gl_batch_set_display(BfmGlBatch *b, const BfmPlatRect *disp, int margin) {
@@ -840,12 +884,19 @@ static void put_tri(BfmGlBatch *b, BfmGlCmd *c, const Corner *k0, const Corner *
     if (!v) return;
     k[0] = k0; k[1] = k1; k[2] = k2;
     for (i = 0; i < 3; i++) {
+        int j;
         memset(&v[i], 0, sizeof v[i]);
         v[i].x = k[i]->x;
         v[i].y = k[i]->y;
         v[i].r = k[i]->r; v[i].g = k[i]->g; v[i].b = k[i]->bl; v[i].a = 255;
         v[i].u = (uint16_t)k[i]->u;
         v[i].v = (uint16_t)k[i]->v;
+        for (j = 0; j < 3; j++) {
+            v[i].txy[2 * j] = (int16_t)k[j]->x;
+            v[i].txy[2 * j + 1] = (int16_t)k[j]->y;
+            v[i].tuv[j] = (uint32_t)((int)k[j]->u & 0xFFFF) | ((uint32_t)((int)k[j]->v & 0xFFFF) << 16);
+            v[i].trgb[j] = (uint32_t)k[j]->r | ((uint32_t)k[j]->g << 8) | ((uint32_t)k[j]->bl << 16);
+        }
         v[i].clut = p ? p->clut : 0;
         v[i].tpage = p ? p->tpage : 0;
         v[i].flags = flags;
@@ -1032,39 +1083,53 @@ void bfm_gl_batch_add_copy(BfmGlBatch *b, const BfmPlatRect *r) {
     full.x = full.y = 0;
     full.w = BFM_GL_VRAM_W;
     full.h = BFM_GL_VRAM_H;
-    for (i = -1; i < BFM_GL_SCENE_SLOTS; i++) {
-        BfmPlatRect sc = full;
-        float ox = 0, oy = 0;
-        int target = BFM_GL_TARGET_VRAM;
-        if (i >= 0) {
-            BfmPlatRect area;
-            if (!b->scene[i].used) continue;
-            area.x = (int16_t)b->scene[i].x; area.y = (int16_t)b->scene[i].y;
-            area.w = b->disp.w; area.h = b->disp.h;
-            if (!rect_overlap(&area, r)) continue;
-            target = BFM_GL_TARGET_SCENE0 + i;
-            ox = (float)(b->margin - b->scene[i].x);
-            oy = (float)-b->scene[i].y;
-            sc.x = (int16_t)b->margin; sc.y = 0;
-            sc.w = b->disp.w; sc.h = b->disp.h;
-        }
-        {
-            DrawKey key;
-            memset(&key, 0, sizeof key);
-            key.target = target;
-            key.blend = -1;
-            key.copy = 1;
-            if (!(c = draw_cmd(b, &key, &sc))) return;
-            c->textured = 1;
-        }
-        corner(&k[0], r->x + ox, r->y + oy, &white, r->x, r->y);
-        corner(&k[1], r->x + r->w + ox, r->y + oy, &white, r->x + r->w, r->y);
-        corner(&k[2], r->x + ox, r->y + r->h + oy, &white, r->x, r->y + r->h);
-        corner(&k[3], r->x + r->w + ox, r->y + r->h + oy, &white, r->x + r->w,
-               r->y + r->h);
-        put_quad(b, c, k, NULL, flags, NULL);
+    {
+        DrawKey key;
+        memset(&key, 0, sizeof key);
+        key.target = BFM_GL_TARGET_VRAM;
+        key.blend = -1;
+        key.copy = 1;
+        if (!(c = draw_cmd(b, &key, &full))) return;
+        c->textured = 1;
+    }
+    corner(&k[0], r->x, r->y, &white, r->x, r->y);
+    corner(&k[1], r->x + r->w, r->y, &white, r->x + r->w, r->y);
+    corner(&k[2], r->x, r->y + r->h, &white, r->x, r->y + r->h);
+    corner(&k[3], r->x + r->w, r->y + r->h, &white, r->x + r->w, r->y + r->h);
+    put_quad(b, c, k, NULL, flags, NULL);
+    for (i = 0; i < BFM_GL_SCENE_SLOTS; i++) {
+        BfmPlatRect area;
+        if (!b->scene[i].used) continue;
+        area.x = (int16_t)b->scene[i].x; area.y = (int16_t)b->scene[i].y;
+        area.w = b->disp.w; area.h = b->disp.h;
+        if (rect_overlap(&area, r)) copy_to_scene(b, i, r);
     }
     tiles_clean(b, r);
+}
+
+/* VRAM rect r, from the VRAM texture, into scene slot i (a 15-bit copy). */
+static void copy_to_scene(BfmGlBatch *b, int i, const BfmPlatRect *r) {
+    const uint16_t flags = BFM_GLV_TEXTURED | BFM_GLV_RAW | BFM_GLV_ABS;
+    float ox = (float)(b->margin - b->scene[i].x), oy = (float)-b->scene[i].y;
+    BfmPlatVertex white;
+    BfmPlatRect sc;
+    Corner k[4];
+    BfmGlCmd *c;
+    DrawKey key;
+    memset(&white, 0xFF, sizeof white);
+    sc.x = (int16_t)b->margin; sc.y = 0;
+    sc.w = b->disp.w; sc.h = b->disp.h;
+    memset(&key, 0, sizeof key);
+    key.target = BFM_GL_TARGET_SCENE0 + i;
+    key.blend = -1;
+    key.copy = 1;
+    if (!(c = draw_cmd(b, &key, &sc))) return;
+    c->textured = 1;
+    corner(&k[0], r->x + ox, r->y + oy, &white, r->x, r->y);
+    corner(&k[1], r->x + r->w + ox, r->y + oy, &white, r->x + r->w, r->y);
+    corner(&k[2], r->x + ox, r->y + r->h + oy, &white, r->x, r->y + r->h);
+    corner(&k[3], r->x + r->w + ox, r->y + r->h + oy, &white, r->x + r->w, r->y + r->h);
+    put_quad(b, c, k, NULL, flags, NULL);
 }
 
 /* ---- CPU reference rasteriser ------------------------------------------- */

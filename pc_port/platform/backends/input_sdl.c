@@ -210,8 +210,13 @@ static int sdl_poll(void *self, BfmPlatPad pads[BFM_PLAT_PAD_PORTS],
 
 static int sdl_set_bindings(void *self, const BfmPlatBinding *b, size_t n) {
     SdlInput *s = (SdlInput *)self;
+    size_t i;
     if (n > MAX_BINDINGS) return BFM_PLAT_NO_SPACE;
-    memcpy(s->bindings, b, n * sizeof *b);
+    if (n && !b) return BFM_PLAT_INVALID;
+    for (i = 0; i < n; i++)
+        if (!b[i].is_hotkey && b[i].port >= BFM_PLAT_PAD_PORTS)
+            return BFM_PLAT_INVALID;
+    if (n) memcpy(s->bindings, b, n * sizeof *b);
     s->binding_count = n;
     return BFM_PLAT_OK;
 }

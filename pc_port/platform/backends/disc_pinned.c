@@ -54,8 +54,15 @@ static int pinned_read(void *self, uint32_t lba, BfmPlatDiscReadMode mode,
                        void *out, size_t size) {
     PinnedDisc *d = (PinnedDisc *)self;
     uint8_t raw[MUSASHI_DISC_RAW_SECTOR_SIZE];
-    size_t off = mode == BFM_DISC_READ_RAW ? 0 : mode == BFM_DISC_READ_NO_SYNC ? 12 : 24;
-    if (!d->media ||
+    size_t off, expected;
+    switch (mode) {
+    case BFM_DISC_READ_RAW: off = 0; expected = 2352; break;
+    case BFM_DISC_READ_NO_SYNC: off = 12; expected = 2340; break;
+    case BFM_DISC_READ_DATA: off = 24; expected = 2048; break;
+    case BFM_DISC_READ_FORM2: off = 24; expected = 2324; break;
+    default: return BFM_PLAT_INVALID;
+    }
+    if (!out || size != expected || !d->media ||
         !musashi_disc_media_read_sector(d->media, lba, raw, sizeof raw))
         return BFM_PLAT_INVALID;
     memcpy(out, raw + off, size);

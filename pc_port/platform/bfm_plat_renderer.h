@@ -87,7 +87,8 @@ typedef struct BfmPlatOutput {
     int aspect_num, aspect_den;
     int frame_rate;
     int fullscreen;
-    int vsync;
+    int vsync;              /* 1 on, 0 off; gl: -1 leaves the swap interval as it is */
+    int present_integer;    /* gl: 1 places the image at whole multiples of its height */
 } BfmPlatOutput;
 
 typedef struct BfmPlatRendererStats {
