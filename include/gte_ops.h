@@ -16,6 +16,7 @@ __asm__(".include \"gte_macros.inc\"\n");
 #define gte_mtc2(v, r) __asm__ volatile("mtc2 %0, $" #r : : "r"(v))
 #define gte_mfc2(v, r) __asm__ volatile("mfc2 %0, $" #r : "=r"(v))
 #define gte_cfc2(v, r) __asm__ volatile("cfc2 %0, $" #r : "=r"(v))
+#define gte_ctc2(v, r) __asm__ volatile("ctc2 %0, $" #r : : "r"(v))
 #define gte_nop() __asm__ volatile("nop")
 
 #define gte_rtps() __asm__ volatile("rtps")
@@ -28,5 +29,10 @@ __asm__(".include \"gte_macros.inc\"\n");
 #define gte_intpl() __asm__ volatile("intpl")
 #define gte_sqr12() __asm__ volatile("sqr 1")
 #define gte_sqr0() __asm__ volatile("sqr 0")
+#define gte_mvmva(sf, mx, v, cv, lm) __asm__ volatile("mvmva " #sf ", " #mx ", " #v ", " #cv ", " #lm)
+/* mvmva 1,0,3,3,0: rotation matrix times IR1-3 (no translation), shifted. */
+#define gte_rtir12() __asm__ volatile("rtir12")
+/* mvmva 1,0,0,0,0: rotation matrix times V0 plus the translation vector. */
+#define gte_rtv0tr() __asm__ volatile("rtv0tr")
 
 #endif
