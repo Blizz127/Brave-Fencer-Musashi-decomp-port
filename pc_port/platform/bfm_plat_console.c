@@ -71,7 +71,16 @@ static int find_cheat(const char *name) {
     return -1;
 }
 
+/* The legacy cheat registry and the console's poke are gated behind the
+ * Port Dev Menu opt-in (docs/PC-PORT.md): without BFM_DEV_MENU=1, or with
+ * BFM_CHEATS=0, nothing can register or write. Off means off. */
+int bfm_plat_legacy_cheats_allowed(void) {
+    const char *menu = getenv("BFM_DEV_MENU"), *cheats = getenv("BFM_CHEATS");
+    return menu && menu[0] == '1' && !(cheats && cheats[0] == '0');
+}
+
 int bfm_plat_cheat_register(const BfmCheat *c, int owner) {
+    if (!bfm_plat_legacy_cheats_allowed()) return BFM_PLAT_UNSUPPORTED;
     if (!c || !name_ok(c->name)) return BFM_PLAT_INVALID;
     if (!c->apply && c->width != 1 && c->width != 2 && c->width != 4)
         return BFM_PLAT_INVALID;
@@ -90,6 +99,7 @@ int bfm_plat_cheat_register_copy(const BfmCheat *c, int owner) {
     CheatStrings *s;
     BfmCheat copy;
     int r;
+    if (!bfm_plat_legacy_cheats_allowed()) return BFM_PLAT_UNSUPPORTED;
     if (!c || !name_ok(c->name)) return BFM_PLAT_INVALID;
     if (cheat_count >= BFM_PLAT_CHEATS_MAX) return BFM_PLAT_NO_SPACE;
     s = &cheat_strings[cheat_count];
@@ -405,7 +415,8 @@ static void register_builtins(void) {
     bfm_plat_console_register("cheats", "list cheats", cmd_cheats, NULL);
     bfm_plat_console_register("cheat", "cheat NAME on|off|toggle", cmd_cheat, NULL);
     bfm_plat_console_register("peek", "peek ADDR [N] - dump guest bytes", cmd_peek, NULL);
-    bfm_plat_console_register("poke", "poke ADDR VALUE [W] - write guest bytes", cmd_poke, NULL);
+    if (bfm_plat_legacy_cheats_allowed())
+        bfm_plat_console_register("poke", "poke ADDR VALUE [W] - write guest bytes", cmd_poke, NULL);
     bfm_plat_console_register("get", "get SECTION.KEY", cmd_get, NULL);
     bfm_plat_console_register("set", "set SECTION.KEY VALUE", cmd_set, NULL);
     bfm_plat_console_register("mods", "list mods", cmd_mods, NULL);

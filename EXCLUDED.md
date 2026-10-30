@@ -184,3 +184,30 @@ the macros already there). The sources come from private commit
 | 2 clean-room sources (`sc02_0031` `8014ccb4`, `sc02_0035` `80128564`) | Inline MIPS assembly for the startup scratch-stack switch. Same class as the excluded `include/retail_scratch_call.h`. |
 | 9 clean-room sources using grouped GTE sequences (`gte_g_*`) | Those private macros transcribe fixed retail instruction groups (matrix and vector loads/stores around GTE commands). Same class as `include/retail_scratch_call.h`, so neither the macros nor their users are published. |
 | Port runtime, tools, tests and docs | Unchanged from the 2026-10-29 note above. |
+
+## 2026-10-30 port-source update (host platform layer)
+
+**Updated:** 19 files under `pc_port/platform/` (not `platform/psyq/`):
+- the OpenGL renderer backend (`backends/renderer_gl.c`, `backends/gl/`);
+- SDL input;
+- the pinned-disc backend;
+- the `bfm_plat` configuration, storage, widescreen, console, mods, input and
+  audio layers.
+
+They are taken from private commit `b65d2f50e3` and replace earlier versions
+of the same files. This is owner-written host code. The public tree builds
+with them (every default target, PsyCross on) as it did before.
+
+**Held from the port source (still private):**
+
+| Files | Reason |
+|---|---|
+| Emulator core and native-lane runtime changes (`pc_port/mips_formatter.c`, `native_boot.c`, `native_lane*.c`, the `gte_native_*` and development headers) | Under review. They include re-implementations of Sony library routines that follow the retail control flow (sections 2 and 3). |
+| `pc_port/platform/psyq/*` | Same reason: the libpad and other Psy-Q compatibility routines follow retail control flow. |
+| The native-lane generator update and its proof tools (`native_*_leaf.py`, `native_dma_wait.py`, `native_*_source.py`, `lane_cycles*.py`) and their tests | The proofs compare against retail instruction sequences written out in the files (hex, decimal or field-encoded words). |
+| `include/m2c_macros.h`, `include/macro.inc`, `include/gte_macros.inc`, `include/labels.inc`, `include/retail_scratch_call.h` | GPL, upstream, or a retail-sequence transcription (sections 1-3). |
+| Updated `docs/` and other new notes | Working notes, not reviewed for publication. |
+
+As a result, this tree cannot rebuild the released native lane or its
+Psy-Q classes. The released builds also need the private core. The public
+`pc_port/` is the earlier core plus this newer host layer.

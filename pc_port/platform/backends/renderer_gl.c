@@ -14,7 +14,9 @@
  * feedback (textures sampling drawn VRAM: GPU snapshots for 15-bit pages,
  * readback for CLUT pages), PS1 dithering (video.dither), internal
  * resolution 1x-8x
- * (video.internal_scale), hor+ widescreen from the projection/widescreen
+ * (video.internal_scale), MSAA 2x/4x/8x (video.msaa, off by default: then
+ * the renderer is exactly the single-sample one; see bfm_gl_exec_set_msaa),
+ * hor+ widescreen from the projection/widescreen
  * state, HD texture replacement (upload_replacement), overlay text. */
 
 #include "../bfm_plat_renderer.h"
@@ -36,6 +38,7 @@
 typedef struct GlRenderer {
     SDL_Window *win;
     SDL_GLContext ctx;
+    int owns_window, video_inited;
     BfmGlExec *x;
     BfmGlVram vram;
     BfmGlBatch batch, overlay;
@@ -59,6 +62,15 @@ static int dither_on(const GlRenderer *s) {
     return mode == BFM_DITHER_ON;
 }
 
+/* video.msaa as the host's config carries it (native_boot copies it from
+ * config.ini like internal_scale and dither). */
+static int msaa_request(void) {
+    const BfmPlatConfig *c = bfm_plat_config();
+    return c ? c->msaa : 0;
+}
+
+static int flush(GlRenderer *s);
+
 /* hor+ margin and displayed image aspect for the current display. */
 static void layout(GlRenderer *s) {
     const BfmPlatConfig *c = bfm_plat_config();
@@ -77,6 +89,13 @@ static void layout(GlRenderer *s) {
         }
     }
     s->image_aspect = a;
+    if (s->disp.w != s->batch.disp.w || s->disp.h != s->batch.disp.h ||
+        margin != s->batch.margin) {
+        /* the scene targets are reallocated for the new size: their pixels
+         * go to the mirror first, drawn with the size still in effect */
+        bfm_gl_batch_resolve_scenes(&s->batch);
+        flush(s);
+    }
     bfm_gl_batch_set_display(&s->batch, &s->disp, margin);
     {
         BfmPlatRect o = s->disp;
@@ -98,6 +117,15 @@ static int make_window(GlRenderer *s, const BfmPlatOutput *o) {
     BfmPlatWidescreen ws;
     int w = o->window_width > 0 ? o->window_width : 960;
     int h = o->window_height > 0 ? o->window_height : 720;
+    /* native_boot already owns a PsyCross context. Creating a second
+     * current context invalidates its GPU/DMA ownership checks. Borrow
+     * that context; standalone renderer clients still get their own. */
+    s->win = SDL_GL_GetCurrentWindow();
+    s->ctx = SDL_GL_GetCurrentContext();
+    if (s->win && s->ctx) return BFM_PLAT_OK;
+    s->win = NULL;
+    s->ctx = NULL;
+    s->owns_window = 1;
     if (bfm_plat_widescreen_compute(o->aspect_num, o->aspect_den,
                                     BFM_WIDESCREEN_HOR_PLUS, 320, 240, &ws) == BFM_PLAT_OK)
         bfm_plat_widescreen_window(&ws, h, &w);
@@ -127,6 +155,7 @@ static int gl_init(void *self, const BfmPlatOutput *o) {
         fprintf(stderr, "[gl] SDL video init failed: %s\n", SDL_GetError());
         return BFM_PLAT_UNSUPPORTED;
     }
+    s->video_inited = 1;
     if (make_window(s, o) != BFM_PLAT_OK) {
         fprintf(stderr, "[gl] no GL 3.3 core context: %s\n", SDL_GetError());
         gl_shutdown(s);
@@ -137,6 +166,17 @@ static int gl_init(void *self, const BfmPlatOutput *o) {
         fprintf(stderr, "[gl] executor: %s\n", s->err);
         gl_shutdown(s);
         return BFM_PLAT_UNSUPPORTED;
+    }
+    bfm_gl_exec_set_integer(s->x, o->present_integer);
+    {
+        /* MSAA is applied at start only; 0 leaves the executor untouched and says nothing */
+        int want = msaa_request();
+        if (want >= 2) {
+            int got = bfm_gl_exec_set_msaa(s->x, want);
+            fprintf(stderr, "GL_MSAA requested=%d effective=%d\n", want, got);
+            if (bfm_gl_exec_msaa_note(s->x)[0])
+                fprintf(stderr, "GL_MSAA note: %s\n", bfm_gl_exec_msaa_note(s->x));
+        }
     }
     bfm_gl_vram_init(&s->vram);
     bfm_gl_batch_init(&s->batch);
@@ -153,6 +193,14 @@ static int gl_init(void *self, const BfmPlatOutput *o) {
 static void gl_shutdown(void *self) {
     GlRenderer *s = (GlRenderer *)self;
     int i;
+    if (s->x && bfm_gl_exec_msaa(s->x)) {
+        BfmGlMsaaStats st;
+        bfm_gl_exec_msaa_stats(s->x, &st);
+        fprintf(stderr,
+                "GL_MSAA stats effective=%d resolves=%u snapshots=%u readbacks=%u stencil_builds=%u presents=%u\n",
+                bfm_gl_exec_msaa(s->x), st.resolves, st.snapshots, st.readbacks, st.stencil_builds,
+                st.presents);
+    }
     if (s->x) {
         for (i = 0; i < BFM_GL_MAX_REPLACEMENTS; i++)
             if (s->repl.r[i].live) bfm_gl_exec_texture_free(s->x, s->repl.r[i].id);
@@ -161,9 +209,11 @@ static void gl_shutdown(void *self) {
     bfm_gl_batch_free(&s->batch);
     bfm_gl_batch_free(&s->overlay);
     free(s->rgb24_buf);
-    if (s->ctx) SDL_GL_DeleteContext(s->ctx);
-    if (s->win) SDL_DestroyWindow(s->win);
-    if (s->win || s->ctx || s->x) SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    if (s->owns_window) {
+        if (s->ctx) SDL_GL_DeleteContext(s->ctx);
+        if (s->win) SDL_DestroyWindow(s->win);
+    }
+    if (s->video_inited) SDL_QuitSubSystem(SDL_INIT_VIDEO);
     memset(s, 0, sizeof *s);
 }
 
@@ -182,7 +232,10 @@ static int gl_output(void *self, const BfmPlatOutput *o) {
     }
     if (o->fullscreen != s->out.fullscreen)
         SDL_SetWindowFullscreen(s->win, o->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
-    if (o->vsync != s->out.vsync) SDL_GL_SetSwapInterval(o->vsync ? 1 : 0);
+    /* vsync -1: the interval stays whatever the context has (a borrowed
+     * PsyCross context keeps its own until a caller sets 0 or 1) */
+    if (o->vsync >= 0 && o->vsync != s->out.vsync) SDL_GL_SetSwapInterval(o->vsync ? 1 : 0);
+    bfm_gl_exec_set_integer(s->x, o->present_integer);
     s->out = *o;
     layout(s);
     return BFM_PLAT_OK;

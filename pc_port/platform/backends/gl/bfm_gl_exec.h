@@ -33,6 +33,46 @@ void bfm_gl_exec_destroy(BfmGlExec *x);
 int bfm_gl_exec_scale(const BfmGlExec *x);
 /* Reallocates the render targets (their content is lost). */
 int bfm_gl_exec_set_scale(BfmGlExec *x, int scale);
+/* on: the present calls place the image at whole multiples of the display
+ * height (bfm_plat_present_viewport); off (the default): fitted. */
+void bfm_gl_exec_set_integer(BfmGlExec *x, int on);
+
+/* MSAA (video.msaa). Off by default: the targets are then the single-sample
+ * textures they have always been and none of the code below runs.
+ * bfm_gl_exec_set_msaa turns on multisampled scene and VRAM targets:
+ *  - every draw renders into an RGBA8 multisample texture (plus a
+ *    multisampled stencil once mask-check is used, built per sample);
+ *  - the draws use their own program, built from the single-sample one:
+ *    geometry sits on pixel boundaries instead of at the half-pixel offset
+ *    the single-sample path uses to hit the PS1's integer sample points, so
+ *    pixel-aligned rects (sprites, tiles, fills, copies) keep their edges
+ *    and only polygon edges blend; texture coordinates and colours are
+ *    centroid-interpolated, and a pixel whose integer position lies outside
+ *    its triangle keeps those instead of the PS1 formulas' extrapolation;
+ *  - a target's single-sample texture holds its RESOLVED image: every
+ *    reader (SNAPSHOT, RESOLVE/readback, finish, present) first resolves the
+ *    rect it needs into it (glBlitFramebuffer), so it sees the box-averaged
+ *    samples. A pixel all of whose samples agree resolves to exactly what
+ *    the single-sample path draws there.
+ * Returns the samples the framebuffers really hold: the request clamped to
+ * the GPU's limits (bfm_gl_msaa_effective) and to 256 MiB for the VRAM
+ * target's colour at the current internal scale, which the driver may round
+ * up (llvmpipe turns 2 into 4). 0 = MSAA is off: samples < 2, an entry point
+ * or shader the context lacks, or a failed allocation; bfm_gl_exec_msaa_note
+ * says why. The targets are reallocated (content lost): call it right after
+ * create, or repaint. */
+int bfm_gl_exec_set_msaa(BfmGlExec *x, int samples);
+int bfm_gl_exec_msaa(const BfmGlExec *x);              /* the samples held, 0 = off */
+const char *bfm_gl_exec_msaa_note(const BfmGlExec *x); /* what set_msaa clamped or refused, "" if nothing */
+
+/* What the multisampled paths did since set_msaa: resolves = glBlitFramebuffer
+ * resolves of any rect; snapshots = SNAPSHOT commands that read a multisampled
+ * target; readbacks = RESOLVE commands and bfm_gl_exec_readback* reads of one;
+ * stencil_builds = per-sample mask stencils built; presents = frames shown. */
+typedef struct BfmGlMsaaStats {
+    unsigned resolves, snapshots, readbacks, stencil_builds, presents;
+} BfmGlMsaaStats;
+void bfm_gl_exec_msaa_stats(const BfmGlExec *x, BfmGlMsaaStats *out);
 
 /* Uploads the mirror's dirty box to the VRAM texture and clears it. */
 void bfm_gl_exec_sync_vram(BfmGlExec *x, BfmGlVram *v);
@@ -59,8 +99,11 @@ void bfm_gl_exec_texture_free(BfmGlExec *x, uint32_t id);
 
 /* Draws the displayed frame into the default framebuffer: the scene slot at
  * the display origin (hor+: the whole wide target) or the display rect of
- * the VRAM target, fitted to image_aspect with black bars, then the overlay
- * batch over the 4:3 display area. Does not swap. */
+ * the VRAM target, fitted to image_aspect with black bars (or at a whole
+ * multiple of its height, see bfm_gl_exec_set_integer), then the overlay
+ * batch over the 4:3 display area. Each pixel shows the 8-bit value of its
+ * 5-bit VRAM value (as the Original path displays it) unless an HD
+ * replacement texture is live. Does not swap. */
 int bfm_gl_exec_present(BfmGlExec *x, const BfmGlBatch *b,
                         const BfmGlBatch *overlay, int win_w, int win_h,
                         double image_aspect, int dither);

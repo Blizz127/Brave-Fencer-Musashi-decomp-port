@@ -18,15 +18,19 @@ typedef struct NullAudio {
 } NullAudio;
 
 static void null_drain(NullAudio *a) {
-    uint64_t now = bfm_plat_timing_now_ns(), frames;
+    uint64_t now = bfm_plat_timing_now_ns(), frames, elapsed, seconds, partial;
     unsigned s;
-    if (a->paused || now <= a->drained_ns) {
-        if (now > a->drained_ns) a->drained_ns = now;
+    if (a->paused || now < a->drained_ns) {
+        a->drained_ns = now;
         return;
     }
-    frames = (now - a->drained_ns) * a->st.rate / 1000000000ull;
+    if (now == a->drained_ns) return;
+    elapsed = now - a->drained_ns;
+    seconds = elapsed / 1000000000ull;
+    partial = (elapsed % 1000000000ull) * a->st.rate / 1000000000ull;
+    frames = seconds * a->st.rate + partial;
     if (!frames) return;
-    a->drained_ns += frames * 1000000000ull / a->st.rate;
+    a->drained_ns += seconds * 1000000000ull + partial * 1000000000ull / a->st.rate;
     for (s = 0; s < BFM_AUDIO_STREAM_COUNT; s++)
         a->st.queued_frames[s] = frames >= a->st.queued_frames[s] ? 0
                                  : a->st.queued_frames[s] - (size_t)frames;
@@ -50,7 +54,7 @@ static int null_queue(void *self, BfmPlatAudioStream s, const int16_t *pcm,
     NullAudio *a = (NullAudio *)self;
     (void)pcm;
     null_drain(a);
-    if (a->st.queued_frames[s] + frames > NULL_QUEUE_CAP) return BFM_PLAT_NO_SPACE;
+    if (frames > NULL_QUEUE_CAP - a->st.queued_frames[s]) return BFM_PLAT_NO_SPACE;
     a->st.queued_frames[s] += frames;
     a->st.submitted_frames[s] += frames;
     return BFM_PLAT_OK;

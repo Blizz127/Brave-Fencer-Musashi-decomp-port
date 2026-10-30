@@ -1,9 +1,17 @@
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200809L   /* mkdir under -std=c99 */
+#endif
 #include "bfm_plat_config.h"
 #include "bfm_plat_ini.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <direct.h>
+#else
+#include <sys/stat.h>
+#endif
 
 static void copy_str(char *dst, size_t size, const char *src) {
     size_t n = strlen(src);
@@ -26,6 +34,7 @@ void bfm_plat_config_defaults(BfmPlatConfig *cfg) {
     cfg->frame_rate = 30;
     cfg->vsync = 1;
     cfg->dither = BFM_DITHER_AUTO;
+    cfg->msaa = 0;
     cfg->fast_forward_speed = 4.0;
     cfg->fast_forward_toggle = 0;
     copy_str(cfg->renderer, sizeof cfg->renderer, "psycross");
@@ -158,6 +167,10 @@ int bfm_plat_config_set(BfmPlatConfig *cfg, const char *key,
         int on;
         if (strcmp(value, "auto") == 0) cfg->dither = BFM_DITHER_AUTO;
         else if (bfm_plat_ini_bool(value, &on)) cfg->dither = on ? BFM_DITHER_ON : BFM_DITHER_OFF;
+        else r = BFM_PLAT_INVALID;
+    } else if (strcmp(key, "video.msaa") == 0) {
+        long v;   /* exactly 0 (off), 2, 4 or 8; anything else keeps the previous value */
+        if (bfm_plat_ini_long(value, &v) && (v == 0 || v == 2 || v == 4 || v == 8)) cfg->msaa = (int)v;
         else r = BFM_PLAT_INVALID;
     }
     else if (strcmp(key, "video.screenshot_dir") == 0) r = set_path(cfg->screenshot_dir, sizeof cfg->screenshot_dir, value);
@@ -321,10 +334,10 @@ int bfm_plat_config_save_file(const BfmPlatConfig *c, const char *path) {
             c->widescreen_mode == BFM_WIDESCREEN_ANAMORPHIC ? "anamorphic" : "hor+");
     fprintf(f, "internal_scale = %d\n"
                "window_width = %d\nwindow_height = %d\nfullscreen = %d\n"
-               "frame_rate = %d\nvsync = %d\ndither = %s\ngpu = %s\nscreenshot_dir = %s\n\n",
+               "frame_rate = %d\nvsync = %d\ndither = %s\nmsaa = %d\ngpu = %s\nscreenshot_dir = %s\n\n",
             c->internal_scale, c->window_width,
             c->window_height, c->fullscreen, c->frame_rate, c->vsync,
-            c->dither == BFM_DITHER_AUTO ? "auto" : c->dither ? "on" : "off",
+            c->dither == BFM_DITHER_AUTO ? "auto" : c->dither ? "on" : "off", c->msaa,
             c->gpu_path == BFM_GPU_BFM_PLAT ? "bfm_plat" : "cpu", c->screenshot_dir);
     fprintf(f, "[timing]\nfast_forward_speed = %g\nfast_forward_toggle = %d\n\n",
             c->fast_forward_speed, c->fast_forward_toggle);
@@ -358,4 +371,118 @@ int bfm_plat_config_save_file(const BfmPlatConfig *c, const char *path) {
 void bfm_plat_config_aspect(const BfmPlatConfig *cfg, int *num, int *den) {
     if (num) *num = cfg && cfg->aspect_num > 0 ? cfg->aspect_num : 4;
     if (den) *den = cfg && cfg->aspect_den > 0 ? cfg->aspect_den : 3;
+}
+
+/* ---------------------------------------------------- single-key edits */
+
+static int edit_name_ok(const char *s) {
+    size_t n = s ? strlen(s) : 0;
+    if (n == 0 || n >= 64) return 0;
+    for (; *s; ++s)
+        if (!((*s >= 'a' && *s <= 'z') || (*s >= '0' && *s <= '9') || *s == '_' ||
+              *s == '-' || *s == '.'))
+            return 0;
+    return 1;
+}
+
+static const char *skip_ws(const char *t) {
+    while (*t == ' ' || *t == '\t') ++t;
+    return t;
+}
+
+/* 1 when line is the header [section] (surrounding blanks ignored). */
+static int edit_is_header(const char *line, const char *section, int *is_header) {
+    const char *t = skip_ws(line), *end;
+    size_t n;
+    *is_header = *t == '[' && (end = strchr(t, ']')) != NULL;
+    if (!*is_header) return 0;
+    t = skip_ws(t + 1);
+    while (end > t && (end[-1] == ' ' || end[-1] == '\t')) --end;
+    n = (size_t)(end - t);
+    return n == strlen(section) && strncmp(t, section, n) == 0;
+}
+
+static int edit_is_key(const char *line, const char *key) {
+    const char *t = skip_ws(line);
+    size_t n = strlen(key);
+    return strncmp(t, key, n) == 0 && *skip_ws(t + n) == '=';
+}
+
+static int edit_is_blank(const char *line) {
+    return *skip_ws(line) == '\n' || *skip_ws(line) == '\r' || *skip_ws(line) == '\0';
+}
+
+static void edit_mkdirs(const char *path) {
+    char dir[BFM_PLAT_PATH_MAX];
+    size_t i, n = strlen(path);
+    if (n >= sizeof dir) return;
+    memcpy(dir, path, n + 1);
+    for (i = 1; i < n; ++i) {
+        if (dir[i] != '/' && dir[i] != '\\') continue;
+        dir[i] = '\0';
+#ifdef _WIN32
+        (void)_mkdir(dir);
+#else
+        (void)mkdir(dir, 0777);
+#endif
+        dir[i] = path[i];
+    }
+}
+
+int bfm_plat_config_write_key(const char *path, const char *section,
+                              const char *key, const char *value) {
+    char tmp[BFM_PLAT_PATH_MAX + 8], line[4096], blank[4096];
+    FILE *in, *out;
+    int in_section = 0, written = 0, have_section = 0, header, last_nl = 1;
+    size_t nblank = 0;
+    const char *v;
+    if (!path || !edit_name_ok(section) || !edit_name_ok(key) || !value ||
+        strlen(value) >= 256)
+        return BFM_PLAT_INVALID;
+    for (v = value; *v; ++v)
+        if (*v == '\n' || *v == '\r' || *v == ';' || *v == '#') return BFM_PLAT_INVALID;
+    if (snprintf(tmp, sizeof tmp, "%s.tmp", path) >= (int)sizeof tmp) return BFM_PLAT_INVALID;
+    edit_mkdirs(path);
+    if (!(out = fopen(tmp, "wb"))) return BFM_PLAT_ERROR;
+    if ((in = fopen(path, "rb")) != NULL) {
+        while (fgets(line, sizeof line, in)) {
+            int match = edit_is_header(line, section, &header);
+            if (in_section && !header && edit_is_blank(line) &&
+                nblank + strlen(line) < sizeof blank) {
+                /* held back so a new key lands after the section's last entry */
+                memcpy(blank + nblank, line, strlen(line) + 1);
+                nblank += strlen(line);
+                continue;
+            }
+            if (header && in_section && !written) {
+                fprintf(out, "%s = %s\n", key, value);
+                written = 1;
+            }
+            if (nblank) { fputs(blank, out); nblank = 0; }
+            if (header) {
+                in_section = match;
+                have_section |= match;
+            } else if (in_section && edit_is_key(line, key)) {
+                if (!written) fprintf(out, "%s = %s\n", key, value);
+                written = 1;   /* later duplicates in the section are dropped */
+                last_nl = 1;
+                continue;
+            }
+            fputs(line, out);
+            last_nl = line[0] && line[strlen(line) - 1] == '\n';
+        }
+        fclose(in);
+    }
+    if (!written) {
+        if (!last_nl) fputc('\n', out);
+        if (!have_section) fprintf(out, "%s[%s]\n", ftell(out) > 0 ? "\n" : "", section);
+        fprintf(out, "%s = %s\n", key, value);
+    }
+    if (nblank) fputs(blank, out);
+    if (fclose(out) != 0) { remove(tmp); return BFM_PLAT_ERROR; }
+#ifdef _WIN32
+    remove(path);   /* rename does not replace an existing file on Windows */
+#endif
+    if (rename(tmp, path) != 0) { remove(tmp); return BFM_PLAT_ERROR; }
+    return BFM_PLAT_OK;
 }

@@ -657,6 +657,7 @@ static int cheat_cb(void *user, const char *section, const char *key,
 static void load_cheats(unsigned mod) {
     CheatParse p;
     char path[700];
+    if (!bfm_plat_legacy_cheats_allowed()) return;   /* dev menu opt-in only */
     memset(&p, 0, sizeof p);
     p.mod = (int)mod;
     snprintf(path, sizeof path, "%s/cheats.ini", mods[mod].dir);

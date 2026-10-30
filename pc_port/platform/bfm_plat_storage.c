@@ -5,6 +5,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #define MAX_BACKENDS 8
 
@@ -197,7 +201,9 @@ int bfm_plat_disc_read(uint32_t lba, uint32_t count, BfmPlatDiscReadMode mode,
     size_t each = bfm_plat_disc_mode_size(mode);
     uint32_t i;
     if (!active) return BFM_PLAT_NOT_READY;
-    if (!each || !out || count == 0 || out_size / each < count)
+    /* Reject the whole request before a sector index can wrap to zero. */
+    if (!each || !out || count == 0 || out_size / each < count ||
+        count - 1 > UINT32_MAX - lba)
         return BFM_PLAT_INVALID;
     for (i = 0; i < count; i++) {
         int r = active->read_sector(active->self, lba + i, mode,
@@ -268,8 +274,10 @@ int bfm_plat_disc_find_file(const char *path, uint32_t *out_lba,
         while (*end && *end != '/' && *end != '\\') end++;
         len = (size_t)(end - p);
         last = (*end == '\0');
-        for (sector = 0; !found && sector * BFM_DISC_DATA_SIZE < dir_size;
+        for (sector = 0; !found && sector < dir_size / BFM_DISC_DATA_SIZE +
+                                                  (dir_size % BFM_DISC_DATA_SIZE != 0);
              sector++) {
+            if (sector > UINT32_MAX - dir_lba) return BFM_PLAT_INVALID;
             r = bfm_plat_disc_read(dir_lba + sector, 1, BFM_DISC_READ_DATA,
                                    sec, sizeof sec);
             if (r != BFM_PLAT_OK) return r;
@@ -311,7 +319,8 @@ int bfm_plat_disc_read_file(const char *path, void *out, size_t cap,
     if (!size) return BFM_PLAT_INVALID;
     r = bfm_plat_disc_find_file(path, &lba, &bytes);
     if (r != BFM_PLAT_OK) return r;
-    sectors = (bytes + BFM_DISC_DATA_SIZE - 1u) / BFM_DISC_DATA_SIZE;
+    sectors = bytes / BFM_DISC_DATA_SIZE + (bytes % BFM_DISC_DATA_SIZE != 0);
+    if ((uint64_t)sectors * BFM_DISC_DATA_SIZE > SIZE_MAX) return BFM_PLAT_ERROR;
     buf = (uint8_t *)malloc(sectors ? (size_t)sectors * BFM_DISC_DATA_SIZE : 1u);
     if (!buf) return BFM_PLAT_ERROR;
     if (sectors) {
@@ -346,20 +355,36 @@ static int card_path(unsigned slot, char *out, size_t size, const char *ext) {
     return n > 0 && (size_t)n < size;
 }
 
+static int card_replace(const char *tmp, const char *path) {
+#ifdef _WIN32
+    /* Keep the old card if replacement fails; deleting it first loses data. */
+    return MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+    return rename(tmp, path) == 0;
+#endif
+}
+
 int bfm_plat_memcard_load(unsigned slot, uint8_t *card, size_t size) {
     char path[600];
     FILE *f;
+    uint8_t *loaded;
     size_t got;
-    int extra;
+    int extra, failed;
     if (slot >= BFM_MEMCARD_SLOTS || !card || size != BFM_MEMCARD_SIZE ||
         !card_path(slot, path, sizeof path, ""))
         return BFM_PLAT_INVALID;
     f = fopen(path, "rb");
-    if (!f) return BFM_PLAT_NOT_FOUND;
-    got = fread(card, 1, size, f);
+    if (!f) return errno == ENOENT ? BFM_PLAT_NOT_FOUND : BFM_PLAT_ERROR;
+    loaded = (uint8_t *)malloc(size);
+    if (!loaded) { fclose(f); return BFM_PLAT_ERROR; }
+    got = fread(loaded, 1, size, f);
     extra = fgetc(f);
-    fclose(f);
-    return (got == size && extra == EOF) ? BFM_PLAT_OK : BFM_PLAT_INVALID;
+    failed = ferror(f);
+    if (fclose(f) != 0 || failed) { free(loaded); return BFM_PLAT_ERROR; }
+    if (got != size || extra != EOF) { free(loaded); return BFM_PLAT_INVALID; }
+    memcpy(card, loaded, size);
+    free(loaded);
+    return BFM_PLAT_OK;
 }
 
 int bfm_plat_memcard_save(unsigned slot, const uint8_t *card, size_t size) {
@@ -374,10 +399,7 @@ int bfm_plat_memcard_save(unsigned slot, const uint8_t *card, size_t size) {
     if (!f) return BFM_PLAT_ERROR;
     ok = fwrite(card, 1, size, f) == size;
     ok = (fclose(f) == 0) && ok;
-#ifdef _WIN32
-    if (ok) remove(path);
-#endif
-    if (!ok || rename(tmp, path) != 0) {
+    if (!ok || !card_replace(tmp, path)) {
         remove(tmp);
         return BFM_PLAT_ERROR;
     }

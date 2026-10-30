@@ -311,3 +311,25 @@ m2c check: 19 files, 0 lines with m2c macro text
 The 2026-10-29 text scan was repeated over the 19 files. It looked for
 numeric-literal runs, hex strings, Sony and SDK markers, tokens, emails, IP
 addresses, home paths, and tool and agent names. It found nothing.
+
+## 2026-10-30 port-source update (19 `pc_port/platform/` files)
+
+**Result: 0 retail data runs, 0 retail instruction sequences, 0 Psy-Q/Sony
+code, 0 secrets or personal data.**
+
+- `retail_guard.py --run-bytes 32`, both passes (same references as above):
+  19 files checked, 0 problems.
+- Retail instruction-word scan: every run of three consecutive 32-bit hex
+  literals was looked up as consecutive aligned words in the executable,
+  every decoded member and the BIOS images. Field-encoded instruction
+  patterns were searched for separately. Nothing found.
+- Text scan:
+  - two descriptive mentions of the Psy-Q API, unchanged from the published
+    files;
+  - one 16-entry list, the GPU dither matrix (a hardware constant), also
+    unchanged from the published file;
+  - no private paths, names, tokens, emails or addresses.
+- `check_no_m2c_text.py`: 0 lines.
+- Build: the public tree with these files configured and built every default
+  target (PsyCross on) without errors, as the previous public tree does. The
+  optional pinned-disc backend passed a separate syntax check.
