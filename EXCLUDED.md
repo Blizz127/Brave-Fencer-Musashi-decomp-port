@@ -156,3 +156,31 @@ runs on the interpreter. This update changes no build.
 
 Sections 1-6 above still apply to everything else: upstream-derived, unclear-origin
 and Sony library code remains excluded.
+
+## 2026-10-30 source update
+
+**Added:** 18 owner clean-room re-derivations from the files held on
+2026-10-29 (7 in `src/main/`, 11 in `src/overlays/`), and four
+single-opcode macros in `include/gte_ops.h` (`gte_ctc2`, `gte_mvmva`,
+`gte_rtir12`, `gte_rtv0tr`; each emits one coprocessor-2 instruction, like
+the macros already there). The sources come from private commit
+`b65d2f50e3` via `git archive`. They meet the same conditions as the
+2026-10-29 update and rebuild byte-exact against this repository's
+`include/` headers.
+
+- 17 of them were held for their header text:
+  - 5 had a header comment naming a private tooling run. The comment was
+    rewritten; the code is unchanged.
+  - The other 12 matched only the word "scratch". In them it means the PS1
+    scratchpad memory, "scratch words", or a local variable named
+    `scratch`, so it is not private text.
+- `src/main/8001d8c4.c` needed only the new single-opcode `gte_mvmva`.
+
+**Still held:**
+
+| Files | Reason |
+|---|---|
+| 5 clean-room sources (`src/main/80010178.c` and four of its callees) | Derived under an authorization that did not include publication. |
+| 2 clean-room sources (`sc02_0031` `8014ccb4`, `sc02_0035` `80128564`) | Inline MIPS assembly for the startup scratch-stack switch. Same class as the excluded `include/retail_scratch_call.h`. |
+| 9 clean-room sources using grouped GTE sequences (`gte_g_*`) | Those private macros transcribe fixed retail instruction groups (matrix and vector loads/stores around GTE commands). Same class as `include/retail_scratch_call.h`, so neither the macros nor their users are published. |
+| Port runtime, tools, tests and docs | Unchanged from the 2026-10-29 note above. |

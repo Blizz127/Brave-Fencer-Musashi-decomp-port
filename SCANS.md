@@ -287,3 +287,27 @@ updated tree, and the updated tree built every default target without
 errors. The default build does not compile `src/`. The PsyCross
 configuration was not run: both trees stop at the same missing-PsyCross
 message until `tools/fetch_toolchains.sh` is run.
+
+## 2026-10-30 source update (18 added `src/` files, `include/gte_ops.h`)
+
+The 19 changed source and header files were scanned on their own; the text scan below also covered the two added notes in EXCLUDED.md and this file.
+
+**Result: 0 retail data runs, 0 Psy-Q/Sony hits, 0 secrets or personal data,
+18/18 byte-exact.**
+
+```
+$ python3 tools/retail_guard.py --stage <changed files> ...   # same references and options as 2026-10-29
+retail_guard: 19 files checked, 0 problem(s)
+$ python3 tools/retail_guard.py --stage <changed files> --run-source <each decoded member> --run-bytes 32
+retail_guard: 19 files checked, 0 problem(s)
+$ python3 tools/verify_registry.py --registry <the 18 entries>   # against this repository's include/, new gte_ops.h
+18/18 registry entries re-verified
+$ python3 tools/check_no_retail_data.py --registry <same>
+checked 18 sources: 0 carry retail data, 0 failed to build
+$ python3 tools/check_no_m2c_text.py <the 18 sources> include/gte_ops.h
+m2c check: 19 files, 0 lines with m2c macro text
+```
+
+The 2026-10-29 text scan was repeated over the 19 files. It looked for
+numeric-literal runs, hex strings, Sony and SDK markers, tokens, emails, IP
+addresses, home paths, and tool and agent names. It found nothing.
