@@ -804,9 +804,9 @@ static int copy_word(MusashiGpuController *c, uint32_t word) {
     return 1;
 }
 
-static int16_t offset11(uint32_t raw, unsigned shift) {
+static int signed11(uint32_t raw, unsigned shift) {
     uint32_t field = (raw >> shift) & 0x7ffu;
-    return (int16_t)((field ^ 0x400u) - 0x400u);
+    return (int)(field ^ 0x400u) - 0x400;
 }
 
 static int clip_box(const MusashiGpuController *controller,
@@ -817,11 +817,23 @@ static int clip_box(const MusashiGpuController *controller,
     int bottom = (int)((controller->drawing_area_end >> 10) & 0x1ffu);
     if (right < left) { left = 0; right = 1023; }
     if (bottom < top) { top = 0; bottom = 511; }
+    /* An admitted triangle or line fits in one copy of the drawing area.
+     * Clip in the unwrapped coordinate plane so an edge crossing +1023
+     * keeps its direction. Wrap only the accepted destination pixels. */
+    if (*x0 < -1024) { left -= 2048; right -= 2048; }
+    if (*y0 < -1024) { top -= 2048; bottom -= 2048; }
     if (*x0 < left) *x0 = left;
     if (*y0 < top) *y0 = top;
     if (*x1 > right) *x1 = right;
     if (*y1 > bottom) *y1 = bottom;
     return *x0 <= *x1 && *y0 <= *y1;
+}
+
+/* Test each complete triangle before clipping, including each half of a quad. */
+static int clip_triangle(const MusashiGpuController *controller,
+                         int *minx, int *miny, int *maxx, int *maxy) {
+    return *maxx - *minx < 1024 && *maxy - *miny < 512 &&
+           clip_box(controller, minx, miny, maxx, maxy);
 }
 
 /* PS1 semi-transparency, per 5-bit channel of back (B) and front (F):
@@ -852,7 +864,9 @@ static int plot_drawn(MusashiGpuController *controller, int x, int y,
                       uint16_t color) {
     uint16_t stp = controller->semi_textured ? (uint16_t)(color & 0x8000u) : 0u;
     int blend = controller->semi && (!controller->semi_textured || (color & 0x8000u));
-    if (x < 0 || y < 0 || x > 1023 || y > 511) return 1;
+    x = (int)((unsigned)x & 0x7ffu);
+    y = (int)((unsigned)y & 0x7ffu);
+    if (x > 1023 || y > 511) return 1;
     if (!controller->backend.store_vram) return 0;
     if (blend || (controller->mask_flags & 2u)) {
         uint16_t back = 0;
@@ -887,7 +901,7 @@ static int fill_triangle(MusashiGpuController *controller,
     if (x2 > maxx) maxx = x2;
     if (y1 > maxy) maxy = y1;
     if (y2 > maxy) maxy = y2;
-    if (!clip_box(controller, &minx, &miny, &maxx, &maxy)) return 1;
+    if (!clip_triangle(controller, &minx, &miny, &maxx, &maxy)) return 1;
     area = (long long)(x1 - x0) * (y2 - y0) - (long long)(y1 - y0) * (x2 - x0);
     if (!area) return 1;
     for (y = miny; y <= maxy; ++y) {
@@ -983,7 +997,7 @@ static int fill_textured_triangle(MusashiGpuController *controller,
     if (x2 > maxx) maxx = x2;
     if (y1 > maxy) maxy = y1;
     if (y2 > maxy) maxy = y2;
-    if (!clip_box(controller, &minx, &miny, &maxx, &maxy)) return 1;
+    if (!clip_triangle(controller, &minx, &miny, &maxx, &maxy)) return 1;
     area = (long long)(x1 - x0) * (y2 - y0) - (long long)(y1 - y0) * (x2 - x0);
     if (!area) return 1;
     for (y = miny; y <= maxy; ++y) {
@@ -1033,7 +1047,7 @@ static int fill_gouraud_triangle(MusashiGpuController *controller,
     if (x2 > maxx) maxx = x2;
     if (y1 > maxy) maxy = y1;
     if (y2 > maxy) maxy = y2;
-    if (!clip_box(controller, &minx, &miny, &maxx, &maxy)) return 1;
+    if (!clip_triangle(controller, &minx, &miny, &maxx, &maxy)) return 1;
     area = (long long)(x1 - x0) * (y2 - y0) - (long long)(y1 - y0) * (x2 - x0);
     if (!area) return 1;
 
@@ -1093,7 +1107,7 @@ static int fill_textured_gouraud_triangle(MusashiGpuController *controller,
     if (x2 > maxx) maxx = x2;
     if (y1 > maxy) maxy = y1;
     if (y2 > maxy) maxy = y2;
-    if (!clip_box(controller, &minx, &miny, &maxx, &maxy)) return 1;
+    if (!clip_triangle(controller, &minx, &miny, &maxx, &maxy)) return 1;
     area = (long long)(x1 - x0) * (y2 - y0) - (long long)(y1 - y0) * (x2 - x0);
     if (!area) return 1;
 
@@ -1168,7 +1182,8 @@ static int draw_line(MusashiGpuController *controller,
     int sx = x0 < x1 ? 1 : -1;
     int sy = y0 < y1 ? 1 : -1;
     int err = dx - dy, e2;
-    int left = 0, top = 0, right = 1023, bottom = 511;
+    int left = x0 < x1 ? x0 : x1, right = x0 < x1 ? x1 : x0;
+    int top = y0 < y1 ? y0 : y1, bottom = y0 < y1 ? y1 : y0;
     /* The GPU skips a line whose extent is 1024+ horizontally or 512+
      * vertically (psx-spx), and clips to the drawing area like polygons. */
     if (dx >= 1024 || dy >= 512) return 1;
@@ -1200,9 +1215,9 @@ static int prim_commit(MusashiGpuController *controller) {
     uint16_t color = (uint16_t)(((controller->prim_data[0] >> 3) & 0x1fu) |
         ((controller->prim_data[0] >> 6) & 0x3e0u) |
         ((controller->prim_data[0] >> 9) & 0x7c00u));
-    int ox = offset11(controller->drawing_offset, 0);
-    int oy = offset11(controller->drawing_offset, 11);
-    int x[4], y[4], i;
+    int ox = signed11(controller->drawing_offset, 0);
+    int oy = signed11(controller->drawing_offset, 11);
+    int x[4], y[4];
     {
         static unsigned trace_count;
         if (getenv("MUSASHI_GPU_TRACE_PRIMITIVES") && trace_count++ < 128u)
@@ -1211,24 +1226,33 @@ static int prim_commit(MusashiGpuController *controller) {
                 ox,oy,controller->display.x,controller->display.y,
                 controller->display.width,controller->display.height);
     }
+    if (opcode >= 0x20u && opcode <= 0x3fu) {
+        const unsigned stride = 1u + ((opcode >> 2) & 1u) + ((opcode >> 4) & 1u);
+        const unsigned count = (opcode & 8u) ? 4u : 3u;
+        for (unsigned i = 0; i < count; ++i) {
+            uint32_t position = controller->prim_data[1u + i * stride];
+            x[i] = signed11(position, 0) + ox;
+            y[i] = signed11(position, 16) + oy;
+        }
+    }
     if (opcode >= 0x40u && opcode <= 0x47u) {
-        int lx0 = (int)(int16_t)(controller->prim_data[1] & 0xffffu) + ox;
-        int ly0 = (int)(int16_t)(controller->prim_data[1] >> 16) + oy;
-        int lx1 = (int)(int16_t)(controller->prim_data[2] & 0xffffu) + ox;
-        int ly1 = (int)(int16_t)(controller->prim_data[2] >> 16) + oy;
+        int lx0 = signed11(controller->prim_data[1], 0) + ox;
+        int ly0 = signed11(controller->prim_data[1], 16) + oy;
+        int lx1 = signed11(controller->prim_data[2], 0) + ox;
+        int ly1 = signed11(controller->prim_data[2], 16) + oy;
         return draw_line(controller, lx0, ly0, lx1, ly1, color);
     }
     if (opcode >= 0x50u && opcode <= 0x57u) {
-        int lx0 = (int)(int16_t)(controller->prim_data[1] & 0xffffu) + ox;
-        int ly0 = (int)(int16_t)(controller->prim_data[1] >> 16) + oy;
-        int lx1 = (int)(int16_t)(controller->prim_data[3] & 0xffffu) + ox;
-        int ly1 = (int)(int16_t)(controller->prim_data[3] >> 16) + oy;
+        int lx0 = signed11(controller->prim_data[1], 0) + ox;
+        int ly0 = signed11(controller->prim_data[1], 16) + oy;
+        int lx1 = signed11(controller->prim_data[3], 0) + ox;
+        int ly1 = signed11(controller->prim_data[3], 16) + oy;
         return draw_line(controller, lx0, ly0, lx1, ly1, color);
     }
 
     if (opcode >= 0x60u && opcode <= 0x7fu && !(opcode & 4u)) {
-        int dest_x = (int)(int16_t)(controller->prim_data[1] & 0xffffu) + ox;
-        int dest_y = (int)(int16_t)(controller->prim_data[1] >> 16) + oy;
+        int dest_x = signed11(controller->prim_data[1] + (uint32_t)ox, 0);
+        int dest_y = signed11((controller->prim_data[1] >> 16) + (uint32_t)oy, 0);
         unsigned width, height;
         if ((opcode & 0x18u) == 0x00u) {
             width = controller->prim_data[2] & 0xffffu;
@@ -1250,8 +1274,8 @@ static int prim_commit(MusashiGpuController *controller) {
         uint16_t clut = (uint16_t)(controller->prim_data[2] >> 16);
         unsigned clut_x = (unsigned)(clut & 0x3fu) * 16u;
         unsigned clut_y = (unsigned)(clut >> 6);
-        int dest_x = (int)(int16_t)(controller->prim_data[1] & 0xffffu) + ox;
-        int dest_y = (int)(int16_t)(controller->prim_data[1] >> 16) + oy;
+        int dest_x = signed11(controller->prim_data[1] + (uint32_t)ox, 0);
+        int dest_y = signed11((controller->prim_data[1] >> 16) + (uint32_t)oy, 0);
         unsigned u0 = controller->prim_data[2] & 0xffu;
         unsigned v0 = (controller->prim_data[2] >> 8) & 0xffu;
         unsigned width, height;
@@ -1292,12 +1316,6 @@ static int prim_commit(MusashiGpuController *controller) {
         return 1;
     }
     if (opcode >= 0x20u && opcode <= 0x23u) {
-        x[0] = (int)(int16_t)(controller->prim_data[1] & 0xffffu) + ox;
-        y[0] = (int)(int16_t)(controller->prim_data[1] >> 16) + oy;
-        x[1] = (int)(int16_t)(controller->prim_data[2] & 0xffffu) + ox;
-        y[1] = (int)(int16_t)(controller->prim_data[2] >> 16) + oy;
-        x[2] = (int)(int16_t)(controller->prim_data[3] & 0xffffu) + ox;
-        y[2] = (int)(int16_t)(controller->prim_data[3] >> 16) + oy;
         return fill_triangle(controller, x[0], y[0], x[1], y[1], x[2], y[2], color);
     }
     if (opcode >= 0x24u && opcode <= 0x27u) {
@@ -1317,12 +1335,6 @@ static int prim_commit(MusashiGpuController *controller) {
         unsigned clut_x = (unsigned)(clut & 0x3fu) * 16u;
         unsigned clut_y = (unsigned)(clut >> 6);
 
-        x[0] = (int)(int16_t)(controller->prim_data[1] & 0xffffu) + ox;
-        y[0] = (int)(int16_t)(controller->prim_data[1] >> 16) + oy;
-        x[1] = (int)(int16_t)(controller->prim_data[3] & 0xffffu) + ox;
-        y[1] = (int)(int16_t)(controller->prim_data[3] >> 16) + oy;
-        x[2] = (int)(int16_t)(controller->prim_data[5] & 0xffffu) + ox;
-        y[2] = (int)(int16_t)(controller->prim_data[5] >> 16) + oy;
 
         if (!fill_textured_triangle(controller,
                 x[0], y[0], u0, v0,
@@ -1333,10 +1345,6 @@ static int prim_commit(MusashiGpuController *controller) {
         return 1;
     }
     if (opcode >= 0x28u && opcode <= 0x2bu) {
-        for (i = 0; i < 4; ++i) {
-            x[i] = (int)(int16_t)(controller->prim_data[1u + (unsigned)i] & 0xffffu) + ox;
-            y[i] = (int)(int16_t)(controller->prim_data[1u + (unsigned)i] >> 16) + oy;
-        }
         if (!fill_triangle(controller, x[0], y[0], x[1], y[1], x[2], y[2], color))
             return 0;
         if (!fill_triangle(controller, x[1], y[1], x[3], y[3], x[2], y[2], color))
@@ -1362,14 +1370,6 @@ static int prim_commit(MusashiGpuController *controller) {
         unsigned clut_x = (unsigned)(clut & 0x3fu) * 16u;
         unsigned clut_y = (unsigned)(clut >> 6);
 
-        x[0] = (int)(int16_t)(controller->prim_data[1] & 0xffffu) + ox;
-        y[0] = (int)(int16_t)(controller->prim_data[1] >> 16) + oy;
-        x[1] = (int)(int16_t)(controller->prim_data[3] & 0xffffu) + ox;
-        y[1] = (int)(int16_t)(controller->prim_data[3] >> 16) + oy;
-        x[2] = (int)(int16_t)(controller->prim_data[5] & 0xffffu) + ox;
-        y[2] = (int)(int16_t)(controller->prim_data[5] >> 16) + oy;
-        x[3] = (int)(int16_t)(controller->prim_data[7] & 0xffffu) + ox;
-        y[3] = (int)(int16_t)(controller->prim_data[7] >> 16) + oy;
 
         if (!fill_textured_triangle(controller,
                 x[0], y[0], u0, v0,
@@ -1389,12 +1389,6 @@ static int prim_commit(MusashiGpuController *controller) {
         uint32_t rgb0 = controller->prim_data[0] & 0xffffffu;
         uint32_t rgb1 = controller->prim_data[2] & 0xffffffu;
         uint32_t rgb2 = controller->prim_data[4] & 0xffffffu;
-        x[0] = (int)(int16_t)(controller->prim_data[1] & 0xffffu) + ox;
-        y[0] = (int)(int16_t)(controller->prim_data[1] >> 16) + oy;
-        x[1] = (int)(int16_t)(controller->prim_data[3] & 0xffffu) + ox;
-        y[1] = (int)(int16_t)(controller->prim_data[3] >> 16) + oy;
-        x[2] = (int)(int16_t)(controller->prim_data[5] & 0xffffu) + ox;
-        y[2] = (int)(int16_t)(controller->prim_data[5] >> 16) + oy;
         return fill_gouraud_triangle(controller,
                                      x[0], y[0], rgb0,
                                      x[1], y[1], rgb1,
@@ -1419,12 +1413,6 @@ static int prim_commit(MusashiGpuController *controller) {
         unsigned clut_x = (unsigned)(clut & 0x3fu) * 16u;
         unsigned clut_y = (unsigned)(clut >> 6);
 
-        x[0] = (int)(int16_t)(controller->prim_data[1] & 0xffffu) + ox;
-        y[0] = (int)(int16_t)(controller->prim_data[1] >> 16) + oy;
-        x[1] = (int)(int16_t)(controller->prim_data[4] & 0xffffu) + ox;
-        y[1] = (int)(int16_t)(controller->prim_data[4] >> 16) + oy;
-        x[2] = (int)(int16_t)(controller->prim_data[7] & 0xffffu) + ox;
-        y[2] = (int)(int16_t)(controller->prim_data[7] >> 16) + oy;
 
         return fill_textured_gouraud_triangle(controller,
                 x[0], y[0], u0, v0, rgb0,
@@ -1437,14 +1425,6 @@ static int prim_commit(MusashiGpuController *controller) {
         uint32_t rgb1 = controller->prim_data[2] & 0xffffffu;
         uint32_t rgb2 = controller->prim_data[4] & 0xffffffu;
         uint32_t rgb3 = controller->prim_data[6] & 0xffffffu;
-        x[0] = (int)(int16_t)(controller->prim_data[1] & 0xffffu) + ox;
-        y[0] = (int)(int16_t)(controller->prim_data[1] >> 16) + oy;
-        x[1] = (int)(int16_t)(controller->prim_data[3] & 0xffffu) + ox;
-        y[1] = (int)(int16_t)(controller->prim_data[3] >> 16) + oy;
-        x[2] = (int)(int16_t)(controller->prim_data[5] & 0xffffu) + ox;
-        y[2] = (int)(int16_t)(controller->prim_data[5] >> 16) + oy;
-        x[3] = (int)(int16_t)(controller->prim_data[7] & 0xffffu) + ox;
-        y[3] = (int)(int16_t)(controller->prim_data[7] >> 16) + oy;
 
         if (!fill_gouraud_triangle(controller,
                                    x[0], y[0], rgb0,
@@ -1480,14 +1460,6 @@ static int prim_commit(MusashiGpuController *controller) {
         unsigned clut_x = (unsigned)(clut & 0x3fu) * 16u;
         unsigned clut_y = (unsigned)(clut >> 6);
 
-        x[0] = (int)(int16_t)(controller->prim_data[1] & 0xffffu) + ox;
-        y[0] = (int)(int16_t)(controller->prim_data[1] >> 16) + oy;
-        x[1] = (int)(int16_t)(controller->prim_data[4] & 0xffffu) + ox;
-        y[1] = (int)(int16_t)(controller->prim_data[4] >> 16) + oy;
-        x[2] = (int)(int16_t)(controller->prim_data[7] & 0xffffu) + ox;
-        y[2] = (int)(int16_t)(controller->prim_data[7] >> 16) + oy;
-        x[3] = (int)(int16_t)(controller->prim_data[10] & 0xffffu) + ox;
-        y[3] = (int)(int16_t)(controller->prim_data[10] >> 16) + oy;
 
         if (!fill_textured_gouraud_triangle(controller,
                 x[0], y[0], u0, v0, rgb0,
@@ -1531,8 +1503,8 @@ static int poly_word(MusashiGpuController *controller, uint32_t word) {
         return controller->faulted ? 0 : 1;
     }
     if (vertex_slot) {
-        int x = (int)(int16_t)(word & 0xffffu) + offset11(controller->drawing_offset, 0);
-        int y = (int)(int16_t)(word >> 16) + offset11(controller->drawing_offset, 11);
+        int x = signed11(word, 0) + signed11(controller->drawing_offset, 0);
+        int y = signed11(word, 16) + signed11(controller->drawing_offset, 11);
         if (controller->poly_vertices && !controller->raster_disabled) {
             const uint32_t opcode = controller->poly_command >> 24;
             controller->semi = (opcode & 2u) ? 1u : 0u;

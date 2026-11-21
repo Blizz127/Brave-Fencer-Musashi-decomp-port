@@ -964,6 +964,94 @@ class GpuControllerTests(unittest.TestCase):
             self.assertEqual(self.write(w), 1, hex(w))
         return stored
 
+    def _geometry_probe(self, area=(4, 4, 11, 11), offset=(0, 0)):
+        writes, reads = {}, []
+
+        def store(_, x, y, pixel):
+            writes[x, y] = pixel
+            return 1
+
+        def read(_, x, y, out):
+            reads.append((x, y))
+            out[0] = 0x3DEF
+            return 1
+
+        self.store_cb, self.read_cb = STORE(store), READ(read)
+        self.controller.backend.store_vram = self.store_cb
+        self.controller.backend.read_vram = self.read_cb
+        left, top, right, bottom = area
+        for word in (0xE3000000 | (top << 10) | left,
+                     0xE4000000 | (bottom << 10) | right,
+                     0xE5000000 | ((offset[1] & 0x7FF) << 11) | (offset[0] & 0x7FF)):
+            self.assertEqual(self.write(word), 1)
+        return writes, reads
+
+    def _polygon(self, opcode, positions, high_bits=0):
+        words = [(opcode << 24) | 0x808080]
+        for i, (x, y) in enumerate(positions):
+            if i and opcode & 0x10:
+                words.append(0x808080)
+            words.append(((y & 0x7FF) << 16) | (x & 0x7FF) | high_bits)
+            if opcode & 4:
+                words.append(0x01060000 if i == 1 else 0)
+        for word in words:
+            self.assertEqual(self.write(word), 1, hex(word))
+
+    def test_polygon_extent_is_checked_before_drawing_area_clip(self):
+        # Only a small interior window is observed. The long edges straddle it.
+        for opcode in (0x20, 0x25, 0x30, 0x35):
+            for width, height, visible in ((1023, 511, True), (1024, 511, False),
+                                           (1023, 512, False)):
+                with self.subTest(opcode=opcode, width=width, height=height):
+                    writes, reads = self._geometry_probe()
+                    self.assertEqual(self.write(0xE1000000), 1)
+                    self._polygon(opcode, [(-400, -100), (width - 400, -100),
+                                           (-400, height - 100)], high_bits=0x9800C000)
+                    expected = {(x, y) for x in range(4, 12) for y in range(4, 12)}
+                    self.assertEqual(set(writes), expected if visible else set())
+                    self.assertEqual(bool(reads), visible and bool(opcode & 4))
+                    if opcode & 4:
+                        self.assertEqual(self.controller.draw_mode & 0x1FF, 0x106)
+
+    def test_quad_checks_only_edges_of_its_two_triangles(self):
+        # B and C form the common edge. Either distant outer vertex may
+        # invalidate only its own triangle, on the opposite side of that edge.
+        b, c = (16, 0), (16, 20)
+        for opcode in (0x28, 0x2D, 0x38, 0x3D):
+            for a, d, left, right in (((-1009, 0), (32, 20), False, True),
+                                      ((0, 0), (-1009, 20), True, False),
+                                      ((-600, 0), (600, 20), True, True)):
+                with self.subTest(opcode=opcode, a=a, d=d):
+                    writes, _ = self._geometry_probe(area=(0, 0, 32, 20))
+                    self._polygon(opcode, [a, b, c, d])
+                    self.assertEqual((12, 5) in writes, left)
+                    self.assertEqual((20, 15) in writes, right)
+
+    def test_drawing_offset_keeps_edges_continuous_across_signed_limit(self):
+        # X becomes 1008..1040. Its right vertices cross +1023 but the
+        # triangle still covers an interior sample at the right edge of VRAM.
+        writes, _ = self._geometry_probe(area=(1014, 6, 1015, 7), offset=(512, 0))
+        self._polygon(0x20, [(496, 0), (528, 0), (496, 32)])
+        self.assertEqual(set(writes), {(x, y) for x in (1014, 1015) for y in (6, 7)})
+        # The signed sum -2048+64 must land at 64 in both axes. Exercise
+        # a triangle, a line, a textured point sprite and a filled rectangle.
+        def position(x, y):
+            return ((y & 0x7FF) << 16) | (x & 0x7FF) | 0xA800B000
+
+        for opcode in (0x20, 0x40, 0x68, 0x6D):
+            with self.subTest(opcode=opcode):
+                writes, _ = self._geometry_probe(area=(64, 64, 64, 64), offset=(-1024, -1024))
+                if opcode == 0x20:
+                    self._polygon(opcode, [(-962, -962), (-954, -962), (-962, -954)])
+                else:
+                    self.assertEqual(self.write((opcode << 24) | 0x808080), 1)
+                    self.assertEqual(self.write(position(-960, -960)), 1)
+                    if opcode == 0x40:
+                        self.assertEqual(self.write(position(-957, -960)), 1)
+                    elif opcode == 0x6D:
+                        self.assertEqual(self.write(0), 1)
+                self.assertEqual(set(writes), {(64, 64)})
+
     def test_gp0_flat_polyline_until_terminator(self):
         # 0x48: colour, then vertices until a 0x5xxx5xxx word.
         stored = self._polyline([0x480000F8, 0x00000000, 0x00000008,
@@ -979,13 +1067,13 @@ class GpuControllerTests(unittest.TestCase):
     def test_gp0_gouraud_polyline_terminator_in_colour_slot(self):
         # 0x58: c0|cmd, v0, c1, v1, c2, v2, terminator (colour position).
         # A vertex that looks like a terminator is still a vertex.
-        # Its segments are 1024+ wide and not drawn (psx-spx), so the only
-        # pixels come from the last in-range segment (16,16)-(0,16).
+        # The low eleven bits of each component give the position (0,0).
         stored = self._polyline([0x580000F8, 0x00000000, 0x0000F800, 0x50005000,
                                  0x00F80000, 0x00100010, 0x000000F8, 0x00100000,
                                  0x50005000])
         self.assertFalse(self.controller.poly_active)
-        self.assertEqual({(x, y) for x, y, _ in stored}, {(x, 16) for x in range(17)})
+        expected = {(i, i) for i in range(17)} | {(x, 16) for x in range(17)}
+        self.assertEqual({(x, y) for x, y, _ in stored}, expected)
         self.assertEqual(self.write(0xE1000000), 1)
 
     def test_gp0_line_clipped_to_drawing_area(self):
