@@ -93,6 +93,29 @@ def dependencies(binary, env=None):
     return dict(re.findall(r"^\s*(\S+) => (.+?) \(0x[0-9a-fA-F]+\)$", report, re.MULTILINE))
 
 
+def host_requirements(destination, members):
+    """Read the direct host SONAMEs and imported symbol versions of each staged ELF."""
+    direct = {}
+    maxima = {}
+    provided = {Path(member).name for member in members}
+    env = dict(os.environ, LC_ALL="C")
+    for member in members:
+        elf = destination / member
+        dynamic = subprocess.check_output(["readelf", "-W", "-d", elf], env=env, text=True)
+        needed = set(re.findall(r"\(NEEDED\).*?\[([^]]+)\]", dynamic))
+        direct[member] = sorted(needed - provided)
+        versions = subprocess.check_output(["readelf", "-W", "--version-info", elf], env=env, text=True)
+        # Definitions name versions exported by this ELF. Only the needs table
+        # describes required versions supplied by another shared library.
+        imports = versions.partition("Version needs section")[2]
+        for family, version in re.findall(r"Name: (GLIBCXX|GLIBC|CXXABI|GCC)_([0-9.]+)", imports):
+            numbers = tuple(map(int, version.split(".")))
+            if numbers > maxima.get(family, ()):
+                maxima[family] = numbers
+    return {"direct_host_sonames": direct,
+            "symbol_versions": {k: ".".join(map(str, v)) for k, v in sorted(maxima.items())}}
+
+
 def stage(root, binary, destination, receipt):
     build_type, native_lane = build_config(binary)
     adjacent = binary.with_name(binary.name + ".receipt.json")
@@ -173,12 +196,11 @@ def stage(root, binary, destination, receipt):
         if Path(staged[soname]).resolve() != (destination / "lib" / soname).resolve():
             raise ValueError(f"staged player does not resolve bundled {soname}")
 
-    versions = []
+    requirements = {"direct_host_sonames": {}, "symbol_versions": {}}
     if shutil.which("readelf") or receipt is not None:
-        for elf in (player, shim, *(destination / entry["path"] for entry in libs.values())):
-            report = output("readelf", "-W", "--version-info", elf)
-            versions.extend(re.findall(r"Name: GLIBC_([0-9.]+)", report))
-    glibc = max(versions, key=lambda v: tuple(map(int, v.split("."))), default=None)
+        members = [player.name, "lib/" + shim_name, *(entry["path"] for entry in libs.values())]
+        requirements = host_requirements(destination, members)
+    glibc = requirements["symbol_versions"].get("GLIBC")
     sdl, al, ssl, zlib = [libs[name] for name in SONAMES]
     os_release = platform.freedesktop_os_release()
     distro = " ".join(v for v in (os_release.get("NAME"), os_release.get("VERSION_ID"),
@@ -213,7 +235,7 @@ checksums {accompany} the Linux download. Extract the matching source with
 dpkg-source -x {al_source}.dsc.
 """
     (notices / "THIRD-PARTY.txt").write_text(text)
-    return {**identity, "glibc_minimum": glibc, "native_lane": native_lane,
+    return {**identity, "glibc_minimum": glibc, "host_requirements": requirements, "native_lane": native_lane,
             "unverified_runtime_notices": sorted(missing_notices),
             "build_type": build_type, "runtime": "hybrid", "cpu_fallback": "MIPS interpreter",
             "runtime_distribution": distro, "runtime_libraries": list(libs.values()),

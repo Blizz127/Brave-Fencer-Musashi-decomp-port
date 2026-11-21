@@ -103,8 +103,11 @@ Controls: an SDL game controller or keyboard. The last controller used stays act
   (or K/J/I/U); Return Start, Space Select; left/right Shift L1/R1,
   left/right Ctrl L2/R2.
 
-Requires the glibc version listed in manifest.json, system OpenGL, X11 or
-Wayland, and ALSA or PulseAudio/PipeWire libraries. The launcher passes extra arguments to the port.
+The host_requirements section of manifest.json lists the system libraries and
+minimum imported glibc, libstdc++ and libgcc symbol versions for this build.
+Use the display and audio client libraries listed for the bundled SDL build
+and working system OpenGL and audio drivers. The launcher passes extra
+arguments to the port.
 For borderless desktop fullscreen, run ./launch.sh --fullscreen. The CPU
 renderer fits the 4:3 picture inside the screen. Use --windowed for a
 1280x960 window. Without either flag the player reads BFM_FULLSCREEN, then

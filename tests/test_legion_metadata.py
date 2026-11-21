@@ -4,9 +4,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from legion_metadata import build_config, sha256, source_identity
+from legion_metadata import build_config, host_requirements, sha256, source_identity
 
 
 class LegionMetadataTests(unittest.TestCase):
@@ -23,6 +24,28 @@ class LegionMetadataTests(unittest.TestCase):
             cache.write_text(home + "CMAKE_CONFIGURATION_TYPES:STRING=Debug;Release\nMUSASHI_NATIVE_LANE:BOOL=ON\n")
             self.assertEqual(build_config(root / "Release/player"), ("Release", True))
             self.assertEqual(build_config(root / "Unknown/player"), (None, None))
+
+    def test_host_requirements_follow_imports_and_exclude_bundled_sonames(self):
+        output = {
+            ("-d", "player"): "(NEEDED) Shared library: [libfixture.so]\n(NEEDED) Shared library: [libc.so.6]",
+            ("-d", "lib/libfixture.so"): "(NEEDED) Shared library: [libstdc++.so.6]",
+            ("--version-info", "player"): "Version needs section '.gnu.version_r'\n Name: GLIBC_2.9",
+            ("--version-info", "lib/libfixture.so"): (
+                "Version definition section '.gnu.version_d'\n Name: GLIBC_999.9\n"
+                "Version needs section '.gnu.version_r'\n Name: GLIBCXX_3.4.32\n Name: CXXABI_1.3.15\n"
+                " Name: GLIBC_2.38\n Name: GCC_4.3.0"),
+        }
+        root = Path("/synthetic-stage")
+        def readelf(argv, *, text, env):
+            self.assertEqual(argv[:2], ["readelf", "-W"])
+            self.assertEqual(env["LC_ALL"], "C")
+            return output[argv[2], argv[3].relative_to(root).as_posix()]
+        with patch("legion_metadata.subprocess.check_output", side_effect=readelf):
+            result = host_requirements(root, ["player", "lib/libfixture.so"])
+        self.assertEqual(result["direct_host_sonames"], {
+            "player": ["libc.so.6"], "lib/libfixture.so": ["libstdc++.so.6"]})
+        self.assertEqual(result["symbol_versions"], {
+            "GLIBC": "2.38", "GLIBCXX": "3.4.32", "CXXABI": "1.3.15", "GCC": "4.3.0"})
 
     def test_only_a_matching_test_receipt_identifies_the_player_source(self):
         with tempfile.TemporaryDirectory() as temp:
