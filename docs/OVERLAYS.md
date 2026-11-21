@@ -64,25 +64,26 @@ depends on it.
 labels only what it can infer without symbols — 2 functions from the internal
 `jal` targets — so a symbol file will be needed to reach the other 17 prologues.
 
-Overlay code is not in the executable, so `match_function.py` compares against
-the member instead, pinned by hash exactly as the executable is:
+A hash-pinned member comparison takes the extracted overlay and its load address.
+For the member-0007 example, set `CANDIDATE_C` to your reconstruction of
+the function at `0x800CF3B0` and `OUTPUT_BIN` to the desired output path.
 
 ```sh
-python3 tools/build_candidate.py src/overlays/main_0007/800cf3b0.c \
-  --symbol func_800CF3B0 --link-base 0x800CF3B0 --output /tmp/ov.bin
+python3 tools/build_candidate.py "$CANDIDATE_C" \
+  --symbol func_800CF3B0 --link-base 0x800CF3B0 --output "$OUTPUT_BIN"
 
 python3 tools/match_function.py \
   --retail-file extracted/overlays/main/0007.bin \
   --base 0x800CEDF8 \
   --sha256 4d1bb156c5fb6569eec465de21c05a1bdd26e3223e8718ca2e02f3621a0184d9 \
-  --vram 0x800CF3B0 --size 0x58 --candidate /tmp/ov.bin
+  --vram 0x800CF3B0 --size 0x58 --candidate "$OUTPUT_BIN"
 ```
 
 ## Matched
 
 | vram | words | source | verdict |
 | --- | --- | --- | --- |
-| `0x800CF3B0` | 22/22 | `src/overlays/main_0007/800cf3b0.c` | MATCH |
+| `0x800CF3B0` | 22/22 | Reconstructed member-0007 function | MATCH |
 
 Getting there needed one correction, and it is the recurring lesson: the first
 attempt wrote the guard as an early-out on the negative condition, which emits

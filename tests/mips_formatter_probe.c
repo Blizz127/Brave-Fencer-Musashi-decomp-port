@@ -9,8 +9,13 @@
 extern SDL_mutex *g_intrMutex;
 #endif
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <assert.h>
 #include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
 
 typedef struct Output {
     unsigned count;
@@ -443,7 +448,39 @@ static int event_exit(void *userdata, int32_t *result) {
     return 1;
 }
 
-int main(void) {
+/* Optional argument for the captured CD diagnostic. The loader validates the
+ * whole local executable before the test reads its message from guest RAM. */
+static int load_cd_message(const char *path, char *message, size_t capacity) {
+    enum { exe_size = 0x65000 };
+    MusashiBootMemory *loaded = calloc(1, sizeof(*loaded));
+    unsigned char *exe = malloc(exe_size);
+    MusashiEntryState entry;
+    FILE *file = fopen(path, "rb");
+    int ok = 0;
+    if (file && exe && loaded && fread(exe, 1, exe_size, file) == exe_size &&
+        fgetc(file) == EOF && !ferror(file) &&
+        musashi_boot_load_entry(loaded, exe, exe_size, 0, &entry)) {
+        const unsigned char *start = musashi_boot_ram_span(loaded, 0x800735fcu, capacity);
+        const unsigned char *end = start ? memchr(start, 0, capacity) : NULL;
+        if (end && end > start && end[-1] == '\n' && !memchr(start, '%', end - start)) {
+            memcpy(message, start, (size_t)(end - start) + 1);
+            ok = 1;
+        }
+    }
+    if (file)
+        fclose(file);
+    free(exe);
+    free(loaded);
+    return ok;
+}
+
+int main(int argc, char **argv) {
+    static const char gpu_format[] = "probe %08x at %08x\n";
+    char cd_message[48] = "test device offline\n";
+    const char *code_image = getenv("MUSASHI_CODE_IMAGE");
+    if (argc > 2 || (argc == 2 && strcmp(argv[1], "--disc-message") != 0))
+        return 1;
+
     {
         MusashiCdController cd;
         uint8_t response = 0xff;
@@ -492,6 +529,12 @@ int main(void) {
                cd.volume[2] == 0x34 && cd.volume[3] == 0x70);
         assert(cd.command == 0x0c && cd.interrupt == 3);
     }
+    /* The formatter executes instructions supplied by the user-owned image.
+     * Run the standalone controller checks above even without an image. */
+    if (!code_image || !*code_image)
+        return 77;
+    if (argc == 2 && !load_cd_message(code_image, cd_message, sizeof cd_message))
+        return 1;
     MusashiBootMemory memory;
     Output output;
     int32_t result = -1;
@@ -571,12 +614,12 @@ int main(void) {
     }
 
     /* Enter through the actual 800141F0 body. Its mode-zero ResetGraph call
-     * uses the retail-format data before reaching the same guest-table stop. */
+     * uses the guest format string before reaching the same table stop. */
     {
         MusashiResetGraphPrefixStop stop = {0, 0};
         memset(&memory, 0, sizeof(memory));
         memset(&output, 0, sizeof(output));
-        memcpy(memory.bytes + 0x74084, "ResetGraph:jtb=%08x,env=%08x\n", 29);
+        memcpy(memory.bytes + 0x74084, gpu_format, sizeof gpu_format);
         memcpy(memory.bytes + 0x742a0, "0123456789abcdef", 17);
         assert(musashi_boot_write32(&memory, 0x800742b4u + (uint32_t)'x' * 4u,
                                      0x8005c9ccu));
@@ -591,7 +634,9 @@ int main(void) {
                                                  &result, &stop) ==
                MUSASHI_RESETGRAPH_PREFIX_UNSUPPORTED_CALL);
         assert(stop.call_address == 0x80042598u && stop.target_address == 0x80042718u);
-        assert(output.count > 16 && !memcmp(output.bytes, "ResetGraph:jtb=", 15));
+        assert(output.count >= 28 && !memcmp(output.bytes, "probe ", 6));
+        assert(!memcmp(output.bytes + 14, " at ", 4));
+        assert(output.bytes[26] == '\r' && output.bytes[27] == '\n');
     }
 
     /* The exact callback initializer makes its observed IRQ/DMA accesses via
@@ -868,7 +913,7 @@ int main(void) {
         device.gpu_cw = callback_gpu_cw;
         device.reset_device = &reset_device;
         device.userdata = &log;
-        memcpy(memory.bytes + 0x74084, "ResetGraph:jtb=%08x,env=%08x\n", 29);
+        memcpy(memory.bytes + 0x74084, gpu_format, sizeof gpu_format);
         memcpy(memory.bytes + 0x742a0, "0123456789abcdef", 17);
         assert(musashi_boot_write32(&memory, 0x800742b4u + (uint32_t)'x' * 4u,
                                      0x8005c9ccu));
@@ -980,7 +1025,9 @@ int main(void) {
         assert(memory.bytes[0xba1e4] == 7 && memory.bytes[0xba1e5] == 7);
         assert(memory.bytes[0xae649] == 0);
         assert(log.gpu_cw_count == 1 && log.gpu_cw_command == 0x00072740u);
-        assert(output.count > 16 && !memcmp(output.bytes, "ResetGraph:jtb=", 15));
+        assert(output.count >= 28 && !memcmp(output.bytes, "probe ", 6));
+        assert(!memcmp(output.bytes + 14, " at ", 4));
+        assert(output.bytes[26] == '\r' && output.bytes[27] == '\n');
     }
     {
         CdDeviceLog log;
@@ -1273,7 +1320,7 @@ int main(void) {
                 }
             }
         }
-        /* This fixture supplies the retail-owned message/table cells solely to
+        /* This fixture supplies the guest message/table cells solely to
          * prove the live 80044124 frame reaches 80044250 after its diagnostic.
          * It is not a loaded retail image or a start-menu assertion. */
         memset(&memory, 0, sizeof(memory));
@@ -1579,14 +1626,16 @@ int main(void) {
         assert(stop.target_address == 0x8005c604u);
         memset(&memory, 0, sizeof(memory));
         memset(&output, 0, sizeof(output));
-        memcpy(memory.bytes + 0x735fc, "CdInit: Init failed\n", 21);
+        size_t message_length = strlen(cd_message);
+        memcpy(memory.bytes + 0x735fc, cd_message, message_length + 1);
         log.count = 0;
         assert(musashi_boot_run_80043300_console_prefix(
                    &memory, &device, sink, &output, &result, &stop) ==
                MUSASHI_RESETGRAPH_PREFIX_COMPLETE);
         assert(log.count == 5 && result == 0 && stop.target_address == UINT32_MAX);
-        assert(output.count == 21 &&
-               !memcmp(output.bytes, "CdInit: Init failed\r\n", 21));
+        assert(output.count == message_length + 1);
+        assert(!memcmp(output.bytes, cd_message, message_length - 1));
+        assert(output.bytes[message_length - 1] == '\r' && output.bytes[message_length] == '\n');
     }
     return 0;
 }

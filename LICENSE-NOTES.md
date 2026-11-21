@@ -1,9 +1,9 @@
 # License and provenance notes
 
 The game, its executable, and all disc content are copyrighted by their
-respective rightsholders. This repository contains tooling, documentation,
-and developer-authored scaffolding only; it does not grant permission to
-redistribute retail data.
+respective rightsholders. The public source includes independently written game and port code,
+tooling and documentation. The project license covers the project’s own
+work. Game content remains the property of its rightsholders.
 
 Contributors must provide their own legally obtained copy of the game. Retail
 payloads are ignored by `.gitignore` and must remain outside version control.

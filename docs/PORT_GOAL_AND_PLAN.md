@@ -1,4 +1,4 @@
-# PROJECT GOAL AND PLAN — read this before planning any work
+# Port goal and development plan
 
 _Set 2026-09-17. This file records what the work is **aiming at**;
 `docs/DEFINITION-OF-DONE.md` remains the authority on what "matched"
@@ -51,15 +51,11 @@ native build. When a range can be recovered as C at reasonable cost, prefer C.
 | **Fast3D** — translates N64 display lists to OpenGL | PS1 GPU primitive translation in the port's GPU backend | verify state before planning graphics work |
 | OTR assets — enables HD texture packs | `extracted/`, `assets/` + the CD device integration | see `docs/ASSETS.md`, `CD-DEVICE-INTEGRATION.md` |
 | zeldaret/oot decomp — **100% C** | 31.79% qualifying coverage, of which ~82 KB is assembly | ← the gap |
-| *(nothing — never needed one)* | **no MIPS interpreter — good.** Keep it that way. | see below |
+| Native runtime | The current PC player combines compiled host code with a PS1 CPU interpreter. | Verify each converted path with the interpreter disabled. |
 
-**A note on what this project got right.** Xenogears' port (a sibling project)
-took a shortcut Musashi has not: it runs a 1,159-line MIPS interpreter over the
-un-decompiled battle overlay so the game boots today. It works, but code
-executing through an interpreter is a black box that **can never be re-rendered
-or restyled**. If an interpreter/recompiler bridge is ever proposed here, treat
-it as a debugging aid with an expiry date, never as a way to declare a system
-"ported".
+The September 2026 coverage figures describe a historical decompilation snapshot.
+A playable native milestone also requires executing a representative gameplay
+route entirely in host code, with observable controls, video, audio and saves.
 
 ## Plan
 
@@ -105,13 +101,9 @@ its registry/oracle workflow (`tools/verify_registry.py`, the m2c-draft +
 oracle-judge loop) are genuine assets, and the honest-metering warnings in
 `docs/PROGRESS.md` are exactly right. Do not relax them.
 
-Do, however, weigh cost. Byte parity is typically far more expensive than
-correctness: on the sibling Xenogears project, five byte-exact functions in one
-session took minutes to *understand* and hours to match register allocation —
-roughly 90% of the effort went into byte parity alone. Where a range is on the
-critical port path and matching is fighting the compiler, recovering correct C
-plus a differential test is the better trade, recorded honestly as such rather
-than claimed as matched.
+A differential test can qualify the behavior of a portable C implementation
+while a compiler comparison remains open. Record the behavioral result and
+byte-match status independently.
 
 ## Measuring progress
 

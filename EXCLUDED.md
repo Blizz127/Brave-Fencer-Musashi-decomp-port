@@ -87,17 +87,11 @@ path and the `chdman` path were replaced by placeholders.
 No prebuilt binary (`.so`, `.a`, `.o`, `.exe`, AppImage, `.bin`) is in the
 snapshot.
 
-## 6. Personal infrastructure and agent notes
+## 6. Local development records
 
-| Path | Files | Reason |
-|---|---:|---|
-| `tasks/` (`plan*.md`, `todo.md`) | 6 | Agent task plans and to-do lists. |
-| `docs/HANDOFF-codex.md` | 1 | Agent handoff naming local worktrees and scratch directories. |
-| `docs/MILESTONE-0.md` | 1 | Agent acceptance report naming the local repository path and operator review. |
-| `docs/OPENING-CONTROL-2026-09-29.md` | 1 | Dated agent run report pointing at local scratch-archive logs. Its result (opening reached, controls not unlocked) is summarised in README.md. |
-| `docs/ASSEMBLY-2026-09-29.md` | 1 | Dated agent accounting report on the registry of excluded sources. |
-| `README.md`, `.gitignore` (originals) | 2 | Replaced: the old README described the pre-match state and a history rewrite; the old `.gitignore` named local agent files. |
-| Untracked local files (`ORIGINAL_REQUEST.md`, `codex-session-*.md`, `.agents/`, `.claude/`, `staging/`, logs) | (untracked) | Local agent state; never considered. |
+The source snapshot excludes internal plans, task handoffs, development logs,
+tool state and machine-specific settings. Public technical reports describe
+the game behavior measured and the public tools available to repeat a check.
 
 Scrubbed in place (content kept, local specifics replaced):
 

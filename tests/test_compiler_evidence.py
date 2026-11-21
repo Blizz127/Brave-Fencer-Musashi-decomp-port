@@ -24,8 +24,8 @@ def asm(*lines: str) -> str:
 # structurally from the preceding branch, so a formatting change cannot skew results.
 FILLED_AND_EMPTY = asm(
     'glabel func_80010000',
-    '    /* 800 80010000 0780023C */  lui        $v0, %hi(D_80074750)',
-    '    /* 804 80010004 FCFF2014 */  bnez       $at, .L80010010',
+    '    /* 800 80010000 125A093C */  lui        $t1, 0x5a12',
+    '    /* 804 80010004 02002015 */  bnez       $t1, .L80010010',
     '    /* 808 80010008 21100000 */   addu       $v0, $zero, $zero',
     '    /* 80C 8001000C 0800E003 */  jr         $ra',
     '    /* 810 80010010 00000000 */   nop',

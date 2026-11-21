@@ -1,6 +1,7 @@
 # Milestone 1 evidence
 
-Status: **retail extracted; boot identity observed; first disassembly produced**.
+Historical milestone outcome: the disc was extracted, the boot executable was
+identified and its initial disassembly was generated.
 
 Every value below was read from the contributor's own verified disc. Nothing in
 this document is inferred from filenames, box text, or online references.
@@ -65,14 +66,10 @@ this correction.
 
 ## Boot identity
 
-`SYSTEM.CNF` (68 bytes, SHA-256 `cf7feab3…c4c28557`):
-
-```text
-BOOT = cdrom:\SLUS_007.26;1
-TCB = 4
-EVENT = 16
-STACK = 801ffff0
-```
+The boot configuration was 68 bytes (SHA-256 `cf7feab3…c4c28557`). It
+selects version 1 of the `SLUS_007.26` executable on the CD, allocates four
+thread control blocks and sixteen events, and sets the stack pointer to
+`0x801ffff0`.
 
 Boot executable `SLUS_007.26`:
 

@@ -1,11 +1,6 @@
-/* Known retail hook sites for SLUS-00726 (US Brave Fencer Musashi).
- *
- * Addresses and field offsets only (facts about the program, no retail
- * bytes). Evidence paths are relative to vendor/bfm-decomp (Druthulu's
- * cleaned decomp of the same build, gitignored, fetched separately) or to
- * this repository. tests/test_bfm_plat.py pins each site to its symbol and,
- * when the vendor tree is present, checks that the cited lines still say
- * what the evidence claims. */
+/* Guest entry points used by the host event system.
+ * The addresses and overlay filters select a hook. The fill callback reads
+ * the guest arguments and state needed for its public event payload. */
 #include "bfm_plat_events.h"
 #include "bfm_plat_mods.h"
 #include "bfm_plat_widescreen.h"
@@ -29,7 +24,7 @@ static int read_u32(uint32_t a, uint32_t *out) {
     return r;
 }
 
-/* "SC02_031" / "sc02_0031" -> area 2, room 31; location from guest RAM. */
+/* Build the room payload using the active overlay and current guest location. */
 static void overlay_room(BfmEventRoom *room) {
     const char *o = bfm_plat_hooks_overlay();
     const char *us;
@@ -42,14 +37,13 @@ static void overlay_room(BfmEventRoom *room) {
     if (us) room->room = (uint32_t)strtoul(us + 1, NULL, 10);
 }
 
-/* Edge state, reset by bfm_plat_hooks_register_known. */
+/* Previous samples used to detect entry into a room or a card operation. */
 static uint32_t last_phase = 0xFFFFFFFFu;
 static char last_overlay[32];
 static uint32_t last_card_state_save = 0xFFFFFFFFu;
 static uint32_t last_card_state_load = 0xFFFFFFFFu;
 
-/* Location-overlay entry stub: fires once when the scene phase is 0 (init)
- * after being non-zero, or when a different overlay reaches phase 0. */
+/* Emit once when an overlay enters phase zero. */
 static int fill_room_enter(void *u, BfmEvent e, BfmPlatEventPayload *p) {
     uint32_t phase;
     const char *o = bfm_plat_hooks_overlay();
@@ -68,7 +62,7 @@ static int fill_room_enter(void *u, BfmEvent e, BfmPlatEventPayload *p) {
     return 1;
 }
 
-/* func_80011B7C(mode): the scene loop leaves with mode 8. */
+/* State 8 signals a possible exit while a scene overlay is active. */
 static int fill_room_exit(void *u, BfmEvent e, BfmPlatEventPayload *p) {
     uint32_t a0;
     (void)u; (void)e;
@@ -106,7 +100,7 @@ static int fill_load(void *u, BfmEvent e, BfmPlatEventPayload *p) {
     return card_edge(&last_card_state_load, is_load_state, p);
 }
 
-/* libgte SetGeomScreen(h): ctc2 $a0, $26 (H is 16 bits). */
+/* H is the unsigned low half of a0. */
 static int fill_geom_screen(void *u, BfmEvent e, BfmPlatEventPayload *p) {
     uint32_t a0;
     BfmPlatProjection cur;
@@ -120,7 +114,7 @@ static int fill_geom_screen(void *u, BfmEvent e, BfmPlatEventPayload *p) {
     return 0;
 }
 
-/* libgte SetGeomOffset(ofx, ofy): each shifted <<16 into OFX/OFY. */
+/* X and Y arrive as signed halfwords. */
 static int fill_geom_offset(void *u, BfmEvent e, BfmPlatEventPayload *p) {
     uint32_t a0, a1;
     BfmPlatProjection cur;
@@ -136,9 +130,7 @@ static int fill_geom_offset(void *u, BfmEvent e, BfmPlatEventPayload *p) {
     return 0;
 }
 
-/* Location overlays (plus MAIN_012) that carry the shared player-stat
- * helpers at the same address: config/dedup.us.yaml entries
- * E_func_8014BC80 and E_func_8014BD60 (identical member lists). */
+/* These overlays use the two gauge update entry points below. */
 static const char gauge_overlays[] =
     "MAIN_012,SC01_000,SC01_001,SC01_004,SC01_005,SC01_006,SC01_008,"
     "SC01_009,SC01_074,SC01_077,SC01_080,SC01_084,SC02_000,SC02_003,"
@@ -169,9 +161,9 @@ static int read_s16(uint32_t a, int32_t *out) {
     return r;
 }
 
-/* func_8014BC80(obj, amount): HP -= amount, or HP = 0 when amount > HP. */
+/* The event reports the value predicted at function entry. */
 static int fill_damage(void *u, BfmEvent e, BfmPlatEventPayload *p) {
-    uint32_t a1, max = 0;   /* max stays 0 if the guest read fails */
+    uint32_t a1, max = 0;   /* The limit is optional when the guest read fails. */
     int32_t hp;
     (void)u;
     if (bfm_plat_guest_reg(BFM_GUEST_REG_A1, &a1) != BFM_PLAT_OK ||
@@ -186,14 +178,14 @@ static int fill_damage(void *u, BfmEvent e, BfmPlatEventPayload *p) {
     return 0;
 }
 
-/* func_800D0F0C(slot_var, item): stores the item id in the slot. */
+/* A nonzero item assignment reports one acquisition. */
 static int fill_item_add(void *u, BfmEvent e, BfmPlatEventPayload *p) {
     uint32_t a0, a1;
     (void)u; (void)e;
     if (bfm_plat_guest_reg(BFM_GUEST_REG_A0, &a0) != BFM_PLAT_OK ||
         bfm_plat_guest_reg(BFM_GUEST_REG_A1, &a1) != BFM_PLAT_OK)
         return 1;
-    if ((a1 & 0xFFu) == 0) return 1;             /* clearing a slot */
+    if ((a1 & 0xFFu) == 0) return 1;             /* Clearing a slot emits no acquisition. */
     p->item.item = a1 & 0xFFu;
     p->item.count = 1;
     p->item.kind = BFM_ITEM_KIND_INVENTORY;
@@ -202,7 +194,7 @@ static int fill_item_add(void *u, BfmEvent e, BfmPlatEventPayload *p) {
     return 0;
 }
 
-/* func_800D128C(item, age): the item's effect. */
+/* The first argument supplies the inventory item number. */
 static int fill_item_use(void *u, BfmEvent e, BfmPlatEventPayload *p) {
     uint32_t a0;
     (void)u; (void)e;
@@ -216,71 +208,53 @@ static int fill_item_use(void *u, BfmEvent e, BfmPlatEventPayload *p) {
 
 static const BfmPlatKnownSite known[] = {
     {0x800189A8u, NULL, BFM_EVENT_FRAME_BEGIN, "func_800189A8",
-     "src/boot.c:310 first call in main's per-frame inner loop (main @ src/boot.c:277); "
-     "src/800.c:6042 body polls both pads (0x4C-byte records at D_80078D98, PadGetState at src/800.c:6094); "
-     "also called once per frame by the resident modal loop src/md_MAIN_003/md_MAIN_003_jr_800D1E18.c:236",
-     "high: runs exactly once per main-loop frame, before GameModeDispatch; the modal loop "
-     "caller also gets FRAME_BEGIN but no FRAME_END", NULL},
+     "The host opens a frame at entry to the resident update routine. See "
+     "src/main/800189a8.c.",
+     "high: frame update entry", NULL},
     {0x800184F0u, NULL, BFM_EVENT_FRAME_END, "func_800184F0",
-     "src/boot.c:372 called right before VSync(*(s32 *)(p + 0xA3E8)) at src/boot.c:374; "
-     "definition src/800.c:5761; only caller in vendor/bfm-decomp/src",
-     "high: last game call of each main-loop frame before the VSync wait", NULL},
+     "The host closes a frame at the resident end-of-frame routine. See "
+     "src/main/800184f0.c.",
+     "high: end-of-frame call", NULL},
     {0x80128158u, "SC*", BFM_EVENT_ROOM_ENTER, "func_80128158",
-     "location-overlay export stub 0 -> func_80128288 (src/overlays/main_0012/80128288.c in this repo: "
-     "dispatch D_8017E618[D_800B99F6] for phase < 9); called every scene-loop frame by resident "
-     "func_800CF238 at src/resident/resident.c:255; phase 0 reached the SC02/31 init routine "
-     "80128420 in docs/MENU-BOOT-CONTINUATION.md (\"SC02 initialization routine\")",
-     "medium: phase 0 = scene init is observed for SC02/31 only; fill fires on the edge into "
-     "phase 0 or on an overlay change. area/room come from the overlay name the native lane "
-     "reports, not from guest RAM", fill_room_enter},
+     "The SC overlay dispatcher reads the scene phase. The hook emits on entry to phase "
+     "zero and when the overlay changes at that phase.",
+     "medium: phase zero can occur outside a room transition", fill_room_enter},
     {0x80011B7Cu, NULL, BFM_EVENT_ROOM_EXIT, "func_80011B7C",
-     "src/boot.c:950 sets major mode (base+0xA3C0) and clears the scene phase; the resident "
-     "scene loop leaves with func_80011B7C(8) at src/resident/resident.c:261",
-     "low: func_80011B7C has ~400 call sites; the fill only fires for mode 8 while a location "
-     "overlay is selected, which matches the scene-loop exit but is not proven unique", fill_room_exit},
+     "The resident state setter takes the requested state in a0. The hook accepts state "
+     "8 while an SC overlay is active. See src/main/80011b7c.c.",
+     "low: changing state alone does not confirm a completed room exit", fill_room_exit},
     {0x8002B0B4u, NULL, BFM_EVENT_SAVE, "func_8002B0B4",
-     "memory-card save/load state machine (src/800_b.c:87, 'SaveLoadRoutine' is its case 0); "
-     "state 13 writes the slot's 0x300-byte game-state block D_80075CC0 at idx*0x300+0x480 "
-     "(src/800_b.c:301, src/800_b.c:318) then advances D_800760AC",
-     "medium: fires on entry when D_800760AC becomes 13 (slot = $a1 idx); the state switch sits "
-     "under a card-event poll, so a retried write can fire twice", fill_save},
+     "The card dispatcher reads the current operation. The hook emits once on entry to "
+     "state 13 and takes the slot from a1 when available.",
+     "medium: the hook observes the start of an operation", fill_save},
     {0x8002B0B4u, NULL, BFM_EVENT_LOAD, "func_8002B0B4",
-     "same state machine; states 17 and 32 read the slot's game-state block with "
-     "func_80060404(D_80075CC0, idx*0x300+0x480, 0x300) (src/800_b.c:486-488)",
-     "medium: as for save; states 17/32 are the two read paths", fill_load},
+     "The card dispatcher also handles reads. The hook emits on entry to state 17 or 32 "
+     "and takes the slot from a1 when available.",
+     "medium: the hook observes the start of an operation", fill_load},
     {0x8004923Cu, NULL, BFM_EVENT_PROJECTION, "func_8004923C",
-     "libgte SetGeomScreen: body is `ctc2 $a0, $26; jr $ra` (repo src/main/8004923c.c); "
-     "game init func_80014444 calls InitGeom (func_80047CB4, which sets H=0x3E8, OFX=OFY=0) then "
-     "func_8004923C(0x3E8) and stores 0x3E8 in D_80126950 (src/800.c:1787; repo src/main/80014444.c)",
-     "high: instruction shape is exactly SetGeomScreen", fill_geom_screen},
+     "The projection hook takes screen distance from the low half of a0 and retains the "
+     "current offsets. See tests/projection_source_probe.c.",
+     "high: projection distance register", fill_geom_screen},
     {0x8004921Cu, NULL, BFM_EVENT_PROJECTION, "func_8004921C",
-     "libgte SetGeomOffset: `sll $a0,16; sll $a1,16; ctc2 $a0,$24; ctc2 $a1,$25` (repo src/main/8004921c.c); "
-     "called per draw buffer by the libgs offset routine func_80052BEC (repo src/main/80052bec.c) "
-     "and by the overlays' camera code (src/shared/ov/func_8017C530.h:14)",
-     "high: instruction shape is exactly SetGeomOffset", fill_geom_offset},
+     "The projection hook reads horizontal and vertical offsets from the signed low "
+     "halves of a0 and a1. See tests/projection_source_probe.c.",
+     "high: projection offset registers", fill_geom_offset},
     {0x8014BC80u, gauge_overlays, BFM_EVENT_DAMAGE, "func_8014BC80",
-     "shared player-HP subtract: HP -= amount, or HP = 0 and D_800B9A17 = 0 when amount > HP "
-     "(src/shared/ov/func_8014BC80.h); func_8014BC44 routes instant kills through it with "
-     "amount = max HP; present at this address in the 141 overlays of "
-     "config/dedup.us.yaml E_func_8014BC80",
-     "high: the lethal player-damage helper; non-lethal func_8014BCC0 (clamps at 1) is not "
-     "hooked, so its drops arrive only as derived damage", fill_damage},
+     "In the listed overlays this hook reads the current HP and limit in guest memory, "
+     "then uses a1 to compute the reported change.",
+     "high: covers the listed overlay routine; other HP changes can be detected by the "
+     "frame observer", fill_damage},
     {0x8014BD60u, gauge_overlays, BFM_EVENT_BP_USE, "func_8014BD60",
-     "shared BP subtract with clamp at 0 (src/shared/ov/func_8014BD60.h), same 141 overlays "
-     "(config/dedup.us.yaml E_func_8014BD60)",
+     "In the listed overlays the BP hook reads the current BP and limit and applies the "
+     "delta in a1 to the event payload.",
      "high", fill_damage},
     {0x800D0F0Cu, NULL, BFM_EVENT_ITEM_GET, "func_800D0F0C",
-     "resident inventory add: var[slot] = item, time var = D_80078EAC "
-     "(src/resident/resident_jr_800D00E4.c:965); slots are vars 0x2F..0x3A "
-     "(free-slot scan func_800D0EC4, :950); called by the shops after payment "
-     "(src/ov_SC03_124/ov_SC03_124_jr_80188544.c:3526)",
-     "high for shop and pickup adds that use it; items placed by other paths "
-     "arrive as derived item_get from the slot watch", fill_item_add},
+     "The item assignment entry takes the item in the low byte of a1. Zero clears a slot "
+     "and suppresses the item event. See src/overlays/main_0010/800d0f0c.c.",
+     "high: an assignment reports one item and suppresses a duplicate frame event", fill_item_add},
     {0x800D128Cu, NULL, BFM_EVENT_ITEM_USE, "func_800D128C",
-     "resident item-effect handler: switch on item id 1..119, heals via func_8014BB24, BP "
-     "via func_8014BD24 (src/resident/resident_jr_800D128C.c:242); called by the inventory "
-     "use path func_800D11F0 (src/resident/resident_jr_800D00E4.c:1197), which then empties "
-     "the slot, and by shops for buy-and-use",
+     "The inventory-use hook reports one inventory item, identified by the low byte of "
+     "a0. See tests/bfm_plat_probe.c.",
      "high", fill_item_use},
 };
 

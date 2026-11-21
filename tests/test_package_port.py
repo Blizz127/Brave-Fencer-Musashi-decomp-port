@@ -35,7 +35,7 @@ class PackageTests(unittest.TestCase):
         (cls.extracted / "DATA").mkdir(parents=True)
         cls.data_file = cls.extracted / "DATA" / "FIELD.DAT"
         cls.data_file.write_bytes(rng.randbytes(20000))
-        (cls.extracted / "SYSTEM.CNF").write_bytes(b"BOOT = cdrom:\\SLUS_007.26;1\r\n")
+        (cls.extracted / "SYSTEM.CNF").write_bytes(b"BOOT = test:/sample.bin;1\n")
 
     def build_binary(self, name, embed=b""):
         src = self.tmp / f"{name}.c"

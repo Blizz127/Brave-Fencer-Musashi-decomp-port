@@ -90,7 +90,7 @@ following. Concretely, all of the following must hold:
 Reaching 60% does **not** require the native port; it is a decompilation
 milestone. The port resumes once decompilation is far enough along.
 
-## Honest current status (2026-09-18)
+## Historical measurements (2026-09-18)
 
 | Measure | Value |
 | --- | --- |
@@ -109,20 +109,16 @@ back: `func_80043300`, the startup retry dispatcher, is no longer an
 instruction `__asm__` overlay but source C that rebuilds 38/38 words, and
 the boot-path leaf `func_80046564` was recovered as C (6/6) as well.
 
-The same day's second batch is much larger: the vendored Druthulu/BFM-decomp
-tree is a matching decompilation of the same disc, and
-`docs/VENDOR-CLEANUP.md` already authorized intake. Sweeping it against the
-oracle and promoting every exact body added 280 functions / 64,500 bytes,
-which is what moved portable C-only coverage from 21.87% to 29.87% and
-completed `main_0007`. See `tasks/plan-2026-09-18-vendor-promotion.md` for the
-pipeline and the two traps (prototypes must not join the preamble; the
-defining file varies per function).
+The September comparison also measured 280 functions and 64,500 bytes from an
+upstream-derived research tree. This raised that historical C coverage from
+21.87% to 29.87%. The public clean-room source excludes those implementations.
+See [EXCLUDED.md](../EXCLUDED.md) for the source boundary.
 
 Two corrections to the 2026-09-11 status below, both load-bearing:
 
-- The 32-bit Psy-Q toolchain is **not** blocked on this host. It fails only
-  inside the command sandbox; the same `cc1` runs normally outside it, and
-  the registry re-verifies from there. See `docs/MATCHING.md`.
+- The historical registry was re-verified with a host capable of running the
+  pinned 32-bit PS1 compiler. See [MATCHING.md](MATCHING.md).
+
 - The claim that a full sweep yields nothing still holds for m2c's *default*
   output, and was re-confirmed on a working toolchain: zero new matches
   across all 1,526 unregistered sources. But 1,220 of those sources did not

@@ -13,7 +13,7 @@ Entertainment.
 
 ## What this repository contains
 
-Only the owner's original work: the native PC port and its host/platform
+The project publishes independently recovered game functions, the native PC port and its host/platform
 layer, analysis and build tools, scripts, tests, split/symbol configuration
 (addresses, sizes, names and hashes only), provenance metadata and
 documentation. The MIT license in [LICENSE](LICENSE) applies to that original
@@ -27,7 +27,7 @@ This repository does **not** contain:
 - any BIOS image or bytes from one;
 - any Sony Psy-Q SDK code, headers, libraries or tools, and no decompiled Sony
   library code;
-- the decompiled game code (`src/`), or any file derived from the upstream
+- any game code derived from the upstream
   decompilation [Druthulu/BFM-decomp](https://github.com/Druthulu/BFM-decomp).
   Its tools and documentation are AGPL-3.0, and its decompiled game code
   (`src/`) asserts no license, so it is not licensed for redistribution.
@@ -39,22 +39,14 @@ This repository does **not** contain:
   the retail bytes;
 - prebuilt third-party binaries or third-party source trees.
 
-Every excluded path and the reason for it is listed in
-[EXCLUDED.md](EXCLUDED.md). Before publishing, every file was checked against
-the retail executable, every file on the disc, every locally decoded overlay,
-and the BIOS image; against Sony/Psy-Q markers; and for secrets and personal
-data. The commands and results are in [SCANS.md](SCANS.md). The only matches
-of retail content are the documented address/metadata class (addresses,
-sizes, offsets and digests: the same facts a symbol map records), not game
-data.
+[EXCLUDED.md](EXCLUDED.md) describes the public source boundary.
+[SCANS.md](SCANS.md) records the dated checks on source snapshots.
+The [README](README.md) identifies the status of downloadable builds.
 
 ## Your own disc
 
-To run anything built from this code you need your own legally obtained copy
-of *Brave Fencer Musashi* (USA, SLUS-00726). The port reads all game code and
-data at runtime from files you extract from that disc; its tools verify your
-files by SHA-256 and never write retail bytes into the source tree. Nothing
-here lets you play the game without it. Do not share disc images, extracted
+Playing the game requires your own legally obtained copy of *Brave Fencer Musashi* (USA, SLUS-00726). The port reads required guest code and assets from that disc. Its tools
+can verify the disc identity using SHA-256. Do not share disc images, extracted
 files, BIOS images, save files or screenshots of game content through this
 repository.
 

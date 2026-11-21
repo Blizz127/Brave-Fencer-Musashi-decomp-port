@@ -1,8 +1,7 @@
 # Port architecture standard (Brave Fencer Musashi)
 
-This follows the owner's port standard of 2026-09-28, shared by all of the
-owner's PlayStation port projects: they follow one pattern. The goal is a port people can customize,
-with better graphics, mods and cheats.
+This September 2026 design describes the port's preservation and customization
+goals, including optional graphics settings, mods and cheats.
 
 ## Purpose: preservation
 
@@ -205,64 +204,40 @@ bfm_plat_shutdown();
 
 ### Game-event hook points
 
-These are named events the native lane fires when the game does them.
-Payload structs are in `bfm_plugin.h`, names in `bfm_plat_events.c`, and
-the retail sites in `bfm_plat_hook_sites.c` (`bfm_plat_known_sites`,
-`bfm_plat_hooks_register_known`). Evidence paths are in
-`vendor/bfm-decomp` (Druthulu's cleaned decomp of the same SLUS-00726
-build, fetched separately) unless marked "repo".
+The port emits events at selected guest function entries. The active overlay,
+guest registers and guest RAM determine the event payload. A trace can reach
+a shared guest address in several different overlays.
 
-| Event | Guest site | Symbol | Evidence | Payload fill | Confidence |
-|---|---|---|---|---|---|
-| `frame_begin` | `0x800189A8` | `func_800189A8` (per-frame pad poll: 2 pads, 0x4C records at `D_80078D98`) | first call in `main`'s inner loop, `src/boot.c:310` (`main` 0x80010178, `src/boot.c:277`); body `src/800.c:6042`, `PadGetState` at `src/800.c:6094`; also once per frame in the resident modal loop `src/md_MAIN_003/md_MAIN_003_jr_800D1E18.c:236` | none (action: `bfm_plat_frame_wait`) | high. The modal loop gets FRAME_BEGIN without FRAME_END |
-| `frame_end` | `0x800184F0` | `func_800184F0` | called right before `VSync(*(s32 *)(p + 0xA3E8))`, `src/boot.c:372`/`:374`; body `src/800.c:5761`; no other caller | none (action: `bfm_plat_frame_hook_end`) | high |
-| `room_enter` | `0x80128158` in any `SC*` overlay | `func_80128158` (location-overlay export stub 0 → `func_80128288`, a phase dispatch `D_8017E618[D_800B99F6]`, repo `src/overlays/main_0012/80128288.c`) | called every scene-loop frame by resident `func_800CF238`, `src/resident/resident.c:255`; phase 0 reached SC02/31's init `80128420` (repo `docs/MENU-BOOT-CONTINUATION.md`, "SC02 initialization routine") | fires on the edge into scene phase 0 (u16 `0x800B99F6` = state base+0xA3C6) or on an overlay change. area/room are parsed from the overlay name the native lane reports ("SC02_031" → 2/31) | medium. Phase 0 = init is observed for SC02/31 only |
-| `room_exit` | `0x80011B7C` | `func_80011B7C(mode)` (set major mode base+0xA3C0, clear phase) | the scene loop leaves with `func_80011B7C(8)`, `src/resident/resident.c:261`; body `src/boot.c:950` | fires when `$a0 == 8` while an `SC*` overlay is selected | low. ~400 call sites, and mode 8 is not proven unique to scene exit |
-| `save` | `0x8002B0B4` | `func_8002B0B4` (memory-card state machine; splat's `SaveLoadRoutine` is its case 0) | state 13 writes the slot's 0x300-byte game-state block, `src/800_b.c:301`, `:318`, then advances `D_800760AC` | fires on the edge into state 13 (s32 `0x800760AC`); slot = `$a1` | medium. A retried write could fire twice |
-| `load` | `0x8002B0B4` | same | states 17/32 read that block, `src/800_b.c:486-488` | fires on the edge into state 17 or 32; slot = `$a1` | medium |
-| `projection` | `0x8004923C` | `func_8004923C` = libgte `SetGeomScreen` (`ctc2 $a0, $26`, repo `src/main/8004923c.c`) | game init `func_80014444` runs InitGeom (`func_80047CB4`), then `func_8004923C(0x3E8)`, storing 0x3E8 in `D_80126950` (`src/800.c:1787`) | h = `$a0 & 0xFFFF` | high (exact instruction shape) |
-| `projection` | `0x8004921C` | `func_8004921C` = libgte `SetGeomOffset` (`sll 16; ctc2 $24/$25`, repo `src/main/8004921c.c`) | called per draw buffer by the libgs offset routine `func_80052BEC` (repo) and by overlay camera code (`src/shared/ov/func_8017C530.h:14`) | ofx/ofy = `(int16)$a0/$a1` | high |
-| `damage` | `0x8014BC80` in the 141 overlays of `config/dedup.us.yaml` `E_func_8014BC80` | `func_8014BC80(obj, amount)`, the shared lethal player-HP subtract (`src/shared/ov/func_8014BC80.h`: HP -= amount, or HP = 0 and `D_800B9A17 = 0`); instant kills reach it via `func_8014BC44` | exact membership list compiled into `bfm_plat_hook_sites.c` and checked against dedup.us.yaml | previous/value/max from HP and `$a1` | high. Non-lethal `func_8014BCC0` is not hooked, so its drops arrive as derived `damage` |
-| `bp_use` | `0x8014BD60`, same overlays | `func_8014BD60`, BP subtract with clamp | dedup `E_func_8014BD60` | from BP and `$a1` | high |
-| `item_get` | `0x800D0F0C` (resident) | `func_800D0F0C(slot_var, item)` stores the item in an inventory slot and stamps its time (`src/resident/resident_jr_800D00E4.c:965`); shops call it after payment (`ov_SC03_124_jr_80188544.c:3526`) | free-slot scan `func_800D0EC4` over vars 0x2F..0x3A (`:950`) | item = `$a1`, kind inventory | high for adds through it. Other paths arrive as derived `item_get` from the slot watch |
-| `item_use` | `0x800D128C` (resident) | `func_800D128C(item, age)`, the item-effect switch over ids 1..119 (`src/resident/resident_jr_800D128C.c:242`); the inventory use path `func_800D11F0` calls it, then empties the slot (`resident_jr_800D00E4.c:1197`) | heals through `func_8014BB24`, BP through `func_8014BD24` | item = `$a0` | high |
-| `battle_start` / `battle_end` | TBD | none | see "Unsited events" below | none | needs runtime tracing |
+| Event | Guest entry | What the platform observes |
+|---|---|---|
+| `frame_begin` | `0x800189A8` | Pad polling starts the main frame. A resident modal loop also calls this site and can emit a begin without the corresponding end. |
+| `frame_end` | `0x800184F0` | The main frame reaches its final game call before waiting for VSync. |
+| `room_enter` | `0x80128158` | An active location overlay reaches scene phase zero after a phase or overlay change. The host obtains the area and room from the selected overlay name. Phase zero was observed as initialization in SC02 member 31. |
+| `room_exit` | `0x80011B7C` | The low half of the first argument is mode 8 while a location overlay is selected. Other modes use this same function. Additional room traces are needed to establish how specific mode 8 is to exits. |
+| `save`, `load` | `0x8002B0B4` | The card state at `0x800760AC` enters 13 for a write or 17 or 32 for a read. The second argument supplies the slot. A retry can produce another event. These hooks report a request inside the state machine. |
+| `projection` | `0x8004923C`, `0x8004921C` | One entry supplies the unsigned 16-bit projection distance. The other supplies both signed 16-bit screen offsets. |
+| `damage`, `bp_use` | `0x8014BC80`, `0x8014BD60` | The shared handlers take the amount in the second argument. The host reads the existing gauge to predict the change. Other writers can trigger the gauge watch at frame end. |
+| `item_get` | `0x800D0F0C` | A nonzero item byte in the second argument identifies one inventory acquisition. Clearing a slot suppresses the event. |
+| `item_use` | `0x800D128C` | The low byte of the first argument identifies the item whose effect is about to run. |
 
-**Unsited events: what was searched (2026-09-28).** Since then, `damage`,
-`bp_use`, `item_get` and `item_use` have code sites (above), and `money`
-plus figure and inventory `item_get` are also derived from the live state
-(below). Only battle boundaries are still open. The second pass walked the
-callers of the damage helpers: the shared player update `func_80153E00`
-and the per-overlay actor/attack code (e.g. `*_jr_801588CC`,
-`*_jr_8016AB6C`). No state that brackets a fight turned up. There is no
-boss HP gauge writer, enemy-active counter or music-change call that I
-could tie to a fight. `D_800B9A17` (cleared on death) is a general
-"player active" flag used ~3,700 times, not a battle marker. So
-`battle_start`/`battle_end` stay unsited. A runtime trace of a boss room
-(which globals change when the boss HP bar appears) is the next step. There is no symbol,
-comment or runtime note for battles or items in `vendor/bfm-decomp`
-(ov_MAIN_012, resident/, shared/ov, md_*, the main-exe TUs) or in this
-repository's docs. Candidates looked at and rejected:
-- `func_8017CF3C` (ov_MAIN_012) formats the save-slot display. It gave the
-  field offsets used in "Live game state"; it is a layout, not an event.
-- `func_80029ED4` is a monotonic counter (`D_80078F08`, capped at
-  9,999,999, which calls `func_8002A2D4` every 10 steps), not an
-  acquisition.
-- `D_80075CC0` is only the save staging copy (`func_8002AF70` /
-  `func_8002B00C` copy 0x2DC bytes in and out). The live state's address
-  comes from the save-menu modules' callers and wasn't traced.
-- Every location overlay's phase-2 exit chooses `func_80011B7C(0x13)` or
-  `func_80011B7C(4)` (e.g. `ov_SC02_000.c:374-376`). The meaning of the two
-  modes (continue vs game over?) isn't established.
+The gauge entries have 141 identified overlay copies. They occur in MAIN
+member 12 and 140 scene code members. Battle start and battle end still have
+no established entry. The general player-active field and the save-slot
+display do not establish combat boundaries.
 
-The next step is runtime tracing: watch the HP fields of the live state and
-the money word for writes, then attribute the writer PCs. Low-confidence
-guesses were not registered, because a wrong site fires wrong events for
-every mod.
+Run the platform hook tests from the repository root.
 
-`tests/test_bfm_plat.py` pins these sites to their symbols, events and
-confidence. When the vendor tree is present, it also checks that every
-cited line still contains the cited code.
+```sh
+python3 -m pytest tests/test_bfm_plat.py -k 'hook or gauge'
+```
+
+The host probes exercise registration, register and RAM inputs, payloads and
+event suppression with synthetic state. With the matching USA disc extracted,
+the tests also check the executable and overlay spans associated with the
+identified hooks. Gameplay coverage depends on which scenes have actually
+been exercised. The host event definitions and selection rules are in
+[bfm_plat_events.h](../pc_port/platform/bfm_plat_events.h) and
+[bfm_plat_hook_sites.c](../pc_port/platform/bfm_plat_hook_sites.c).
 
 How the native lane uses them:
 - `bfm_plat_guest_memory_bind` (RAM) and `bfm_plat_guest_regs_bind`
@@ -287,51 +262,49 @@ registered site with its overlay and hits.
 
 ### Live game state
 
-These are the static addresses of the live state (SLUS-00726). They come
-from the save path. `func_80029774(n)` (`src/800.c:21185`) snapshots the
-live globals into the 0x2DC-byte record `D_80078F28 + n*0x2DC`:
-- `+0x24`: the 0x98-byte struct `D_80078E78` (`src/800.c:21190`)
-- `+0xBC`: `D_800A6588[64]`
-- `+0x13C`: `D_800AE648[64]`
-- `+0x17C`: `D_800BA1B8[256]`
-- `+0x27C`: `D_800BA2B8[0x60]`
+The USA game snapshots live data into a 732-byte save record. Five fields
+describe the layout used by the save and restore routines.
 
-`func_8002992C` restores the same fields. The save-slot display
-(`ov_MAIN_012_jr_8017CF3C.c:4103-4172`) reads four fields at the same
-offsets from the start of `D_80078E78`, which fixes the offsets.
-Constants are `BFM_GUEST_*` in `bfm_plat_events.h`. Evidence paths are in
-vendor/bfm-decomp, and `tests/test_bfm_plat.py` pins every cited line.
+| Record offset | Live address | Contents |
+|---|---|---|
+| `0x24` | `0x80078E78` | 152-byte player and progress block |
+| `0xBC` | `0x800A6588` | 64 halfword figure prices |
+| `0x13C` | `0x800AE648` | 64 bytes of story flags |
+| `0x17C` | `0x800BA1B8` | 256 byte-addressed script variables |
+| `0x27C` | `0x800BA2B8` | 96 bytes used for NPC timestamps |
 
-| Field | Address | Type | Evidence | Confidence |
-|---|---|---|---|---|
-| live struct | `0x80078E78` | 0x98 bytes | snapshot at record +0x24, `src/800.c:21190` | high |
-| play time | `0x80078E7C` | u8 frames(/30), s, min, h | `func_80029444` ticks it and caps at 99:59:59 (`src/800.c:21037`, `:21053`); the slot display shows its hour byte (+7) | high |
-| money | `0x80078E8C` | s32 | new game sets 100 (`func_800295D4`, `src/800.c:21125`); the overlays' money routine adds, caps at 99999 and refuses a negative balance (`ov_SC03_124_jr_80188544.c:3740-3741`); the slot display shows it (+0x14, cap 99999) | high |
-| gauge 1 max / current | `0x80078EB2` / `0x80078EB4` | u16 / s16 | new game sets both to 250 (`src/800.c:21116-21117`); max raised with a cap of 500 (`shared/ov/func_8014BC0C.h:6`); refill current = max (`func_8014BB0C.h:6`); the slot display shows them as a pair (+0x3C/+0x3A) | addresses high; the "HP" label medium (first gauge in the display, 500 cap) |
-| gauge 2 max / current | `0x80078EB6` / `0x80078EB8` | u16 / s16 | new game 250/250 (`src/800.c:21118-21119`); max capped at 0x662 (`func_8014BCEC.h:9`); add with clamp to max (`func_8014BD24`); refill (`func_8014BDC8.h:6`); slot display +0x40/+0x3E | addresses high; the "BP" label medium |
-| story flags | `0x800AE648` | 512 bits | set/clear/test `func_80029124` / `func_80029178` (`src/800.c:20881`); new game sets flags 0x1E, 0x80, 0x82, 0x83, 0x85 | high |
-| script variables | `0x800BA1B8` | u8[256] | byte/halfword get/set `func_800291A0/B4/C8/DC` | high |
-| action figures | vars `0x63`..`0x8D` (43) | u8: low nibble price trend, 0x80 unlocked, 0x40 owned | shop purchase: pay `func_8018957C(-price)`, then set 0x40 (`ov_SC03_124_jr_80188544.c:3442`, `:3447`); "all owned" check over 0x2B entries (`src/800.c:22268`); unlock `func_8002AC00` | high |
-| figure prices | `0x800A6588` | u16[64] | drift between a base and 4× in `func_8002AC98`; the shop charges `D_800A6586[i]` (= entry i-1) | high |
+The save-slot display independently identifies several offsets in the progress
+block. The exported guest address constants are in
+[bfm_plat_events.h](../pc_port/platform/bfm_plat_events.h).
 
-| inventory slots | script vars `0x2F`..`0x3A` (`0x800BA1E7`..`0x800BA1F2`) | u8 item id, 0 = empty (12 slots) | add `func_800D0F0C`, free-slot scan `func_800D0EC4` (`for (i = 0x2F; i < 0x3B; ...)`, `resident_jr_800D00E4.c:950-953`), find-by-item `func_800D0F8C`, use `func_800D11F0` | high |
-| slot times | halfword vars `0x14 + 2*slot` | u16 day acquired | `func_800D0F0C` stamps `D_80078EAC`; `func_800D10EC` swaps an item for its aged form when `day - stamp >= table[item*12]` (spoiling/maturing) | high |
-| day counter | `0x80078EAC` | u16 (live struct +0x34) | shown as the day on the save slot (cap 999); the NPC stamps below compute `day*24 + hour` from it | high |
-| time of day | `0x80078EB1` hour, `0x80078EB0` minute | u8, u8 | save slot shows `+0x39:+0x38` capped at 23:59 (`ov_MAIN_012_jr_8017CF3C.c`); `day*24 + D_80078EB1` in the NPC stamps | high |
-| location | `0x800B9A08` | s16 `currentLocationId` (named in `config/symbols.us.txt:1023`) | the resident location-change handler `func_800CF628` saves the old id and loads the next (`src/resident/resident.c:469`); warp `func_800D1D24` sets it and `D_800B9A0A = id & 0xF000` (region) (`resident_jr_800D128C.c:992`) | high (id semantics: medium; values look like `0x30NN`) |
-| NPC timestamps | `0x800BA2B8` | 24 × 4 bytes, s16 at +2 = `day*24 + hour` | written and read by object id (`obj->0xD0->0x10`) in the town/shop overlays (`ov_SC03_001_jr_801870B0.c:3407`, SC03_124/125, SC04_018/020, SC05_017); readers compare days elapsed (`ov_SC04_018_jr_80183E6C.c:3643-3650`) | medium: per-NPC "last seen" stamps, not equipment or key items |
+| Field | Live address or variable | Meaning and limits |
+|---|---|---|
+| Play time | `0x80078E7C` | Four bytes hold frames, seconds, minutes and hours. The clock uses 30 frames per second and caps at 99 hours, 59 minutes, 59 seconds. |
+| Wallet | `0x80078E8C` | Signed 32-bit balance in stored units. A new game starts at 100. The shop rejects an unaffordable debit and caps increases at 99,999. The HUD adds a trailing zero. |
+| First gauge | `0x80078EB2` maximum, `0x80078EB4` current | Unsigned maximum, signed current. Both start at 250 and the maximum caps at 500. The save display and refill behavior support the HP interpretation. |
+| Second gauge | `0x80078EB6` maximum, `0x80078EB8` current | Same field sizes. Both start at 250 and the maximum caps at 1,634. The BP label is inferred from the second gauge's use. |
+| Inventory | Script variables `0x2F` through `0x3A` | Twelve one-byte slots hold item IDs. Zero marks a vacancy. Each occupied slot has a corresponding acquisition-day halfword starting at variable `0x14`, two bytes apart. The game uses elapsed days for spoilage and maturation. |
+| Toy figures | Script variables `0x63` through `0x8D` | Each byte records shop availability and ownership in bits 7 and 6. The low nibble gives the price trend. Shop prices use the separate halfword price table. |
+| Day and time | `0x80078EAC` day, `0x80078EB0` minute, `0x80078EB1` hour | The day occupies two bytes. The slot display limits the day to 999 and the time to 23 hours, 59 minutes. |
+| Location | `0x800B9A08` | Signed 16-bit current-location identifier. The location-change handler replaces this value. Its complete room mapping remains open. |
+| NPC timestamps | `0x800BA2B8` | 24 four-byte entries. The halfword two bytes into an entry stores elapsed days converted to hours plus the current hour. The interpretation as time since a particular NPC encounter is provisional. |
 
-Item ids 1..119 are the cases of `func_800D128C`. The id-to-name table
-isn't needed by the platform, and its strings are retail data. Where
-equipment and key items live is still open. They aren't in `D_800BA2B8`
-(which holds NPC stamps); the story flags are the likely home.
+The resident item-effect dispatcher handles IDs 1 through 119. The platform
+does not require item names. The representation of equipment and key items
+remains unverified.
+
+The wallet and inventory tests exercise the independently recovered game
+functions using synthetic balances, slots and dates. The public registries
+can also be checked against a local USA disc extraction.
+[Inventory test](../tests/test_resident_inventory.py) ·
+[Wallet test](../tests/test_shop_wallet.py)
 
 ### Memory watches and derived events
 
 `bfm_plat_watch.h`: a watch is a guest range (up to 64 bytes, addresses
 normalised to physical RAM) plus a callback with the old and new bytes.
 There are two feeds:
-- **Write hook** (needs port-int). The native lane / interpreter store path
+- **Write hook.** The native lane / interpreter store path
   calls `if (bfm_plat_watch_hit(addr, len)) { read old; store;
   bfm_plat_watch_on_write(addr, len, old, new); }`. `hit` is a min/max
   test plus a 4 KiB-page bitmap.
@@ -707,14 +680,12 @@ instead of the controller's CPU rasteriser.
 - **Switch:** `MUSASHI_GPU=cpu|bfm_plat` (default `cpu`) and
   `MUSASHI_RENDERER` (default `psycross`, which draws into native_boot's own
   PsyCross context). The bfm_plat config key is `[video] gpu`.
-- **Patch:** `tools/patches/native-lane-gpu-bridge.patch` is the change,
-  against port/native-lane 5fecb1337. port-int owns `gpu_controller.c` and
-  `native_boot.c` and applies it: `git apply -p1`. It adds:
+- **GPU integration.** The bridge design adds three pieces:
   - the controller's tap and raster switch;
   - native_boot's switch, attach and `present_frame`;
   - CMake entries for `bfm_plat_gpu_bridge.c` and `psyq/psyq_psycross.c`.
-  The renderer opens after PsyCross is up; opening it inside `plat_start`
-  crashed in PsyCross `ResetGraph`, so that is called out in the patch.
+  The renderer opens after PsyCross initialization. Opening it inside
+  `plat_start` crashed in PsyCross `ResetGraph` during testing.
 - **Tests:** `tests/test_bfm_gpu_bridge.py`.
   - Synthetic streams go through the bridge into a reference backend
     (`bfm_gl_ref_draw`), under ASan/UBSan: fill, opaque and semi tiles, the
@@ -724,9 +695,8 @@ instead of the controller's CPU rasteriser.
     C0 GPUREAD, GP1 info and vblank.
   - When a `gpu_controller.c` is available (`BFM_GPU_CONTROLLER_DIR`), the
     same streams also go through the controller and are compared region by
-    region. Against port/native-lane's controller with the blend fix
-    (572274c07), every region it implements matches. Semi regions differ
-    on main@ac0ec2dd1, which has no blend fix yet.
+    region. With the blend correction, the controller matched the implemented
+    regions. Before the correction, semi-transparent regions differed.
 - **Known controller gaps,** reported rather than asserted:
   - raw-texture rects `0x65/67/75/77/7D/7F` are not drawn;
   - textured-rect modulation is missing;
@@ -788,10 +758,10 @@ of the call ranking.
 |---|---|---|
 | `SDL_VIDEODRIVER=offscreen`, Mesa EGL via a vendor JSON, `EGL_PLATFORM=surfaceless` | real GL 3.3 context without a display (llvmpipe) | environment |
 | `LIBGL_ALWAYS_SOFTWARE` unset | setting it segfaults Mesa 25.0's EGL inside `SDL_CreateWindow` | Mesa bug; Mesa falls back to llvmpipe by itself |
-| `MUSASHI_AUDIO=null` | explicit, logged null audio (port/native-lane 8edc1d55d) | used when the binary has it. Older builds (main before that merge) get the old **workaround**: an ALSA `null` PCM (`ALSA_CONFIG_PATH`, `SDL_AUDIODRIVER=alsa`), which satisfies an audio gate meant to require a real device. The script warns when it falls back |
-| `MUSASHI_CODE_IMAGE=<EXE>` | instructions are fetched from the user's EXE | needed on main@ac0ec2dd1: without it the run refused at `80010000` with no reason printed. That was a run-off-disc bug, fixed on port/native-lane in 7d483a31b (guest memory bound at run entry), after which it isn't needed. Setting it stays harmless |
+| `MUSASHI_AUDIO=null` | explicit, logged null audio | used when the binary supports it. For older builds the script configures an ALSA null PCM through `ALSA_CONFIG_PATH` and `SDL_AUDIODRIVER=alsa` and logs the fallback |
+| `MUSASHI_CODE_IMAGE=<EXE>` | instructions are fetched from the user's EXE | historical builds required this when guest memory was unbound at run entry. The affected boot stopped at `80010000` |
 | `MUSASHI_GUEST_CLOCK=1` (default; `--host-clock` to compare) | guest time advances with executed cycles | on a loaded host the host-paced clock ends in an IRQ-dispatch refusal in the SPU poll loop (`8003b118`). Since 8edc1d55d it is printed: `IRQ_DISPATCH_REFUSED reason=source-overflow … hint=MUSASHI_GUEST_CLOCK=1` |
-| `LD_PRELOAD` of Mesa `libEGL`/`libEGL_mesa`/`libgallium` | keeps Mesa mapped for PsyCross's shutdown | only for builds without port-int's ordered shutdown (`musashi_psyx_shutdown`, 8edc1d55d), detected with `nm`. The old **workaround**: `GR_Shutdown` called GL after the EGL libraries were unloaded and segfaulted on every exit. `--no-preload` / `--preload` override |
+| `LD_PRELOAD` of Mesa `libEGL`/`libEGL_mesa`/`libgallium` | keeps Mesa mapped for PsyCross shutdown | for older builds where `GR_Shutdown` called GL after EGL had unloaded. The script uses `nm` to detect ordered shutdown (`musashi_psyx_shutdown`). Override with `--no-preload` or `--preload` |
 | `tools/headless/bfm_swap_capture.c` (`LD_PRELOAD`, `BFM_CAPTURE_*`) | hooks `SDL_GL_SwapWindow` | observation only. It reads the back buffer before the real swap, and optionally PsyCross's `vram` array, found by `nm` offset. PNGs use `bfm_plat_png_write` |
 
 Frames here are PsyCross presents, which only happen when native_boot
@@ -831,10 +801,9 @@ guard passes. The guard fails on:
 
 The `--exe`/`--extracted` files stay on the user's machine; nothing from
 them is copied. Tests: `tests/test_package_port.py` uses a synthetic random
-"retail" EXE, including the exact 64/63-byte threshold. Run on this box
-against the real EXE, the guard found one 65-byte run (a table of guest
-code addresses) in the current `libmusashi_pc_port.a` from port/native-lane.
-That has been reported to port-int.
+executable, including the exact 64/63-byte threshold. In a historical
+static-library build the guard found a 65-byte sequence of guest code addresses
+matching the game's executable.
 
 ### Pause, screenshot, quit
 
@@ -985,8 +954,8 @@ aspect.
 
 ## Status
 
-Done (`port/platform-layer`, tested without SDL: `tests/test_bfm_plat.py`,
-also clean under ASan/UBSan):
+At this design checkpoint, `tests/test_bfm_plat.py` exercised the following
+interfaces without SDL. The same tests passed under ASan and UBSan.
 - All interface headers, dispatchers, and the built-in `null` / `image` /
   scripted-input / host-clock backends.
 - Config file, CLI and save-back. Mods loader with dlopen and static
@@ -1001,10 +970,10 @@ also clean under ASan/UBSan):
 - Config-driven input bindings, the console text front end, the
   event catalog and the guest-PC hook-site table.
 
-Stubbed / next:
-- The `psycross`, `sdl` and `pinned` backends have never run. They need the
-  SDL2/OpenAL/GL dev libs, and their CMake wiring is not added yet (the
-  top-level `CMakeLists.txt` belongs to the native-lane work).
+At that checkpoint the following work remained open.
+
+- The `psycross`, `sdl` and `pinned` backend runtime tests required
+  SDL2, OpenAL and GL development libraries and CMake integration.
 - The `psycross` renderer has no HD `upload_replacement` path, and
   `set_output` is a no-op. PsyCross owns window size. HD is on `gl`.
 - `gl`: not yet run against the real game. That needs the native lane's
@@ -1027,8 +996,8 @@ Stubbed / next:
 
 ## Psy-Q compatibility layer
 
-`pc_port/platform/psyq/` is the Psy-Q → PsyCross/HLE layer that
-port/native-lane's native lane consumes. The generated coverage report is
+`pc_port/platform/psyq/` provides the Psy-Q to PsyCross/HLE layer used by
+the native lane. The generated coverage report is
 [PSYQ-COMPAT.md](PSYQ-COMPAT.md).
 
 **Enumeration.** `tools/psyq_callsites.py --vendor <vendor/bfm-decomp>` works
@@ -1104,7 +1073,7 @@ static const MusashiNativeLaneEntry psyq_entries[] = {
   (`bfm_psyq_stats`). E2–E6 inside packets are ignored; the draw
   environment comes from PutDrawEnv.
 - **GTE state (bridge):** there is one cop2 register file: PsyCross's
-  process-wide `gteRegs` bank. port-int's `gte_owner.c` already leases it
+  process-wide `gteRegs` bank. The port's `gte_owner.c` leases it
   for the interpreter (its CTC2/CFC2/data/command paths run on that bank),
   and PsyCross's libgte functions work on the same bank. So no copying is
   needed; the bridge only enforces the owner's lease.
@@ -1134,7 +1103,7 @@ static const MusashiNativeLaneEntry psyq_entries[] = {
   waits one, 1 returns 0 (there's no hsync counter on the host), and < 0
   returns the platform's field counter.
 - **Callbacks** (DrawSyncCallback, VSyncCallback, DMACallback…) call guest
-  code and stay with port-int's IRQ HLE and `musashi_native_guest_call`.
+  code through the port's IRQ HLE and `musashi_native_guest_call`.
 
 **libgs** (`psyq/bfm_psyq_libgs.c`, and the GTE ones in `psyq_psycross.c`).
 libgs's 2D sort calls build GPU packets in the packet area whose pointer is
@@ -1195,9 +1164,10 @@ decompiled C of each entry.
   ApplyTransposeMatrixLV, csqrt…) on the same bank through the bridge
 - SetDrawEnv (DR_ENV packets) and printf (guest varargs)
 
-## CMake wiring (note for port/native-lane)
+## CMake wiring
 
-This branch doesn't touch `CMakeLists.txt`. To wire it into the build:
+The following example records the design's target dependencies. The
+repository's top-level CMake file defines the current build.
 
 ```cmake
 # Core: C99, no dependencies. dlopen for native plugins.
@@ -1281,10 +1251,10 @@ Notes:
 - For the sample plugin to find nothing but the plugin SDK, export nothing
   from the executable. Plugins use only the `BfmPluginHost` table.
 
-## Migration order (does not stall current work)
+## Planned integration order
 
-1. Interfaces and built-in backends land (this branch). The native lane
-   keeps running on its `musashi_*` device owners.
+1. Add interfaces and built-in backends while the native lane continues
+   using its `musashi_*` devices.
 2. The native lane's Psy-Q-shaped shims call `bfm_plat_*`: VSync →
    `bfm_plat_timing_vsync`, CdRead/CdSearchFile → `bfm_plat_disc_*`, pad →
    `bfm_plat_input_*`, LoadImage/DrawOTag → renderer. It binds guest RAM

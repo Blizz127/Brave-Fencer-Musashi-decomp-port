@@ -5,16 +5,19 @@ The port links the decompilation against
 the Psy-Q libraries for PC on SDL2, OpenAL and OpenGL. It is vendored at a
 pinned commit by `tools/fetch_toolchains.sh` and its checkout is ignored.
 
-## Status
+## Historical development and test results
 
-Cleared REFUSED `800D18DC` (MAIN10 `[800D18DC,800D1938)` 23 words). Tip xvfb
-2026-09-09 ~16:15 CT STOP **`pc=800d1938`** (`CPU_BOUNDARY` `ra=800d1928`
+The dated measurements below describe the configurations used at the time.
+For the current public source and build instructions, see the [project README](../README.md).
+
+On September 9 the Xvfb boot diagnostic passed the 23-word MAIN10 entry at
+`800D18DC` and stopped at **`pc=800d1938`** (`CPU_BOUNDARY` `ra=800d1928`
 `a0=800ae6a8` `a1=800d19dc`) / `startup=PARTIAL` / `EXIT:2`.
 The summary records the proven CPU refusal as **`menu=NOT_REACHED`** and keeps
 the pending human look as a separate **`visual_check=REQUIRED`** marker;
 `tools/native_boot_check.py` requires both, so a presented frame cannot be
-mistaken for a reached menu. Folded SC02 PAC0 `8014E934…80150EC4` (60 leaves /
-2404 words from `8e857c7f0`) onto tip with D18 retained. The SC02 hole
+mistaken for a reached menu. The SC02 PAC0 work covered 60 leaves and 2,404 words
+between `8014E934` and `80150EC4`. The SC02 hole
 `80150EC4…80153C8C` is closed: its 13 differing spans are recovered, each a
 single data reference shifted by the member's `+0x888` block offset, and all
 re-earned MATCH against the SC02 blob. Remaining SC02 work is 272 known spans
@@ -24,9 +27,9 @@ rather than a retargeted data reference: `8013C9C4`, `8013D330`, `80164E40`,
 `8017C120`, `8017C24C`, `8017DF18`, `8017E22C`, `8017E254`, `8017E298`,
 `8017E324`. For example `8017BFF8` returns `D_801857E8` in member 0012 while
 SC02_031 holds an unrelated store/`lwc2` sequence there, so these need their own
-SC02 decompilation rather than an adaptation; seven of them have Druthulu
-`shared/ov` donor shapes that still need their extern declarations. Next MAIN10
-hole `800D1938+`.
+SC02 decompilation. Several earlier experiments used upstream-derived comparison
+material. The public source exclusions are recorded in [EXCLUDED.md](../EXCLUDED.md).
+The next MAIN10 boundary was `800D1938`.
 Scanout enabled.
 
 **Later the same day** the resident-image walk below moved the tip to
@@ -36,11 +39,9 @@ stand. See "Resident-image walk: GTE bank leaves and the second wave".
 
 ## SC02 word-lane provenance (2026-09-10)
 
-The SC02 word lane's authority is **the image the guest itself loads**, not
-`artifacts/bfm-takeover-20260907/sc01-title-code.bin`. That capture is a
-different member: its overlay words match SC01.CD/extracted `sc01` data and
-diverge from the resident image at the first data reference (word 48 of
-`func_80128288`, `3C02801A` vs the resident `3C02801B`).
+The SC02 word lane identifies the image the guest loads. An earlier title capture
+contained the SC01 member. At word 48 of `func_80128288`, its first data reference
+differs from the reference in the resident SC02 member.
 
 `MUSASHI_DUMP_RAM=<path>` captures the guest's 2 MiB main RAM at the boundary
 stop, so the resident overlay can be compared directly. Run with the disc
@@ -48,7 +49,7 @@ arguments and auto-start to reach it:
 
 ```sh
 SDL_VIDEODRIVER=x11 MUSASHI_BOOT_AUTO_START=1 MUSASHI_HOLD_WINDOW_MS=1000 \
-MUSASHI_DUMP_RAM=/tmp/ram.bin \
+MUSASHI_DUMP_RAM=./ram.bin \
 xvfb-run -a build/musashi_native_boot extracted/disc/files/SLUS_007.26 \
   extracted/disc/disc.cue extracted/disc/disc.bin
 ```
@@ -113,9 +114,8 @@ through the CMake entry list and the formatter, exactly as `func_80029104`.
 
 The `pc=800cf8b4` stop was **not** a missing 0007 selection — the loaded image
 at that moment is member 0010. A `MUSASHI_DUMP_RAM` capture at the stop shows
-guest RAM `@800cedf8` holding the member-0010 signature
-(`00000036 3C03800C 946399F0 27BDFFE8`), and the 64 bytes at `0x800cf8b4` match
-`extracted/overlays/main/0010.bin` at offset `0x20abc`, i.e. base `0x800aedf8`
+that the member identity at `800cedf8` agrees with MAIN member 0010. The 64
+bytes at the stop match `extracted/overlays/main/0010.bin` at offset `0x20abc`, i.e. base `0x800aedf8`
 (the same base the MAIN10 leaves use). The address simply sat outside the
 port's member-0010 ranges. `func_800CF8B4` `[800CF8B4,800CF8CC)` is now carved
 from that image (6/6 words, C written from the disassembly since no registry
@@ -123,8 +123,8 @@ entry exists) and wired under `g_overlay_0010_words`. The 0007 selector remains
 unused, but nothing yet requires it — a 0007-loaded image would say so in a
 RAM capture.
 
-Two more SC02 leaves followed: `func_8016F14C` (24/24, donor `edf31e68`) and
-`func_801719A4` (24/24, donor `7890648e`, whose `D_8011F738` already matches).
+Two more SC02 leaves followed. Both `func_8016F14C` and `func_801719A4`
+matched all 24 words. The latter uses the table at `D_8011F738`.
 
 Current stop: `pc=800d2844`, which is past the last wired member-0004 range
 (`0x800d24d0`). Next step: capture guest RAM at the stop with
@@ -133,12 +133,9 @@ carve the enclosing function from that member's image the same way.
 
 ## Gate status
 
-`tools/run_tests.sh` passes on `6b38fb9e4` (and on `536e94e1a` / `21e91dd33`
-earlier the same day): **538 tests OK**, out-of-tree configure/build, **22/22 CTests** (including
-`native_startup_boundary`), archive symbol checks and the smoke run all clean,
-script exit 0. The earlier aborted run is superseded; re-run it after any
-further formatter or CMake change, because those are the files this lane edits
-most.
+`tools/run_tests.sh` passed 538 tests and 22/22 CTests, including
+`native_startup_boundary`, in the September development build.
+The out-of-tree build, archive symbol checks and smoke run also passed.
 
 The resident-image walk below re-ran it after its formatter and CMake changes:
 **538 tests OK** and **22/22 CTests** again, exit 0.
@@ -176,11 +173,9 @@ storing a raw word.
 
 **Site tables that follow the wired ranges.** `gte_bank_site`, `lwc2_site`,
 `swc2_site`, `gte_exported_srav_site`, `merge_kind_for` and the load-successor
-tables are now regenerated from the wired ranges by
-`tools`-external scripts (`/tmp/bfm-carve/regen.py` in this session): for every
-address in a wired range, once per image that covers it — the executable,
-member 0031, or each MAIN.CD member whose blob carries that address. Two
-members can be resident at the same address with different words, so the merge
+tables derive from the wired ranges. Each address has an entry for each image
+that covers it, including the executable, member 0031 and MAIN.CD members.
+Two members can be resident at the same address with different words, so the merge
 table is now an exact `(pc, word)` lookup instead of a `switch` on the pc
 alone. Pcs already owned by a per-family table are left out of the residual
 tables so their caller pins stay in force.
@@ -232,10 +227,9 @@ commit.
   merge table, and `gte_47d3c_caller` / `gte_48d9c_caller` / `gte_484ec_caller`
   gained the remaining retail return aliases (executable and member 0031).
 
-Carved and wired this pass — word export, CMake entry, formatter table and
-fetch range — each verified against the authority named in its file header
-(`extracted/disc/files/SLUS_007.26` for the executable,
-`artifacts/sc02-resident-20260910/overlay.bin` for member 0031):
+The following ranges were checked against the local executable and the copy of
+member 0031 loaded by the game when the word export, CMake entry, formatter
+table and fetch range were connected.
 
 | region | ranges |
 | --- | --- |
@@ -274,12 +268,10 @@ file header:
 | `8002109C…80021120` | 33 | word export + pre-existing m2c C below `#else` |
 | `80021120…80021174` | 21 | word export + pre-existing m2c C below `#else` |
 
-The four `800210xx` files existed since the Codex import as C-only drafts;
-they were wrapped in `#ifdef MUSASHI_NATIVE_MIPS_WORD_EXPORT` rather than
-rewritten, so their oracle C claims are untouched (and still unverified —
-no MIPS toolchain is installed here to run `tools/match_function.py`).
-Each range got its CMake `addr:count` entry, formatter table and fetch
-branch. Also fixed while here, pre-existing and unrelated to the carve
+The four `800210xx` files already existed as C drafts. Conditional
+`MUSASHI_NATIVE_MIPS_WORD_EXPORT` wrappers retained the drafts. Their compiled
+C matching status was unverified in that test. Each range got its CMake
+`addr:count` entry, formatter table and fetch branch. Also fixed while here, pre-existing and unrelated to the carve
 work: the `kOverlaySc02_801458E0Words` table had no fetch branch, which
 failed `test_bios_event_callbacks.py` under `-Werror` even on HEAD.
 
@@ -372,24 +364,16 @@ refusal and reentry boundaries. Three source tests execute the actual display
 instructions and cache copy, cover four refusal prefixes, and reject compiled
 store mutations; their Clang ASan/UBSan probe passes. The fresh full regression
 passes 957 tests plus 92 subtests in 521.76 seconds. All 22 graphics tests, 11
-headless tests and symbol checks pass. The earlier shared fixture initializer
-failure is fixed; its failure log remains in the previous checkpoint. Independent
-source/owner/native review accepts this bounded display milestone.
-
-Current native evidence: `artifacts/spu-startup-20260906/native/gpu-registers-final/`.
-Aggregate verification: `artifacts/spu-startup-20260906/gpu-register-verification.json`.
-The immutable `gpu-display-verification.json` retains the prior GP1(05) refusal;
-`draw-verification.json` retains the earlier no-DMA boundary. Existing 18 source
-streams remain 1147 EXE/assembly-exact exported words (1047 mapped). These exports
+headless tests and symbol checks pass. Earlier tests had stopped at GP1(05)
+and before DMA. The 18 source streams contained 1,147 words checked against
+the local executable and disassembly, of which 1,047 were mapped. These exports
 do not claim newly matched C, full BIOS parity or a complete decompilation.
 
 Next: execute the real BIOS exception-prefix patch and FlushCache publication,
 then initialize persistent CP0/GTE state through source instructions. The
 source audit identifies 108 additional words and 12 CTC2 writes; these are not
-yet bound. See `gpu-gte-init-source-plan.md` and the CP0 startup authority follow-up
-in the artifact directory. The audit corrects the earlier short plan: controls
-21–23 are far color, not background color. Enabled scanout, actual title/menu
-assets and primitive rendering, launcher and human acceptance remain open.
+yet bound. Controls 21–23 set far color. Enabled scanout, title and menu
+rendering, launcher operation and player testing remained open at this stage.
 
 Mounted native startup now completes the full sound initializer and returns
 naturally to `800101FC`, then enters file loading at `8001971C`. All fourteen
@@ -402,15 +386,8 @@ Actual mode4 reverb feedback RAM writes are observed at the final sound return.
 The sound checkpoint passes707 pytest tests plus84 subtests,21 graphics and10
 headless CTests. Its final trace checker passes108 focused tests, including
 malformed logs, packet/order/deadline mutations and missing real reverb work.
-See `artifacts/spu-startup-20260906/outer-verification.json`. The retained binary
-below belongs to that checkpoint; the working build continues beyond it.
-
-```sh
-python3 tools/native_spu_boot_check.py --sound-outer \
-    artifacts/spu-startup-20260906/native/sound-outer-native-boot \
-    extracted/disc/files/SLUS_007.26 extracted/disc/disc.cue extracted/disc/disc.bin
-```
-
+The test used the `--sound-outer` mode of `tools/native_spu_boot_check.py`
+with the matching development executable and locally supplied USA game data.
 The retained sound checkpoint is historical; the current draw continuation
 stops at BIOS/GTE initialization `80053CF8` after DMA2 and display setup. Progressive VSync remains conditional on actual source/GPU
 state, while the interlaced `XOR` path is unsupported. Hardware timing/DSP
@@ -445,36 +422,25 @@ Manual writes commit actual RAM synchronously under the documented native
 policy; physical FIFO/key subphase and measured Gaussian rounding remain unproven.
 The next common-attribute call also returns naturally at `8002C974`: seven actual
 register writes restore CD gains `3FFF` and control `C001`, retaining the event
-and uploaded RAM. Its live checker and 47 focused tests pass; evidence is sealed
-in `artifacts/spu-startup-20260906/common-verification.json`. Reverb processing
+and uploaded RAM. Its live checker and 47 focused tests passed. Reverb processing
 and CD track-table commands remain ahead in the outer sound initializer.
 
-Historical common-attribute checkpoint command (requires its earlier binary):
-```sh
-python3 tools/native_spu_boot_check.py --common-attributes \
-    build/menu-resume/musashi_native_boot extracted/disc/files/SLUS_007.26 \
-    extracted/disc/disc.cue extracted/disc/disc.bin
-```
-
-See [menu continuation](MENU-BOOT-CONTINUATION.md) and
-`artifacts/cd-native-owner-20260906/` for source authority, logs and reviews.
+The historical check used the `--common-attributes` mode of
+`tools/native_spu_boot_check.py`. The [menu continuation](MENU-BOOT-CONTINUATION.md)
+describes subsequent results.
 
 The native targets are **diagnostics and an asset viewer**, not a bootable game.
 Matched fixed-point functions are linked, but `pc_port/main.c` does not execute
 the retail startup loop. Native startup executes through CD initialization; later game startup and
 scene dependencies remain incomplete.
 
-The earlier Checkpoint P viewer pause (2026-09-03) is historical. The current
-priority is genuine native menu boot: see `tasks/plan.md` and the freshly
-byte-checked [entry contract](NATIVE-BOOT-ENTRY.md). The viewer/GTE checks do
-not establish native boot, a visible retail menu, or launcher acceptance.
+The September 3 viewer and GTE checks covered standalone rendering.
+The [entry contract](NATIVE-BOOT-ENTRY.md) describes the boot diagnostic.
 
-What runs, all from the repository root after `./tools/run_tests.sh`:
+The rendering and boot-data probes use the following commands from the
+repository root after building their targets.
 
 ```sh
-# link check, pure fixed-point maths, no display needed
-build/musashi_pc_smoke
-
 # pinned EXE entry-data setup only; explicit synthetic return address, no game boot
 build/musashi_boot_data_probe extracted/disc/files/SLUS_007.26
 
@@ -496,20 +462,17 @@ python3 tools/extract_tmd.py extracted/pac/sc01/0037_000.bin --offset 0x87F0 \
     --output extracted/models/some_model.tmd
 ```
 
-What does not run:
+Limits of these early diagnostics:
 
-- **Integrated game execution.** The native executable does not run the game
-  main loop or its input, audio, and scene paths.
+- The smoke and viewer targets exercise individual paths. The hybrid game
+  executable and the native-only startup diagnostics have separate coverage.
 - **Textured or per-vertex-coloured models.** The viewer and `tools/tmd.py`
   refuse them rather than draw garbage. Viewer expansion is not the current
   menu-boot milestone.
 - **Lighting.** Every polygon takes its authored colour, flat.
-- **Windows.** A Windows x64 test build exists: `bfm-r44-c427ee546-windows-x64.zip`
-  in release `bfm-r41-3634893fe`. It was cross-built with a zig/LLVM
-  toolchain from unpublished port sources, and its native-lane set is the
-  same as Linux r41. It has been validated under Wine only. Real Windows
-  hardware, and the recipe in this repository, remain unverified for
-  Windows.
+- **Windows.** The historical r44 build used Zig/LLVM and the same native
+  function selection as Linux r41. Its tests ran under Wine. Physical Windows
+  testing was unverified.
 
 The smoke target verifies the link with pure fixed-point maths, so it runs
 headless — requiring a window, display and GPU would make the build check
@@ -525,12 +488,10 @@ exactly where sine reaches one.
 
 ## Shipping model: run off the disc (2026-09-28)
 
-The distributed port contains only our code (decompiled game C, our own
-runtime/HLE, the native-lane glue) and open-source dependencies. Everything
-from the game (code words, overlays, tables, assets) is read from the
-user's own SLUS-00726 disc image at run time, or extracted from it in a
-local, gitignored step (`extracted/`). Nothing retail is committed or built
-into a binary.
+The target distribution contains the port's code and licensed dependencies.
+The disc reader loads the user's own USA game data. The mechanisms described
+here apply to the source and build stages. The [project README](../README.md)
+gives the distribution status of packaged builds.
 
 - **Instruction fetch.** `formatter_fetch`, `input_callback_word` and
   `cd_irq_word` admit a PC by address range and read the word from guest
@@ -551,13 +512,13 @@ into a binary.
 - **Tests.** Probes that seed synthetic RAM fetch main-exe words from the
   developer's own extract through `MUSASHI_CODE_IMAGE` (size and digest
   checked; set by `tools/run_tests.sh`, CTest and `tests/conftest.py`).
-  The shipped port never sets it. The shared helper regenerates
+  Production builds use the user's supplied disc. The shared test helper regenerates
   `<addr>_words.inc` from the local EXE using
   `tests/data/formatter_word_ranges.txt` (addresses and counts only), and
   mutation tests push edits through `_sync_code_image`
   (`MUSASHI_CODE_IMAGE_MUTANT=1`, test-only).
 
-No retail words remain in the port sources:
+The source uses the following instruction and address checks.
 - **Site admission** (merge/retire, GTE, DIV/SRAV and the other per-site
   tables, 1,685 rows; 73 pc-bound guards) keeps only PCs plus a site-group
   id. `code_site(pc, group, instruction)` admits an instruction only if it
@@ -575,10 +536,10 @@ No retail words remain in the port sources:
   from the user's ROM when supplied, else zero stand-ins (exception entry is
   serviced natively and never executes them); the game's own PATCHGTE
   handler is recognised by digest.
-- CTest `retail_content_guard` runs `tools/retail_guard.py` over the shipped
-  outputs (native boot, port libraries, lane archive) against the local EXE
-  and every MAIN.CD member; it passes with the lane off and on and skips
-  without a disc.
+- CTest `retail_content_guard` runs `tools/retail_guard.py` over local
+  build outputs against the supplied executable and MAIN.CD members.
+  The historical test passed with the lane off and on. It skips when
+  the necessary game data is unavailable.
 
 ## PsyQ exclusion (2026-09-28)
 
@@ -614,11 +575,10 @@ Replacement status (each entry: what now provides it):
 | 8005C1C0 | libgpu GPU-type probe (GP1 10000007h) | port HLE `pc_port/gpu_bindings.c` |
 | 800616D0 8006291C 80062988 | libmcrd memory-card VBlank service (request stack step, idle query, completion) | port HLE `pc_port/libmcrd_vblank.c` |
 
-The HLE (`pc_port/include/musashi_psyq_hle.h`, header-only) is written from
-the documented C-library/libetc behaviour, not from PsyQ code. The native lane never
-admits a PsyQ-range function: **469 of 655 game functions** are admitted
-(240 PsyQ candidates excluded); interpreted game code still runs the PsyQ
-words the user's own disc provides, which ship with nothing.
+The HLE (`pc_port/include/musashi_psyq_hle.h`, header-only) implements documented
+C-library and libetc behaviour. The native lane admitted 469 of 655 game functions in that test and excluded 240 PsyQ
+candidates. The interpreter executed the library instructions supplied by the
+user's disc.
 
 ## Third-party components and licenses
 
@@ -635,8 +595,7 @@ words the user's own disc provides, which ship with nothing.
 
 ## Platform layer wiring (2026-09-28)
 
-`bfm_plat` (pc_port/platform, from port/platform-layer; design in
-docs/ARCHITECTURE-PORT.md) is a CMake target linked into
+`bfm_plat` in `pc_port/platform` is a CMake target linked into
 `musashi_native_boot` (`MUSASHI_WITH_BFM_PLAT`). At startup, after the EXE
 identity check, native_boot brings it up with the `null` renderer, audio
 and input backends (native_boot still owns PsyCross/SDL until the game-facing
@@ -654,7 +613,7 @@ Routed through `bfm_plat_*` (opt-in; the defaults keep native_boot's own paths):
 
 | switch | effect |
 |---|---|
-| `MUSASHI_GPU=bfm_plat` | GP0/GP1 are teed into port-plat's GPU bridge and drawn by `MUSASHI_RENDERER` (default `psycross`); the controller keeps FIFO/DMA/GPUSTAT with its rasteriser off. The controller's backend is the bridge (VRAM/env/display applied there, reads via `bfm_gpu_bridge_read_vram`); present follows the bridge's GP1 03 state. The splash fades in correctly headless. |
+| `MUSASHI_GPU=bfm_plat` | GP0/GP1 are teed into the platform GPU bridge and drawn by `MUSASHI_RENDERER` (default `psycross`); the controller keeps FIFO/DMA/GPUSTAT with its rasteriser off. The controller's backend is the bridge (VRAM/env/display applied there, reads via `bfm_gpu_bridge_read_vram`); present follows the bridge's GP1 03 state. The splash fades in correctly headless. |
 | `MUSASHI_INPUT=bfm_plat` | the SIO digital pad samples `bfm_plat_input_pad(0)` from the backend `MUSASHI_INPUT_BACKEND` (default `sdl`, bindings from `[input]`; `null` is the scripted pad mods drive). Polled once per VBlank, where native_boot already pumps SDL events. `MUSASHI_HOLD_*`/scripted test overrides still apply on top. |
 | `MUSASHI_AUDIO=bfm_plat` | the SPU core's 44.1 kHz stereo output goes to `bfm_plat_audio` (backend `MUSASHI_AUDIO_BACKEND`, default `openal`; bfm_plat falls back to `null` when the device cannot open, and says so). The null backend drains at the platform clock's audio rate. STOP prints `AUDIO_SINK frames= nonsilent= peak=` and `SPU_KEYON writes=`. Headless: OpenAL Soft's `wave` driver (`ALSOFT_CONF` with `drivers=wave`) records the device output. Default audio (`MUSASHI_AUDIO` unset: SDL; `null`) is unchanged. |
 | `MUSASHI_TIMING=bfm_plat` | with `MUSASHI_GUEST_CLOCK=1` only: each guest VBlank calls `bfm_plat_timing_vsync(1)` (NTSC field pacing, fast-forward, `BFM_EVENT_VSYNC` for mods) in place of `guest_clock_wait`'s throttle; `MUSASHI_UNTHROTTLED` runs uncapped and still emits the events. Refused under host-paced time, which host time already paces. |
@@ -724,10 +683,9 @@ state is never touched (the heap-continuation probe's byte-identical-CPU
 assertion holds with tracing on).
 
 `tools/native_lane_gen.py --only <path>.counts` restricts the lane to the
-traced PCs, so integration can follow what a boot really runs. **Not yet
-done on this box:** the live native boot needs an X display (PsyCross opens
-a GL window; there is no xvfb here), so only the headless probes have been
-traced (`entry_cpu`, `heap_continuation`, `callback_registration`).
+traced PCs. The historical trace covered the headless probes `entry_cpu`,
+`heap_continuation` and `callback_registration`. The live PsyCross boot
+requires an X display or Xvfb and was outside this test.
 
 ### Generic native lane
 
@@ -764,7 +722,7 @@ entries whose body holds one are listed in `musashi_native_lane_hooked_psyq`
 and skipped. The IRQ dispatcher suspends the lane
 (`musashi_native_lane_suspend`), so IRQ callbacks are always interpreted.
 
-**PsyQ entries (port-plat's compat table).** `pc_port/native_lane_psyq.c`
+**PsyQ entries (the platform compatibility table).** `pc_port/native_lane_psyq.c`
 installs the non-STUB rows of `pc_port/platform/psyq/bfm_psyq_compat.def`
 next to the generated entries and binds guest RAM, the scratchpad and the
 GTE bridge (`musashi_gte_owner_native_begin/_end`, which take the cop2 lease
@@ -777,7 +735,7 @@ for the call). `MUSASHI_PSYQ_LANE` selects the classes:
 | `0` | none |
 
 Rows the differential probe found to differ from the retail code are held
-back by PC (`kHeldBack`, with the reason; empty since port-plat 7935600a2). A wrapper that refuses leaves the
+back by PC in `kHeldBack`, with a reason. A wrapper that refuses leaves the
 interpreter to run the retail code. ratan2 and RotMatrix* are exact HLE over
 the game's own tables in guest RAM, not PsyCross's copies: those equal the
 game's data and would put retail bytes in the binary (retail_content_guard).
@@ -793,7 +751,7 @@ Two designs were evaluated:
 - **(a)** Map guest RAM at host virtual `0x80000000` on the 64-bit host and
   admit only functions an automatic checker proves pointer-width safe.
 - **(b)** A 32-bit host build (`-m32`) where all decomp C has PS1 data
-  layout. This needs i386 SDL2/OpenAL/GL (the owner would install them), a
+  layout. This needs i386 SDL2, OpenAL and OpenGL, a
   32-bit PsyCross build, and it still needs the guest RAM window, because
   host addresses of host objects are no more guest addresses at 32 bits.
 
@@ -844,7 +802,7 @@ How (a) works:
   mismatched prototypes behave as on the PS1): a direct call when the callee
   is admitted, otherwise the interpreter thunk.
 
-Current tree: **603 of 870 admitted**; rejected hooks 84, compile 52 (MIPS
+September development build: **603 of 870 admitted**; rejected hooks 84, compile 52 (MIPS
 register asm and similar), escape 44, layout 25, calls 21, memory 13,
 arith 9, irq 8, ub 4, abi 3, inttoptr 2, source 2. Stubs: 179 direct,
 270 thunks.
@@ -862,7 +820,7 @@ own instructions (IRQs are delivered in thunked callees and after return).
 maps guest RAM at `0x80000000`, loads the pinned EXE, and for every entry
 and three argument patterns runs the function on the interpreter only and
 then through the lane (forked child each), comparing v0 and all guest RAM
-outside the callee's frame. Result on this tree: **1297 comparable cases
+outside the callee's frame. The historical build reported **1297 comparable cases
 identical, 0 different, 0 native failures; 500 of 603 functions verified**.
 381 cases were not comparable (the interpreter itself refused: a device,
 BIOS call or unsupported pointer), 129 hit the mirror gap and 2 the
@@ -872,14 +830,12 @@ now close (`func_8003B08C` writes DMA through the pointer cell `D_8006B560`;
 `func_80046ABC` passes 1 of 3 arguments to `func_80046CFC`).
 `tests/test_native_lane.py` pins those decisions.
 
-Build it with `-DMUSASHI_NATIVE_LANE=ON` (needs clang). The option stays
-**OFF** until the live boot (`native_startup_boundary`, needs xvfb) has
-been run with it on.
+The native lane can be built with `-DMUSASHI_NATIVE_LANE=ON` and Clang.
+The historical build kept the option off by default.
 
-Gate on this branch (2026-09-28): `tools/run_tests.sh` with the user-local
-dependency prefix (`CMAKE_PREFIX_PATH=~/opt/host-port-deps/usr:...`):
-**561 tests OK (2 skipped)**, 22/22 CTests (8 display-dependent skips),
-port symbol check and smoke clean, exit 0. Without that prefix the only
+On September 28, `tools/run_tests.sh` passed 561 tests (2 skipped) with
+dependencies configured through `CMAKE_PREFIX_PATH`, and 22/22 CTests
+(including eight display-dependent skips). The port-symbol and smoke checks passed. Without that prefix the only
 error is the known `test_native_smoke` configure failure (no system
 SDL2/OpenAL/GL). With `MUSASHI_NATIVE_LANE=ON`, 23/23 CTests including
 `native_lane_differential`.
@@ -889,7 +845,7 @@ SDL2/OpenAL/GL). With `MUSASHI_NATIVE_LANE=ON`, 23/23 CTests including
 Native builds also require OpenSSL development headers and `libcrypto` for
 the entry-data loader's pinned-image check. CMake uses `OpenSSL::Crypto`;
 no TLS component is linked. When using Homebrew graphics dependencies, pass
-`-DOPENSSL_ROOT_DIR=/home/linuxbrew/.linuxbrew` in a fresh build directory to
+`-DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"` in a fresh build directory to
 keep the dependency prefix consistent. Existing cached `OPENSSL_INCLUDE_DIR`
 and `OPENSSL_CRYPTO_LIBRARY` selections must also point to that installation.
 
@@ -1001,9 +957,7 @@ natural controller transaction. The source ledger accounts for startup/input
 instructions while Timer2 and bound SIO advance from actual host-time cuts;
 CD and video deadlines remain disconnected. The source ledger reaches `950315`;
 the earlier source-only Timer2 count `8039` is historical. Current Timer2 counts
-vary with elapsed host time; retail phase parity is unproven. See
-`artifacts/cd-init-device-20260905/contract.md` for the
-source-authoritative three-boot CD contract.
+vary with elapsed host time. Retail phase parity remains unproven.
 
 The current native SIO owner is bound to digital port 1 and an SDL keyboard
 provider on the same paced epoch. Startup reports `keyboard_polls=0` and no
@@ -1011,9 +965,7 @@ DATA-pad packet, so provider binding is not natural input proof. Six metadata
 edges are mapped, four new metadata arrays are integrated, and the legacy
 16-bit path remains refused at `8005DB04`. The selected-device identity fix
 and focused probe pass; the synthetic fixture reaches `DC04`/`EAE8` refusal
-with metadata stores. See
-`artifacts/controller-protocol-20260905/integration-contract.md` for the
-bounded retail and native contract.
+with metadata stores.
 
 The graphics gate reports `GPUREAD=00000400` and query-7 leaves `GPUREAD=400`;
 the physical GPU revision response is unproven. Blank-only presentation is
@@ -1071,10 +1023,6 @@ than something that quietly depends on file output.
 Verified on real hardware as well as software: on Mesa Intel (ARL) the sampled
 values are identical to llvmpipe's, so the CI result is not an artefact of the
 software renderer.
-
-Getting a single quad on screen took a long chain of measurements, and several
-of my own intermediate conclusions were wrong. They are corrected here because
-the wrong ones were plausible.
 
 ### Root cause: two consumer-side defines
 
@@ -1222,44 +1170,16 @@ synthesis from OT position is ever wanted, it needs a new hook there; do not
 smuggle it in through `z` without deciding the fight policy for PGXP-`z` vs
 OT order first.
 
-**Reference hierarchy: retail framebuffer first, N64 art intent second,
-synthetic pixels always.** The standing gate stays the synthetic pixel tests
-(quad/TMD under `xvfb-run`, judged by `tools/vram_pixel.py` at tolerance 3 in
-5-bit units). The next rung is retail framebuffer comparison once the boot
-reaches a stable scene: same frame number, emulator VRAM dump as ground truth.
-The N64 version of the game is art-intent reference only — different renderer,
-different hardware, never pixel truth. PGXP stays off until (a) real GTE
-transforms feed the cache on the path being tested, (b) the `_HF()` boundary
-is converted, and (c) the `z`-vs-OT policy above is written down.
+**Framebuffer comparison.** The quad and TMD tests run under Xvfb with a
+tolerance of three in each five-bit color channel. For a game scene, compare
+the same frame with a framebuffer captured from the USA PlayStation release.
+PGXP remains disabled pending a test covering GTE transforms, explicit
+coordinate conversion and ordering-table depth.
 
-## Vendor matched intake (cleaned)
+## Public source selection
 
-Raw Druthulu matched sources live under `vendor/bfm-decomp/` (see `VENDOR.md`).
-The PC port does **not** compile those giant TUs directly.
-
-Smoke-matched symbols (`func_80012AB0`, `func_80012E6C`, `func_8001311C`,
-`func_80013154`) link from cleaned house-style files:
-
-- `src/main/80012ab0.c`
-- `src/main/80012e6c.c`
-- `src/main/8001311c.c`
-- `src/main/80013154.c`
-
-Local cleaned forms win over vendor `__asm__("$0")` / dump style. Cleanup rules:
-`docs/VENDOR-CLEANUP.md`.
-
-```sh
-# default: cleaned src/main leaves (same as before)
-cmake -S . -B build
-cmake --build build --target musashi_pc_smoke
-
-# vendor-aware configure: asserts vendor/bfm-decomp exists; still links cleaned leaves
-cmake -S . -B build -DMUSASHI_USE_VENDOR_BFM=ON
-cmake --build build --target musashi_pc_smoke
-ctest --test-dir build -R musashi_pc_smoke --output-on-failure
-```
-
-`musashi_native_boot` remains on the address-file / word-array interpreter path for
-most of the EXE; only the smoke-matched leaves above are compiled as host C today.
-Widening intake means cleaning more vendor functions into `src/main/800*.c` and
-adding them to CMake — not flipping on all of `vendor/bfm-decomp/src/`.
+The public build uses owner-authored source and licensed dependencies.
+CMake omits the historical `musashi_pc_smoke` target when its sources are
+absent. The hybrid player selects functions through the native-lane checker.
+The project documents the source-selection rules and historical exclusions
+in [EXCLUDED.md](../EXCLUDED.md).

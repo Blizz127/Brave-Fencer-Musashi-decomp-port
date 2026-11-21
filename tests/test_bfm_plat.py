@@ -3,6 +3,7 @@
 Builds without SDL/OpenAL/GL. The disc images here are synthetic ISO9660
 images generated below; no retail data is used.
 """
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -253,81 +254,32 @@ KNOWN_SITES = {
 }
 UNSITED = ["battle_start", "battle_end"]
 
-# (vendor/bfm-decomp path, line, text that line must contain): each is
-# cited in the sites' evidence strings.
-VENDOR_EVIDENCE = [
-    ("src/boot.c", 277, "void main(void)"),
-    ("src/boot.c", 310, "func_800189A8();"),
-    ("src/boot.c", 372, "func_800184F0();"),
-    ("src/boot.c", 374, "VSync(*(s32 *)(p + 0xA3E8));"),
-    ("src/800.c", 6042, "void func_800189A8(void)"),
-    ("src/800.c", 6094, "PadGetState(chan)"),
-    ("src/800.c", 5761, "void func_800184F0(void)"),
-    ("src/md_MAIN_003/md_MAIN_003_jr_800D1E18.c", 236, "func_800189A8();"),
-    ("src/resident/resident.c", 255, "func_80128158();"),
-    ("src/resident/resident.c", 261, "func_80011B7C(8);"),
-    ("src/boot.c", 950, "void func_80011B7C(arg0)"),
-    ("src/800_b.c", 87, "s32 func_8002B0B4(s32 sel, s32 idx, u8 *out)"),
-    ("src/800_b.c", 301, "case 13:"),
-    ("src/800_b.c", 318, "func_80060614(D_80075CC0, idx * 0x300 + 0x480, 0x300);"),
-    ("src/800_b.c", 486, "case 17:"),
-    ("src/800_b.c", 487, "case 32:"),
-    ("src/800_b.c", 488, "func_80060404(D_80075CC0, idx * 0x300 + 0x480, 0x300);"),
-    ("src/800.c", 1787, "func_8004923C(0x3E8);"),
-    ("src/shared/ov/func_8017C530.h", 14, "func_8004921C(ofx, ofy);"),
-    # inventory (resident)
-    ("src/resident/resident_jr_800D00E4.c", 950, "s32 func_800D0EC4(void)"),
-    ("src/resident/resident_jr_800D00E4.c", 953, "for (i = 0x2F; (u32)i < 0x3B; i++)"),
-    ("src/resident/resident_jr_800D00E4.c", 965, "void func_800D0F0C(s32 arg0, s32 arg1)"),
-    ("src/resident/resident_jr_800D00E4.c", 1197, "func_800D128C(s0, (s16)((u16)D_80078EAC - v0));"),
-    ("src/resident/resident_jr_800D128C.c", 242, "s32 func_800D128C(s32 arg0, s32 arg1)"),
-    ("src/ov_SC03_124/ov_SC03_124_jr_80188544.c", 3526, "func_800D0F0C(slot, w10);"),
-    ("src/shared/ov/func_8014BC80.h", None, "D_800B9A17 = 0;"),
-    ("config/dedup.us.yaml", 8867, "vram: 0x8014BC80"),
-    # location, day/time, NPC stamps
-    ("config/symbols.us.txt", 1023, "currentLocationId                = 0x800B9A08; // data"),
-    ("src/resident/resident.c", 469, "s16 *cli = &currentLocationId;"),
-    ("src/resident/resident_jr_800D128C.c", 992, "currentLocationId = v0;"),
-    ("src/ov_SC03_001/ov_SC03_001_jr_801870B0.c", 3407, "= idx2 + (idx1 * 24);"),
-    ("src/ov_SC04_018/ov_SC04_018_jr_80183E6C.c", 3643, "q = t / 24;"),
-    # live game state (bfm_plat_events.h BFM_GUEST_*)
-    ("src/800.c", 21115, "void func_800295D4(void)"),
-    ("src/800.c", 21116, "D_80078EB4 = 0xFA;"),
-    ("src/800.c", 21117, "D_80078EB2 = 0xFA;"),
-    ("src/800.c", 21118, "D_80078EB8 = 0xFA;"),
-    ("src/800.c", 21119, "D_80078EB6 = 0xFA;"),
-    ("src/800.c", 21125, "D_80078E8C = 0x64;"),
-    ("src/800.c", 21037, "void func_80029444(void)"),
-    ("src/800.c", 21053, "D_80078E7C_w = 0x633B3B00;"),
-    ("src/800.c", 21190, "*(Blk98_80029274 *)(dst + 0x24) = D_80078E78;"),
-    ("src/800.c", 20881, "void func_80029124(s32 arg0, s32 arg1)"),
-    ("src/800.c", 22268, "func_800291B4((s16)i + 0x63) & 0x40"),
-    ("src/shared/ov/func_8014BC0C.h", 6, "(u16)D_80078EB2 >= 0x1F5"),
-    ("src/shared/ov/func_8014BCEC.h", 9, "v >= 0x663"),
-    ("src/shared/ov/func_8014BB0C.h", 6, "D_80078EB4 = D_80078EB2;"),
-    ("src/shared/ov/func_8014BDC8.h", 6, "D_80078EB8 = D_80078EB6;"),
-    ("src/ov_SC03_124/ov_SC03_124_jr_80188544.c", 3740, "var = D_80078E8C + a0;"),
-    ("src/ov_SC03_124/ov_SC03_124_jr_80188544.c", 3741, "if (var > 99999)"),
-    ("src/ov_SC03_124/ov_SC03_124_jr_80188544.c", 3442, "func_8018957C(-D_800A6586[i13])"),
-    ("src/ov_SC03_124/ov_SC03_124_jr_80188544.c", 3447, "func_800291A0(c13, f13 | 0x40);"),
-    ("src/ov_MAIN_012/ov_MAIN_012_jr_8017CF3C.c", 4103, "a = p[7];"),
-    ("src/ov_MAIN_012/ov_MAIN_012_jr_8017CF3C.c", 4142, "a = *(u16 *)(p + 0x3C);"),
-    ("src/ov_MAIN_012/ov_MAIN_012_jr_8017CF3C.c", 4157, "a = *(u16 *)(p + 0x40);"),
-    ("src/ov_MAIN_012/ov_MAIN_012_jr_8017CF3C.c", 4172, "a = *(u32 *)(p + 0x14);"),
-    ("config/symbols.us.txt", 14, "main                             = 0x80010178; // func"),
-    ("config/symbols.us.txt", None, "GameModeDispatch                 = 0x80010B40;"),
-]
+# Complete routine hashes from the USA disc, except for the shared 32-byte
+# room dispatcher prefix. The code is always read from the local extraction.
+HOOK_SPANS = {
+    0x8004923c: (12, "d8c79a8c2661cba5b0c79fdf925407b5a4945c383bb0c8c293287878a693cac2"),
+    0x8004921c: (24, "9aa95b09a0c5f31d49c3f954d1bc4cbe5101b46feb9a7a9a92673d0716fdfcf1"),
+    0x800189a8: (120, "d5e1fe200f7c534aae9c1490a147f7104c7b462ab2b4af7f0f8acc8f25d3f371"),
+    0x800184f0: (548, "96272b3cded22d918e6524e69634b5131a0c0467cdad05c5ba99589ee7f62fe4"),
+    0x80011b7c: (148, "e1fb6ee4d4a1b8cdc2fc08ce196f7e93fc5a648dcbeff2567d4e286632d0f391"),
+    0x8002b0b4: (4716, "e08f73e586778f87daa9713c5fa92370e0aa856c7f3326bc640a7c9678e8d03e"),
+    0x800d0f0c: (64, "9c41b23fa61a73b749796233c70a59d887d120dcb657fe96e9b9844493ed9833"),
+    0x800d128c: (972, "a423b73fca2a176c8224f68913c7d0c4a7910f860e4cefc9679f69a8507a456d"),
+    0x8014bc80: (64, "0b2763474c6b97ca254dcb39ee9dda83c468ea7c95b2a053363b65089176f8ee"),
+    0x8014bd60: (56, "731db5f32df23134e0950160f01a594a0ce77ebc8ccbb750815320a7990307ce"),
+    0x80128158: (32, "26d61e063488a45fdf5ccbfc1ab5dd268fe11267325c371d4892c40d6b71f74d"),
+}
+
+GAUGE_LABELS_SHA256 = "1c89f9552aba16331d6ca422f4393a368980c65b1be3401414c2974ac38be4ad"
+GAUGE_IMAGES_SHA256 = "58443fec46f38e43b3431993aa51dff790c2377279b6d152955e1569e53e0e4a"
 
 
-SITE_EVIDENCE_COUNT = 19   # (inventory pins follow; they are checked by the vendor test)   # the entries above "live game state" are cited by hook sites
-
-
-def vendor_root():
-    for base in (ROOT, Path(os.environ.get("BFM_DECOMP_ROOT", str(ROOT)))):
-        v = base / "vendor/bfm-decomp"
-        if (v / "src/boot.c").is_file():
-            return v
-    return None
+def hash_hook(image, base_address, pc):
+    size, expected = HOOK_SPANS[pc]
+    offset = pc - base_address
+    if offset < 0 or offset + size > len(image):
+        return False
+    return hashlib.sha256(image[offset:offset + size]).hexdigest() == expected
 
 
 class BfmPlatTests(unittest.TestCase):
@@ -362,6 +314,10 @@ class BfmPlatTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("ok " + args[0], proc.stdout)
         return proc.stdout
+
+    def run_cheat_probe(self, *args, probe=None):
+        env = dict(os.environ, BFM_DEV_MENU="1", BFM_CHEATS="1")
+        return self.run_probe(*args, env=env, probe=probe)
 
     def fresh(self, name):
         d = self.tmp / name
@@ -491,7 +447,7 @@ class BfmPlatTests(unittest.TestCase):
         (mods / "evil").mkdir()
         (mods / "evil/mod.ini").write_text("[mod]\nname = evil\nplugin = ../../x\n")
         (mods / "not_a_mod").mkdir()          # no manifest: skipped
-        out = self.run_probe("mods", mods)
+        out = self.run_cheat_probe("mods", mods)
         lines = [l for l in out.splitlines() if l.startswith("mod ")]
         names = [l.split()[2] for l in lines]
         self.assertEqual(names, ["static", "evil", "hello", "off", "scripted"])
@@ -561,32 +517,44 @@ class BfmPlatTests(unittest.TestCase):
         self.assertEqual(sites, KNOWN_SITES)
         unsited = [l.split()[1] for l in out.splitlines() if l.startswith("unsited ")]
         self.assertEqual(unsited, UNSITED)
-        evidence = " ".join(l for l in out.splitlines() if l.startswith("evidence "))
-        for path, line, _ in VENDOR_EVIDENCE[:SITE_EVIDENCE_COUNT]:
-            if line is not None and path.startswith("src/"):
-                self.assertIn(f"{path}:{line}" if path != "src/800_b.c" or line not in (486, 487, 488)
-                              else "src/800_b.c:486-488", evidence)
-        # The repository file the room-enter evidence cites.
-        disp = (ROOT / "src/overlays/main_0012/80128288.c").read_text()
-        self.assertIn("D_8017E618[D_800B99F6]();", disp)
-        # Repository files the projection evidence cites.
-        self.assertIn("ctc2 $a0, $26", (ROOT / "src/main/8004923c.c").read_text())
-        off = (ROOT / "src/main/8004921c.c").read_text()
-        self.assertIn("ctc2 $a0, $24", off)
-        self.assertIn("ctc2 $a1, $25", off)
-        self.assertIn("func_8004921C(", (ROOT / "src/main/80052bec.c").read_text())
-        self.assertIn("func_8004923C(0x3E8);", (ROOT / "src/main/80014444.c").read_text())
+        evidence = [line.split(maxsplit=2) for line in out.splitlines()
+                    if line.startswith("evidence ")]
+        self.assertEqual(len(evidence), len(KNOWN_SITES))
+        self.assertTrue(all(len(fields) == 3 and fields[2].strip() for fields in evidence))
+        scopes = self.gauge_scopes(out)
+        self.assertEqual(set(scopes), {"damage", "bp_use"})
+        self.assertEqual(scopes["damage"], scopes["bp_use"])
+        labels = scopes["damage"]
+        self.assertEqual(len(labels), 141)
+        self.assertEqual(len(set(labels)), len(labels))
+        manifest = "".join(label + "\n" for label in sorted(labels))
+        self.assertEqual(hashlib.sha256(manifest.encode("ascii")).hexdigest(), GAUGE_LABELS_SHA256)
+        self.assertEqual({int(pc, 16) for pc, _, _ in sites}, set(HOOK_SPANS))
 
-    def test_hook_site_evidence_matches_vendor_source(self):
-        v = vendor_root()
-        if v is None:
-            self.skipTest("vendor/bfm-decomp not present")
-        for path, line, text in VENDOR_EVIDENCE:
-            lines = (v / path).read_text(errors="replace").splitlines()
-            if line is None:
-                self.assertTrue(any(text in l for l in lines), (path, text))
-            else:
-                self.assertIn(text, lines[line - 1], (path, line))
+    @staticmethod
+    def gauge_scopes(catalog):
+        scopes = {}
+        for line in catalog.splitlines():
+            if line.startswith("scope "):
+                _, event, members = line.split()
+                scopes[event] = members.split(",")
+        return scopes
+
+    def test_hook_addresses_in_owned_executable_and_inventory(self):
+        extracted = ROOT / "extracted"
+        paths = (extracted / "disc/files/SLUS_007.26", extracted / "overlays/main/0010.bin")
+        if not all(path.is_file() for path in paths):
+            self.skipTest("requires the USA executable and extracted MAIN.CD member 10")
+        exe, resident = (path.read_bytes() for path in paths)
+        self.assertEqual(hashlib.sha256(exe).hexdigest(),
+                         "66371c3a7517e9eabd7cb6cf0c5abffe7296bd4bac29c85b8bf7bb9db349714a")
+        self.assertEqual(hashlib.sha256(resident).hexdigest(),
+                         "97933aae35fd27e3917866e4f9c7ef5716850c7efda3f96719496c9ba5b86246")
+        for pc in HOOK_SPANS:
+            if pc < 0x80080000:
+                self.assertTrue(hash_hook(exe[0x800:], 0x80010000, pc), hex(pc))
+            elif pc in (0x800D0F0C, 0x800D128C):
+                self.assertTrue(hash_hook(resident, 0x800AEDF8, pc), hex(pc))
 
     def test_hook_site_fills_and_frame_actions(self):
         self.run_probe("hook_fills")
@@ -686,7 +654,7 @@ bfm.command("luaboom", "luaboom", function() error("boom") end)
 bfm.on("frame_end", function() if seen.late == nil then
   seen.late = pcall(bfm.cheat, {name = "late", address = 0, value = 0, width = 1}) end end)
 """)
-        out = self.run_probe("lua", d, probe=probe)
+        out = self.run_cheat_probe("lua", d, probe=probe)
         self.assertIn("mod lua_hello script=1", out)
         self.assertIn("mod luatest script=1", out)
         self.assertIn("mod luabad script=-1", out)
@@ -712,7 +680,7 @@ bfm.on("frame_end", function() if seen.late == nil then
         d = self.fresh("disccheck")
         exe = b"PS-X EXE" + bytes(range(256)) * 40            # synthetic, not retail
         exe_sha = hashlib.sha256(exe).hexdigest()
-        cnf = b"BOOT = cdrom:\\SLUS_007.26;1\r\nTCB = 4\r\nEVENT = 10\r\nSTACK = 801FFFF0\r\n"
+        cnf = b"BOOT = test:/images/SLUS_007.26;1\r\n"
         good = build_iso_root({"SYSTEM.CNF": cnf, "SLUS_007.26": exe})
         (d / "good.iso").write_bytes(good)
         (d / "good.bin").write_bytes(iso_to_raw(good))
@@ -739,7 +707,7 @@ bfm.on("frame_end", function() if seen.late == nil then
         self.assertIn("SLUS-00726", self.disc_status(d / "other.iso")[1])
         (d / "nocnf.iso").write_bytes(build_iso_root({"README.TXT": b"x"}))
         self.assertEqual(self.disc_status(d / "nocnf.iso")[0], "not_ps1")
-        (d / "noboot.iso").write_bytes(build_iso_root({"SYSTEM.CNF": b"TCB = 4\n"}))
+        (d / "noboot.iso").write_bytes(build_iso_root({"SYSTEM.CNF": b"FIXTURE = empty\n"}))
         self.assertEqual(self.disc_status(d / "noboot.iso")[0], "not_ps1")
         (d / "noise.iso").write_bytes(bytes(2048 * 20))
         self.assertEqual(self.disc_status(d / "noise.iso")[0], "not_ps1")
@@ -781,24 +749,47 @@ bfm.on("frame_end", function() if seen.late == nil then
         ini = (d / "cheat_pack/cheats.ini").read_text()
         self.assertEqual(ini.count("enabled = 0"), 4)
         self.assertNotIn("enabled = 1", ini)
-        out = self.run_probe("cheat_pack", d)
+        out = self.run_cheat_probe("cheat_pack", d)
         for name in ("infinite_hp", "infinite_bp", "max_money", "max_hp_gauge"):
             self.assertIn(f"[on]  {name}", out)
 
-    def test_gauge_site_overlay_list_matches_dedup(self):
-        import re
-        src = (PLAT / "bfm_plat_hook_sites.c").read_text()
-        m = re.search(r"gauge_overlays\[\] =\s*((?:\s*\"[^\"]*\")+);", src)
-        listed = set("".join(re.findall(r'"([^"]*)"', m.group(1))).split(","))
-        self.assertEqual(len(listed), 141)
-        v = vendor_root()
-        if v is None:
-            self.skipTest("vendor/bfm-decomp not present")
-        text = (v / "config/dedup.us.yaml").read_text()
-        for fn in ("func_8014BC80", "func_8014BD60"):
-            mm = re.search(rf"func: {fn}\n\s+vram: 0x[0-9A-F]+\n\s+binaries: \[([^\]]*)\]", text)
-            members = {x.strip()[3:] for x in mm.group(1).split(",")}
-            self.assertEqual(members, listed, fn)
+    def test_gauge_and_room_hook_addresses_in_owned_scenes(self):
+        overlays = ROOT / "extracted/overlays"
+        if not (overlays / "main/0012.bin").is_file():
+            self.skipTest("requires MAIN.CD and the decoded USA scene overlays")
+        labels = sorted(self.gauge_scopes(self.run_probe("sites"))["damage"])
+        manifest = hashlib.sha256()
+        for label in labels:
+            if label == "MAIN_012":
+                image = (overlays / "main/0012.bin").read_bytes()
+                base = 0x80100158
+            else:
+                group, member = label.split("_")
+                directory = overlays / group.lower()
+                stem = f"{int(member):04}"
+                base = 0x80128158
+                if label in ("SC02_037", "SC03_107"):
+                    raw = directory / (stem + ".bin")
+                    if not raw.is_file():
+                        self.skipTest("requires the complete extracted USA scene archives")
+                    chunk = raw.read_bytes()
+                    self.assertEqual(chunk[:4], b"PAC\0", label)
+                    kind, _, length = struct.unpack_from("<3I", chunk, 4)
+                    self.assertEqual(kind, 1, label)
+                    self.assertTrue(0x800 < length <= len(chunk), label)
+                    image = chunk[0x800:length]
+                else:
+                    path = directory / (stem + ".pac0.bin")
+                    if not path.is_file():
+                        self.skipTest("requires the complete decoded USA scene overlays")
+                    image = path.read_bytes()
+                self.assertTrue(hash_hook(image, base, 0x80128158), label)
+            for pc in (0x8014BC80, 0x8014BD60):
+                self.assertTrue(hash_hook(image, base, pc), (label, hex(pc)))
+            digest = hashlib.sha256(image).hexdigest()
+            manifest.update(f"{label} {digest}\n".encode("ascii"))
+        self.assertEqual(manifest.hexdigest(), GAUGE_IMAGES_SHA256)
+
 
     def test_live_state_constants_match_documented_addresses(self):
         header = (PLAT / "bfm_plat_events.h").read_text()
@@ -943,32 +934,49 @@ bfm.on("frame_end", function() if seen.late == nil then
         self.run_probe("libgs")
 
     def test_psyq_generated_table_is_current(self):
-        v = vendor_root()
-        if v is None:
-            self.skipTest("vendor/bfm-decomp not present")
-        asm = next((a for a in (ROOT / "asm", ROOT.parent / "brave-fencer-musashi-decomp/asm")
-                    if (a / "main.s").is_file()), None)
-        if asm is None:
-            self.skipTest("no local splat disassembly (asm/main.s)")
-        proc = subprocess.run(["python3", str(ROOT / "tools/psyq_callsites.py"), "--vendor", str(v),
-                               "--asm", str(asm), "--check"],
-                              capture_output=True, text=True, timeout=600)
-        if proc.returncode != 0:
-            # The entry table must match; call-site counts follow the local disassembly,
-            # which grows as more overlays are extracted.
-            self.assertNotIn("bfm_psyq_compat.def", proc.stderr, proc.stderr)
-            self.skipTest("call-site counts drifted with the local disassembly; "
-                          "regenerate with tools/psyq_callsites.py (%s)" % proc.stderr.strip())
+        import json
+        import sys
+        from unittest.mock import patch
+
+        with patch.object(sys, "path", [str(ROOT / "tools"), *sys.path]):
+            import psyq_callsites as calls
+        data = json.loads(calls.OUT_JSON.read_text())
+        self.assertEqual(calls.OUT_DEF.read_text(), calls.render_def(data))
+        self.assertEqual(calls.OUT_MD.read_text(), calls.render_md(data))
 
     def test_psyq_callsites_fails_clearly_without_disassembly(self):
-        v = vendor_root()
-        if v is None:
-            self.skipTest("vendor/bfm-decomp not present")
-        proc = subprocess.run(["python3", str(ROOT / "tools/psyq_callsites.py"), "--vendor", str(v),
-                               "--asm", str(self.tmp / "no-asm")], capture_output=True, text=True, timeout=60)
+        layout = self.fresh("callsite_layout")
+        config = layout / "config"
+        config.mkdir()
+        (config / "splat.us.exe.yaml").write_text(
+            "  - [0x40, asm, libexample]  # vram 0x80110000-0x80110040\n")
+        (config / "symbols.us.txt").write_text("ProbeEntry = 0x80110008; // func\n")
+        missing = layout / "asm"
+        proc = subprocess.run(["python3", str(ROOT / "tools/psyq_callsites.py"),
+                               "--vendor", str(layout), "--asm", str(missing)],
+                              capture_output=True, text=True, timeout=60)
         self.assertEqual(proc.returncode, 2)
         self.assertIn("asm/main.s", proc.stderr)
         self.assertIn("never committed", proc.stderr)
+
+        import sys
+        from unittest.mock import patch
+
+        asm = layout / "asm"
+        asm.mkdir()
+        # One call into the declared segment, then a call just outside it.
+        lines = []
+        for i, target in enumerate((0x80110008, 0x80110040)):
+            word = (3 << 26) | ((target >> 2) & 0x03ffffff)
+            lines.append(f"/* {4*i:06X} {0x80018000+4*i:08X} "
+                         f"{word.to_bytes(4, 'little').hex()} */  jal probe\n")
+        (asm / "main.s").write_text("".join(lines))
+        with patch.object(sys, "path", [str(ROOT / "tools"), *sys.path]):
+            import psyq_callsites as calls
+        scanned = calls.scan(layout, asm)
+        self.assertEqual(scanned["meta"]["callsites"], 1)
+        self.assertEqual([(row["addr"], row["name"]) for row in scanned["entries"]],
+                         [("0x80110008", "ProbeEntry")])
 
     def test_psyq_table_consistency(self):
         import json

@@ -1,42 +1,27 @@
 # brave-fencer-musashi-decomp-port
 
-An experimental PC port of *Brave Fencer Musashi* (PlayStation, USA,
-SLUS-00726). You play from **your own disc**; no game data or BIOS is included.
-The current runtime is **hybrid**: compiled host code plus a CPU interpreter.
-The fully native port remains a development goal.
+An experimental PC port of *Brave Fencer Musashi* for the USA PlayStation disc
+(SLUS-00726). The player reads your own disc. Its hybrid runtime runs part of
+the game as compiled host code and uses a CPU interpreter for the rest.
 
-> **Source update — 2026-10-29 (decompilation only, no new build):** 1,340
-> more owner-authored functions in `src/` (300 main-executable, 1,040 scene
-> overlay), each independently re-derived from the retail disassembly and
-> rebuilt byte-exact against the retail code with the pinned compiler. See
-> [EXCLUDED.md](EXCLUDED.md) ("2026-10-29 source update") and
-> [SCANS.md](SCANS.md) for what was added, what was held back and the scans.
-> These files are decompilation progress: the published builds do not compile
-> them natively unless they are on `config/lane_own_code_allow.txt`, and the
-> runtime is unchanged. The newest public test build is still
-> [bfm-r55-ba90b87ad](https://github.com/Blizz127/brave-fencer-musashi-decomp-port/releases/tag/bfm-r55-ba90b87ad)
-> (2026-10-20, prerelease, Linux x86_64), a **hybrid** build in which code that
-> is not converted runs on the built-in CPU interpreter. Work toward a fully
-> native runtime continues privately as development diagnostics: it is not
-> playable, and nothing here claims a native or complete port.
->
-> **Earlier test build — r47, 2026-10-16 (prerelease):** Linux x86_64 and Windows x64 are available now in
-> [bfm-r47-8f8176c8c](https://github.com/Blizz127/brave-fencer-musashi-decomp-port/releases/tag/bfm-r47-8f8176c8c)
-> (`bfm-r47-8f8176c8c-linux-x86_64.tar.gz`, `bfm-r47-81c5dbd03-windows-x64.zip`).
-> It is r41 plus the game's VSync wait running as native code. It is still a
-> hybrid test build: it passed boot tests, but the full route, speed and
-> handheld checks were not run. The Windows build has run under Wine only, not
-> on real Windows.
->
-> **Latest stable release — r38, 2026-10-02:** Linux x86_64. Forest rendering
-> fixes and isolated inn save/cold Continue checks passed. The instructions
-> below use r38.
->
-> **Previous Windows x64 test build — r44, 2026-10-05:** `bfm-r44-c427ee546-windows-x64.zip`
-> is available in the [bfm-r41-3634893fe](https://github.com/Blizz127/brave-fencer-musashi-decomp-port/releases/tag/bfm-r41-3634893fe) test prerelease. It has been
-> validated under Wine only, not on real Windows. The same prerelease also has
-> a newer Linux r41 test build. Whole-game completion and full graphics/audio
-> fidelity are unverified.
+## Player downloads and source builds
+
+**November 21, 2026. For new Linux installs, build from the current source.**
+We downloaded every historical player package from the public releases and
+checked its published size and SHA-256. All 22 distinct Linux and Windows
+executables contain a 36-byte game dispatch table. Nineteen also contain a
+32-byte warp callback. Fourteen Linux executables include two complete original
+diagnostic strings in their debug sections. The review covered 14 distinct
+archives across 12 release tags.
+
+The public source now reads the dispatch table from your disc. Its developer
+menu has an empty warp list. A Linux player built at commit `7fd45d2` was
+checked for both tables and both strings. Qualification of a replacement
+download, including an in-game save and cold Continue, is in progress.
+
+The [Linux build instructions](#build-from-source) cover dependencies, disc
+verification and launching the game. The [setup guide](docs/SETUP.md) records
+controls and save paths for existing installations.
 
 ## About this project
 This is a passion project. I'm working hard on it, but it's made for fun and for everyone's enjoyment — free, non-commercial, and made by a fan. If you enjoy it, that's the whole point.
@@ -108,71 +93,12 @@ python3 tools/check_no_retail_data.py --registry provenance/resident-inventory.j
 
 ## How to play
 
-These instructions match [bfm-r38-61c60516d](https://github.com/Blizz127/brave-fencer-musashi-decomp-port/releases/tag/bfm-r38-61c60516d).
-Read the [setup guide](docs/SETUP.md) for prerequisites, controls, saves and troubleshooting.
+Build the Linux player and launch it with the `.cue` from your own USA disc.
+Keep every referenced `.bin` track beside the cue. The setup guide includes
+instructions for backing up an existing memory card.
+[Build from source](#build-from-source) · [Save locations](docs/SETUP.md#saves-settings-and-files-on-linux)
 
-### Linux x86_64
-
-Download `bfm-r38-61c60516d-linux-x86_64.tar.gz` and `SHA256SUMS` from the
-release page into the same directory, then:
-
-```sh
-sha256sum -c SHA256SUMS
-mkdir -p "$HOME/Games/bfm-port"
-tar -xzf bfm-r38-61c60516d-linux-x86_64.tar.gz -C "$HOME/Games/bfm-port"
-"$HOME/Games/bfm-port/bfm-r38-61c60516d/launch.sh"
-```
-
-Requires glibc **2.38+**, a C++ runtime with **GLIBCXX_3.4.32**, OpenGL
-and the desktop graphics/audio libraries listed in the setup guide.
-Put a `.cue`/`.bin` dump of **your own USA SLUS-00726 disc** in
-`~/Games/brave-fencer-musashi/disc/` or a `disc/` folder beside `launch.sh`.
-Keep all referenced tracks together. One-bin and per-track dumps work; a
-2048-byte `.iso` does not. A file picker is offered when available, or set
-`BFM_DISC="/path/to/your/game.cue"` when launching.
-
-To try the r47 test build instead, use `bfm-r47-8f8176c8c-linux-x86_64.tar.gz`
-and the `SHA256SUMS` from the
-[r47 release page](https://github.com/Blizz127/brave-fencer-musashi-decomp-port/releases/tag/bfm-r47-8f8176c8c)
-in the same steps, and run `bfm-r47-8f8176c8c/launch.sh`. Its `launch.sh`
-turns the native VSync wait on; `MUSASHI_VSYNC_WAIT=off` runs the r41 wait.
-
-For Steam Deck/Game Mode, add `launch.sh` as a non-Steam game and keep Steam
-Input enabled. Preserve earlier version folders and back up saves after
-quitting normally; no running game needs to be updated or restarted.
-
-### Windows x64 (test build, Wine-validated only)
-
-Download `bfm-r44-c427ee546-windows-x64.zip` and `SHA256SUMS` from the
-[bfm-r41-3634893fe](https://github.com/Blizz127/brave-fencer-musashi-decomp-port/releases/tag/bfm-r41-3634893fe) release page. This build was cross-compiled for
-Windows 10/11 x64 and has run **only under Wine**. It has not been tested on
-real Windows hardware. Its native-lane function set is the same as Linux r41.
-
-The newer r47 Windows test build, `bfm-r47-81c5dbd03-windows-x64.zip`, installs
-the same way from the
-[r47 release page](https://github.com/Blizz127/brave-fencer-musashi-decomp-port/releases/tag/bfm-r47-8f8176c8c);
-its hash is in `SHA256SUMS-windows-x64` there. It has also run only under Wine.
-
-1. Optional: check the download in PowerShell with
-   `Get-FileHash bfm-r44-c427ee546-windows-x64.zip -Algorithm SHA256`. Compare
-   the result with the line in `SHA256SUMS`.
-2. Extract the zip to a folder you control, for example
-   `%USERPROFILE%\Games\bfm-port`.
-3. Put the `.cue`/`.bin` dump of **your own USA SLUS-00726 disc** in a `disc\`
-   folder next to `launch.cmd`, or in
-   `%USERPROFILE%\Games\brave-fencer-musashi\disc`. Keep all referenced tracks
-   together. If neither folder has a disc, a file picker asks once. You can
-   also set `BFM_DISC` to the `.cue` path.
-4. Run `launch.cmd`. Saves go to `%APPDATA%\bfm-port` (memory card
-   `bfm_card0.mcd`). The log of the last run is
-   `%APPDATA%\bfm-port\last-run.log`.
-
-The package README says controls and the dev menu work as in the Linux build:
-F8 or Select+Start opens the menu, and `BFM_DEV_MENU=0` turns it off. That
-has not been re-checked on a Windows machine. See
-[Windows notes](docs/SETUP.md#windows-x64-test-build).
-
-### Controls, saves and dev menu
+### Historical packaged controls, saves and dev menu
 
 - Gameplay: D-pad/left stick or arrows/WASD; controller A/B/X/Y correspond to
   Cross/Circle/Square/Triangle, or keyboard C/V/X/Z. Enter is Start; Space is
@@ -217,8 +143,7 @@ were built from `61c60516d18bf6402e6dbd937d8c8d18ebd1af4b`. GitHub's automatic
 source archives and the historical build instructions below do not
 reproduce the newer r38 binary. The Windows x64 binary was cross-built
 from unpublished port sources (windows-port `c427ee546`); this recipe does
-not build it. Public player instructions above describe the release
-artifact, not the older source snapshot's menu behavior.
+not build it. The packaged menu and save instructions above describe the historical binaries.
 
 The public build uses a curated main-executable registry at
 `provenance/native-main.json`. It records 256 owner-authored C sources totaling

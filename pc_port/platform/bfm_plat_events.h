@@ -96,18 +96,12 @@ void bfm_plat_events_mark_code_site(BfmEvent event);
 int bfm_plat_events_take_code_mark(BfmEvent event);
 void bfm_plat_events_clear_code_marks(void);
 
-/* ---- Known retail hook sites (SLUS-00726) ------------------------------
- * Evidence-backed guest sites for the hook points, with their payload
- * fills. Evidence cites vendor/bfm-decomp (Druthulu's cleaned decomp of
- * the same build) and this repository's runtime notes. No retail bytes are
- * involved: these are addresses and field offsets only. */
+/* Addresses in the USA game memory map used by host event sampling. */
 #define BFM_GUEST_STATE_BASE   0x800AF630u  /* D_800AF630 main state block */
 #define BFM_GUEST_MAJOR_MODE   0x800B99F0u  /* u16 base+0xA3C0 (func_80011B7C arg) */
 #define BFM_GUEST_SCENE_PHASE  0x800B99F6u  /* u16 base+0xA3C6 = D_800B99F6 */
 #define BFM_GUEST_CARD_STATE   0x800760ACu  /* s32 D_800760AC memcard state */
-/* Live game state (the 0x98-byte struct D_80078E78 and friends that
- * func_80029774 snapshots into each 0x2DC-byte save record; see
- * docs/ARCHITECTURE-PORT.md "Live game state" for the evidence). */
+/* The live record supplies the counters sampled below. */
 #define BFM_GUEST_LIVE_STRUCT   0x80078E78u  /* 0x98 bytes */
 #define BFM_GUEST_PLAY_TIME     0x80078E7Cu  /* u8 frames(/30), s, min, h (<=99:59:59) */
 #define BFM_GUEST_MONEY         0x80078E8Cu  /* s32, 0..99999 */
@@ -141,7 +135,7 @@ typedef struct BfmPlatKnownSite {
     const char *overlay;       /* NULL / "SC*" */
     BfmEvent event;
     const char *symbol;        /* function name at guest_pc */
-    const char *evidence;      /* file:line references */
+    const char *evidence;      /* Basis for this event mapping. */
     const char *confidence;    /* "high" / "medium" / "low" + why */
     BfmPlatHookFill fill;
 } BfmPlatKnownSite;

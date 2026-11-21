@@ -1,16 +1,14 @@
 # Matching log and method
 
-## Status
+## Historical matching results
 
-The compiler is **resolved: GCC 2.7.2 / PSY-Q 4.0 / ASPSX 2.56**.
-
-25 functions are byte-verified against retail — but only 3 are substantive;
-the other 22 are two-instruction stubs. See "Counting honestly" below.
-The 6→3 elimination is **replicated** across two independent functions, one of
-them a verified-correct source. The compiler is still
-**unresolved**, but no longer unconstrained: half the candidate set has been
-eliminated by a complex function — see "First elimination" below. That result
-is **unreplicated**; a second function was attempted and came out inconclusive.
+The matching configuration identified for the US release is GCC 2.7.2,
+PSY-Q 4.0 and ASPSX 2.56. The early compiler study below compared six
+candidates. At the 25-function checkpoint, three matches were substantive
+and 22 were two-instruction stubs. These checkpoints describe the original
+investigation. Some draft sources and the aggregate registry used for it
+are outside the public source distribution. For the current public matching
+registries and verification commands, see the [README](../README.md).
 
 | vram | words | source | verdict |
 | --- | --- | --- | --- |
@@ -79,8 +77,8 @@ MATCHED 25 functions, 308 bytes
 
 ## Regenerating the disassembly
 
-`asm/` is retail-derived and untracked, and it has been found empty once
-already. It comes back with:
+Generate the local retail disassembly from your own disc before running the
+matching tools.
 
 ```sh
 python3 -m splat split config/slus_007.26.yaml
@@ -89,21 +87,10 @@ python3 -m splat split config/overlay_main_0012.yaml
 python3 tools/verify_registry.py
 ```
 
-The last line rebuilds every registry entry and puts it through the oracle
-again. The registry is a claim, not a record, and after anything touches the
-tree it is re-earned rather than remembered.
-
-## A destructive automation bug, caught only by re-verification
-
-Batch-matching wrote each candidate's source, then deleted it when the build or
-comparison failed. `func_8012BF4C` already had a hand-written, committed,
-verified source; the batch overwrote it with m2c output, failed, and deleted the
-file — destroying work already in git.
-
-Nothing in the matching flow noticed. It surfaced only because every registry
-entry is re-verified through the oracle after a batch, which is why that step
-exists. Any future batch must refuse to overwrite an existing source rather than
-assume it owns the path.
+After each batch, rerun the registry verification. A failed candidate once
+overwrote and removed an existing verified source for `func_8012BF4C`.
+Batch matching must leave existing source files intact when a new candidate
+fails to compile or compare.
 
 ## Linking: why bytes from the object are not comparable
 
@@ -143,14 +130,14 @@ build that left the previous run's bytes in place caused `match_function` to
 report a confident MATCH on stale data during this work — the exact false pass
 the oracle exists to prevent.
 
-Reproduce with:
-
-After `./tools/fetch_toolchains.sh`, every path resolves from the repository:
+To reproduce the small leaf comparison, set `CANDIDATE_C` to an independent
+reconstruction of `func_80012AB0` and `OUTPUT_BIN` to the desired output path.
+With the toolchain installed, run the following commands.
 
 ```sh
-python3 tools/build_candidate.py src/main/80012ab0.c \
-  --symbol func_80012AB0 --toolchain gcc-2.7.2-psx --output /tmp/candidate.bin
-python3 tools/match_function.py --vram 0x80012AB0 --size 0xC --candidate /tmp/candidate.bin
+python3 tools/build_candidate.py "$CANDIDATE_C" \
+  --symbol func_80012AB0 --toolchain gcc-2.7.2-psx --output "$OUTPUT_BIN"
+python3 tools/match_function.py --vram 0x80012AB0 --size 0xC --candidate "$OUTPUT_BIN"
 ```
 
 ## First elimination: `func_80012E6C`
@@ -447,7 +434,7 @@ and `-G` arguments must use the `=` form:
 ```
 
 
-## D4: not every function is -O2
+## Per-function optimization
 
 `func_80010A98`, on the boot chain just after crt0's constructor-table loop,
 registers two callbacks. m2c's decompilation needed real types before it would
@@ -558,24 +545,12 @@ addressing before behavioral or byte-level verification.
 
 ### Mixed startup compile probe
 
-`include/retail_scratch_call.h` preserves the three scratchpad sequences as
-explicit MIPS assembly with caller-clobbered registers and memory declared.
-It rejects native compilation. The original stack pointer is restored after
-each call; the fixed save cell makes this operation non-reentrant. The
-pinned maspsx parser requires tab-separated `.set` directives: space-separated
-ones in the first probe left extra delay-slot instructions in the output.
-
-The local, ignored `staging/startup/80010178-mixed.c` combines that fragment
-with recovered C and explicit byte-pointer arithmetic for the two opaque
-state-block arguments. Build the probe with:
-
-```sh
-python3 tools/build_candidate.py staging/startup/80010178-mixed.c \
-  --symbol func_80010178 --link-base 0x80010178 --optimization=-O0 \
-  --output /tmp/musashi-startup-probe.bin
-python3 tools/match_function.py --vram 0x80010178 --size 0x7F4 \
-  --candidate /tmp/musashi-startup-probe.bin
-```
+A historical mixed C/assembly probe combined the three scratchpad stack
+switches with recovered C and explicit byte-pointer arithmetic for the two
+opaque state-block arguments. The embedded assembly specified its
+caller-clobbered registers and memory effects. The fixed cell for the saved
+stack pointer made the operation non-reentrant. In this toolchain, maspsx
+needed tab-separated `.set` directives to avoid extra delay-slot instructions.
 
 The initial full candidate was **not a match**: `-O0` emitted 1,936 bytes versus retail's
 2,036, and `-O2` emitted 1,424 bytes. In each compiled candidate, all three
@@ -585,8 +560,8 @@ assembly fragments only. Their relocated positions, the differing prologue
 and surrounding C still require matching work; runtime behavior remains
 unverified. No new entry was added to the pure-C match registry.
 
-The subsequent ignored `staging/startup/80010178-registers.c` probe uses
-ordinary C `register` locals for the addresses initialized into `$s0` and
+A second probe used ordinary C `register` locals for the addresses loaded
+into `$s0` and
 `$s1` at retail `0x80010198..0x800101A4`. At `-O0`, GCC emits those same
 initializations. No hard-coded register bindings or artificial stack padding
 were introduced. The frame still differs (candidate `0x28`, retail `0x38`).
@@ -603,8 +578,7 @@ bytes; the complete 2,036-byte retail comparison still refuses the differing
 length. Loop branching, frame layout, and expression ordering remain
 unresolved; the size difference is not a parity percentage.
 
-Two other functions examined for D4 turned out to be poor fits and were left
-alone rather than forced:
+Two further boot functions required separate treatment.
 
 * `func_80010000`, the crt0 entry itself, is flagged `/* Handwritten function
   */` by splat and directly manipulates `$sp`/`$fp`/`$gp`/`$ra` in ways no C
@@ -623,16 +597,11 @@ alone rather than forced:
 
 ## Batch triage: the 65-128 bucket
 
-With the oracle unavailable, 861 pending functions in the 65-128 bucket
-(267 main, 594 main_0012) were m2c-decompiled and sanitized in parallel
-by subagents into scratch (never `src/`, never the registry), then gated
-through `gcc -fsyntax-only -std=c89` — C89 specifically, because modern
-GCC reads `f()` as `(void)` while gcc-2.7.2 reads it as unchecked args,
-so the default dialect false-rejects the harness's own convention.
-
-Result: 313 parse-OK, banked for promotion the moment the toolchain runs
-again (9 need no linking at all). The sanitizer rules this forced are in
-`tools/batch_match.py::_sanitize`, each RED-tested: `? (*name)()`
+In the 65–128-byte size range, 861 drafts were checked with
+`gcc -fsyntax-only -std=c89` (267 main and 594 main_0012). C89 accepts the
+unprototyped `f()` calls used by the historical compiler. Of these drafts,
+313 passed syntax checking, including nine without relocations. The sanitizer
+in `tools/batch_match.py` corrects m2c placeholders including `? (*name)()`
 locals, `extern ? D`, bare and named `?` params, callback
 declarators, NULL to 0, missing-symbol declarations, and extern-pointer
 refinement. A corpus OK-set diff proved zero regressions.
@@ -665,24 +634,11 @@ $ra" in last block`) to stdout, so the harness captures them as candidate
 body — `_sanitize` now drops those lines, recovering ~13% of the 0012
 small bucket alone.
 
-Two operational lessons, both now structural:
-
-- The durable bank is `staging/candidates/` (gitignored, local-only),
-  plus `staging/pend_*.txt`. An earlier `/tmp`-only bank of ~1500 files
-  partly evaporated mid-session — `/tmp` here is shared with at least one
-  other active agent and files vanish. Gate passes into `staging/`
-  promptly; treat `/tmp` as scratch. `docs/RECOVERY.md` holds the regen
-  one-liners and the oracle probe.
-- Coverage honesty: "attempted" means a gated pass exists in
-  `staging/candidates/` under the function's name. Raw m2c outputs in
-  `/tmp` are not coverage — they evaporate and were never gated.
-- As of 2026-09-04 the full pending set (3765: main 1334, main_0012
-  2431) is triaged to zero fresh: 1848 gated passes banked (49%),
-  the rest in `staging/fails_*.txt` by bucket. The fails are dominated
-  by struct-table member access (`unkXXX` on `extern s32`), then
-  `M2C_ERROR`, `spNN`/`saved_reg_*` temporaries, and arity-mismatched
-  static prototypes. Nothing mechanical is left; the remaining work is
-  per-function struct modeling plus the oracle sweep.
+On 2026-09-04, 1,848 of 3,765 drafts passed syntax checking across the
+two regions. Common failures involved global tables with unresolved field
+types, unmodelled stack parameters, saved-register temporaries and prototype
+mismatches. A syntax pass only prepares a candidate for compilation and
+byte comparison. See [Candidate verification](RECOVERY.md).
 
 ## Exact placement and structured startup probe
 
@@ -696,7 +652,7 @@ unaligned cases failed before the fix and all three pass afterward. All
 362 existing registry entries re-verified with the corrected linker; the full
 suite passed 317 tests plus 5 subtests on 2026-09-04.
 
-The local, ignored `staging/startup/80010178-postincrement.c` probe replaces
+A structured startup probe replaces
 the recovered gotos with nested `while` loops, uses a global counter ternary
 without a spill temporary, and restores postfix halfword increments.
 Compiled at `-O0` with base `0x80010178`, it is exactly 2036 bytes, with
@@ -708,43 +664,26 @@ invented to force the frame. Original local declarations remain unresolved.
 Casting the address bases before addition in the separate `addresswords`
 probe did not change these differences.
 
-A subsequent `staging/startup/80010178-integer-add.c` probe uses
+A subsequent probe used
 `offset + (u32)address_base` for those three additions. Unlike pointer
 addition or base-first integer addition, it reproduces their operand order.
 It matches 499/509 words at identical addresses; only the ten frame words
 above remain different. This does not resolve the original local declarations
 or qualify the mixed-assembly probe for the pure-C registry.
 
-These are static recovery observations only. The probe still includes three
-retail scratch-stack assembly fragments and is neither a pure-C registry
-match nor native boot evidence. Reproduce the compile with:
+Both probes included three MIPS scratch-stack sequences. These partial static
+results establish neither a complete C match nor executed host startup.
 
-```sh
-python3 tools/build_candidate.py staging/startup/80010178-postincrement.c \
-  --symbol func_80010178 --link-base 0x80010178 --optimization=-O0 \
-  --output /tmp/musashi-startup-postincrement.bin
-```
+## Function inventory on 2026-09-11
 
-## Native queue, 2026-09-11: every function drafted, oracle pending
-
-The function inventory is closed (see `docs/PROGRESS.md`, ceiling section):
+The inventory for these three regions contained
 1531 main + 19 main_0007 + 2412 main_0012 = 3962 functions, 697632 bytes.
 All splat disassemblies were regenerated with hole-evidenced symbols
 (`config/symbol_addrs.main.auto.txt`, `config/symbol_addrs.main_0007.auto.txt`;
 old instruction bytes verified identical, zero lost).
 
-Every unregistered function has (or is getting) a dual-shape draft in
-`src/`: pinned SHA256 word export plus an UNVERIFIED m2c body, via
-`/tmp/carve_all.py` (generalizes `/tmp/carve_batch.py` per region; asserts
-words against the blob, never rewrites seam words, skips verified bodies).
-As of the disk-quota interruption: 652/1519 spans carved. Resume with:
-
-```sh
-python3 /tmp/carve_all.py full /tmp/carve_full.log > /tmp/carve_resume.log 2>&1
-```
-
-Then, on a shell where the 32-bit toolchain executes, drain the queue.
-`--max-size` must be raised: 75% of the pending bytes are functions over
+For a local source collection, `--register-existing` compares existing drafts.
+At the time, 75% of the unverified bytes were in functions over
 the 256-byte default cap:
 
 ```sh
@@ -755,34 +694,15 @@ python3 tools/verify_registry.py
 python3 tools/progress.py
 ```
 
-Caveats: `verify_existing` never stamps, so matched files keep their
-UNVERIFIED header notes after registration — the registry is the
-authority, not the file header. m2c-failed spans stay word-only and need
-hand-written bodies (struct-table member access dominates, per the triage
-above). The 31 pre-existing `enddlabel func_` data labels (80072xxx run
-et al.) are proven data (no prologue, no call/jump target, table/ASCII
-heads) — do not "recover" them.
+A registry entry requires a successful build and byte comparison. The 31
+pre-existing `enddlabel func_` labels near `80072xxx` denote data. They lack
+prologues and call or jump targets and begin with table or text contents.
 
-## Environment watch: 32-bit toolchain execution
+## Running the historical toolchain
 
-The vendored Psy-Q compilers are 32-bit statically linked i386 binaries.
-They die with SIGSYS (exit 159, empty output, not even `--version`) in a
-sandbox whose seccomp profile rejects a legacy startup syscall; `cc1`
-fails identically while `m2c`, `maspsx`, and binutils (all Python or
-64-bit) are unaffected. When this holds, `tools/verify_registry.py`
-correctly fails closed at 0/252 rather than claiming anything. `personality()`
-itself works (`setarch`/`linux32` exit 0), so the block is syscall-specific,
-not a missing compat layer. If a session shows this, do not work around it
-by weakening the oracle: bank verified-ready candidates and wait for an
-environment where the toolchain executes.
-
-**Resolved, 2026-09-14.** The block is the sandbox, not the host. The same
-`cc1` that exits 159 under the sandboxed shell runs normally when the
-sandbox is off, and the full `tools/verify_registry.py` re-verified every
-entry from there. So the rule above stands with one correction: the failure
-signature is a *sandbox* signature, and the first thing to try is the same
-command outside it. Only treat the toolchain as unavailable once it fails
-in an unsandboxed shell too.
+The historical PS1 compiler binaries target 32-bit i386. If the compiler exits
+with `SIGSYS` before processing input, check whether the execution environment
+supports that toolchain. A failed compiler run yields no verified matches.
 
 ## The sweep is exhausted; the near-miss band is not
 

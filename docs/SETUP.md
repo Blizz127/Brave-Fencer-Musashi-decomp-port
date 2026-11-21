@@ -1,16 +1,14 @@
-# Setup for public r38
+# Setup for existing public r38 installations
 
-These instructions match **bfm-r38-61c60516d**, published on 2026-10-02,
-using runtime source `61c60516d18bf6402e6dbd937d8c8d18ebd1af4b`.
-[Download the release](https://github.com/Blizz127/brave-fencer-musashi-decomp-port/releases/tag/bfm-r38-61c60516d).
-This is an experimental **hybrid** port: substantial game code still runs
-through a CPU interpreter. Full native execution and whole-game completion
-are not established.
+For a new Linux install, follow the current source build instructions. The
+November 21 package review found embedded game tables in historical Linux and
+Windows players. [Package review and current build instructions](../README.md#player-downloads-and-source-builds)
 
-| Platform | Package and verification |
-|---|---|
-| Linux x86_64 | Published tarball; forest, village, recorded attract endpoint, isolated inn save and cold Continue checked. Automated gameplay checks used null audio. |
-| Windows x64 | Test build `bfm-r44-c427ee546-windows-x64.zip` in the [bfm-r41-3634893fe](https://github.com/Blizz127/brave-fencer-musashi-decomp-port/releases/tag/bfm-r41-3634893fe) prerelease (2026-10-05). It was cross-compiled and boots through the intro into gameplay under **Wine only**; it has not been tested on real Windows. See [Windows x64 test build](#windows-x64-test-build). |
+The controls, save paths and launcher examples below describe Linux r38,
+published on October 2, 2026, from runtime source
+`61c60516d18bf6402e6dbd937d8c8d18ebd1af4b`. Its forest, village and
+isolated inn save and cold Continue checks used null audio. The r44 Windows
+build was tested under Wine. Both builds use a hybrid runtime.
 
 ## Linux prerequisites
 
@@ -23,25 +21,16 @@ are not established.
 The package includes the required SDL2, OpenAL, libcrypto and zlib shared
 libraries. Keep its `lib/` folder with the executable. No BIOS is needed.
 
-## Download, install and run on Linux
+## Run an existing Linux package
 
-1. Download `bfm-r38-61c60516d-linux-x86_64.tar.gz` and `SHA256SUMS` from the
-   release above into the same directory.
-2. Check and unpack them:
-
-   ```sh
-   sha256sum -c SHA256SUMS
-   mkdir -p "$HOME/Games/bfm-port"
-   tar -xzf bfm-r38-61c60516d-linux-x86_64.tar.gz -C "$HOME/Games/bfm-port"
-   ```
-
-3. Keep your own `.cue` file and all referenced `.bin` tracks together in
+1. Open the directory holding your existing installation.
+2. Keep your own `.cue` file and all referenced `.bin` tracks together in
    `~/Games/brave-fencer-musashi/disc/`, or in a `disc/` directory beside
    `launch.sh`. One-bin and per-track dumps are supported. A 2048-byte `.iso`
    is unsupported because it lacks the required CD-XA data. The normal disc
    route checks the combined raw track bytes and the USA boot executable;
    other regions and modified dumps are rejected.
-4. Run:
+3. Run the launcher:
 
    ```sh
    "$HOME/Games/bfm-port/bfm-r38-61c60516d/launch.sh"
@@ -138,9 +127,9 @@ and enhanced rendering options are not promised here.
 
 ## Windows x64 test build
 
-**Download:** `bfm-r44-c427ee546-windows-x64.zip` (3,980,113 bytes) and
-`SHA256SUMS` from the [bfm-r41-3634893fe](https://github.com/Blizz127/brave-fencer-musashi-decomp-port/releases/tag/bfm-r41-3634893fe) release. The zip's SHA-256
-is `c182fd27d0558389c643c42ccedbbb3d62287d350818873438a1f2ec64f87af5`.
+The historical `bfm-r44-c427ee546-windows-x64.zip` is 3,980,113 bytes with
+SHA-256 `c182fd27d0558389c643c42ccedbbb3d62287d350818873438a1f2ec64f87af5`.
+The package review found both game tables in its player.
 
 **Status:**
 - This is a Windows 10/11 x64 build cross-compiled from unpublished port

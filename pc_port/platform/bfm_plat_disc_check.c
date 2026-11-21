@@ -121,7 +121,7 @@ static int check_cue(const char *cue, BfmPlatDiscCheck *c) {
     return BFM_PLAT_OK;
 }
 
-/* "BOOT = cdrom:\SLUS_007.26;1" -> "SLUS_007.26" */
+/* Read the executable basename from the BOOT directive of a PS1 disc. */
 static int parse_system_cnf(const char *text, size_t n, char *boot, size_t size) {
     size_t i = 0;
     while (i < n) {

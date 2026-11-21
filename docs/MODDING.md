@@ -346,10 +346,10 @@ while the console is open.
 
 ## 8. Known game state (US, SLUS-00726)
 
-Found statically from the decompilation. The evidence for each row, down
-to file and line, is in ARCHITECTURE-PORT.md ("Live game state") and is
-checked by the test suite. Confidence is about the address and type; a
-"label" note means the meaning of the value is inferred.
+These addresses describe the USA release. The platform tests check its
+exported constants and exercise event payloads with synthetic game state.
+The field descriptions below also draw on the game's save layout. Gauge and
+NPC labels identify inferred uses. See the [architecture guide](ARCHITECTURE-PORT.md#live-game-state).
 
 | What | Address | Type | Confidence |
 |---|---|---|---|

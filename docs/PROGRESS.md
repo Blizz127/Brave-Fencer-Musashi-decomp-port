@@ -1,10 +1,3 @@
-> **PROJECT GOAL:** a native PC port in the mould of Ship of Harkinian /
-> the Silent Hill decomp ports, ultimately re-rendered (HD-2D).
-> **Read `docs/PORT_GOAL_AND_PLAN.md` before planning any work.**
-> The port is the deliverable; the decompilation is how you get there.
-> Recovered *assembly* is worth nothing to the port -- you cannot run PS1 MIPS
-> on x86. Report C-only executed-path coverage, not just total coverage.
-
 # Interpreting progress
 
 `python3 tools/progress.py` reports registered byte ranges and sums their sizes.
@@ -35,8 +28,8 @@ byte-matched, runs solely through the word-stepping CPU. The two numbers
 answer different questions (how much is understood vs how much of the
 port can exist) and must travel together.
 
-Owner decision (2026-09-29, 13:40 CDT): genuinely handwritten mnemonic
-assembly may be registered with `recovery: "assembly"`, its vendor origin,
+The coverage convention adopted on 2026-09-29 records reviewed handwritten
+mnemonic assembly with `recovery: "assembly"`, its documented origin,
 and a reviewed complete-function extent after the normal byte-match and
 retail-data gates. Report its unique bytes as **mnemonic assembly**, separately
 from portable matched C. It remains eligible for the combined qualifying
@@ -101,8 +94,8 @@ function bytes: the flat SLUS `.text`, all of member 0007, and member
 0012's code chunk all embed data-in-text (jump tables, pointer tables,
 globals, string/const pools) plus alignment padding. Those bytes can never
 be complete functions, so they can never enter the qualifying numerator.
-The reachable maximum is the splat-enumerated function total, audited
-2026-09-11 with `/tmp/gap_analysis.py` (every non-function byte classified):
+The 2026-09-11 audit classified the bytes between identified functions in
+three regions. The resulting ceiling applies to those regions.
 
 | Region | Denominator | Function bytes | Proven non-function remainder |
 | --- | --- | --- | --- |

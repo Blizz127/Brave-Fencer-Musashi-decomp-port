@@ -352,6 +352,7 @@ if(MUSASHI_BUILD_PC_PORT)
     target_compile_features(musashi_mips_formatter_probe PRIVATE c_std_99)
     target_link_libraries(musashi_mips_formatter_probe PRIVATE musashi_pc_port)
     add_test(NAME mips_formatter_boundary COMMAND musashi_mips_formatter_probe)
+    set_tests_properties(mips_formatter_boundary PROPERTIES SKIP_RETURN_CODE 77)
 
     add_executable(musashi_callback_registration_probe tests/callback_registration_probe.c)
     target_compile_features(musashi_callback_registration_probe PRIVATE c_std_99)
@@ -696,6 +697,8 @@ if(MUSASHI_BUILD_PC_PORT)
     # developer's own extracted EXE (never from src/ or the build tree).
     set(MUSASHI_CODE_IMAGE ${CMAKE_CURRENT_SOURCE_DIR}/extracted/disc/files/SLUS_007.26)
     if(EXISTS ${MUSASHI_CODE_IMAGE})
+        add_test(NAME mips_formatter_disc_message
+                 COMMAND musashi_mips_formatter_probe --disc-message)
         get_property(MUSASHI_ALL_TESTS DIRECTORY PROPERTY TESTS)
         foreach(MUSASHI_TEST IN LISTS MUSASHI_ALL_TESTS)
             set_property(TEST ${MUSASHI_TEST} APPEND PROPERTY

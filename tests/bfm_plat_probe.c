@@ -851,6 +851,9 @@ static int group_sites(void) {
         printf("site %08x %s %s %s %.*s\n", (unsigned)k[i].guest_pc,
                !k[i].overlay ? "-" : strchr(k[i].overlay, ',') ? "list" : k[i].overlay, bfm_plat_event_name(k[i].event),
                k[i].symbol, (int)strcspn(k[i].confidence, ":"), k[i].confidence);
+    for (i = 0; i < n; i++)
+        if (k[i].overlay && strchr(k[i].overlay, ','))
+            printf("scope %s %s\n", bfm_plat_event_name(k[i].event), k[i].overlay);
     for (i = 0; i < m; i++) printf("unsited %s\n", bfm_plat_event_name(u[i]));
     for (i = 0; i < n; i++) printf("evidence %08x %s\n", (unsigned)k[i].guest_pc, k[i].evidence);
     return 0;

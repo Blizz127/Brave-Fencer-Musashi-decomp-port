@@ -1,4 +1,27 @@
-# Snapshot scans
+# Source snapshot scans
+
+## November 21, 2026 source audit
+
+A second review of the public source at `2da109f` found material the earlier
+scans missed. A Python test encoded a 47-byte run from the disc configuration
+using escape sequences. Historical documentation also transcribed configuration
+fields and a dispatch table. A formatter test quoted diagnostic text from the
+USA executable. The revised fixtures use synthetic input or read the verified
+local executable. The revised documents retain the measured behavior.
+
+The hook tests also carried excerpts from an external decompilation. The
+revised tests exercise the public hook callbacks on synthetic guest state and
+compare selected instruction spans against the USA disc by size and digest.
+The runtime describes the observed event fields without quoting external
+implementation text. The compiler and matching-tool tests use artificial
+assembly listings for parsing and delay-slot checks.
+
+The earlier results below record what each scanner reported. A raw-byte search
+of source files cannot detect every string a compiler or interpreter builds
+from escaped literals. The release-package audit examined the compiled
+executables separately. [Current source and release status](README.md)
+
+## Historical source checks
 
 Every scan was run over the exact committed tree, and the retail references
 stayed on the owner's machine. Reference paths are shown relative to the
@@ -199,9 +222,7 @@ tilde_local_paths: 6
     tools/gl_bench/run.sh:4: ~/opt
     tools/run_headless_boot.sh:40: ~/opt
 agent_scratch_paths: 3
-    .gitignore:102: .claude/
-    EXCLUDED.md:92: codex-session
-    EXCLUDED.md:92: .claude/
+    (three references in the tooling exclusions and ignore rules)
 exit status: 0
 ```
 
