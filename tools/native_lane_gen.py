@@ -987,6 +987,42 @@ FACING_EXTENTS = {
 }
 
 
+# These SC01/0000 player helpers access actor memory and globals, and their
+# instruction-boundary timing is still interpreted. Some other members contain
+# the same whole function at the same address; others use a different layout.
+SC01_PLAYER_MOTION_EXTENTS = {
+    0x801473DC: (16, 0xC43EE3DE99F5D03C),
+    0x801473EC: (116, 0x21CB35CF151E9600),
+    0x80147814: (76, 0x7581AF829A9891B6),
+    0x80147948: (84, 0xF4F0A29E42172E90),
+    0x801479BC: (84, 0xAC93D88A54D5E69B),
+    0x80147B5C: (212, 0xA36525D925E9F0C9),
+    0x80148038: (92, 0x605F22189CA0384F),
+    0x801488A8: (116, 0x6AB40F4A792D7C96),
+    0x8014891C: (100, 0xEB3B92195A88580D),
+    0x80148980: (104, 0x067B31ACE1209C59),
+    0x80148A48: (100, 0xADF7AAC6CEE6EBFE),
+    0x80149744: (68, 0x1C428CFC35FA8A6C),
+    0x80149884: (60, 0x8B07EBA43DB9CF50),
+    0x80149CD4: (60, 0xEC44C5610B56AF22),
+    0x80149FB0: (152, 0x3ECE2E2F5F3CE5F9),
+    0x8016F1AC: (24, 0x2D530D164FD71FFB),
+}
+
+
+def scene_player_motion_source_only(entry, src, info):
+    pc = entry["vram"]
+    extent = SC01_PLAYER_MOTION_EXTENTS.get(pc)
+    if extent is None:
+        return False
+    if entry.get("region") == "sc01_0000" or (info and info["member"] == "sc01_0000"):
+        return True
+    if info and entry["size"] == extent[0] and member_digest(info, pc, extent[0]) == extent[1]:
+        return True
+    source = ROOT / "src/overlays/sc01_0000" / f"{pc:08x}.c"
+    return src.resolve() == source or (source.is_file() and src.read_bytes() == source.read_bytes())
+
+
 def build_one(entry, out, symbols, hooks, clang, info=None):
     vram, size, src = entry["vram"], entry["size"], ROOT / entry["source"]
     name = entry["name"]
@@ -1006,6 +1042,8 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
         if wrapped_angle and (size != 12 or hashlib.sha256(src.read_bytes()).hexdigest() !=
                 "7e1d58c1eca9742e5c025641f349f594066b5cadd3b4eb1c4a64f8706bb7ace2"):
             raise Reject("source", "wrapped-angle step requires the verified clean source")
+        if scene_player_motion_source_only(entry, src, info):
+            raise Reject("memory", "SC01 player motion requires checked guest memory and instruction timing")
         if vram in DENY:
             raise Reject("deny", DENY[vram])
         facing = FACING_EXTENTS.get(vram)

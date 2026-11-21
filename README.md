@@ -42,8 +42,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 21 source update covers 190 functions across seven scene overlays,
-totaling 6,800 bytes of matching executable code. In the opening scene, one
+The November 21 source update covers 206 functions across seven scene overlays,
+totaling 8,264 bytes of matching executable code. In the opening scene, one
 routine calls the handler selected by the player state byte. Another sets the
 facing direction and counts frames. A separate scene event uses that timer
 to advance its state on the 31st call from a fresh counter. The first opening handler
@@ -71,6 +71,14 @@ the original memory access and timing behavior, so the native dispatcher
 defers them in both scene members that share these bodies.
 Run the synthetic cases with
 `python3 -m unittest discover -s tests -p test_scene_geometry.py`.
+
+Sixteen SC01/0000 functions read directional input, update actor velocity and
+position, and check whether the current player state allows an action. The host
+test covers digital button masks, analog stick thresholds, coordinate wraparound,
+and movement limits. Fifteen of these functions also match the forest overlay
+SC01/0077 byte for byte. The sixteenth reads a different scene table there.
+The player continues to interpret this code. Run the component and native
+selection tests with `python3 -m pytest -q tests/test_scene_player_motion.py`.
 
 Run the middle-state component test with a C compiler installed.
 
