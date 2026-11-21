@@ -842,6 +842,16 @@
       "optimization": "-O2"
     },
     {
+      "name": "func_8017E170",
+      "vram": 2149048688,
+      "size": 68,
+      "region": "sc01_0077",
+      "source": "src/overlays/sc01_0077/8017e170.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
       "name": "func_801320D0",
       "region": "sc02_0031",
       "vram": 2148737232,

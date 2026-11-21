@@ -52,10 +52,11 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 21 source update covers 157 functions across six scene overlays,
-totaling 1,936 bytes of matching executable code. In the opening scene, one
+The November 21 source update covers 158 functions across six scene overlays,
+totaling 2,004 bytes of matching executable code. In the opening scene, one
 routine calls the handler selected by the player state byte. Another sets the
-facing direction and completes a timed event. The PC player still uses a hybrid
+facing direction and counts frames. A separate scene event uses that timer
+to advance its state on the 31st call from a fresh counter. The PC player still uses a hybrid
 runtime. These matches can be checked independently of a player build.
 
 With the matching toolchain installed and your USA disc extracted as described
