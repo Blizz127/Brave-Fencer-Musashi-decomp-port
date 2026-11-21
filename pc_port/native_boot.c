@@ -71,6 +71,8 @@ static int log_sample(uint64_t *counter, uint64_t first, uint64_t stride) {
 #include "bfm_plat_audio.h"
 #include "musashi_plat_audio_sink.h"
 #include "bfm_plat_font.h"
+#include "card/player_card.h"
+#include "card/card_save_directory.h"
 #include "musashi_dev_menu.h"
 /* MUSASHI_GPU=bfm_plat: GP0/GP1 are teed into the bfm_plat GPU bridge and
  * drawn by the bfm_plat renderer (MUSASHI_RENDERER, default psycross); the
@@ -142,6 +144,8 @@ typedef struct NativeBoot {
      * lane this range is made PROT_NONE, so a native access there faults
      * (HOST_FAULT) instead of silently touching the host state that follows. */
     uint8_t ram_mirror_guard[0x800000u - MUSASHI_RAM_SIZE - 4096u];
+    MusashiGuestIrqImage irq_image;
+    MusashiGuestIrqStop irq_guest_stop;
     uint8_t list_tail_before[448];
     int list_tail_captured;
     MusashiPsyCrossIrqRuntime irq;
@@ -173,6 +177,10 @@ typedef struct NativeBoot {
     MusashiCallbackRegistrationDevice registration;
     MusashiCallbackDevice callback;
     MusashiCdDevice cd;
+#ifdef MUSASHI_WITH_BFM_PLAT
+    MusashiPlayerCard file_card;
+    int close_requested;
+#endif
     MusashiEventDevice event;
     MusashiInputDevice input;
     MusashiBiosInput bios_input;
@@ -226,6 +234,8 @@ typedef struct NativeBoot {
     uint64_t guest_tick, guest_next_vblank, guest_sequence, guest_host_origin;
     uint32_t guest_pending_cycles;
 } NativeBoot;
+_Static_assert(offsetof(NativeBoot, irq_image) >= 0x800000u,
+               "IRQ image owner must lie outside the native guest aliases");
 
 /* One presented frame: the bfm_plat renderer (via the GPU bridge) or the
  * PsyCross scanout of the controller's VRAM. */
@@ -276,6 +286,9 @@ static int select_opening_overlay(NativeBoot *boot) {
 static int native_devices_shutdown(NativeBoot *boot) {
     if (boot->irq.scheduler.installed) return 0;
     musashi_host_gamepad_close();
+#ifdef MUSASHI_WITH_BFM_PLAT
+    musashi_player_card_close(&boot->file_card);
+#endif
     if (boot->gpu_dma) {
         if (!musashi_gpu_dma2_close(boot->gpu_dma)) return 0;
         boot->gpu_dma = NULL;
@@ -348,8 +361,20 @@ static int exchange_clear_pad(void *userdata, int32_t value, int32_t *previous) 
 
 static int init_card(void *userdata, int32_t pad_started, int32_t *previous) {
     NativeBoot *boot = userdata;
-    return musashi_bios_card_init_service(&boot->card, pad_started, previous);
+    int accepted = musashi_bios_card_init_service(&boot->card, pad_started, previous);
+#ifdef MUSASHI_WITH_BFM_PLAT
+    if (accepted && boot->file_card.service) cs_init_card(boot->file_card.service);
+#endif
+    return accepted;
 }
+
+#ifdef MUSASHI_WITH_BFM_PLAT
+static int player_file_vector(void *userdata, uint32_t vector, uint32_t selector,
+                              const uint32_t args[4], uint32_t *v0) {
+    NativeBoot *boot = userdata;
+    return musashi_player_card_vector(&boot->file_card, vector, selector, args, v0, &boot->bios.file_error);
+}
+#endif
 
 static int execute_event(void *userdata, uint32_t callback) {
     NativeBoot *boot = userdata;
@@ -390,6 +415,9 @@ static int start_card(void *userdata, int32_t *result) {
     if (boot->host_service_depth) return 0;
     boot->host_service_depth++;
     accepted=musashi_bios_card_start_service(&boot->card, result);
+#ifdef MUSASHI_WITH_BFM_PLAT
+    if (accepted && boot->file_card.service) cs_start_card(boot->file_card.service);
+#endif
     boot->host_service_depth--;
     return accepted;
 }
@@ -1600,8 +1628,12 @@ static int epoch_video_edge(void *userdata, uint64_t sequence, uint64_t cycle) {
     if (display_on(boot)) {
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
-            if (ev.type == SDL_QUIT)
+            if (ev.type == SDL_QUIT) {
+#ifdef MUSASHI_WITH_BFM_PLAT
+                if (!host_stop_signal) boot->close_requested = 1;
+#endif
                 host_stop_signal = SIGTERM;
+            }
         }
 #ifdef MUSASHI_WITH_BFM_PLAT
         if (g_plat_input_on) (void)bfm_plat_input_poll();
@@ -1909,6 +1941,22 @@ static int epoch_video_edge(void *userdata, uint64_t sequence, uint64_t cycle) {
     return 1;
 }
 
+/* Device adapters run inside the epoch and cannot dispatch guest callbacks.
+ * Once the selected clock has committed its video edges, let the card deliver
+ * their completions on the owner thread before returning to the guest. */
+static int advance_epoch(NativeBoot *boot, uint32_t cycles) {
+#ifdef MUSASHI_WITH_BFM_PLAT
+    uint64_t sequence = boot->epoch.last_sequence;
+#endif
+    if (!musashi_device_epoch_advance_cost(&boot->epoch, cycles)) return 0;
+#ifdef MUSASHI_WITH_BFM_PLAT
+    const uint64_t committed = boot->epoch.last_sequence;
+    while (!host_stop_signal && sequence < committed)
+        musashi_player_card_pulse(&boot->file_card, ++sequence);
+#endif
+    return 1;
+}
+
 /* Guest-clock cycle quantum. Committing every device on each 2-cycle
  * instruction charge was most of the host's time; batching 16 cycles keeps
  * device state within 14 cycles of guest time (under half a microsecond,
@@ -1920,7 +1968,7 @@ static int guest_clock_flush(NativeBoot *boot) {
     uint32_t pending = boot->guest_pending_cycles;
     if (!pending) return 1;
     boot->guest_pending_cycles = 0;
-    if (!musashi_device_epoch_advance_cost(&boot->epoch, pending)) {
+    if (!advance_epoch(boot, pending)) {
         boot->source_clock.faulted = 1;
         return 0;
     }
@@ -1928,7 +1976,7 @@ static int guest_clock_flush(NativeBoot *boot) {
 }
 
 static int epoch_sync_flushed(NativeBoot *boot) {
-    return guest_clock_flush(boot) && musashi_device_epoch_sync(&boot->epoch);
+    return guest_clock_flush(boot) && advance_epoch(boot, 0);
 }
 
 static int advance_source_clock(void *userdata, uint32_t cycles) {
@@ -1978,7 +2026,7 @@ static int advance_source_clock(void *userdata, uint32_t cycles) {
         return guest_clock_flush(boot);
     }
     if (!guest_clock_flush(boot)) return 0;
-    if (!musashi_device_epoch_advance_cost(&boot->epoch, cycles)) {
+    if (!advance_epoch(boot, cycles)) {
         boot->source_clock.faulted = 1;
         return 0;
     }
@@ -2393,7 +2441,7 @@ static int run_backup_unit(void *userdata, int32_t *guest_result) {
                     "source_start=%llu source_end=%llu\n",
                     (unsigned long long)epoch_started, (unsigned long long)boot->epoch.cycle,
                     (unsigned long long)source_started, (unsigned long long)boot->source_clock.cycles);
-            fprintf(stderr, "native_boot: BU_RETURN result=%d memory_cards=DISCONNECTED "
+            fprintf(stderr, "native_boot: BU_RETURN result=%d physical_sio_cards=DISCONNECTED "
                     "bu_return_port=%u bu_return_last_port=%u bu_return_flags=%02x%02x "
                     "sio_tx_bytes=%llu\n", (int)*guest_result,
                     (unsigned)boot->card.port, (unsigned)boot->card.last_port,
@@ -2408,8 +2456,7 @@ static int run_backup_unit(void *userdata, int32_t *guest_result) {
          * card wait, so each poll spends guest cycles; nothing else would
          * move device time forward. */
         if (boot->continuation != continuation ||
-            !(boot->guest_clock ? musashi_device_epoch_advance_cost(&boot->epoch, 1024u)
-                                : musashi_device_epoch_sync(&boot->epoch)) ||
+            !advance_epoch(boot, boot->guest_clock ? 1024u : 0u) ||
             !musashi_psycross_irq_scheduler_dispatch_pending(&boot->irq.scheduler, continuation))
             return 0;
         if ((Uint32)(SDL_GetTicks() - started) >= 10000u) {
@@ -2425,6 +2472,9 @@ static int init_backup_unit(void *userdata,int32_t *guest_result) {
     if (boot->host_service_depth) return 0;
     boot->host_service_depth++;
     accepted=run_backup_unit(userdata,guest_result);
+#ifdef MUSASHI_WITH_BFM_PLAT
+    if (accepted && boot->file_card.service) cs_init_files(boot->file_card.service);
+#endif
     boot->host_service_depth--;
     return accepted;
 }
@@ -2437,12 +2487,41 @@ static void console_bytes(void *userdata, const uint8_t *bytes, int32_t length) 
     }
 }
 
+static int source_irq_dispatch(void *userdata, MusashiBootMemory *memory, uint32_t context,
+    const uint32_t *installed, const void *interrupted, const MusashiIrqDispatchDevice *io) {
+    NativeBoot *boot = userdata;
+    if (!boot || memory != &boot->memory || interrupted != boot->continuation ||
+        interrupted != boot->irq.scheduler.active_continuation || !boot->irq.scheduler.delivering)
+        return 0;
+    const MusashiGuestIrqCd cd = {memory, boot->irq.cd_registers, boot->irq.cd_services,
+        &boot->irq.cd_frame, &boot->irq.cd_stop};
+    const MusashiGuestIrqCard card = {
+        memory, boot->startup_devices.cd, boot->startup_devices.event, &boot->bios.events
+    };
+    MusashiGuestIrqServices services = {.card=&card, .spu=boot->spu ? &boot->cd_spu : NULL,
+        .cd=boot->irq.cd_clock == &boot->execution_clock ? &cd : NULL};
+    int result = musashi_boot_execute_guest_irq_with_services(&boot->irq_image, memory, context,
+        installed, io, &boot->execution_clock, &boot->dma, &services, &boot->irq_guest_stop);
+    if (!result) boot->irq.failed_target = boot->irq_guest_stop.pc;
+    return result;
+}
+
 static int source_irq_execute(void *userdata, MusashiBootMemory *memory, uint32_t target) {
     NativeBoot *boot = userdata;
     MusashiResetGraphPrefixStop stop = {0};
     MusashiResetGraphPrefixStatus status;
-    status = musashi_boot_execute_source_function(memory, &boot->startup_devices,
-        target, console_bytes, NULL, &stop);
+    if (target == 0x800616d0u) {
+        const MusashiPsyCrossIrqScheduler *scheduler = &boot->irq.scheduler;
+        if (memory != &boot->memory || !scheduler->installed || !scheduler->pumping ||
+            !scheduler->delivering || scheduler->faulted || scheduler->return_consumed ||
+            scheduler->owner_thread != (uint64_t)SDL_ThreadID() || !boot->continuation ||
+            scheduler->active_continuation != boot->continuation) return 0;
+        status = musashi_boot_execute_source_card_vblank(memory, &boot->startup_devices,
+            scheduler->context_address, console_bytes, NULL, &stop);
+    } else {
+        status = musashi_boot_execute_source_function(memory, &boot->startup_devices,
+            target, console_bytes, NULL, &stop);
+    }
     if (status != MUSASHI_RESETGRAPH_PREFIX_COMPLETE) {
         boot->irq.failed_target = (stop.target_address && stop.target_address != 0xffffffffu)
             ? stop.target_address : target;
@@ -3249,7 +3328,7 @@ static int load_exe(NativeBoot *boot, const char *path) {
     io_error = ferror(file);
     fclose(file);
     accepted = !io_error && size == expected_size && extra == EOF &&
-        musashi_boot_map_exe(&boot->memory, exe, size);
+        musashi_boot_map_irq_exe(&boot->irq_image,&boot->memory,exe,size);
     free(exe);
     return accepted;
 }
@@ -4112,7 +4191,8 @@ int main(int argc, char **argv) {
         return 2;
     }
     if (!musashi_bios_exception_init_selected(&boot.exception_image,&boot.memory,&boot.bios,boot.irq.cpu_status) ||
-        !musashi_psycross_irq_scheduler_bind_context(&boot.irq.scheduler,native_cpu_context,&boot)) {
+        !musashi_psycross_irq_scheduler_bind_context(&boot.irq.scheduler,native_cpu_context,&boot) ||
+        !musashi_psycross_irq_scheduler_bind_guest(&boot.irq.scheduler,source_irq_dispatch,&boot)) {
         fputs("native_boot: CPU/image ownership refused before CRT\n",stderr);
         native_devices_shutdown(&boot);
         musashi_psyx_shutdown();
@@ -4396,8 +4476,30 @@ int main(int argc, char **argv) {
         musashi_psyx_shutdown();
         return 2;
     }
+#ifdef MUSASHI_WITH_BFM_PLAT
+    {
+        char path[512];
+        const char *setting = getenv("MUSASHI_MEMCARD");
+        const char *directory = NULL;
+        if (!setting || strcmp(setting, "0") != 0) {
+            if (musashi_card_save_directory(path, sizeof path)) directory = path;
+            else fputs("Memory card slot 1 unavailable: save directory could not be opened.\n", stderr);
+        }
+        if (musashi_player_card_open(&boot.file_card, &boot.memory, &boot.bios.events, directory))
+            boot.cd.file_vector = player_file_vector;
+        else fputs("Memory card slot 1 unavailable: file service could not start.\n", stderr);
+    }
+#endif
     status = musashi_boot_run_entry_with_devices(&boot.memory, 0, &boot.startup_devices,
         console_bytes, NULL, observe_entry, &boot, &entry_stop);
+#ifdef MUSASHI_WITH_BFM_PLAT
+    if (boot.close_requested || (!host_stop_signal && status == MUSASHI_RESETGRAPH_PREFIX_COMPLETE)) {
+        if (!musashi_player_card_finish(&boot.file_card)) {
+            fputs("Memory card notifications could not complete before shutdown.\n", stderr);
+            cleanup_ok = 0;
+        }
+    }
+#endif
     {
         MusashiCpuStatusSnapshot state;
         MusashiGteSnapshot gte;

@@ -1,6 +1,6 @@
 # Setup for existing public r38 installations
 
-For a new Linux install, follow the current source build instructions. The
+To build a development player on Linux, use the current source instructions. The
 November 21 package review found embedded game tables in historical Linux and
 Windows players. [Package review and current build instructions](../README.md#player-downloads-and-source-builds)
 
@@ -103,9 +103,20 @@ base directories. An exported `XDG_PICTURES_DIR` selects the screenshots'
 base directory. Files created from your disc, cards and screenshots remain
 local; do not upload them to this repository or wiki.
 
-The game uses a 128 KiB virtual card and its ordinary save/Continue menus,
-not emulator save states. An isolated inn save and cold Continue passed for
-this runtime; every save location and later-game state are not yet verified.
+The game uses a 128 KiB virtual card for its save and Continue menus. The
+historical Linux r38 binary passed an isolated inn save followed by a cold
+Continue. Other locations and later game states still need testing. The current
+source build is being tested separately with a disposable card.
+
+Developers can exercise the two card requests issued by the US game on an
+occupied vertical-blank handler. From the repository root, point the test at
+the executable extracted from your own disc. The test creates temporary cards
+and checks the event results after the interrupted game code resumes.
+
+```sh
+MUSASHI_CODE_IMAGE=/path/to/SLUS_007.26 python3 -m unittest discover -s tests -p test_guest_irq_frame.py
+```
+
 Keep a backup of `bfm_card0.mcd`, especially before cheats or warps. To use a
 separate card directory, start a later session with:
 

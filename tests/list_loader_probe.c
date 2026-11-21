@@ -1,17 +1,19 @@
 /* Source-only fixture: synthetic MMIO and event cadence, real VBlank handler
  * writes the counter. No disc transfer or native boot success is supplied. */
 #include "../pc_port/mips_formatter.c"
+#include "irq_guest_fixture.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 static MusashiBootMemory memory;
+static FixtureIrqGuest irq;
 typedef struct Fixture { unsigned cycles, events; int deliver; } Fixture;
 static int advance(void *userdata, uint32_t cost) {
     Fixture *f=userdata;
     f->cycles+=cost;
     if (f->deliver && !f->events && f->cycles>=300u) {
-        assert(musashi_boot_call_80042ce8(&memory,NULL,NULL));
+        assert(fixture_irq_direct_vblank(&irq, &memory));
         ++f->events;
     }
     return 1;
@@ -46,8 +48,8 @@ int main(int argc,char **argv) {
         MusashiExecutionClock clock={&f,advance};
         MusashiGpuDevice gpu={.userdata=&f,.read32=read32};
         MusashiCallbackDevice device={.userdata=&f,.read16=read16,.reset_device=&gpu};
-        memset(&memory,0,sizeof(memory)); assert(musashi_boot_map_exe(&memory,exe,(size_t)size));
-        for(unsigned i=0;i<8;++i) put(0x8006cb98u+4*i,0);
+        memset(&memory,0,sizeof(memory)); assert(musashi_boot_map_irq_exe(&irq.image, &memory, exe, (size_t)size));
+        fixture_irq_vblank_setup(&memory);
         put(0x8006cbb8,0); put(0x8006baa0,0); put(0x8006ba9c,0);
         put(0x8006ba94,0x1f801814); put(0x8006ba98,0x1f801110);
         init(&cpu); cpu.pc=0x8004239c; cpu.npc=cpu.pc+4;

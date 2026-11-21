@@ -18,10 +18,6 @@ void musashi_psyx_shutdown(void); /* pc_port/psyx_shutdown.cpp: GL teardown befo
 
 extern SDL_mutex *g_intrMutex;
 
-static int put16(MusashiBootMemory *memory, uint32_t address, uint16_t value) {
-    return musashi_boot_write16(memory, address, value);
-}
-
 static int put32(MusashiBootMemory *memory, uint32_t address, uint32_t value) {
     return musashi_boot_write32(memory, address, value);
 }
@@ -29,6 +25,7 @@ static int put32(MusashiBootMemory *memory, uint32_t address, uint32_t value) {
 int main(void) {
     MusashiBootMemory memory, snapshot;
     MusashiPsyCrossIrqRuntime runtime = {0};
+    FixtureIrqGuest guest = {0};
     uint32_t tick = 0;
     int observed = 0;
     int attempt;
@@ -37,20 +34,24 @@ int main(void) {
     MusashiIrqSourceBatch batch;
     uint64_t install_cut;
 
+    const char *path = getenv("BFM_TEST_SLUS");
+    if (!path || !*path) {
+        fputs("irq_scheduler_live: BFM_TEST_SLUS is required for guest IRQ execution\n", stderr);
+        return 77;
+    }
+    memset(&memory, 0, sizeof(memory));
+    if (!fixture_irq_guest_map_file(&guest, &memory, path)) return 1;
+    fixture_irq_vblank_setup(&memory);
+    assert(put32(&memory, 0x8006cbb8u, 0));
+
     SetVideoMode(MODE_NTSC);
     PsyX_Initialise("musashi_irq_scheduler_live", 320, 240, 0);
     if (SDL_GL_GetCurrentWindow() == NULL || SDL_GL_GetCurrentContext() == NULL) {
         fputs("irq_scheduler_live: PsyCross initialisation failed, skipping\n", stderr);
         return 77;
     }
-    memset(&memory, 0, sizeof(memory));
     assert(musashi_psycross_irq_runtime_init(&runtime, &memory, NULL));
-    fixture_irq_cpu_attach(&runtime.scheduler);
-    assert(put16(&memory, 0x8006bafcu, 1u));
-    assert(put16(&memory, 0x8006bb2cu, 1u));
-    assert(put32(&memory, 0x8006cb88u, 0x1f801070u));
-    assert(put32(&memory, 0x8006cb8cu, 0x1f801074u));
-    assert(put32(&memory, 0x8006bb00u, 0x80042ce8u));
+    fixture_irq_cpu_attach_guest(&runtime.scheduler, &guest);
     assert(musashi_irq_controller_write16(&runtime.controller, 0x1f801074u, 1u));
     if (!musashi_psycross_irq_scheduler_hook_entry_int(&runtime.scheduler, 0x8006bb34u)) {
         fputs("irq_scheduler_live: scheduler installation refused\n", stderr);

@@ -1,9 +1,8 @@
 #include "musashi_boot_memory.h"
 #include <string.h>
 
-#include "musashi_psyq_hle.h"
 
-/* PsyQ services (libetc/libc2) are port-owned HLE, never Sony code. */
+/* These declarations bind project-owned gameplay memory routines. */
 extern void func_80016714_native(uint8_t *destination, int32_t count);
 extern void func_80029044_native(uint8_t *destination);
 extern void func_8002906C_native(uint8_t *destination);
@@ -19,81 +18,110 @@ int musashi_boot_search_bytes(MusashiBootMemory *memory, uint32_t address,
         if (!source)
             return 0;
     }
-    found = musashi_hle_find_byte(source, target, count);
+    found = source ? memchr(source, (unsigned char)target, (size_t)count) : NULL;
     *result = found ? address + (uint32_t)(found - source) : 0;
     return 1;
 }
 
-typedef struct MusashiNativeConsoleContext {
+#define CONSOLE_CLASS_TABLE 0x800728a9u
+#define CONSOLE_COLUMN 0x80078978u
+#define CONSOLE_FALLBACK 0x80074498u
+
+typedef struct ConsoleOutput {
+    MusashiBootMemory *memory;
+    const uint8_t *classes;
+    uint32_t column;
     MusashiConsoleSink sink;
     void *userdata;
-} MusashiNativeConsoleContext;
+} ConsoleOutput;
 
-void musashi_native_console_sink(void *userdata, const uint8_t *bytes,
-                                 int32_t length) {
-    MusashiNativeConsoleContext *context = userdata;
-    context->sink(context->userdata, bytes, length);
+static int console_output_init(ConsoleOutput *out, MusashiBootMemory *memory,
+                               MusashiConsoleSink sink, void *userdata) {
+    if (!memory || !sink)
+        return 0;
+    out->memory = memory;
+    out->classes = musashi_boot_ram_span(memory, CONSOLE_CLASS_TABLE, 256);
+    out->sink = sink;
+    out->userdata = userdata;
+    return out->classes && musashi_boot_read32(memory, CONSOLE_COLUMN, &out->column);
+}
+
+static int console_write_byte(ConsoleOutput *out, uint8_t byte) {
+    if (out->sink) {
+        if (!musashi_boot_write32(out->memory, CONSOLE_COLUMN, out->column))
+            return 0;
+        out->sink(out->userdata, &byte, 1);
+    }
+    return 1;
+}
+
+static unsigned console_byte_width(const ConsoleOutput *out, uint8_t byte) {
+    return (out->classes[byte] & 0x97u) != 0;
+}
+
+static int console_output_byte(ConsoleOutput *out, uint8_t byte) {
+    unsigned width, writes = 1;
+    if (byte == '\n') {
+        out->column += console_byte_width(out, '\r');
+        if (!console_write_byte(out, '\r'))
+            return 0;
+        out->column = 0;
+        return console_write_byte(out, '\n');
+    }
+    if (byte == '\t') {
+        byte = ' ';
+        width = console_byte_width(out, byte);
+        if (width)
+            writes = 8u - (out->column & 7u);
+        else if (out->column & 7u)
+            return 0; /* This classification cannot reach the next tab stop. */
+    } else {
+        width = console_byte_width(out, byte);
+    }
+    for (unsigned i = 0; i < writes; ++i) {
+        out->column += width;
+        if (!console_write_byte(out, byte))
+            return 0;
+    }
+    return 1;
 }
 
 int musashi_boot_console_char(MusashiBootMemory *memory, int32_t value,
                               MusashiConsoleSink sink, void *userdata) {
-    uint8_t *classification;
-    uint32_t column_bits;
-    int32_t column;
-    MusashiNativeConsoleContext context;
-    if (!memory || !sink)
-        return 0;
-    classification = musashi_boot_ram_span(memory, 0x800728a9u, 0x100u);
-    if (!classification || !musashi_boot_read32(memory, 0x80078978u,
-                                                &column_bits))
-        return 0;
-    memcpy(&column, &column_bits, sizeof(column));
-    context.sink = sink;
-    context.userdata = userdata;
-    musashi_hle_console_putc(value, classification, &column, musashi_native_console_sink, &context);
-    memcpy(&column_bits, &column, sizeof(column_bits));
-    return musashi_boot_write32(memory, 0x80078978u, column_bits);
+    ConsoleOutput out;
+    return console_output_init(&out, memory, sink, userdata) &&
+           console_output_byte(&out, (uint8_t)value);
 }
 
-static uint8_t *terminated_console_string(MusashiBootMemory *memory,
-                                          uint32_t address) {
-    uint8_t *string;
-    uint32_t offset;
-    string = musashi_boot_ram_span(memory, address, 1);
-    if (!string)
-        return NULL;
-    offset = address - 0x80000000u;
-    while (offset < MUSASHI_RAM_SIZE) {
-        if (memory->bytes[offset] == 0)
-            return string;
-        offset++;
-    }
-    return NULL;
+static const uint8_t *console_string_end(MusashiBootMemory *memory, uint32_t address) {
+    const uint8_t *start = musashi_boot_ram_span(memory, address, 1);
+    return start ? memchr(start, 0, (size_t)(memory->bytes + MUSASHI_RAM_SIZE - start)) : NULL;
 }
 
 int musashi_boot_console_string(MusashiBootMemory *memory, uint32_t address,
                                 MusashiConsoleSink sink, void *userdata) {
-    uint8_t *source;
-    uint8_t *fallback;
-    uint8_t *classification;
-    uint32_t column_bits;
-    int32_t column;
-    MusashiNativeConsoleContext context;
-    if (!memory || !sink)
+    ConsoleOutput out;
+    const uint8_t *start, *end;
+    if (!console_output_init(&out, memory, sink, userdata))
         return 0;
-    source = terminated_console_string(memory, address);
-    fallback = terminated_console_string(memory, 0x80074498u);
-    classification = musashi_boot_ram_span(memory, 0x800728a9u, 0x100u);
-    if (!source || !fallback || !classification ||
-        !musashi_boot_read32(memory, 0x80078978u, &column_bits))
+    start = musashi_boot_ram_span(memory, address, 1);
+    end = console_string_end(memory, address);
+    if (!end || !console_string_end(memory, CONSOLE_FALLBACK))
         return 0;
-    memcpy(&column, &column_bits, sizeof(column));
-    context.sink = sink;
-    context.userdata = userdata;
-    musashi_hle_console_puts(source, fallback, classification, &column,
-                             musashi_native_console_sink, &context);
-    memcpy(&column_bits, &column, sizeof(column_bits));
-    return musashi_boot_write32(memory, 0x80078978u, column_bits);
+
+    /* Custom classifications can leave an unaligned tab unable to advance.
+     * Check the whole string first so an invalid tab emits no partial text. */
+    if (!console_byte_width(&out, ' ') && memchr(start, '\t', (size_t)(end - start))) {
+        ConsoleOutput check = out;
+        check.sink = NULL;
+        for (const uint8_t *p = start; p < end; ++p)
+            if (!console_output_byte(&check, *p))
+                return 0;
+    }
+    for (const uint8_t *p = start; p < end && *p; ++p)
+        if (!console_output_byte(&out, *p))
+            return 0;
+    return 1;
 }
 
 int musashi_boot_call_8005c29c(MusashiBootMemory *memory, uint32_t address,
@@ -101,7 +129,7 @@ int musashi_boot_call_8005c29c(MusashiBootMemory *memory, uint32_t address,
     uint8_t *destination = musashi_boot_ram_span(memory, address, count ? count : 1);
     if (!destination)
         return 0;
-    musashi_hle_fill_bytes(destination, value, count);
+    memset(destination, (unsigned char)value, (size_t)count);
     return 1;
 }
 
@@ -139,19 +167,11 @@ int musashi_boot_call_8002906c(MusashiBootMemory *memory) {
 
 int musashi_boot_call_80043060(MusashiBootMemory *memory, int32_t argument,
                               int32_t *previous) {
-    uint32_t bits;
-    int32_t word, result;
-    if (!previous || !musashi_boot_read32(memory, 0x8006cbe8u, &bits))
+    uint32_t old_word;
+    if (!previous || !musashi_boot_read32(memory, 0x8006cbe8u, &old_word) ||
+        !musashi_boot_write32(memory, 0x8006cbe8u, (uint32_t)argument))
         return 0;
-    /* Preserve all bit patterns without implementation-defined unsigned-to-
-     * signed conversion. No pointer into byte-backed RAM is dereferenced as
-     * an int, and no persistent host global can diverge from the RAM image. */
-    memcpy(&word, &bits, sizeof(word));
-    result = musashi_hle_exchange_word(&word, argument);
-    memcpy(&bits, &word, sizeof(bits));
-    if (!musashi_boot_write32(memory, 0x8006cbe8u, bits))
-        return 0;
-    *previous = result;
+    memcpy(previous, &old_word, sizeof(old_word));
     return 1;
 }
 

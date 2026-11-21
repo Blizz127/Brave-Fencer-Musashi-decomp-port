@@ -50,6 +50,24 @@ records two independently re-derived motion routines in the no-disc smoke test.
 code, no code) and `config/psyq_pending_replacement.txt` (a list of source
 paths) are included.
 
+### Historical host replacements
+
+A later provenance review identified nine complete files and two changes to
+device bindings whose authors had consulted excluded library implementations.
+The following historical implementations are excluded from the corrected tree.
+
+| Historical path under `pc_port/` | Role |
+|---|---|
+| `include/musashi_psyq_hle.h` | Shared declarations for the historical replacements |
+| `libetc_irq_veneer.c`, `libetc_dma_veneer.c` | Interrupt and DMA entry points |
+| `libetc_irq_registration.c`, `libetc_dma_registration.c` | Handler registration |
+| `libetc_vsync_handler.c`, `libetc_dma_irq.c`, `libetc_irq_dispatch.c` | VBlank, DMA and interrupt dispatch |
+| `libmcrd_vblank.c` | Memory-card VBlank callback |
+| `device_reset_bindings.c`, `gpu_bindings.c` | Affected portions of device reset and GPU bindings |
+
+The player uses the owner's verified program for these guest routines. They
+still require CPU interpretation and do not count toward native game coverage.
+
 ## 3. Retail game content and BIOS
 
 | Path | Files | Reason |

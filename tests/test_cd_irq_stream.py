@@ -31,15 +31,15 @@ def test_cd_irq_stream_source(tmp_path, variant):
     command = ['cc','-std=c99','-O2','-Wall','-Wextra','-Werror',
         '-Wno-parentheses','-ffunction-sections','-fdata-sections','-Wl,--gc-sections',
         '-DMUSASHI_NATIVE_IRQ_DISPATCH=1','-DMUSASHI_NATIVE_CALLBACK_HANDLER=1',
-        '-DMUSASHI_NATIVE_VBLANK=1',
         '-DMUSASHI_NATIVE_DMA_REGISTRATION=1','-DMUSASHI_NATIVE_DMA_IRQ_HANDLER=1',
-        '-I',str(ROOT/'include'),'-I',str(ROOT/'pc_port/include'),'-I',str(generated),
+        '-I',str(ROOT/'include'),'-I',str(ROOT/'pc_port/include'),
+        '-I',str(ROOT/'pc_port'),'-I',str(generated),
         str(ROOT/'tests/cd_irq_stream_probe.c'),
         str(formatter),
         *[str(ROOT/'pc_port'/f'{name}.c') for name in ('boot_memory',
-          'spu_cd_audio','cd_controller','cd_dma3','dma_controller','disc_media','bios_events','irq_controller','irq_scheduler','cpu_status','vblank_bindings')],
+          'spu_cd_audio','cd_controller','cd_dma3','dma_controller','disc_media','bios_events','irq_controller','irq_scheduler','cpu_status')],
         *[str(ROOT/'src/main'/f'{name}.c') for name in
-          ('8001096c',)],str(ROOT/'pc_port/libmcrd_vblank.c'),str(ROOT/'pc_port/libetc_irq_dispatch.c'),str(ROOT/'pc_port/libetc_dma_irq.c'),str(ROOT/'pc_port/libetc_vsync_handler.c'),str(ROOT/'pc_port/libetc_dma_registration.c'),
+          ('8001096c',)],str(ROOT/'pc_port/irq_direct_compat.c'),
         '-lcrypto',*flags,'-o',str(exe)]
     subprocess.run(command, check=True, timeout=40)
     _sync_code_image(generated)

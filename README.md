@@ -6,7 +6,8 @@ the game as compiled host code and uses a CPU interpreter for the rest.
 
 ## Player downloads and source builds
 
-**November 21, 2026. For new Linux and Windows x64 installs, build from the current source.**
+**November 21, 2026. Player downloads are under review.**
+The source build is available for development and testing.
 We downloaded every historical player package from the public releases and
 checked its published size and SHA-256. All 22 distinct Linux and Windows
 executables contain a 36-byte game dispatch table. Nineteen also contain a
@@ -16,8 +17,10 @@ archives across 12 release tags.
 
 The public source now reads the dispatch table from your disc. Its developer
 menu has an empty warp list. A Linux player built at commit `7fd45d2` was
-checked for both tables and both strings. Qualification of a replacement
-download, including an in-game save and cold Continue, is in progress.
+checked for both tables and both strings. The source also delegates interrupt
+and device-library routines to the program on your disc. The current source
+still needs an ordinary inn save and a successful Continue after restarting
+before it can qualify as a replacement player download.
 
 The Linux instructions cover disc verification, the build and the first
 launch. Windows x64 users can cross-build the player on Linux with Zig and the
@@ -155,7 +158,8 @@ instructions for backing up an existing memory card.
   Select. [Full controls](docs/SETUP.md#controls).
 - Save using the game's menus. The default Linux card is
   `~/.local/state/bfm-port/bfm_card0.mcd`; `BFM_SAVE_DIR` selects a separate
-  card directory. Inn save and cold Continue passed isolated tests.
+  card directory. The historical r38 binary passed an isolated inn save and
+  cold Continue. Current source-build qualification is still in progress.
   [Save/config locations and limitations](docs/SETUP.md#saves-settings-and-files-on-linux).
 - The packaged dev menu is enabled by default, with cheats initially off.
   Open with **F8** or **Back/Select+Start** on one controller. Navigate with
@@ -173,8 +177,8 @@ launcher controls instead.
 
 ## Status
 
-r38 fixes forest frames going dark and includes tested inn saving and cold
-Continue. Forest, village and the recorded four-scene attract route passed
+The historical r38 binary passed inn saving and cold Continue and fixed dark
+forest frames. In that build, the forest, village and four-scene attract route passed
 scoped checks. Attract still stops at known refusal `800495ec`; later
 unsupported code may also stop. Automated checks used null audio, and do
 not establish hardware audio fidelity or whole-game completion.

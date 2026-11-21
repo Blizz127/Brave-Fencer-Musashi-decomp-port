@@ -4,8 +4,8 @@
 #include <stdint.h>
 
 #include "musashi_irq_dispatch.h"
+#include "musashi_guest_irq.h"
 #include "musashi_irq_controller.h"
-#include "musashi_vblank.h"
 #include "musashi_cpu_status.h"
 #include "musashi_callback_registration.h"
 
@@ -34,6 +34,10 @@ typedef struct MusashiPsyCrossIrqScheduler {
     MusashiIrqRaiseVblank raise_vblank;
     void *raise_userdata;
     uint32_t context_address;
+    uint32_t installed_context[12];
+    int (*guest_dispatch)(void *, MusashiBootMemory *, uint32_t, const uint32_t *,
+        const void *, const MusashiIrqDispatchDevice *);
+    void *guest_dispatch_userdata;
     uint32_t deliveries;
     int last_result;
     int installed;
@@ -83,17 +87,14 @@ typedef struct MusashiPsyCrossIrqScheduler {
  * callback queues source edges only; its mutex protects queue and registration
  * lifetime. Reinitialization is for a freshly loaded guest only.
  *
- * The built-in executor runs recovered 80042CE8 -> 800616D0 and its helpers.
- * Additional request/completion calls require an explicit executor. Missing
- * or refused targets are recorded; no game-success fallback is supplied. */
+ * The card VBlank handler runs through the registered source executor. A
+ * missing or declined callback faults the current delivery. */
 typedef struct MusashiPsyCrossIrqRuntime {
     MusashiCpuStatus *cpu_status; /* Owned, never recreated on hook install. */
     int initialized; /* Fresh init only; remains set after checked close. */
     MusashiIrqController controller;
     MusashiIrqDispatchDevice device;
     MusashiPsyCrossIrqScheduler scheduler;
-    MusashiVblankExecutor vblank;
-    const MusashiVblankExecutor *requests;
     uint32_t failed_target;
     const MusashiCdRegisterDevice *cd_registers;
     const MusashiExecutionClock *cd_clock;
@@ -106,7 +107,7 @@ typedef struct MusashiPsyCrossIrqRuntime {
 } MusashiPsyCrossIrqRuntime;
 
 int musashi_psycross_irq_runtime_init(MusashiPsyCrossIrqRuntime *runtime,
-    MusashiBootMemory *memory, const MusashiVblankExecutor *requests);
+    MusashiBootMemory *memory, const void *reserved);
 
 int musashi_psycross_irq_runtime_close(MusashiPsyCrossIrqRuntime *);
 int musashi_psycross_irq_scheduler_bind_cpu(MusashiPsyCrossIrqScheduler *, MusashiCpuStatus *);
@@ -133,6 +134,10 @@ int musashi_psycross_irq_runtime_bind_dma(MusashiPsyCrossIrqRuntime *,
  * of IRQ slot targets must outlive installation. This does not raise IRQs. */
 int musashi_psycross_irq_runtime_bind_source_execute(MusashiPsyCrossIrqRuntime *,
     int (*execute)(void *, MusashiBootMemory *, uint32_t), void *userdata);
+
+int musashi_psycross_irq_scheduler_bind_guest(MusashiPsyCrossIrqScheduler *,
+    int (*)(void *, MusashiBootMemory *, uint32_t, const uint32_t *, const void *,
+            const MusashiIrqDispatchDevice *), void *);
 
 /* B0:19 / HookEntryInt adapter. It records the supplied guest context without
  * interpreting it as a host frame, then installs the single PsyCross VBlank

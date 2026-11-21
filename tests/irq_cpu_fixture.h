@@ -3,6 +3,7 @@
 /* Explicit synthetic CPU bank and native-service boundary for existing device
  * fixtures. This is not the live formatter context or real BIOS-image proof. */
 #include "musashi_irq_scheduler.h"
+#include "irq_guest_fixture.h"
 #include <SDL.h>
 #include <assert.h>
 #include <string.h>
@@ -35,6 +36,11 @@ static void fixture_irq_cpu_attach(MusashiPsyCrossIrqScheduler *s) {
     assert(musashi_psycross_irq_scheduler_bind_context(s, fixture_irq_context, NULL));
     s->before_dispatch = fixture_irq_kernel_entry;
     s->before_dispatch_userdata = s;
+}
+static inline void fixture_irq_cpu_attach_guest(MusashiPsyCrossIrqScheduler *s,
+                                                FixtureIrqGuest *guest) {
+    fixture_irq_cpu_attach(s);
+    assert(musashi_psycross_irq_scheduler_bind_guest(s, fixture_irq_guest_dispatch, guest));
 }
 /* Standalone fixtures own their allocation; runtime fixtures use runtime_close. */
 static inline void fixture_irq_cpu_close(MusashiPsyCrossIrqScheduler *s) {

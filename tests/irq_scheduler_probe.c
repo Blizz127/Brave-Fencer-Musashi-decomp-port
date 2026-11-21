@@ -18,6 +18,13 @@ static MusashiPsyCrossIrqScheduler *executing_scheduler;
 static const int continuation;
 static int collect_during_execute;
 static MusashiIrqSourceBatch callback_batch;
+static FixtureIrqGuest guest;
+static const char *exe_path;
+static void init_guest_ram(MusashiBootMemory *memory) {
+    assert(fixture_irq_guest_map_file(&guest, memory, exe_path));
+    fixture_irq_vblank_setup(memory);
+    assert(musashi_boot_write32(memory, 0x8006cbb8u, 0));
+}
 static void queue_edge(void) {
     assert(SDL_LockMutex(g_intrMutex) == 0);
     vsync_callback();
@@ -46,9 +53,11 @@ static int write16(void *userdata, uint32_t address, uint16_t value) {
     return 1;
 }
 
-static int execute(void *userdata, MusashiBootMemory *memory, uint32_t target) {
-    Hardware *hardware = userdata;
-    if (target != 0x80042ce8u) return 0;
+static int observe_vblank(void *userdata, uint32_t cost) {
+    (void)userdata;
+    guest.cycles += cost;
+    if (guest.stop.pc != 0x80042ce8u || !executing_scheduler) return 1;
+    Hardware *hardware = executing_scheduler->device->userdata;
     if (executing_scheduler) {
         assert(executing_scheduler->active_continuation == &continuation);
         assert(executing_scheduler->delivering && !executing_scheduler->return_consumed);
@@ -74,7 +83,13 @@ static int execute(void *userdata, MusashiBootMemory *memory, uint32_t target) {
         collect_during_execute = 0;
     }
     hardware->calls++;
-    return musashi_boot_call_80042ce8(memory, NULL, NULL);
+    return 1;
+}
+
+static int execute(void *userdata, MusashiBootMemory *memory, uint32_t target) {
+    (void)userdata; (void)memory; (void)target;
+    assert(!"unexpected nested callback in empty-slot fixture");
+    return 0;
 }
 
 static int raise_vblank(void *userdata) {
@@ -101,22 +116,25 @@ static void put32(MusashiBootMemory *memory, uint32_t address, uint32_t value) {
     assert(musashi_boot_write32(memory, address, value));
 }
 
+static const uint32_t card_target = 0x800616d0u;
+static const uint32_t synthetic_target = 0x801ed1d0u;
+
 static void runtime_test(MusashiBootMemory *memory) {
     MusashiPsyCrossIrqRuntime runtime = {0};
-    uint32_t tick, index;
+    uint32_t tick;
     uint16_t active;
     memset(memory, 0, sizeof(*memory));
+    init_guest_ram(memory);
     assert(!musashi_psycross_irq_runtime_init(NULL, memory, NULL));
     assert(!musashi_psycross_irq_runtime_init(&runtime, NULL, NULL));
+    assert(!musashi_psycross_irq_runtime_init(&runtime, memory, &continuation));
     assert(musashi_psycross_irq_runtime_init(&runtime, memory, NULL));
-    fixture_irq_cpu_attach(&runtime.scheduler);
+    fixture_irq_cpu_attach_guest(&runtime.scheduler, &guest);
     put16(memory, 0x8006bafcu, 1u);
     put16(memory, 0x8006bb2cu, 1u);
     put32(memory, 0x8006cb88u, 0x1f801070u);
     put32(memory, 0x8006cb8cu, 0x1f801074u);
     put32(memory, 0x8006bb00u, 0x80042ce8u);
-    put32(memory, 0x8006cbb4u, 0x800616d0u);
-    put32(memory, 0x80072a34u, UINT32_MAX); /* synthetic idle fixture */
     assert(musashi_irq_controller_write16(&runtime.controller, 0x1f801074u, 1u));
     assert(musashi_psycross_irq_scheduler_hook_entry_int(
         &runtime.scheduler, 0x8006bb34u));
@@ -129,22 +147,27 @@ static void runtime_test(MusashiBootMemory *memory) {
     assert(runtime.controller.status == 0 && runtime.failed_target == 0);
     assert(musashi_boot_read32(memory, 0x8006cbb8u, &tick) && tick == 1);
 
-    /* Nonempty request uses its actual guest target and remains incomplete.
-     * A second platform frame must not decrement the index or clear the fault. */
-    put32(memory, 0x80072a34u, 0);
-    put32(memory, 0x80078d78u, 0x80012340u);
+    /* The authenticated card callback can return on the idle fixture state. */
+    put32(memory, 0x8006cbb4u, card_target);
+    queue_edge();
+    assert(musashi_psycross_irq_scheduler_pump(&runtime.scheduler, &continuation));
+    assert(guest.stop.pc == 0xb0u && guest.stop.instructions);
+    assert(runtime.scheduler.last_result == MUSASHI_IRQ_CONTEXT_RETURN_DELEGATED);
+    assert(musashi_boot_read32(memory, 0x8006cbb8u, &tick) && tick == 2);
+
+    /* No owned executable is installed at the test target. */
+    put32(memory, 0x8006cbb4u, synthetic_target);
     queue_edge();
     assert(!musashi_psycross_irq_scheduler_pump(&runtime.scheduler, &continuation));
-    assert(runtime.scheduler.faulted && runtime.failed_target == 0x80012340u);
+    assert(runtime.scheduler.faulted && guest.stop.pc == 0x80042d30u);
     assert(runtime.scheduler.last_result == 0);
-    assert(musashi_boot_read32(memory, 0x8006cbb8u, &tick) && tick == 2);
-    assert(musashi_boot_read32(memory, 0x80072a34u, &index) && index == 0);
+    assert(musashi_boot_read32(memory, 0x8006cbb8u, &tick) && tick == 3);
     assert(musashi_boot_read16(memory, 0x8006bafeu, &active) && active == 1);
     queue_edge();
     assert(!musashi_psycross_irq_scheduler_pump(&runtime.scheduler, &continuation));
     assert(runtime.scheduler.active_continuation == &continuation && !runtime.scheduler.return_consumed);
-    assert(musashi_boot_read32(memory, 0x8006cbb8u, &tick) && tick == 2);
-    assert(runtime.scheduler.deliveries == 2 && runtime.scheduler.last_result == 0);
+    assert(musashi_boot_read32(memory, 0x8006cbb8u, &tick) && tick == 3);
+    assert(runtime.scheduler.deliveries == 3 && runtime.scheduler.last_result == 0);
     assert(musashi_psycross_irq_scheduler_uninstall(&runtime.scheduler));
     assert(!musashi_psycross_irq_scheduler_hook_entry_int(
         &runtime.scheduler, 0x8006bb34u));
@@ -154,7 +177,7 @@ static void runtime_test(MusashiBootMemory *memory) {
     assert(runtime.failed_target == 0x80012344u);
     put32(memory, 0x8006cbb4u, 0x80012348u);
     assert(!runtime.device.execute(runtime.device.userdata, memory, 0x80042ce8u));
-    assert(runtime.failed_target == 0x80012348u);
+    assert(runtime.failed_target == 0x80042ce8u);
     assert(musashi_psycross_irq_runtime_close(&runtime));
     assert(!musashi_psycross_irq_runtime_init(&runtime, memory, NULL));
     assert(!musashi_psycross_irq_runtime_close(&runtime));
@@ -186,9 +209,14 @@ static void dma_irq_test(MusashiBootMemory *memory) {
     MusashiPsyCrossIrqRuntime runtime = {0};
     MusashiDmaCallbackRegistrationDevice dma = {0};
     DmaDicr dicr = {0x00900000u};
+    MusashiDmaController controller;
     memset(memory, 0, sizeof(*memory));
+    init_guest_ram(memory);
     assert(musashi_psycross_irq_runtime_init(&runtime, memory, NULL));
-    fixture_irq_cpu_attach(&runtime.scheduler);
+    fixture_irq_cpu_attach_guest(&runtime.scheduler, &guest);
+    musashi_dma_controller_init(&controller, &runtime.controller);
+    assert(musashi_dma_controller_write32(&controller, 0x1f8010f4u, dicr.value));
+    guest.dma = &controller;
     dma.userdata = &dicr;
     dma.read32 = dma_dicr_read32;
     dma.write32 = dma_dicr_write32;
@@ -210,41 +238,77 @@ static void dma_irq_test(MusashiBootMemory *memory) {
     assert(runtime.scheduler.last_result == MUSASHI_IRQ_CONTEXT_RETURN_DELEGATED);
     assert(runtime.controller.status == 0 && runtime.failed_target == 0);
     assert(!runtime.scheduler.faulted && runtime.scheduler.deliveries == 1);
-    assert(dicr.value == 0x00900000u);
+    assert(controller.interrupt == dicr.value && dicr.value == 0x00900000u);
+    guest.dma = NULL;
     assert(musashi_psycross_irq_scheduler_uninstall(&runtime.scheduler));
     assert(musashi_psycross_irq_runtime_close(&runtime));
 }
 
+typedef struct SourceFixture {
+    MusashiBootMemory *memory;
+    int accept_card;
+    unsigned card_calls;
+    unsigned root_calls;
+    unsigned synthetic_calls;
+} SourceFixture;
+
 static int stub_source_execute(void *userdata, MusashiBootMemory *memory, uint32_t target) {
-    (void)userdata;
-    (void)memory;
-    return target == 0x8002cdd8u;
+    SourceFixture *source = userdata;
+    assert(memory == source->memory);
+    if (target == card_target) {
+        source->card_calls++;
+        return source->accept_card;
+    }
+    if (target == 0x8002cdd8u) {
+        source->root_calls++;
+        return 1;
+    }
+    if (target == synthetic_target) {
+        source->synthetic_calls++;
+        return 1;
+    }
+    return 0;
 }
 
-static void vblank_root_test(MusashiBootMemory *memory) {
+static void unowned_vblank_child_test(MusashiBootMemory *memory) {
     MusashiPsyCrossIrqRuntime runtime = {0};
+    SourceFixture source = {.memory = memory, .accept_card = 1};
     uint32_t tick;
     memset(memory, 0, sizeof(*memory));
+    init_guest_ram(memory);
     assert(musashi_psycross_irq_runtime_init(&runtime, memory, NULL));
-    fixture_irq_cpu_attach(&runtime.scheduler);
+    fixture_irq_cpu_attach_guest(&runtime.scheduler, &guest);
     assert(musashi_psycross_irq_runtime_bind_source_execute(
-        &runtime, stub_source_execute, NULL));
+        &runtime, stub_source_execute, &source));
     put16(memory, 0x8006bafcu, 1u);
     put16(memory, 0x8006bb2cu, 1u);
     put32(memory, 0x8006cb88u, 0x1f801070u);
     put32(memory, 0x8006cb8cu, 0x1f801074u);
     put32(memory, 0x8006bb00u, 0x80042ce8u);
-    put32(memory, 0x8006cbb4u, 0x800616d0u);
+    put32(memory, 0x8006cb9cu, synthetic_target);
     put32(memory, 0x8006cba8u, 0x8001096cu);
-    put32(memory, 0x80072a34u, UINT32_MAX);
+    put32(memory, 0x8006cbb4u, card_target);
     assert(musashi_irq_controller_write16(&runtime.controller, 0x1f801074u, 1u));
     assert(musashi_psycross_irq_scheduler_hook_entry_int(
         &runtime.scheduler, 0x8006bb34u));
     assert(musashi_psycross_irq_scheduler_set_enabled(&runtime.scheduler, 1));
     queue_edge();
-    assert(musashi_psycross_irq_scheduler_pump(&runtime.scheduler, &continuation));
-    assert(runtime.scheduler.last_result == MUSASHI_IRQ_CONTEXT_RETURN_DELEGATED);
-    assert(!runtime.scheduler.faulted && runtime.failed_target == 0);
+    /* This fixture never installs instructions or an image owner for its
+     * synthetic first slot. A host callback willing to accept it cannot
+     * authorize the guest call; subsequent real slots must remain untouched. */
+    assert(!musashi_psycross_irq_scheduler_pump(&runtime.scheduler, &continuation));
+    assert(runtime.scheduler.faulted && !runtime.scheduler.return_consumed);
+    assert(runtime.scheduler.active_continuation == &continuation);
+    assert(guest.stop.pc == 0x80042d30u && guest.stop.instructions);
+    uint32_t blocked, steps = guest.stop.instructions;
+    assert(musashi_boot_read32(memory, 0x8006cb9cu, &blocked) && blocked == synthetic_target);
+    assert(!source.synthetic_calls && !source.root_calls && !source.card_calls);
+    assert(musashi_boot_read32(memory, 0x8006cbb8u, &tick) && tick == 1);
+    put32(memory, 0x8006cb9cu, 0);
+    queue_edge();
+    assert(!musashi_psycross_irq_scheduler_pump(&runtime.scheduler, &continuation));
+    assert(runtime.scheduler.deliveries == 1 && guest.stop.instructions == steps);
+    assert(!source.synthetic_calls && !source.root_calls && !source.card_calls);
     assert(musashi_boot_read32(memory, 0x8006cbb8u, &tick) && tick == 1);
     assert(musashi_psycross_irq_scheduler_uninstall(&runtime.scheduler));
     assert(musashi_psycross_irq_runtime_close(&runtime));
@@ -284,13 +348,14 @@ static void metadata_test(MusashiBootMemory *memory) {
     MusashiIrqSourceBatch batch, before;
     uint64_t first_cut;
     memset(memory, 0, sizeof(*memory));
+    init_guest_ram(memory);
     put16(memory, 0x8006bafcu, 1); put16(memory, 0x8006bb2cu, 1);
     put32(memory, 0x8006cb88u, 0x1f801070u); put32(memory, 0x8006cb8cu, 0x1f801074u);
     put32(memory, 0x8006bb00u, 0x80042ce8u);
     hardware.mask = 1;
     scheduler.memory = memory; scheduler.device = &device;
     scheduler.raise_vblank = raise_vblank; scheduler.raise_userdata = &hardware;
-    fixture_irq_cpu_attach(&scheduler);
+    fixture_irq_cpu_attach_guest(&scheduler, &guest);
     executing_scheduler = &scheduler;
     memset(&batch, 0xa5, sizeof(batch)); before = batch;
     assert(!musashi_psycross_irq_scheduler_collect_source(&scheduler, &batch));
@@ -455,6 +520,7 @@ static void cpu_boundary_test(MusashiBootMemory *memory) {
     }
 }
 int main(void) {
+    const MusashiExecutionClock observed_clock = {NULL, observe_vblank};
     MusashiBootMemory memory, snapshot;
     Hardware hardware = {0};
     MusashiIrqDispatchDevice device = {
@@ -467,6 +533,18 @@ int main(void) {
     assert(SDL_Init(0) == 0);
     g_intrMutex = SDL_CreateMutex();
     assert(g_intrMutex != NULL);
+    exe_path = getenv("BFM_TEST_SLUS");
+    if (!exe_path || !*exe_path) {
+        /* These controls do not dispatch any guest handler. */
+        cpu_boundary_test(&memory);
+        metadata_fault_test(&memory);
+        SDL_DestroyMutex(g_intrMutex);
+        SDL_Quit();
+        fputs("irq_scheduler_probe: guest cases need BFM_TEST_SLUS\n", stderr);
+        return 77;
+    }
+    init_guest_ram(&memory);
+    guest.clock = &observed_clock;
     put16(&memory, 0x8006bafcu, 1u);
     put16(&memory, 0x8006bb2cu, 1u);
     put32(&memory, 0x8006cb88u, 0x1f801070u);
@@ -477,7 +555,7 @@ int main(void) {
     scheduler.device = &device;
     scheduler.raise_vblank = raise_vblank;
     scheduler.raise_userdata = &hardware;
-    fixture_irq_cpu_attach(&scheduler);
+    fixture_irq_cpu_attach_guest(&scheduler, &guest);
     executing_scheduler = &scheduler;
     assert(musashi_psycross_irq_scheduler_hook_entry_int(&scheduler, 0x8006bb34u));
     assert(scheduler.installed && scheduler.context_address == 0x8006bb34u);
@@ -533,7 +611,7 @@ int main(void) {
         scheduler.device = &device;
         scheduler.raise_userdata = &hardware;
         scheduler.raise_vblank = kind ? raise_vblank : refuse_vblank;
-        fixture_irq_cpu_attach(&scheduler);
+        fixture_irq_cpu_attach_guest(&scheduler, &guest);
         assert(musashi_psycross_irq_scheduler_hook_entry_int(&scheduler, 0x8006bb34u));
         if (kind == 1) scheduler.pending_vblanks = UINT32_MAX;
         if (kind == 2) scheduler.source_vblanks = UINT64_MAX;
@@ -548,7 +626,7 @@ int main(void) {
     scheduler.device = &device;
     scheduler.raise_userdata = &hardware;
     scheduler.raise_vblank = raise_vblank;
-    fixture_irq_cpu_attach(&scheduler);
+    fixture_irq_cpu_attach_guest(&scheduler, &guest);
     /* The child callback's unknown guest slot faults after its tick write. */
     put32(&memory, 0x8006cb98u, 0x80012340u);
     assert(musashi_psycross_irq_scheduler_hook_entry_int(&scheduler, 0x8006bb34u));
@@ -567,7 +645,7 @@ int main(void) {
     scheduler.device = &device;
     scheduler.raise_userdata = &hardware;
     scheduler.raise_vblank = raise_vblank;
-    fixture_irq_cpu_attach(&scheduler);
+    fixture_irq_cpu_attach_guest(&scheduler, &guest);
     vsync_callback = preexisting_callback;
     assert(!musashi_psycross_irq_scheduler_hook_entry_int(&scheduler, 0x8006bb34u));
     assert(vsync_callback == preexisting_callback);
@@ -576,7 +654,7 @@ int main(void) {
     executing_scheduler = NULL;
     cpu_boundary_test(&memory);
     dma_irq_test(&memory);
-    vblank_root_test(&memory);
+    unowned_vblank_child_test(&memory);
     runtime_test(&memory);
     metadata_test(&memory);
     metadata_fault_test(&memory);

@@ -1,4 +1,4 @@
-#include "irq_cpu_fixture.h"
+#include "irq_cd_fixture.h"
 /* Scheduler/service fixture: real CD/source/event owners, explicit test RAM and
  * registered PsyCross seam. No worker VBlank, cold boot, or menu proof. */
 #include "musashi_irq_scheduler.h"
@@ -18,13 +18,14 @@ int VSyncCallback(void (*callback)(void)) { vsync_callback=callback; return 0; }
 typedef struct Fixture {
     MusashiBootMemory *ram;
     MusashiPsyCrossIrqRuntime runtime;
+    FixtureCdIrq irq;
     MusashiCdOwned *cd;
     MusashiCdRegisterDevice registers;
     MusashiExecutionClock clock;
     MusashiCdIrqServices services;
     MusashiBiosKernel bios;
     uint64_t cycle;
-    unsigned service_calls, instructions, irq_raises;
+    unsigned service_calls, instructions, child_steps, irq_raises;
     int active_service, refuse_service, nested_frame, refuse_clock;
     int32_t first_event, second_event, unrelated_event;
     struct { uint32_t r[32], hi, lo, pc, npc; } continuation;
@@ -44,10 +45,13 @@ static int clock_step(void *p,uint32_t cost) {
     Fixture *f=p;
     assert(cost==2 || cost==3);
     assert(f->runtime.scheduler.active_continuation==&f->continuation);
-    assert(f->runtime.scheduler.delivering && f->runtime.cd_frame.busy);
+    assert(f->runtime.scheduler.delivering);
     assert(!f->runtime.scheduler.return_consumed);
-    assert(!(f->runtime.controller.status&4)); /* actual dispatcher ACK first */
-    if(f->refuse_clock) return 0;
+    if (f->runtime.cd_frame.busy) {
+        assert(!(f->runtime.controller.status&4)); /* The parent acknowledged before entering CD. */
+        if (f->refuse_clock) return 0;
+        ++f->child_steps;
+    }
     f->cycle+=cost; ++f->instructions;
     return musashi_cd_owned_advance(f->cd,f->cycle);
 }
@@ -59,7 +63,7 @@ static int deliver(void *p,uint32_t class_word,uint32_t spec) {
        s->active_continuation!=&f->continuation || s->return_consumed ||
        !f->runtime.cd_frame.busy || f->runtime.cd_frame.faulted || f->active_service) return 0;
     assert(class_word==0xf0000003 && spec==0x20);
-    assert(f->instructions>100 && !(f->runtime.controller.status&4));
+    assert(f->child_steps>100 && !(f->runtime.controller.status&4));
     f->active_service=1; ++f->service_calls;
     /* These actual ownership operations must refuse without recursively
      * dispatching, replacing the retained service, or consuming B0:17. */
@@ -93,7 +97,7 @@ static void init(Fixture *f,const MusashiDiscMedia *media,int bind) {
     f->ram=calloc(1,sizeof(*f->ram)); assert(f->ram);
     memset(&f->continuation,0x5a,sizeof(f->continuation));
     assert(musashi_psycross_irq_runtime_init(&f->runtime,f->ram,NULL));
-    fixture_irq_cpu_attach(&f->runtime.scheduler);
+    fixture_cd_irq_attach(&f->irq, &f->runtime);
     f->cd=musashi_cd_owned_open_bios_idle(media,&hardware,0); assert(f->cd);
     f->registers=(MusashiCdRegisterDevice){.userdata=f->cd,.read8=musashi_cd_owned_read8,.write8=musashi_cd_owned_write8};
     f->clock=(MusashiExecutionClock){f,clock_step};
@@ -110,7 +114,6 @@ static void init(Fixture *f,const MusashiDiscMedia *media,int bind) {
     f->first_event=open_event(f,0x20,0x2000,0);
     f->unrelated_event=open_event(f,0x40,0x1000,0x8006189c);
     f->second_event=open_event(f,0x20,0x2000,0);
-    put(f,0x8006bb34,0x80042780); put(f,0x8006bb38,0x8006cb14);
     for(unsigned i=0;i<4;++i) put(f,0x8006cf4c+4*i,0x1f801800+i);
     put(f,0x800737d0,0x80043f08); put(f,0x800737d4,0x80043e08);
     put(f,0x8006ce54,1); put(f,0x8006cd54,0); /* Setloc policies */
@@ -147,6 +150,11 @@ static void lifecycle_and_success(const MusashiDiscMedia *media) {
     setloc(&f);
     assert(musashi_psycross_irq_scheduler_dispatch_pending(&f.runtime.scheduler,&f.continuation));
     assert(f.service_calls==1 && f.runtime.scheduler.deliveries==1);
+    assert(f.irq.guest.stop.pc == 0xb0u && f.irq.guest.stop.instructions > 0 &&
+           f.irq.guest.stop.cd_instructions == f.runtime.cd_frame.instructions &&
+           f.runtime.cd_frame.instructions > 0);
+    assert(f.child_steps == f.irq.guest.stop.cd_instructions &&
+           f.instructions == f.irq.guest.stop.instructions + f.child_steps);
     assert(f.runtime.scheduler.last_result==MUSASHI_IRQ_CONTEXT_RETURN_DELEGATED);
     assert(!f.runtime.scheduler.active_continuation && !f.runtime.scheduler.return_consumed);
     assert(!f.runtime.scheduler.delivering && !f.runtime.scheduler.pumping && !f.runtime.scheduler.faulted);

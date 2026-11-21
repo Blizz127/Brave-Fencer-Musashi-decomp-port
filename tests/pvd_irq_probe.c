@@ -1,4 +1,4 @@
-#include "irq_cpu_fixture.h"
+#include "musashi_guest_irq.h"
 /* First PVD source-IRQ fixture. Metadata/registration/clock are test-owned;
  * actual pinned bytes arrive only through CD FIFO -> DMA3 -> guest RAM.
  * The GPU frontend has an explicit synthetic renderer backend. No real
@@ -23,6 +23,10 @@ int VSyncCallback(void (*callback)(void)) { vsync_callback=callback; return 0; }
 
 typedef struct Fixture {
     MusashiBootMemory *ram;
+    MusashiGuestIrqImage image;
+    MusashiGuestIrqStop guest_stop;
+    unsigned dispatches, parent_steps, nested_steps;
+    uint64_t parent_cycles, nested_cycles;
     MusashiPsyCrossIrqRuntime runtime;
     MusashiCdOwned *cd;
     MusashiCdDma3 *dma3;
@@ -93,7 +97,14 @@ static int clock_step(void *p,uint32_t cost) {
     Fixture *f=p;
     assert(cost==2 || cost==3);
     assert(f->runtime.scheduler.active_continuation==&f->continuation);
-    assert(f->runtime.scheduler.delivering && f->runtime.cd_frame.busy);
+    assert(f->runtime.scheduler.delivering);
+    if (f->runtime.cd_frame.busy) {
+        ++f->nested_steps;
+        f->nested_cycles += cost;
+    } else {
+        ++f->parent_steps;
+        f->parent_cycles += cost;
+    }
     assert(!f->runtime.scheduler.return_consumed);
     if(f->fail_clock && f->dma_count) return 0;
     if(f->stall_clock && f->dma_count) return 1; /* deliberately broken clock negative */
@@ -168,6 +179,39 @@ static int32_t event(Fixture *f,uint32_t spec) {
     assert(musashi_bios_events_enable(&f->bios.events,handle,&result) && result==1); return handle;
 }
 static int consume(Fixture *f,int32_t handle) { int32_t result; assert(musashi_bios_events_test(&f->bios.events,handle,&result)); return result; }
+static int context_source(void *userdata, const void *identity, MusashiCpuContext *out) {
+    Fixture *f = userdata;
+    if (identity != &f->continuation) return 0;
+    *out = (MusashiCpuContext){.identity=identity, .gpr=f->continuation.r,
+        .pc=f->continuation.pc, .npc=f->continuation.npc,
+        .instruction_valid=1, .provenance=MUSASHI_CPU_CONTEXT_SOURCE};
+    return 1;
+}
+static int kernel_entry(void *userdata, uint16_t pending) {
+    Fixture *f = userdata;
+    MusashiPsyCrossIrqScheduler *s = &f->runtime.scheduler;
+    MusashiCpuStatusSnapshot state;
+    assert(pending == 4 && s->active_continuation == &f->continuation && s->delivering);
+    assert(musashi_cpu_status_inspect(s->cpu_status, &s->active_exception, &state));
+    assert(state.active && !state.faulted && state.cause_epc_valid &&
+           state.epc == f->continuation.pc && !state.kernel_entered);
+    return musashi_cpu_status_accept_kernel_entry(s->cpu_status, &s->active_exception);
+}
+static int guest_execute(void *userdata, MusashiBootMemory *memory, uint32_t context,
+                         const uint32_t *saved, const void *identity, const MusashiIrqDispatchDevice *bus) {
+    Fixture *f=userdata;
+    const MusashiGuestIrqCd cd = {.memory=f->ram, .registers=&f->registers,
+        .services=&f->services, .frame=&f->runtime.cd_frame, .stop=&f->runtime.cd_stop};
+    const MusashiGuestIrqServices irq = {.cd=&cd};
+    assert(identity == &f->continuation && identity == f->runtime.scheduler.active_continuation);
+    ++f->dispatches;
+    return musashi_boot_execute_guest_irq_with_services(&f->image, memory, context, saved,
+        bus, &f->clock, &f->dma, &irq, &f->guest_stop);
+}
+static int unexpected_handler(void *userdata, MusashiBootMemory *memory,uint32_t target) {
+    (void)userdata; (void)memory; (void)target;
+    abort();
+}
 static void init(Fixture *f,const MusashiDiscMedia *media,const uint8_t *exe,size_t exe_size) {
     MusashiCdOwnedHardware hw={.userdata=f,.current_thread=owner,.healthy=healthy,
         .raise_irq4=raise_cd,.data_transfer_idle=transfer_idle};
@@ -176,10 +220,21 @@ static void init(Fixture *f,const MusashiDiscMedia *media,const uint8_t *exe,siz
         .draw_mode=renderer_draw,.display_enable=renderer_display,
         .clear_fifo=renderer_reset,.ready=renderer_ready};
     memset(f,0,sizeof(*f)); f->ram=calloc(1,sizeof(*f->ram)); assert(f->ram);
-    assert(musashi_boot_map_exe(f->ram,exe,exe_size));
+    assert(musashi_boot_map_irq_exe(&f->image,f->ram,exe,exe_size));
     memset(&f->continuation,0x5a,sizeof(f->continuation));
-    assert(musashi_psycross_irq_runtime_init(&f->runtime,f->ram,NULL));
-    fixture_irq_cpu_attach(&f->runtime.scheduler);
+    f->continuation.r[0] = 0; f->continuation.pc=0x8004251cu; f->continuation.npc=0x80042520u;
+    MusashiPsyCrossIrqScheduler *s = &f->runtime.scheduler;
+    s->owner_thread=owner(NULL); s->memory=f->ram;
+    musashi_irq_controller_init(&f->runtime.controller);
+    f->runtime.device=(MusashiIrqDispatchDevice){.userdata=&f->runtime.controller,
+        .read16=musashi_irq_controller_read16,.write16=musashi_irq_controller_write16,
+        .execute=unexpected_handler};
+    s->device=&f->runtime.device; s->raise_vblank=musashi_irq_controller_raise_vblank;
+    s->raise_userdata=&f->runtime.controller;
+    assert(musashi_cpu_status_open(&s->cpu_status,owner,NULL));
+    assert(musashi_psycross_irq_scheduler_bind_context(s,context_source,f));
+    assert(musashi_psycross_irq_scheduler_bind_guest(s,guest_execute,f));
+    s->before_dispatch=kernel_entry; s->before_dispatch_userdata=f;
     f->cd=musashi_cd_owned_open_bios_idle(media,&hw,0); assert(f->cd);
     musashi_dma_controller_init(&f->dma,&f->runtime.controller);
     f->dma3=musashi_cd_dma3_open(f->ram,&f->dma,&dev,0); assert(f->dma3);
@@ -193,11 +248,12 @@ static void init(Fixture *f,const MusashiDiscMedia *media,const uint8_t *exe,siz
     f->clock=(MusashiExecutionClock){f,clock_step};
     f->services=(MusashiCdIrqServices){.userdata=f,.deliver_event=deliver,.callback_device=&f->callback};
     musashi_bios_kernel_init(&f->bios); f->event20=event(f,0x20); f->event40=event(f,0x40);
-    assert(musashi_psycross_irq_runtime_bind_cd(&f->runtime,&f->registers,&f->clock));
-    assert(musashi_psycross_irq_runtime_bind_cd_services(&f->runtime,&f->services));
+
     /* Test-owned IRQ registration/context, using the actual source identities.
      * EXE supplies the command-policy tables/MMIO cells, not a capture. */
-    put(f,0x8006bb34,0x80042780); put(f,0x8006bb38,0x8006cb14);
+    const uint32_t record[12]={0x80042780u,0x8006cb14u,0x801fffc0u,0x8006bafcu,
+        0,0,0,0,0,0,0,0x80074750u};
+    for (unsigned i=0;i<12;++i) put(f,0x8006bb34u+4u*i,record[i]);
     put(f,0x8006cb88,0x1f801070); put(f,0x8006cb8c,0x1f801074);
     put(f,0x8006bb08,0x80045290); put(f,0x8006cc84,0x80043398); put(f,0x8006cc88,0x800433c0);
     assert(musashi_boot_write16(f->ram,0x8006bafc,1));
@@ -211,12 +267,29 @@ static void init(Fixture *f,const MusashiDiscMedia *media,const uint8_t *exe,siz
 }
 static int dispatch(Fixture *f) {
     unsigned char before[sizeof(f->continuation)]; int accepted;
+    unsigned n=f->dispatches, p=f->parent_steps, c=f->nested_steps;
+    MusashiCpuStatusSnapshot status;
     memcpy(before,&f->continuation,sizeof(before));
     accepted=musashi_psycross_irq_scheduler_dispatch_pending(&f->runtime.scheduler,&f->continuation);
     assert(!memcmp(before,&f->continuation,sizeof(before)));
-    if(!accepted) fprintf(stderr,"PVD_STOP call=%08x target=%08x steps=%u CDfault=%u DMAfault=%u transfers=%llu bytes=%llu\n",
-        f->runtime.cd_stop.call_address,f->runtime.cd_stop.target_address,f->runtime.cd_frame.instructions,
-        cdstate(f).fault,dmastate(f).fault,(unsigned long long)dmastate(f).transfers,(unsigned long long)dmastate(f).bytes);
+    fprintf(stderr,"PVD_CD_IRQ delivery=%u returned=%d dispatcher_pc=%08x outer=%u cd=%u "
+        "cd_stop=%08x:%08x I_STAT=%04x transfers=%llu bytes=%llu\n",f->dispatches,accepted,
+        f->guest_stop.pc,f->parent_steps-p,f->nested_steps-c,
+        f->runtime.cd_stop.call_address,f->runtime.cd_stop.target_address,f->runtime.controller.status,
+        (unsigned long long)dmastate(f).transfers,(unsigned long long)dmastate(f).bytes);
+    if (accepted) {
+        assert(f->dispatches==n+1 && f->guest_stop.pc==0xb0u &&
+               f->runtime.scheduler.last_result==MUSASHI_IRQ_CONTEXT_RETURN_DELEGATED &&
+               !f->runtime.controller.status);
+        assert(f->guest_stop.instructions==f->parent_steps-p && f->guest_stop.instructions>0u);
+        assert(f->runtime.cd_frame.instructions==f->nested_steps-c && f->runtime.cd_frame.instructions>0u);
+        assert(f->guest_stop.cd_instructions==f->runtime.cd_frame.instructions);
+        assert(musashi_cpu_status_snapshot(f->runtime.scheduler.cpu_status,&status) &&
+               !status.active && !status.faulted && status.sequence==f->dispatches);
+        unsigned returned=f->dispatches, steps=f->instructions;
+        assert(musashi_psycross_irq_scheduler_dispatch_pending(&f->runtime.scheduler,&f->continuation));
+        assert(f->dispatches==returned && f->instructions==steps);
+    }
     return accepted;
 }
 static void command(Fixture *f,unsigned cmd,const uint8_t *params,unsigned count) {
@@ -248,7 +321,7 @@ static void prepare(Fixture *f) {
 }
 static void finish(Fixture *f) {
     assert(musashi_psycross_irq_scheduler_uninstall(&f->runtime.scheduler));
-    assert(musashi_psycross_irq_runtime_close(&f->runtime));
+    assert(musashi_cpu_status_close(f->runtime.scheduler.cpu_status));
     assert(musashi_cd_dma3_close(f->dma3)); assert(musashi_cd_owned_close(f->cd)); free(f->ram);
 }
 static void success(const MusashiDiscMedia *media,const uint8_t *exe,size_t size) {
@@ -277,6 +350,14 @@ static void success(const MusashiDiscMedia *media,const uint8_t *exe,size_t size
     assert(f.service20==2 && consume(&f,f.event20)==1 && !consume(&f,f.event20));
     assert(!cdstate(&f).reading && !cdstate(&f).phase && !cdstate(&f).interrupt);
     assert(dmastate(&f).bytes==2060 && get(&f,0x8006cfb4)==0);
+    assert(f.dispatches==6);
+    printf("PVD_GUEST_IRQ_PASS deliveries=%u returning_b017=%u parent_steps=%u parent_cycles=%llu "
+           "cd_steps=%u cd_cycles=%llu dma_transfers=%u dma_bytes=%llu fifo_bytes=%llu "
+           "header_matches=1 pvd_matches=1 guards=1 event20=%u event40=%u\n",
+           f.dispatches,f.dispatches,f.parent_steps,(unsigned long long)f.parent_cycles,
+           f.nested_steps,(unsigned long long)f.nested_cycles,f.dma_count,
+           (unsigned long long)dmastate(&f).bytes,(unsigned long long)cdstate(&f).data_bytes_read,
+           f.service20,f.service40);
     finish(&f);
 }
 
@@ -351,5 +432,5 @@ int main(int argc,char **argv) {
     success(media,exe,size);
     for(int i=0;i<NEGATIVE_COUNT;++i) negative(media,exe,size,(enum Negative)i);
     free(exe); musashi_disc_media_close(media); SDL_DestroyMutex(g_intrMutex); SDL_Quit();
-    puts("PVD_IRQ_PASS fixture_only=1"); return 0;
+    puts("PVD_IRQ_PASS fixture_only=1 guest_dispatch=1 negative_cases=13"); return 0;
 }

@@ -5,6 +5,7 @@ import struct
 import subprocess
 import tempfile
 import unittest
+from owned_registration_fixture import compile_registration_api, map_registration_image
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = 0x8006CBC4
@@ -29,17 +30,9 @@ class DmaRegistrationTests(unittest.TestCase):
     def setUpClass(cls):
         temp = tempfile.TemporaryDirectory(prefix="musashi-dma-registration-")
         cls.addClassCleanup(temp.cleanup)
-        library = Path(temp.name) / "dma_registration.so"
-        subprocess.run([
-            "cc", "-std=c99", "-O2", "-Wall", "-Wextra", "-Werror", "-shared", "-fPIC",
-            "-DMUSASHI_NATIVE_DMA_REGISTRATION=1",
-            "-DMUSASHI_NATIVE_CALLBACK_DISPATCH=1",
-            "-I", str(ROOT / "include"), "-I", str(ROOT / "pc_port/include"),
-            str(ROOT / "pc_port/libetc_dma_registration.c"), str(ROOT / "pc_port/libetc_dma_veneer.c"),
-            str(ROOT / "pc_port/boot_memory.c"),
-            "-lcrypto", "-o", str(library),
-        ], check=True, stdin=subprocess.DEVNULL, timeout=60, capture_output=True)
-        cls.library = C.CDLL(str(library))
+        cls.library = compile_registration_api(ROOT, temp.name, (
+            'musashi_boot_call_80042f8c', 'musashi_boot_call_800425e0',
+        ))
         cls.call = cls.library.musashi_boot_call_80042f8c
         cls.call.argtypes = [C.POINTER(Memory), C.POINTER(Device), C.c_int32,
                              C.c_uint32, C.POINTER(C.c_uint32)]
@@ -50,6 +43,7 @@ class DmaRegistrationTests(unittest.TestCase):
 
     def setUp(self):
         self.memory = Memory()
+        map_registration_image(self.memory, ROOT)
         self.trace = []
         self.control = 0xFE123456
         self.refuse = None

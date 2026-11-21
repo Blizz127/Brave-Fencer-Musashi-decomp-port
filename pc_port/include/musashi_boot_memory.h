@@ -123,18 +123,12 @@ int musashi_boot_call_8002906c(MusashiBootMemory *memory);
 /* Exact 800426D4 ready-status leaf: zero-extended D_8006BAFE. */
 int musashi_boot_call_800426d4(MusashiBootMemory *memory, uint16_t *result);
 
-/* Execute the decomp-owned device query through explicit GPU callbacks.
- * This does not map MMIO into cached RAM or assume the emulator's observed
- * status value. */
-/* Uses live GPU pointer cells in memory, with retail snapshot lifetimes;
- * callers must load/initialize those cells, not rely on fixed MMIO defaults. */
+/* Retained direct-call ABI. Returns zero without changing the result, RAM or device. */
 int musashi_boot_call_8005c1c0(MusashiBootMemory *memory,
                                const MusashiGpuDevice *device,
                               int32_t mode, int32_t *result);
 
-/* Execute the decomp-owned low-level device reset against checked shared RAM
- * and explicit 16/32-bit device callbacks. The wrapper fails on an incomplete
- * adapter and never treats device addresses as cached RAM. */
+/* Retained direct-call ABI. Returns zero without changing the result, RAM or device. */
 int musashi_boot_call_8005bd7c(MusashiBootMemory *memory,
                               const MusashiGpuDevice *device,
                               int32_t mode, int32_t *result);
@@ -240,6 +234,10 @@ typedef struct MusashiCdDevice {
     /* Continuous execution requires SYS1's guest return value. The legacy
      * acceptance-only callback above remains for old diagnostic wrappers. */
     int (*enter_critical_result)(void *userdata, int32_t *result);
+    /* Optional device owner for documented BIOS file/card calls. A declined
+     * vector remains available to other devices. Accepted void calls retain v0. */
+    int (*file_vector)(void *userdata, uint32_t vector, uint32_t selector,
+                       const uint32_t args[4], uint32_t *v0);
 } MusashiCdDevice;
 
 /* Start from mapped EXE bytes, executing its source-owned CRT and caller on
@@ -401,6 +399,10 @@ MusashiResetGraphPrefixStatus musashi_boot_run_entry_with_devices(
     MusashiConsoleSink, void *sink_userdata,
     MusashiEntryObserver, void *observer_userdata, MusashiEntryRunStop *);
 
+/* Execute the user's resident card callback with the installed IRQ frame. */
+MusashiResetGraphPrefixStatus musashi_boot_execute_source_card_vblank(
+    MusashiBootMemory *, const MusashiStartupPrefixDevice *, uint32_t context,
+    MusashiConsoleSink, void *sink_userdata, MusashiResetGraphPrefixStop *);
 /* Run one already-fetched source function on a nested CPU until it returns
  * to a sentinel RA. COMPLETE means that function returned; it is not a menu
  * or IRQ-success claim. Unmapped fetches publish the refused PC in stop. */

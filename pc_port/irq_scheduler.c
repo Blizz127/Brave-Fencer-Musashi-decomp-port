@@ -232,7 +232,9 @@ static int scheduler_dispatch(MusashiPsyCrossIrqScheduler *scheduler,
     /* IRQ callbacks stay interpreted: the dispatcher's return and the CD
      * IRQ frame account for the guest calls they see. */
     musashi_native_lane_suspend(1);
-    scheduler->last_result = musashi_boot_call_800427f4(scheduler->memory, &dispatch_device);
+    scheduler->last_result = scheduler->guest_dispatch ? scheduler->guest_dispatch(
+        scheduler->guest_dispatch_userdata, scheduler->memory, scheduler->context_address,
+        scheduler->installed_context, continuation, &dispatch_device) : 0;
     musashi_native_lane_suspend(0);
     scheduler->deliveries++;
     if (scheduler->faulted ||
@@ -282,6 +284,7 @@ int musashi_psycross_irq_scheduler_hook_entry_int(void *userdata,
                                                   uint32_t context_address) {
     MusashiPsyCrossIrqScheduler *scheduler = userdata;
     uint64_t tick, frequency;
+    uint32_t saved[12];
     MusashiCpuStatusSnapshot cpu;
     if (!scheduler || (scheduler->owner_thread && !scheduler_is_owner(scheduler)) ||
         !scheduler->cpu_status ||
@@ -303,6 +306,17 @@ int musashi_psycross_irq_scheduler_hook_entry_int(void *userdata,
         scheduler_unlock();
         return 0;
     }
+    if (context_address != 0x8006bb34u) {
+        scheduler_unlock();
+        return 0;
+    }
+    for (unsigned i = 0; i < 12; ++i) {
+        if (!musashi_boot_read32(scheduler->memory,context_address+4u*i,&saved[i])) {
+            scheduler_unlock();
+            return 0;
+        }
+    }
+    memcpy(scheduler->installed_context, saved, sizeof(saved));
     scheduler->source_frequency = frequency;
     scheduler->source_cut_tick = scheduler->source_tick = tick;
     scheduler->owner_thread = (uint64_t)SDL_ThreadID();
@@ -349,63 +363,9 @@ static int runtime_write16(void *userdata, uint32_t address, uint16_t value) {
     return musashi_irq_controller_write16(&runtime->controller, address, value);
 }
 
-static int runtime_call_one(void *userdata, MusashiBootMemory *memory,
-    uint32_t target, uint32_t argument, uint32_t *result) {
-    MusashiPsyCrossIrqRuntime *runtime = userdata;
-    const MusashiVblankExecutor *requests = runtime->requests;
-    if (requests && requests->call_one &&
-        requests->call_one(requests->userdata, memory, target, argument, result))
-        return 1;
-    runtime->failed_target = target;
-    return 0;
-}
-
-static int runtime_call_two(void *userdata, MusashiBootMemory *memory,
-    uint32_t target, uint32_t first, uint32_t second) {
-    MusashiPsyCrossIrqRuntime *runtime = userdata;
-    const MusashiVblankExecutor *requests = runtime->requests;
-    if (requests && requests->call_two &&
-        requests->call_two(requests->userdata, memory, target, first, second))
-        return 1;
-    runtime->failed_target = target;
-    return 0;
-}
-
-static int runtime_source_execute(MusashiPsyCrossIrqRuntime *runtime,
-    MusashiBootMemory *memory, uint32_t target) {
-    if (runtime->source_execute &&
-        runtime->source_execute(runtime->source_execute_userdata, memory, target))
-        return 1;
-    runtime->failed_target = target;
-    return 0;
-}
-
-static int runtime_vblank_callback(void *userdata, MusashiBootMemory *memory,
-    uint32_t target) {
-    MusashiPsyCrossIrqRuntime *runtime = userdata;
-    if (target == 0x800616d0u)
-        return musashi_boot_call_800616d0(memory, &runtime->vblank);
-    if (target == 0x8001096cu)
-        return musashi_boot_call_8001096c(memory, runtime_vblank_callback, userdata);
-    return runtime_source_execute(runtime, memory, target);
-}
-
-static int runtime_dma_channel_callback(void *userdata, MusashiBootMemory *memory,
-    uint32_t target) {
-    return runtime_source_execute(userdata, memory, target);
-}
-
 static int runtime_irq_callback(void *userdata, MusashiBootMemory *memory,
     uint32_t target) {
     MusashiPsyCrossIrqRuntime *runtime = userdata;
-    if (target == 0x80042ce8u)
-        return musashi_boot_call_80042ce8(memory, runtime_vblank_callback, userdata);
-    if (target == 0x80042e08u && runtime->dma_device &&
-        scheduler_is_owner(&runtime->scheduler) && runtime->scheduler.delivering &&
-        runtime->scheduler.active_continuation && !runtime->scheduler.return_consumed &&
-        musashi_boot_call_80042e08(memory, runtime->dma_device,
-            runtime_dma_channel_callback, userdata))
-        return 1;
     if (target == 0x80045290u && runtime->cd_registers && runtime->cd_clock &&
         scheduler_is_owner(&runtime->scheduler) && runtime->scheduler.delivering &&
         runtime->scheduler.active_continuation && !runtime->scheduler.return_consumed &&
@@ -482,6 +442,16 @@ int musashi_psycross_irq_scheduler_bind_cpu(MusashiPsyCrossIrqScheduler *s,
         return 0;
     s->cpu_status = cpu; s->owner_thread = (uint64_t)SDL_ThreadID(); return 1;
 }
+int musashi_psycross_irq_scheduler_bind_guest(MusashiPsyCrossIrqScheduler *s,
+    int (*run)(void *, MusashiBootMemory *, uint32_t, const uint32_t *, const void *,
+               const MusashiIrqDispatchDevice *), void *userdata) {
+    if (!scheduler_is_owner(s) || !run || s->guest_dispatch || s->installed ||
+        s->pumping || s->collecting || s->delivering || s->faulted) return 0;
+    s->guest_dispatch = run;
+    s->guest_dispatch_userdata = userdata;
+    return 1;
+}
+
 int musashi_psycross_irq_scheduler_bind_context(MusashiPsyCrossIrqScheduler *s,
     int (*provider)(void *, const void *, MusashiCpuContext *), void *userdata) {
     MusashiCpuStatusSnapshot state;
@@ -508,9 +478,9 @@ int musashi_psycross_irq_runtime_close(MusashiPsyCrossIrqRuntime *r) {
 }
 
 int musashi_psycross_irq_runtime_init(MusashiPsyCrossIrqRuntime *runtime,
-    MusashiBootMemory *memory, const MusashiVblankExecutor *requests) {
+    MusashiBootMemory *memory, const void *reserved) {
     MusashiCpuStatus *cpu = NULL;
-    if (!runtime || !memory || runtime->initialized || runtime->cpu_status ||
+    if (reserved || !runtime || !memory || runtime->initialized || runtime->cpu_status ||
         (runtime->scheduler.owner_thread && !scheduler_is_owner(&runtime->scheduler)) ||
         runtime->scheduler.installed)
         return 0;
@@ -521,10 +491,6 @@ int musashi_psycross_irq_runtime_init(MusashiPsyCrossIrqRuntime *runtime,
     runtime->scheduler.cpu_status = cpu;
     runtime->scheduler.owner_thread = (uint64_t)SDL_ThreadID();
     musashi_irq_controller_init(&runtime->controller);
-    runtime->requests = requests;
-    runtime->vblank = (MusashiVblankExecutor){
-        runtime, runtime_call_one, runtime_call_two
-    };
     runtime->device = (MusashiIrqDispatchDevice){
         runtime, runtime_read16, runtime_write16, runtime_irq_callback, NULL, NULL
     };

@@ -56,9 +56,28 @@ static void compare_payload(Fixture *f,const MusashiDiscMedia *media) {
 static int foreign_dispatch(void *p) {
     Fixture *f=p; return musashi_psycross_irq_scheduler_dispatch_pending(&f->runtime.scheduler,&f->continuation);
 }
+/* The child fetches from this owner's live RAM and retained reference.
+ * Check the entire 424-word LIST body against the supplied executable. */
+static int list_body_matches(const Fixture *f, const uint8_t *exe, size_t size) {
+    const uint32_t start = 0x8001a338u;
+    const size_t length = 424u * 4u, offset = 0x800u + (start - 0x80010000u);
+    if (size < offset + length) return 0;
+    for (unsigned i = 0; i < f->image.cd_span_count; ++i) {
+        const MusashiGuestCdCodeSpan *span = &f->image.cd_spans[i];
+        if (span->pc > start || start - span->pc > span->size) continue;
+        size_t within = start - span->pc;
+        if (length > span->size - within) continue;
+        size_t reference = span->offset + within;
+        if (reference + length > sizeof(f->image.cd_code)) return 0;
+        return !memcmp(exe + offset, f->image.cd_code + reference, length) &&
+               !memcmp(exe + offset, f->ram->bytes + (start - 0x80000000u), length);
+    }
+    return 0;
+}
 static void success_list(const MusashiDiscMedia *media,const uint8_t *exe,size_t size) {
     Fixture f; MusashiCdOwnedState s;
     list_init(&f,media,exe,size);
+    assert(list_body_matches(&f, exe, size));
     { int result=-1; SDL_Thread *thread=SDL_CreateThread(foreign_dispatch,"foreign-list",&f);
       assert(thread); SDL_WaitThread(thread,&result); assert(result==0);
       assert(!f.runtime.scheduler.faulted && !f.runtime.cd_frame.faulted && !dmastate(&f).bytes); }

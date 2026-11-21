@@ -541,44 +541,40 @@ The source uses the following instruction and address checks.
   The historical test passed with the lane off and on. It skips when
   the necessary game data is unavailable.
 
-## PsyQ exclusion (2026-09-28)
+## PsyQ source exclusion
 
-No Sony PsyQ code is compiled or linked into the port: neither SDK objects
-nor decompiled PsyQ C. `config/psyq_ranges.txt` lists the 71 PsyQ code
-ranges of the EXE (snd*, lib*, apicard*, gap segments of the vendor splat
-layout; the `sgap_*` islands are game code), built by
-`tools/psyq_manifest.py build`. CMake runs `tools/psyq_manifest.py check`
-over every `src/main` source of every target and fails configuration on any
-PsyQ-range source, except the bindings listed in
-`config/psyq_pending_replacement.txt`. That list started with the 19
-decompiled-PsyQ bindings the port used to compile (libetc callback/IRQ/DMA,
-libgpu device ops, libc2 console/string, libmcrd VBlank) and is now
-**empty**: every one is replaced by port-owned HLE (table below), and
-`tests/test_psyq_exclusion.py` fails if one returns or the list grows.
+CMake checks the game's resident library ranges in `config/psyq_ranges.txt`
+against every `src/main` target source. The exception list in
+`config/psyq_pending_replacement.txt` is empty. The hybrid player executes
+supported guest library functions from a locally supplied US executable.
 
-Replacement status (each entry: what now provides it):
-
-| PsyQ entry | service | provider |
+| Guest entry | Operation | Provider in this source |
 | --- | --- | --- |
-| 80042C64 | libetc word clear | port HLE `musashi_hle_clear_words` |
-| 8005C29C | libc2 memset | port HLE `musashi_hle_fill_bytes` |
-| 8005CCC8 | libc2 memchr | port HLE `musashi_hle_find_byte` |
-| 80043060 | libetc word exchange | port HLE `musashi_hle_exchange_word` |
-| 8005C388 / 8005CD48 | libc2 TTY putchar / puts | port HLE `musashi_hle_console_putc/puts` |
-| 800425B0 / 800425E0 | libetc InterruptCallback / DMACallback veneers | port HLE `pc_port/libetc_irq_veneer.c`, `libetc_dma_veneer.c` |
-| 800429DC | libetc InterruptCallback registration (I_MASK, BIOS ChangeClearPad/RCnt) | port HLE `pc_port/libetc_irq_registration.c` |
-| 80042F8C | libetc DMACallback registration (DICR) | port HLE `pc_port/libetc_dma_registration.c` |
-| 80042CE8 | libetc VSync callback service | port HLE `pc_port/libetc_vsync_handler.c` |
-| 80042E08 | libetc DMA interrupt service (DICR drain) | port HLE `pc_port/libetc_dma_irq.c` |
-| 800427F4 | libetc interrupt service (I_STAT dispatch, storm guard, RFE) | port HLE `pc_port/libetc_irq_dispatch.c` |
-| 8005BD7C (+800426FC) | libgpu graphics reset (I_MASK exchange, GPU DMA/GP1 reset) | port HLE `pc_port/device_reset_bindings.c` |
-| 8005C1C0 | libgpu GPU-type probe (GP1 10000007h) | port HLE `pc_port/gpu_bindings.c` |
-| 800616D0 8006291C 80062988 | libmcrd memory-card VBlank service (request stack step, idle query, completion) | port HLE `pc_port/libmcrd_vblank.c` |
+| 80042C64 | Clear words | Checked guest RAM and a host memory operation |
+| 8005C29C | Fill bytes | Guest CPU for the two verified graphics-reset calls. Other supported callers use a checked host memory operation. |
+| 8005CCC8, 80043060 | Search bytes and exchange a word | Checked guest RAM operations |
+| 8005C388, 8005CD48 | Console characters and strings | Host console sink using the guest classification table and column |
+| 800425B0, 800429DC | Interrupt callback registration | Guest CPU and checked interrupt mask and BIOS policy devices |
+| 800425E0, 80042F8C | DMA callback registration | Guest CPU and checked DMA control device |
+| 800427F4, 80042CE8, 80042E08 | Interrupt dispatch, vertical blank and DMA service | Bounded guest CPU using the installed exception context and checked interrupt and DMA devices |
+| 8005BD7C, 8005C1C0 | Graphics reset and GPU query | Guest CPU on the active graphics bus |
+| 800616D0, 8006291C, 80062988 | Memory-card vertical blank callback and its resident callees | Guest CPU from the locally supplied executable |
 
-The HLE (`pc_port/include/musashi_psyq_hle.h`, header-only) implements documented
-C-library and libetc behaviour. The native lane admitted 469 of 655 game functions in that test and excluded 240 PsyQ
-candidates. The interpreter executed the library instructions supplied by the
-user's disc.
+The game's card-information and card-load requests run from vertical blank
+slot 7 on the interrupted machine's guest CPU. They use the registered BIOS
+event handles and mounted card service. The card service completes accepted
+work on a later source vertical blank.
+
+The scheduler requires an installed hook, live CPU exception and matching
+memory owner for guest interrupt delivery. A refused callback terminates
+that delivery. The direct graphics reset, GPU query and interrupt-service
+diagnostic APIs report failure when their callers lack the CPU and device
+state required for these paths.
+
+In a directed mode-zero reset test, the guest CPU took 57,887 modeled cycles
+from the reset call through its return. Seven measured timestamps and the
+ordered hardware writes matched a recording of the original executable on
+PCSX-Redux. This measurement covers that startup interval.
 
 ## Third-party components and licenses
 

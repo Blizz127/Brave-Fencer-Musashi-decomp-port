@@ -55,6 +55,9 @@ int musashi_bios_events_deliver(MusashiBiosEvents *events, uint32_t class_word,
                                 uint32_t spec,
                                 MusashiBiosEventExecutor execute,
                                 void *userdata);
+/* Deliver a polling event atomically. A matching enabled guest callback
+ * needs an executor before any polling record may be updated. */
+int musashi_bios_events_deliver_poll(MusashiBiosEvents *events, uint32_t class_word, uint32_t spec);
 int musashi_bios_events_undeliver(MusashiBiosEvents *events,
                                   uint32_t class_word, uint32_t spec);
 

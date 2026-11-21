@@ -1,7 +1,6 @@
 #include "musashi_boot_memory.h"
 #include "musashi_cd_controller.h"
 #include "musashi_callback_registration.h"
-#include "musashi_vblank.h"
 #ifdef MUSASHI_WITH_PSYCROSS
 #include <SDL.h>
 #include "musashi_irq_scheduler.h"
@@ -28,8 +27,8 @@ typedef struct CallbackDeviceLog {
     unsigned write32_count;
     uint32_t write16_address[8];
     uint16_t write16_value[8];
-    uint32_t write32_address[3];
-    uint32_t write32_value[3];
+    uint32_t write32_address[4];
+    uint32_t write32_value[4];
     unsigned hook_count;
     uint32_t hook_context;
     uint16_t mask;
@@ -44,6 +43,7 @@ typedef struct CallbackDeviceLog {
 
 typedef struct ResetGpuLog {
     uint16_t mask;
+    unsigned gpu_reads, gpu_writes;
 } ResetGpuLog;
 
 typedef struct CdDeviceLog {
@@ -103,10 +103,10 @@ static int scheduler_write16(void *userdata, uint32_t address, uint16_t value) {
 
 static int scheduler_execute(void *userdata, MusashiBootMemory *memory,
                              uint32_t target) {
-    (void)userdata;
-    if (target != 0x80042ce8u)
-        return 0;
-    return musashi_boot_call_80042ce8(memory, NULL, NULL);
+    /* This fixture checks registration only. No source IRQ was delivered. */
+    (void)userdata; (void)memory; (void)target;
+    assert(!"unexpected IRQ execution during formatter registration");
+    return 0;
 }
 
 static int scheduler_raise_vblank(void *userdata) {
@@ -148,7 +148,7 @@ static void callback_write16(void *userdata, uint32_t address, uint16_t value) {
 
 static void callback_write32(void *userdata, uint32_t address, uint32_t value) {
     CallbackDeviceLog *log = userdata;
-    assert(log->write32_count < 3);
+    assert(log->write32_count < 4);
     log->write32_address[log->write32_count] = address;
     log->write32_value[log->write32_count++] = value;
 }
@@ -193,7 +193,32 @@ static int registration_c0(void *userdata, int32_t channel, int32_t disabled) {
     return 1;
 }
 
-static void init_registration(MusashiCallbackDevice *device, CallbackDeviceLog *log) {
+/* Only these resident instructions are copied into each synthetic RAM
+ * fixture. The verified local executable supplies every byte at runtime. */
+static struct FixtureCodeSpan {
+    uint32_t address;
+    size_t length;
+    uint8_t bytes[0x154];
+} fixture_spans[] = {
+    {.address=0x800425b0u, .length=0x30u},  /* IRQ registration veneer */
+    {.address=0x800429dcu, .length=0x154u}, /* IRQ registration */
+    {.address=0x8005be30u, .length=28},     /* GPU reset's two fill callsites */
+    {.address=0x8005c29cu, .length=44}      /* Checked fill implementation */
+};
+
+static void copy_fixture_text(MusashiBootMemory *memory, int into_guest) {
+    for (unsigned i = 0; i < sizeof(fixture_spans)/sizeof(fixture_spans[0]); ++i) {
+        struct FixtureCodeSpan *span = &fixture_spans[i];
+        uint8_t *live = musashi_boot_ram_span(memory, span->address, span->length);
+        assert(live && span->length <= sizeof(span->bytes));
+        if (into_guest) memcpy(live, span->bytes, span->length);
+        else memcpy(span->bytes, live, span->length);
+    }
+}
+
+static void init_registration(MusashiBootMemory *memory, MusashiCallbackDevice *device,
+                              CallbackDeviceLog *log) {
+    copy_fixture_text(memory, 1);
     log->registration = (MusashiCallbackRegistrationDevice){
         log, registration_read16, registration_write16, registration_b0, registration_c0
     };
@@ -367,6 +392,23 @@ static void reset_gpu_write32(void *userdata, uint32_t address, uint32_t value) 
            address == 0x1f801814u || address == 0x1f801810u);
 }
 
+static int fixture_gpu_read(void *userdata, uint32_t address, uint32_t *value) {
+    ResetGpuLog *log = userdata;
+    if (address != 0x1f801810u && address != 0x1f801814u) return 0;
+    ++log->gpu_reads;
+    *value = reset_gpu_read32(log, address);
+    return 1;
+}
+
+static int fixture_gpu_write(void *userdata, uint32_t address, uint32_t value) {
+    ResetGpuLog *log = userdata;
+    if (address != 0x1f801810u && address != 0x1f801814u && address != 0x1f8010a8u)
+        return 0;
+    ++log->gpu_writes;
+    reset_gpu_write32(log, address, value);
+    return 1;
+}
+
 static int cd_enter(void *userdata) {
     ((CdDeviceLog *)userdata)->enter_count++;
     return 1;
@@ -448,9 +490,8 @@ static int event_exit(void *userdata, int32_t *result) {
     return 1;
 }
 
-/* Optional argument for the captured CD diagnostic. The loader validates the
- * whole local executable before the test reads its message from guest RAM. */
-static int load_cd_message(const char *path, char *message, size_t capacity) {
+/* The loader validates resident test code and the optional CD message. */
+static int load_fixture_data(const char *path, char *message, size_t capacity) {
     enum { exe_size = 0x65000 };
     MusashiBootMemory *loaded = calloc(1, sizeof(*loaded));
     unsigned char *exe = malloc(exe_size);
@@ -460,12 +501,15 @@ static int load_cd_message(const char *path, char *message, size_t capacity) {
     if (file && exe && loaded && fread(exe, 1, exe_size, file) == exe_size &&
         fgetc(file) == EOF && !ferror(file) &&
         musashi_boot_load_entry(loaded, exe, exe_size, 0, &entry)) {
-        const unsigned char *start = musashi_boot_ram_span(loaded, 0x800735fcu, capacity);
-        const unsigned char *end = start ? memchr(start, 0, capacity) : NULL;
-        if (end && end > start && end[-1] == '\n' && !memchr(start, '%', end - start)) {
-            memcpy(message, start, (size_t)(end - start) + 1);
-            ok = 1;
-        }
+        copy_fixture_text(loaded, 0);
+        if (message) {
+            const unsigned char *start = musashi_boot_ram_span(loaded, 0x800735fcu, capacity);
+            const unsigned char *end = start ? memchr(start, 0, capacity) : NULL;
+            if (end && end > start && end[-1] == '\n' && !memchr(start, '%', end - start)) {
+                memcpy(message, start, (size_t)(end - start) + 1);
+                ok = 1;
+            }
+        } else ok = 1;
     }
     if (file)
         fclose(file);
@@ -533,7 +577,7 @@ int main(int argc, char **argv) {
      * Run the standalone controller checks above even without an image. */
     if (!code_image || !*code_image)
         return 77;
-    if (argc == 2 && !load_cd_message(code_image, cd_message, sizeof cd_message))
+    if (!load_fixture_data(code_image, argc == 2 ? cd_message : NULL, sizeof cd_message))
         return 1;
     MusashiBootMemory memory;
     Output output;
@@ -694,7 +738,7 @@ int main(int argc, char **argv) {
         device.write32 = callback_write32;
         device.hook_entry_int = isolated_hook_entry_int;
         device.hook_entry_int_userdata = &hook_log;
-        init_registration(&device, &log);
+        init_registration(&memory, &device, &log);
         device.a0_72 = NULL;
         device.exit_critical_section = NULL;
         device.gpu_cw = NULL;
@@ -732,7 +776,7 @@ int main(int argc, char **argv) {
         device.write16 = callback_write16;
         device.write32 = callback_write32;
         device.hook_entry_int = callback_hook_entry_int;
-        init_registration(&device, &log);
+        init_registration(&memory, &device, &log);
         device.a0_72 = callback_a0_72;
         device.exit_critical_section = callback_exit_critical;
         device.gpu_cw = callback_gpu_cw;
@@ -777,17 +821,6 @@ int main(int argc, char **argv) {
             assert(event_slot == 0x800616d0u);
             assert(event_log.open_count == 8 && event_log.enable_count == 8 &&
                    event_log.b0_0b_count == 8);
-
-            /* Use the slot and idle index installed by the actual startup
-             * bodies. Direct handler invocation is not scheduled IRQ delivery. */
-            assert(musashi_boot_read32(&memory, 0x80072a34u, &event_slot));
-            assert(event_slot == UINT32_MAX);
-            assert(musashi_boot_read32(&memory, 0x8006cbb8u, &event_slot));
-            assert(event_slot == 0);
-            assert(musashi_boot_call_80042ce8(
-                &memory, musashi_boot_execute_vblank_callback, NULL));
-            assert(musashi_boot_read32(&memory, 0x8006cbb8u, &event_slot));
-            assert(event_slot == 1);
 
             /* Retail's static callback table supplies the wrapper's +0x0C
              * initializer pointer; 80042718 returns early after prior setup. */
@@ -907,7 +940,7 @@ int main(int argc, char **argv) {
 #else
         device.hook_entry_int = callback_hook_entry_int;
 #endif
-        init_registration(&device, &log);
+        init_registration(&memory, &device, &log);
         device.a0_72 = callback_a0_72;
         device.exit_critical_section = callback_exit_critical;
         device.gpu_cw = callback_gpu_cw;
@@ -965,8 +998,10 @@ int main(int argc, char **argv) {
                 &input_log, input_enter_critical, input_c0_3, input_c0_2, input_c0_0a,
                 input_exit_critical
             };
+            const MusashiGpuIoDevice gpu = {&reset_log, fixture_gpu_read, fixture_gpu_write};
             MusashiStartupPrefixDevice startup_device = {
-                &device, &cd_device, &event_device, &input_device
+                .callback = &device, .cd = &cd_device, .event = &event_device,
+                .input = &input_device, .gpu_io = &gpu
             };
             assert(musashi_boot_write32(&memory, 0x80078c7cu, UINT32_MAX));
             assert(musashi_boot_write32(&memory, 0x80078cc0u, UINT32_MAX));
@@ -987,6 +1022,7 @@ int main(int argc, char **argv) {
                 assert(musashi_boot_run_post_entry_dispatch_prefix(
                            &memory, &startup_device, &retry_device, sink, &output,
                            &result, &stop) == MUSASHI_RESETGRAPH_PREFIX_COMPLETE);
+                assert(reset_log.gpu_reads == 1 && reset_log.gpu_writes == 4);
                 assert(retry_log.count == 1 && stop.target_address == UINT32_MAX);
                 assert(musashi_boot_read32(&memory, 0x8006cc84u, &word) &&
                        word == 0x80043398u);
@@ -1549,7 +1585,7 @@ int main(int argc, char **argv) {
             callback_device.write16 = callback_write16;
             callback_device.write32 = callback_write32;
             callback_device.hook_entry_int = callback_hook_entry_int;
-            init_registration(&callback_device, &callback_log);
+            init_registration(&memory, &callback_device, &callback_log);
             callback_device.a0_72 = callback_a0_72;
             callback_device.exit_critical_section = callback_exit_critical;
             callback_device.gpu_cw = callback_gpu_cw;

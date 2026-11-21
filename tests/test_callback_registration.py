@@ -5,6 +5,7 @@ import struct
 import subprocess
 import tempfile
 import unittest
+from owned_registration_fixture import compile_registration_api, map_registration_image
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = 0x8006BB00
@@ -32,17 +33,9 @@ class CallbackRegistrationTests(unittest.TestCase):
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory(prefix="musashi-registration-")
         cls.addClassCleanup(cls.temp.cleanup)
-        library = Path(cls.temp.name) / "registration.so"
-        subprocess.run([
-            "cc", "-std=c99", "-O2", "-Wall", "-Wextra", "-Werror", "-shared", "-fPIC",
-            "-DMUSASHI_NATIVE_CALLBACK_REGISTRATION=1",
-            "-DMUSASHI_NATIVE_CALLBACK_DISPATCH=1",
-            "-I", str(ROOT / "include"), "-I", str(ROOT / "pc_port/include"),
-            str(ROOT / "pc_port/libetc_irq_registration.c"), str(ROOT / "pc_port/libetc_irq_veneer.c"),
-            str(ROOT / "pc_port/boot_memory.c"),
-            "-lcrypto", "-o", str(library),
-        ], check=True, stdin=subprocess.DEVNULL, timeout=60, capture_output=True)
-        cls.library = C.CDLL(str(library))
+        cls.library = compile_registration_api(ROOT, cls.temp.name, (
+            'musashi_boot_call_800429dc', 'musashi_boot_call_800425b0',
+        ))
         cls.call = cls.library.musashi_boot_call_800429dc
         cls.call.argtypes = [C.POINTER(Memory), C.POINTER(Device), C.c_int32,
                              C.c_uint32, C.POINTER(C.c_uint32)]
@@ -53,6 +46,7 @@ class CallbackRegistrationTests(unittest.TestCase):
 
     def setUp(self):
         self.memory = Memory()
+        map_registration_image(self.memory, ROOT)
         self.trace = []
         self.mask = 0x8200
         self.refuse = None

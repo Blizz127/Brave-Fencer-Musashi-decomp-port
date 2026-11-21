@@ -137,6 +137,18 @@ int musashi_bios_events_deliver(MusashiBiosEvents *events, uint32_t class_word,
     return 1;
 }
 
+int musashi_bios_events_deliver_poll(MusashiBiosEvents *events, uint32_t class_word, uint32_t spec) {
+    uint32_t index;
+    if (!events) return 0;
+    for (index = 0; index < MUSASHI_BIOS_EVENTS_CAPACITY; ++index) {
+        const MusashiBiosEventRecord *record = &events->records[index];
+        if (record->class_word == class_word && record->spec == spec &&
+            record->status == MUSASHI_BIOS_EVENT_STATUS_ENABLED &&
+            record->mode == MUSASHI_BIOS_EVENT_MODE_CALLBACK && record->callback) return 0;
+    }
+    return musashi_bios_events_deliver(events, class_word, spec, NULL, NULL);
+}
+
 int musashi_bios_events_undeliver(MusashiBiosEvents *events,
                                   uint32_t class_word, uint32_t spec) {
     uint32_t index;

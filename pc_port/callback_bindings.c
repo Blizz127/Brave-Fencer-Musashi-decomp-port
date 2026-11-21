@@ -1,5 +1,5 @@
 #include "musashi_boot_memory.h"
-#include "musashi_psyq_hle.h"
+#include <string.h>
 
 int musashi_boot_call_80042c64(MusashiBootMemory *memory, uint32_t address,
                                uint32_t word_count) {
@@ -14,7 +14,7 @@ int musashi_boot_call_80042c64(MusashiBootMemory *memory, uint32_t address,
     destination = musashi_boot_ram_span(memory, address, bytes ? bytes : 1u);
     if (!destination)
         return 0;
-    musashi_hle_clear_words(destination, word_count);
+    memset(destination, 0, bytes);
     return 1;
 }
 

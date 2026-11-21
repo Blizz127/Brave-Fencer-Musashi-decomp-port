@@ -1,7 +1,9 @@
 #include "musashi_boot_memory.h"
 #include "musashi_callback_registration.h"
 #include "musashi_mips_div.h"
+#include "musashi_sha256_digest.h"
 #include "musashi_native_lane.h"
+#include "musashi_guest_irq.h"
 #ifdef MUSASHI_LINKED_BIOS_EXCEPTION
 #include "musashi_bios_exception.h"
 #endif
@@ -3822,7 +3824,6 @@ static const uint32_t kEventRegisterWords[121]; /* shape only: 121 words, fetche
 static const uint32_t kEventTestWords[66]; /* shape only: 66 words, fetched from guest RAM */
 static const uint32_t kEventCallbackWords[8][5]; /* shape only: 40 words, fetched from guest RAM */
 
-#include "musashi_psyq_hle.h"
 
 /* The generated initializer is derived at configure time from the exact
  * inline-assembly overlay. Keeping it in the native build proves that no
@@ -7958,7 +7959,6 @@ enum {
     CALLBACK_INSTALLER = 0x80042c90u,
     CALLBACK_INSTALLER_CLEAR = 0x80042d8cu,
     CALLBACK_CHANNEL_CLEAR = 0x80043034u,
-    CALLBACK_REGISTER_WRAPPER = 0x800425b0u,
     CALLBACK_CHANNEL_INSTALLER = 0x80042db8u,
     CALLBACK_BIOS_A0_72 = 0x8005ce50u,
     CALLBACK_EXIT_CRITICAL = 0x8005cf18u,
@@ -8098,6 +8098,18 @@ enum {
     STARTUP_ENTRY_STEP_LIMIT = 2000000000u,
 };
 
+typedef struct DmaRegistrationFrame {
+    MusashiBootMemory *memory;
+    const MusashiDmaCallbackRegistrationDevice *device;
+    int standalone;
+} DmaRegistrationFrame;
+
+enum {
+    DMA_REG_BODY = 0x80042f8cu, DMA_REG_END = 0x80043034u,
+    DMA_REG_VENEER = 0x800425e0u, DMA_REG_VENEER_END = 0x80042610u,
+    DMA_REG_DICR = 0x1f8010f4u
+};
+
 typedef struct FormatterCpu {
     uint32_t r[32];
     uint32_t hi, lo;
@@ -8108,8 +8120,12 @@ typedef struct FormatterCpu {
     const MusashiInputDevice *input_device;
     MusashiBiosCallbackFrame *bios_frame;
     MusashiCdIrqFrame *cd_irq_frame;
+    const MusashiGuestIrqImage *irq_image;
+    const MusashiGuestIrqImage *cd_parent_image;
+    const MusashiDmaCallbackRegistrationDevice *irq_dma;
     const MusashiExecutionClock *clock;
     const MusashiCdRegisterDevice *cd_register_device;
+    const DmaRegistrationFrame *dma_registration;
     const MusashiCdSpuDevice *cd_spu_device;
     const MusashiHeapDevice *heap_device;
     const MusashiGpuIoDevice *gpu_io_device;
@@ -8129,6 +8145,9 @@ typedef struct FormatterCpu {
     /* Branch origin survives even an untaken branch's delay slot. */
     uint8_t delay_slot;
     uint32_t branch_pc;
+    /* The standalone checked registration API has no caller stack. Its guest
+     * call frame uses private bytes outside the mapped guest address space. */
+    uint8_t *registration_stack;
 } FormatterCpu;
 
 typedef struct FormatterConsoleContext {
@@ -8200,6 +8219,23 @@ static uint8_t *cpu_ram_span(MusashiBootMemory *memory, const FormatterCpu *cpu,
                              uint32_t address, unsigned width) {
     uint32_t physical = address & 0x1fffffffu;
     if (address & (width - 1u)) return NULL;
+    if (cpu->registration_stack) {
+        if (width <= 256u && address >= 0x70000000u &&
+            address - 0x70000000u <= 256u - width)
+            return cpu->registration_stack + (address - 0x70000000u);
+        return musashi_boot_ram_span(memory, address, width);
+    }
+    if (cpu->dma_registration) {
+        const DmaRegistrationFrame *frame = cpu->dma_registration;
+        if (frame->memory != memory) return NULL;
+        if (frame->standalone) {
+            if (cpu->pc >= DMA_REG_VENEER && cpu->pc < DMA_REG_VENEER_END &&
+                address >= MUSASHI_BIOS_CALLBACK_STACK_BASE &&
+                address <= MUSASHI_BIOS_CALLBACK_STACK_TOP-width)
+                return cpu->bios_frame->scratch + address-MUSASHI_BIOS_CALLBACK_STACK_BASE;
+            return musashi_boot_ram_span(memory, address, width);
+        }
+    }
     if (cpu->bios_image && (!cpu->bios_image->intersects ||
         cpu->bios_image->intersects(address, width))) return NULL;
     if (cpu->bios_frame && physical < 0x10000u) {
@@ -8285,6 +8321,12 @@ static int cpu_read16(MusashiBootMemory *memory, const FormatterCpu *cpu,
     const uint8_t *p = cpu_ram_span(memory, cpu, address, 2);
     uint16_t accepted;
     if (!value || (address & 1u)) return 0;
+    if (cpu->pc == 0x80042a3cu) {
+        const MusashiCallbackRegistrationDevice *reg = cpu->callback_device
+            ? cpu->callback_device->registration_device : NULL;
+        return (cpu->registration_stack || address == 0x1f801074u) && reg && reg->read16 &&
+            reg->read16(reg->userdata, address, value);
+    }
     if (p) { *value = (uint16_t)(p[0] | (uint16_t)p[1] << 8); return 1; }
     if (!callback_read16(cpu, address, &accepted)) return 0;
     *value = accepted;
@@ -8295,6 +8337,12 @@ static int cpu_write16(MusashiBootMemory *memory, const FormatterCpu *cpu,
                         uint32_t address, uint16_t value) {
     uint8_t *p = cpu_ram_span(memory, cpu, address, 2);
     if (address & 1u) return 0;
+    if (cpu->pc == 0x80042a40u || cpu->pc == 0x80042b04u) {
+        const MusashiCallbackRegistrationDevice *reg = cpu->callback_device
+            ? cpu->callback_device->registration_device : NULL;
+        return (cpu->registration_stack || address == 0x1f801074u) && reg && reg->write16 &&
+            reg->write16(reg->userdata, address, value);
+    }
     if (p) { p[0] = (uint8_t)value; p[1] = (uint8_t)(value >> 8); return 1; }
     return callback_write16(cpu, address, value);
 }
@@ -8303,7 +8351,19 @@ static int cpu_read32(MusashiBootMemory *memory, const FormatterCpu *cpu,
                        uint32_t address, uint32_t *value) {
     const uint8_t *p = cpu_ram_span(memory, cpu, address, 4);
     uint32_t accepted;
+    if (cpu->irq_image && address == 0x1f8010f4u)
+        return value && cpu->irq_dma && cpu->irq_dma->read32 &&
+            cpu->irq_dma->read32(cpu->irq_dma->userdata, address, value);
     if (!value || (address & 3u)) return 0;
+    if (!p && cpu->dma_registration) {
+        const DmaRegistrationFrame *frame = cpu->dma_registration;
+        const MusashiDmaCallbackRegistrationDevice *dma = frame->device;
+        if (frame->memory != memory || cpu->pc < DMA_REG_BODY || cpu->pc >= DMA_REG_END ||
+            address != DMA_REG_DICR || !dma || !dma->read32 ||
+            !dma->read32(dma->userdata, address, &accepted)) return 0;
+        *value = accepted;
+        return 1;
+    }
     if (cpu->bios_image && cpu->bios_image->intersects &&
         cpu->bios_image->intersects(address, 4)) {
         if (!cpu->bios_image->read32 || !cpu->bios_image->read32(
@@ -8364,7 +8424,17 @@ static int cpu_read32(MusashiBootMemory *memory, const FormatterCpu *cpu,
 static int cpu_write32(MusashiBootMemory *memory, const FormatterCpu *cpu,
                         uint32_t address, uint32_t value) {
     uint8_t *p = cpu_ram_span(memory, cpu, address, 4);
+    if (cpu->irq_image && address == 0x1f8010f4u)
+        return cpu->irq_dma && cpu->irq_dma->write32 &&
+            cpu->irq_dma->write32(cpu->irq_dma->userdata, address, value);
     if (address & 3u) return 0;
+    if (!p && cpu->dma_registration) {
+        const DmaRegistrationFrame *frame = cpu->dma_registration;
+        const MusashiDmaCallbackRegistrationDevice *dma = frame->device;
+        return frame->memory == memory && cpu->pc >= DMA_REG_BODY && cpu->pc < DMA_REG_END &&
+            address == DMA_REG_DICR && dma && dma->write32 &&
+            dma->write32(dma->userdata, address, value);
+    }
     if (cpu->bios_image && cpu->bios_image->intersects &&
         cpu->bios_image->intersects(address, 4))
         return cpu->bios_image->write32 && cpu->bios_image->write32(
@@ -8440,16 +8510,8 @@ static int formatter_call(MusashiBootMemory *memory, FormatterCpu *cpu,
         if (lane < 0) return 0;
     }
     if (address == FORMATTER_CONSOLE_CHAR) {
-        uint8_t *classes = musashi_boot_ram_span(memory, 0x800728a9u, 0x100u);
-        uint32_t column_word;
-        int32_t column;
-        if (!classes || !sink || !musashi_boot_read32(memory, 0x80078978u, &column_word))
-            return 0;
-        memcpy(&column, &column_word, sizeof(column));
-        musashi_hle_console_putc((int32_t)cpu->r[4], classes, &column,
-                                 formatter_console_write, userdata);
-        memcpy(&column_word, &column, sizeof(column_word));
-        if (!musashi_boot_write32(memory, 0x80078978u, column_word))
+        if (!sink || !musashi_boot_console_char(memory, (int32_t)cpu->r[4],
+                                                formatter_console_write, userdata))
             return 0;
         return formatter_return(cpu);
     }
@@ -8519,15 +8581,6 @@ static int formatter_call(MusashiBootMemory *memory, FormatterCpu *cpu,
             return 0;
         return formatter_return(cpu);
     }
-    if (address == CALLBACK_REGISTER_WRAPPER) {
-        uint32_t previous;
-        if (!cpu->callback_device ||
-            !musashi_boot_call_800425b0(memory, cpu->callback_device->registration_device,
-                                       (int32_t)cpu->r[4], cpu->r[5], &previous))
-            return 0;
-        cpu->r[2] = previous;
-        return formatter_return(cpu);
-    }
     if (address == STARTUP_ENVIRONMENT_CLEAR) {
         if (!intrinsic_span(cpu, cpu->r[4], cpu->r[5])) return 0;
         if (!musashi_boot_call_80016714(memory, cpu->r[4], cpu->r[5]))
@@ -8593,6 +8646,7 @@ static int spu_source_guard(MusashiBootMemory *memory, const FormatterCpu *cpu) 
         /* Channel 4 is the SPU DMA complete callback. Channel 2 is the GPU
          * queue/DrawOTag callback registered from 8005B8F8 / cleared from
          * 8005BA90. MAIN4 registers its loaded MDEC-output handler on channel1. */
+        if (cpu->dma_registration && cpu->dma_registration->standalone) return 1;
         return (cpu->r[4] == 4u && cpu->r[5] == 0x8003aa18u) ||
                (cpu->r[4] == 2u && (cpu->r[5] == 0x8005ba90u || cpu->r[5] == 0)) ||
                (g_overlay_0004_words && cpu->r[4] == 1u &&
@@ -9571,11 +9625,55 @@ static const uint8_t *code_image(void) {
     return g_code_image;
 }
 
+/* Check the entire selected routine in this frame's own RAM on every fetch,
+ * including after a device hook. Never use the optional test image, another
+ * memory owner, or a cached validation result to execute these bytes. */
+static int span_digest(MusashiBootMemory *, uint32_t, unsigned, uint64_t *);
+static int dma_registration_word(MusashiBootMemory *memory, const DmaRegistrationFrame *frame,
+                                 uint32_t pc, uint32_t *out) {
+    uint32_t base, end;
+    uint64_t expected, live;
+    if (frame->memory != memory) return 0;
+    if (pc >= DMA_REG_BODY && pc < DMA_REG_END) {
+        base = DMA_REG_BODY; end = DMA_REG_END; expected = 0x0e722784c8e256f3ull;
+    } else if (frame->standalone && pc >= DMA_REG_VENEER && pc < DMA_REG_VENEER_END) {
+        base = DMA_REG_VENEER; end = DMA_REG_VENEER_END; expected = 0xa3a101cf015393d8ull;
+    } else return 0;
+    return span_digest(memory, base, (end-base)/4u, &live) && live == expected &&
+           musashi_boot_read32(memory, pc, out);
+}
+
+static int cd_parent_word(const MusashiGuestIrqImage *image, MusashiBootMemory *memory,
+                          uint32_t pc, uint32_t *word) {
+    if (image->identity != image || image->memory != memory ||
+        image->cd_span_count > sizeof(image->cd_spans)/sizeof(image->cd_spans[0]) || (pc & 3u))
+        return 0;
+    unsigned lo=0, hi=image->cd_span_count;
+    while (lo<hi) {
+        unsigned mid=lo+(hi-lo)/2u;
+        const MusashiGuestCdCodeSpan *span=&image->cd_spans[mid];
+        if (pc<span->pc) hi=mid;
+        else if (pc-span->pc>=span->size) lo=mid+1u;
+        else {
+            if (span->size < 4u || pc-span->pc > span->size-4u ||
+                (size_t)span->offset+span->size>sizeof(image->cd_code)) return 0;
+            const uint8_t *live=musashi_boot_ram_span(memory,pc,4);
+            return live && !memcmp(live,image->cd_code+span->offset+(pc-span->pc),4) &&
+                musashi_boot_read32(memory,pc,word);
+        }
+    }
+    return 0;
+}
+
 static int code_word(MusashiBootMemory *memory, const FormatterCpu *cpu,
                      uint32_t pc, uint32_t *out) {
     uint8_t *p;
     const uint8_t *image;
     if (pc & 3u) return 0;
+    if (cpu && cpu->dma_registration)
+        return dma_registration_word(memory, cpu->dma_registration, pc, out);
+    if (cpu && cpu->cd_parent_image)
+        return cd_parent_word(cpu->cd_parent_image, memory, pc, out);
     if (pc >= CODE_IMAGE_BASE && pc < CODE_IMAGE_END && (image = code_image())) {
         const uint8_t *w = image + CODE_IMAGE_TEXT + (pc - CODE_IMAGE_BASE);
         *out = (uint32_t)w[0] | ((uint32_t)w[1] << 8) | ((uint32_t)w[2] << 16) |
@@ -10141,9 +10239,102 @@ static int code_site(uint32_t pc, unsigned group, uint32_t instruction) {
 
 static int formatter_admitted(const FormatterCpu *cpu, uint32_t *out);
 
+
+/* These two existing resident entries consume only the owner's live image.
+ * Their interface does not supply trusted instruction words. */
+static int registration_code_pc(uint32_t pc) {
+    return (pc >= 0x800425b0u && pc < 0x800425e0u) ||
+           (pc >= 0x800429dcu && pc < 0x80042b30u);
+}
+
+static int registration_code_word(MusashiBootMemory *memory, uint32_t pc, uint32_t *word) {
+    static const uint8_t veneer[32] = {
+        0xbb, 0xf8, 0x60, 0x2f, 0x75, 0x4b, 0x9d, 0x76,
+        0x59, 0xb3, 0x4d, 0xc6, 0x6c, 0xe9, 0x6b, 0xf1,
+        0x55, 0x40, 0x01, 0xc6, 0xc1, 0x54, 0xb6, 0xd3,
+        0x8f, 0xc0, 0xd2, 0x90, 0xd6, 0x73, 0x40, 0xae
+    };
+    static const uint8_t registration[32] = {
+        0xc4, 0xf2, 0xaa, 0xef, 0xb7, 0xfd, 0xbb, 0xaf,
+        0x4b, 0x2a, 0x1f, 0x16, 0xec, 0x12, 0x27, 0x58,
+        0xce, 0x2f, 0x73, 0xd0, 0x85, 0xa9, 0xdc, 0xb1,
+        0x33, 0x14, 0xc0, 0x00, 0xa6, 0xb7, 0x74, 0x68
+    };
+    int wrapper = pc < 0x800425e0u;
+    uint32_t base = wrapper ? 0x800425b0u : 0x800429dcu;
+    size_t size = wrapper ? 0x30u : 0x154u;
+    const uint8_t *bytes = musashi_boot_ram_span(memory, base, size);
+    uint8_t digest[32];
+    return bytes && musashi_sha256_digest(bytes, size, digest) &&
+        memcmp(digest, wrapper ? veneer : registration, sizeof digest) == 0 &&
+        musashi_boot_read32(memory, pc, word);
+}
+
+/* The two resident callees share one byte-verified window in the user's EXE.
+ * They execute through the guest CPU. Only their SHA-256 is part of the port. */
+static int card_vblank_helper_word(MusashiBootMemory *memory, uint32_t pc, uint32_t *out) {
+    enum { start = 0x8006291cu, size = 0x7cu };
+    static const uint8_t expected[32] = {
+        0x71, 0x82, 0x45, 0x88, 0xd0, 0x95, 0xde, 0x56,
+        0x11, 0x91, 0x16, 0xbb, 0x65, 0x2d, 0x82, 0x9b,
+        0xaa, 0x1d, 0xc6, 0xcc, 0x73, 0x2a, 0x67, 0xc1,
+        0x7c, 0xa0, 0xf3, 0x3b, 0xfe, 0x97, 0x15, 0x75
+    };
+    uint8_t digest[32];
+    const uint8_t *image = code_image();
+    const uint8_t *body = image ? image + CODE_IMAGE_TEXT + (start - CODE_IMAGE_BASE)
+                                : musashi_boot_ram_span(memory, start, size);
+    if (!out || (pc & 3u) || !body || !musashi_sha256_digest(body, size, digest) ||
+        memcmp(expected, digest, sizeof digest)) return 0;
+    const uint8_t *word = body + (pc - start);
+    *out = word[0] | (uint32_t)word[1] << 8 | (uint32_t)word[2] << 16 | (uint32_t)word[3] << 24;
+    return 1;
+}
+
+static int irq_live_word(const MusashiGuestIrqImage *, MusashiBootMemory *, uint32_t, uint32_t *);
+/* These two return addresses belong to the two observed reset calls into the
+ * byte fill. Other callers keep the existing host binding. The reset needs
+ * instruction checkpoints during its clears while interrupt sources advance. */
+static int reset_calls_guest_fill(const FormatterCpu *cpu) {
+    return cpu->pc >= RESETGRAPH_FILL && cpu->pc < 0x8005c2c8u &&
+           (cpu->r[31] == 0x8005be38u || cpu->r[31] == 0x8005be4cu);
+}
+
+static int reset_fill_word(MusashiBootMemory *memory, uint32_t pc, uint32_t *out) {
+    /* SHA256 of the live 28-byte caller pair followed by the live 44-byte
+     * callee in the authenticated SLUS. No guest instructions are built in. */
+    static const uint8_t expected[32] = {
+        0x2c, 0xe3, 0x22, 0x41, 0x9f, 0x22, 0xeb, 0x90,
+        0x9f, 0x96, 0x6f, 0xdc, 0xf6, 0x12, 0x0f, 0x22,
+        0x1b, 0xf8, 0x63, 0x84, 0xec, 0xf6, 0x89, 0x25,
+        0x64, 0x07, 0x11, 0xea, 0x80, 0x01, 0xe3, 0xa3
+    };
+    uint8_t spans[28 + 44], digest[32];
+    const uint8_t *calls = musashi_boot_ram_span(memory, 0x8005be30u, 28);
+    const uint8_t *fill = musashi_boot_ram_span(memory, RESETGRAPH_FILL, 44);
+    if (!calls || !fill) return 0;
+    memcpy(spans, calls, 28);
+    memcpy(spans + 28, fill, 44);
+    return musashi_sha256_digest(spans, sizeof spans, digest) &&
+        memcmp(digest, expected, sizeof digest) == 0 &&
+        musashi_boot_read32(memory, pc, out);
+}
+
 static int formatter_fetch(MusashiBootMemory *memory, const FormatterCpu *cpu, uint32_t *out) {
     uint32_t shape;
-    if (!formatter_admitted(cpu, &shape)) return 0;
+    if (cpu && cpu->dma_registration) {
+        if (cpu->irq_image || cpu->registration_stack) return 0;
+        return dma_registration_word(memory, cpu->dma_registration, cpu->pc, out);
+    }
+    if (cpu && cpu->irq_image) return irq_live_word(cpu->irq_image,memory,cpu->pc,out);
+    if (cpu && reset_calls_guest_fill(cpu)) return reset_fill_word(memory, cpu->pc, out);
+    if (cpu && registration_code_pc(cpu->pc))
+        return registration_code_word(memory, cpu->pc, out);
+    if (!formatter_admitted(cpu, &shape)) {
+        if (cpu && cpu->pc >= 0x8006291cu && cpu->pc < 0x80062998u)
+            return card_vblank_helper_word(memory, cpu->pc, out);
+        return 0;
+    }
     return code_word(memory, cpu, cpu->pc, out);
 }
 
@@ -10775,8 +10966,10 @@ int musashi_boot_continuation_host_context(const void *continuation,
     input = cpu->input_device;
     event = cpu->event_device;
     switch (cpu->pc) {
+    case RESETGRAPH_FILL:
+        accepted = !reset_calls_guest_fill(cpu); break;
     case FORMATTER_CONSOLE_CHAR: case FORMATTER_SEARCH:
-    case FORMATTER_STRING_LENGTH: case RESETGRAPH_FILL:
+    case FORMATTER_STRING_LENGTH:
     case CALLBACK_CLEAR: case CALLBACK_INSTALLER_CLEAR:
     case CALLBACK_CHANNEL_CLEAR: case STARTUP_ENVIRONMENT_CLEAR:
     case STARTUP_CLEAR_29044: case STARTUP_CLEAR_2906C:
@@ -10784,8 +10977,6 @@ int musashi_boot_continuation_host_context(const void *continuation,
     case STARTUP_RECORD_CLEAR: case CD_INITIALIZER_STRING_EMIT:
     case 0x80043060u:
         accepted = 1; break;
-    case CALLBACK_REGISTER_WRAPPER:
-        accepted = callback && callback->registration_device; break;
     case INPUT_C0_3:
         accepted = input && input->dequeue_irq_result; break;
     case INPUT_C0_2:
@@ -10801,8 +10992,6 @@ int musashi_boot_continuation_host_context(const void *continuation,
     case CD_A0_70: accepted = cd && cd->a0_70; break;
     case RESETGRAPH_GPU_CW:
         accepted = callback && callback->gpu_cw; break;
-    case RESETGRAPH_DEVICE_RESET:
-        accepted = callback && callback->reset_device; break;
     case CALLBACK_BIOS_B0_19:
         accepted = callback && callback->hook_entry_int; break;
     case CALLBACK_BIOS_A0_72:
@@ -13052,6 +13241,8 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     uint8_t byte;
     uint16_t half;
     int merge_kind;
+    int publish_flow = !cpu->registration_stack &&
+        (!cpu->dma_registration || !cpu->dma_registration->standalone);
     int schedule_merge = 0;
     int schedule_gte_load = 0;
     uint32_t scheduled_gte_load = 0;
@@ -13062,11 +13253,12 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     uint8_t scheduled_merge_reg = 0;
     if ((cpu->pc & 3u) || !spu_source_guard(memory, cpu))
         return formatter_refuse0(__LINE__, cpu->pc);
-    if (g_entry_hook && cpu->pc == g_entry_pending) {
+    if (publish_flow && g_entry_hook && cpu->pc == g_entry_pending) {
         g_entry_pending = 1u;
         g_entry_hook(g_entry_hook_user, cpu->pc, cpu->r);
     }
-    if (g_lane_count || g_lane_ovl_count) {
+    if (!cpu->dma_registration && !cpu->irq_image && !cpu->cd_parent_image && !registration_code_pc(cpu->pc) &&
+        !reset_calls_guest_fill(cpu) && (g_lane_count || g_lane_ovl_count)) {
         int lane = lane_try(memory, cpu);
         if (lane > 0) return 1;
         if (lane < 0) return formatter_refuse0(__LINE__, cpu->pc);
@@ -13076,7 +13268,7 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         g_overlay_sc01_0000_words = sc01_entry_matches(memory);
         overlay_changed();
     }
-    if (memory != g_fetch_memory) {
+    if (!cpu->dma_registration && memory != g_fetch_memory) {
         g_fetch_memory = memory;
         code_sites_invalidate();
     }
@@ -13116,6 +13308,8 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     /* These optional debug-call branches have no admitted host target yet. */
     if (cpu->pc == 0x8005937cu || cpu->pc == 0x80059698u ||
         cpu->pc == 0x80059844u || cpu->pc == 0x8005986cu) return formatter_refuse0(__LINE__, cpu->pc);
+    if (cpu->pc == 0x800425c8u && cpu->r[rs] != 0x800429dcu)
+        return formatter_refuse0(__LINE__, cpu->pc);
     if (cpu->pc == 0x80042598u) {
         uint32_t table, target;
         if (!code_site(0x80042598u, 16u, instruction) ||
@@ -13590,8 +13784,8 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         }
         case 8: target_npc = cpu->r[rs]; break;
         case 9: cpu->r[rd] = cpu->pc + 8u; target_npc = cpu->r[rs];
-            if (g_trace_state >= 0) musashi_trace_function_entry(target_npc, cpu->pc, 'r');
-            if (g_entry_hook) g_entry_pending = target_npc;
+            if (publish_flow && g_trace_state >= 0) musashi_trace_function_entry(target_npc, cpu->pc, 'r');
+            if (publish_flow && g_entry_hook) g_entry_pending = target_npc;
             break;
         case 13: return formatter_refuse0(__LINE__, cpu->pc);
         case 16: cpu->r[rd] = cpu->hi; break;
@@ -13668,8 +13862,8 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         break;
     case 2: target_npc = (cpu->pc + 4u & 0xf0000000u) | ((instruction & 0x03ffffffu) << 2); break;
     case 3: cpu->r[31] = cpu->pc + 8u; target_npc = (cpu->pc + 4u & 0xf0000000u) | ((instruction & 0x03ffffffu) << 2);
-        if (g_trace_state >= 0) musashi_trace_function_entry(target_npc, cpu->pc, 'j');
-        if (g_entry_hook) g_entry_pending = target_npc;
+        if (publish_flow && g_trace_state >= 0) musashi_trace_function_entry(target_npc, cpu->pc, 'j');
+        if (publish_flow && g_entry_hook) g_entry_pending = target_npc;
         break;
     case 4: if (cpu->r[rs] == cpu->r[rt]) target_npc = cpu->pc + 4u + (uint32_t)((int32_t)signed_immediate * 4); break;
     case 5: if (cpu->r[rs] != cpu->r[rt]) target_npc = cpu->pc + 4u + (uint32_t)((int32_t)signed_immediate * 4); break;
@@ -13900,6 +14094,75 @@ gte_transfer_refused:
     return formatter_refuse0(__LINE__, cpu->pc);
 }
 
+/* The public prefix device owns checked B0:5B and C0:0A side effects.
+ * Registration discards their guest return words on all supported paths.
+ * Full startup uses its result-bearing BIOS owners at these same boundaries. */
+static int registration_prefix_service(MusashiBootMemory *memory, FormatterCpu *cpu) {
+    const MusashiCallbackRegistrationDevice *reg = cpu->callback_device
+        ? cpu->callback_device->registration_device : NULL;
+    uint32_t ra = cpu->r[31], caller;
+    int accepted;
+    if (cpu->pc == CD_B0_5B && ra == 0x80042aa8u) {
+        if (!registration_code_word(memory, ra - 8u, &caller)) return -1;
+        accepted = reg && reg->b0_5b && reg->b0_5b(reg->userdata, (int32_t)cpu->r[4]);
+    } else if (cpu->pc == INPUT_C0_0A &&
+               (ra == 0x80042ab4u || ra == 0x80042accu ||
+                ra == 0x80042ae4u || ra == 0x80042af8u)) {
+        if (!registration_code_word(memory, ra - 8u, &caller)) return -1;
+        accepted = reg && reg->c0_0a &&
+            reg->c0_0a(reg->userdata, (int32_t)cpu->r[4], (int32_t)cpu->r[5]);
+    } else return 0;
+    return accepted && formatter_return(cpu) ? 1 : -1;
+}
+
+/* Isolated API clients supply the IRQ device, but no live CPU or guest stack.
+ * Only this bounded call uses a private stack. The normal player enters both
+ * functions with its original CPU, stack, clock and instruction checkpoints. */
+static int isolated_registration(MusashiBootMemory *memory,
+    const MusashiCallbackRegistrationDevice *device, uint32_t entry,
+    int32_t index, uint32_t target, uint32_t *previous) {
+    MusashiCallbackDevice bus = {0};
+    FormatterCpu cpu = {0};
+    uint8_t stack[256] = {0};
+    unsigned steps;
+    if (!previous || !musashi_boot_ram_span(memory, 0x8006bb00u + (uint32_t)index * 4u, 4u))
+        return 0;
+    bus.registration_device = device;
+    cpu.callback_device = &bus;
+    cpu.registration_stack = stack;
+    cpu.pc = entry;
+    cpu.npc = entry + 4u;
+    cpu.r[4] = (uint32_t)index;
+    cpu.r[5] = target;
+    cpu.r[29] = 0x70000100u;
+    cpu.r[31] = UINT_MAX;
+    for (steps = 0; steps < 512u; ++steps) {
+        if (cpu.pc == UINT_MAX) {
+            if (cpu.npc != 3u || cpu.r[29] != 0x70000100u) return 0;
+            *previous = cpu.r[2];
+            return 1;
+        }
+        int service = registration_prefix_service(memory, &cpu);
+        if (service < 0) return 0;
+        if (!service && (!registration_code_pc(cpu.pc) || !formatter_step(memory, &cpu))) {
+            return 0;
+        }
+    }
+    return 0;
+}
+
+int musashi_boot_call_800425b0(MusashiBootMemory *memory,
+    const MusashiCallbackRegistrationDevice *device, int32_t index, uint32_t target,
+    uint32_t *previous) {
+    return isolated_registration(memory, device, 0x800425b0u, index, target, previous);
+}
+
+int musashi_boot_call_800429dc(MusashiBootMemory *memory,
+    const MusashiCallbackRegistrationDevice *device, int32_t index, uint32_t target,
+    uint32_t *previous) {
+    return isolated_registration(memory, device, 0x800429dcu, index, target, previous);
+}
+
 int musashi_boot_format_8005c640(MusashiBootMemory *memory,
                                  uint32_t format_address,
                                  uint32_t argument_words_address,
@@ -14056,7 +14319,8 @@ MusashiResetGraphPrefixStatus musashi_boot_run_800141f0_prefix(
         if (cpu.pc == UINT_MAX)
             return MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT;
         if (cpu.pc == FORMATTER_CONSOLE_CHAR || cpu.pc == FORMATTER_SEARCH ||
-            cpu.pc == FORMATTER_STRING_LENGTH || cpu.pc == RESETGRAPH_FILL) {
+            cpu.pc == FORMATTER_STRING_LENGTH ||
+            (cpu.pc == RESETGRAPH_FILL && !reset_calls_guest_fill(&cpu))) {
             if (!formatter_call(memory, &cpu, sink, &console))
                 return MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT;
         } else if (!formatter_step(memory, &cpu)) {
@@ -14093,7 +14357,8 @@ MusashiResetGraphPrefixStatus musashi_boot_run_resetgraph_prefix(
             return MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT;
         }
         if (cpu.pc == FORMATTER_CONSOLE_CHAR || cpu.pc == FORMATTER_SEARCH ||
-            cpu.pc == FORMATTER_STRING_LENGTH || cpu.pc == RESETGRAPH_FILL) {
+            cpu.pc == FORMATTER_STRING_LENGTH ||
+            (cpu.pc == RESETGRAPH_FILL && !reset_calls_guest_fill(&cpu))) {
             if (!formatter_call(memory, &cpu, sink, &console))
                 return MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT;
         } else if (!formatter_step(memory, &cpu)) {
@@ -14118,6 +14383,13 @@ MusashiCallbackInitPrefixStatus musashi_boot_run_callback_init_prefix(
     cpu.r[29] = 0x801fff80u;
     cpu.r[31] = UINT_MAX;
     for (step = 0; step < FORMATTER_STEP_LIMIT; ++step) {
+        int service = registration_prefix_service(memory, &cpu);
+        if (service < 0) {
+            stop->call_address = cpu.r[31] - 8u;
+            stop->target_address = cpu.pc;
+            return MUSASHI_CALLBACK_INIT_PREFIX_INVALID_INPUT;
+        }
+        if (service) continue;
         if (cpu.pc == CALLBACK_BIOS_B0_19) {
             if (device->hook_entry_int) {
                 if (!device->hook_entry_int(callback_hook_userdata(device), cpu.r[4]))
@@ -14182,7 +14454,7 @@ MusashiCallbackInitPrefixStatus musashi_boot_run_callback_init_prefix(
         if (cpu.pc == UINT_MAX)
             return MUSASHI_CALLBACK_INIT_PREFIX_INVALID_INPUT;
         if (cpu.pc == CALLBACK_CLEAR || cpu.pc == CALLBACK_INSTALLER_CLEAR ||
-            cpu.pc == CALLBACK_CHANNEL_CLEAR || cpu.pc == CALLBACK_REGISTER_WRAPPER) {
+            cpu.pc == CALLBACK_CHANNEL_CLEAR) {
             if (!formatter_call(memory, &cpu, NULL, NULL))
                 return MUSASHI_CALLBACK_INIT_PREFIX_INVALID_INPUT;
         } else if (!formatter_step(memory, &cpu)) {
@@ -14327,6 +14599,11 @@ static MusashiResetGraphPrefixStatus run_startup_cpu_loop(
                         cpu->pc, cpu->gte_load_next_pc, cpu->gte_load_reg);
             return MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT;
         }
+        if (!entry_stop && (cpu->pc == CD_B0_5B || cpu->pc == INPUT_C0_0A)) {
+            int service = registration_prefix_service(memory, cpu);
+            if (service < 0) return MUSASHI_RESETGRAPH_PREFIX_UNSUPPORTED_CALL;
+            if (service) continue;
+        }
         if (entry_stop && cpu->pc == EVENT_REGISTER && !cpu->event_device) {
             stop->call_address = cpu->r[31] - 8u;
             stop->target_address = cpu->pc;
@@ -14353,6 +14630,16 @@ static MusashiResetGraphPrefixStatus run_startup_cpu_loop(
             cpu->r[2] = (uint32_t)service_result;
             formatter_return(cpu);
             continue;
+        }
+        if ((cpu->pc == 0xa0u || cpu->pc == 0xb0u) && cpu->npc == cpu->pc + 4u &&
+            !cpu->delay_slot && cpu->cd_device && cpu->cd_device->file_vector) {
+            uint32_t result_word = cpu->r[2];
+            if (cpu->cd_device->file_vector(cpu->cd_device->userdata, cpu->pc, cpu->r[9],
+                                            cpu->r + 4, &result_word)) {
+                cpu->r[2] = result_word;
+                formatter_return(cpu);
+                continue;
+            }
         }
         if (entry_stop && cpu->pc == 0xb0u && cpu->r[9] == 0x56u) {
             uint32_t table;
@@ -14518,15 +14805,12 @@ static MusashiResetGraphPrefixStatus run_startup_cpu_loop(
             stop->target_address = RESETGRAPH_GPU_CW;
             return MUSASHI_RESETGRAPH_PREFIX_UNSUPPORTED_CALL;
         }
-        if (cpu->pc == RESETGRAPH_DEVICE_RESET) {
-            int32_t reset_result;
-            if (device->reset_device &&
-                musashi_boot_call_8005bd7c(memory, device->reset_device,
-                                            (int32_t)cpu->r[4], &reset_result)) {
-                cpu->r[2] = (uint32_t)reset_result;
-                formatter_return(cpu);
-                continue;
-            }
+        /* With the checked CPU/GPU bus, keep the live registers, clock and
+         * instruction checkpoints and execute the existing guest code path.
+         * A direct-reset-only caller lacks that execution environment. */
+        if (cpu->pc == RESETGRAPH_DEVICE_RESET &&
+            (!device->reset_device || !cpu->gpu_io_device ||
+             !cpu->gpu_io_device->read32 || !cpu->gpu_io_device->write32)) {
             stop->call_address = cpu->r[31] - 8u;
             stop->target_address = RESETGRAPH_DEVICE_RESET;
             return MUSASHI_RESETGRAPH_PREFIX_UNSUPPORTED_CALL;
@@ -14580,9 +14864,10 @@ static MusashiResetGraphPrefixStatus run_startup_cpu_loop(
             return MUSASHI_RESETGRAPH_PREFIX_COMPLETE;
         }
         if (cpu->pc == FORMATTER_CONSOLE_CHAR || cpu->pc == FORMATTER_SEARCH ||
-            cpu->pc == FORMATTER_STRING_LENGTH || cpu->pc == RESETGRAPH_FILL ||
+            cpu->pc == FORMATTER_STRING_LENGTH ||
+            (cpu->pc == RESETGRAPH_FILL && !reset_calls_guest_fill(cpu)) ||
             cpu->pc == CALLBACK_CLEAR || cpu->pc == CALLBACK_INSTALLER_CLEAR ||
-            cpu->pc == CALLBACK_CHANNEL_CLEAR || cpu->pc == CALLBACK_REGISTER_WRAPPER ||
+            cpu->pc == CALLBACK_CHANNEL_CLEAR ||
             cpu->pc == STARTUP_ENVIRONMENT_CLEAR || cpu->pc == STARTUP_CLEAR_29044 ||
             cpu->pc == STARTUP_CLEAR_2906C || cpu->pc == STARTUP_CLEAR_29094 ||
             cpu->pc == STARTUP_CLEAR_29218 || cpu->pc == STARTUP_RECORD_CLEAR) {
@@ -14596,20 +14881,43 @@ static MusashiResetGraphPrefixStatus run_startup_cpu_loop(
     return MUSASHI_RESETGRAPH_PREFIX_STEP_LIMIT;
 }
 
-MusashiResetGraphPrefixStatus musashi_boot_run_800141f0_callback_prefix(
-    MusashiBootMemory *memory, const MusashiCallbackDevice *device,
+static void formatter_bind_startup_devices(FormatterCpu *cpu,
+                                           const MusashiStartupPrefixDevice *devices) {
+    cpu->callback_device = devices->callback;
+    cpu->cd_device = devices->cd;
+    cpu->event_device = devices->event;
+    cpu->input_device = devices->input;
+    cpu->clock = devices->clock;
+    cpu->cd_register_device = devices->cd_registers;
+    cpu->cd_spu_device = devices->cd_spu;
+    cpu->heap_device = devices->heap;
+    cpu->gpu_io_device = devices->gpu_io;
+    cpu->cpu_transfer = devices->cpu_transfer;
+    cpu->bios_image = devices->bios_image;
+}
+
+static MusashiResetGraphPrefixStatus run_startup_callback_prefix(
+    MusashiBootMemory *memory, const MusashiStartupPrefixDevice *devices,
     MusashiConsoleSink sink, void *userdata, int32_t *result,
     MusashiResetGraphPrefixStop *stop) {
     FormatterCpu cpu = {0};
-    if (!memory || !device || !sink || !result || !stop)
+    if (!memory || !devices || !devices->callback || !sink || !result || !stop)
         return MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT;
-    cpu.callback_device = device;
+    formatter_bind_startup_devices(&cpu, devices);
     cpu.pc = STARTUP_ENTRY;
     cpu.npc = STARTUP_ENTRY + 4u;
     cpu.r[29] = 0x801fff80u;
     cpu.r[31] = UINT_MAX;
     return run_startup_cpu(memory, &cpu, sink, userdata, result, stop,
                            NULL, NULL, NULL);
+}
+
+MusashiResetGraphPrefixStatus musashi_boot_run_800141f0_callback_prefix(
+    MusashiBootMemory *memory, const MusashiCallbackDevice *device,
+    MusashiConsoleSink sink, void *userdata, int32_t *result,
+    MusashiResetGraphPrefixStop *stop) {
+    const MusashiStartupPrefixDevice devices = {.callback = device};
+    return run_startup_callback_prefix(memory, &devices, sink, userdata, result, stop);
 }
 
 void musashi_boot_bios_callback_frame_init(MusashiBiosCallbackFrame *frame) {
@@ -14883,6 +15191,7 @@ static int cd_irq_admitted(uint32_t pc, uint32_t *word) {
     if (pc & 3u) return 0;
 #define CD_WORD_RANGE(lo,hi,words) \
     if (pc >= (lo) && pc < (hi)) { *word = (words)[(pc-(lo))/4u]; return 1; }
+    CD_WORD_RANGE(DMA_REG_BODY,DMA_REG_END,kSpu80042F8CWords)
     CD_WORD_RANGE(0x800377d8u,0x80037cc8u,kMain800377D8Words)
     CD_WORD_RANGE(0x80046610u,0x80046630u,kMain80046610Words)
     CD_WORD_RANGE(0x80046d1cu,0x8004768cu,kMain80046D1CWords)
@@ -14967,6 +15276,60 @@ static int cd_irq_admitted(uint32_t pc, uint32_t *word) {
 #undef CD_WORD_RANGE
     return 0;
 }
+/* Independent callable diagnostic. The wrapper's stack writes belong to this
+ * isolated ABI frame; the body publishes only its actual guest RAM/device
+ * effects. No simulated interrupt, guest callback, or native result is used. */
+static int dma_registration_run(MusashiBootMemory *memory,
+    const MusashiDmaCallbackRegistrationDevice *device, uint32_t entry, int32_t index,
+    uint32_t callback, uint32_t *previous) {
+    MusashiBiosCallbackFrame stack = {0};
+    const DmaRegistrationFrame frame = {memory, device, 1};
+    FormatterCpu cpu = {0};
+    int in_body = entry == DMA_REG_BODY, called = in_body;
+    if (!memory || !previous ||
+        !musashi_boot_ram_span(memory, 0x8006cbc4u+(uint32_t)index*4u, 4u)) return 0;
+    cpu.pc = entry; cpu.npc = entry+4u;
+    cpu.r[4] = (uint32_t)index; cpu.r[5] = callback;
+    cpu.r[29] = MUSASHI_BIOS_CALLBACK_STACK_TOP;
+    cpu.r[31] = UINT32_MAX;
+    cpu.bios_frame = &stack;
+    cpu.dma_registration = &frame;
+    for (unsigned steps = 0; steps < 64u; ++steps) {
+        uint32_t was = cpu.pc;
+        if (!formatter_step(memory, &cpu)) return 0;
+        if (cpu.pc == UINT32_MAX) {
+            if (!called || cpu.r[29] != MUSASHI_BIOS_CALLBACK_STACK_TOP ||
+                cpu.r[31] != UINT32_MAX || (in_body && entry != DMA_REG_BODY))
+                return 0;
+            *previous = cpu.r[2];
+            return 1;
+        }
+        if (in_body && !(cpu.pc >= DMA_REG_BODY && cpu.pc < DMA_REG_END)) {
+            if (entry != DMA_REG_VENEER || cpu.pc != DMA_REG_VENEER+0x20u ||
+                cpu.r[31] != cpu.pc) return 0;
+            in_body = 0;
+        } else if (!in_body && cpu.pc >= DMA_REG_BODY && cpu.pc < DMA_REG_END) {
+            if (called || was != DMA_REG_VENEER+0x1cu || cpu.pc != DMA_REG_BODY ||
+                cpu.r[31] != DMA_REG_VENEER+0x20u) return 0;
+            called = in_body = 1;
+        } else if (!in_body && (cpu.pc < DMA_REG_VENEER || cpu.pc >= DMA_REG_VENEER_END))
+            return 0;
+    }
+    return 0;
+}
+
+int musashi_boot_call_80042f8c(MusashiBootMemory *memory,
+    const MusashiDmaCallbackRegistrationDevice *device, int32_t index,
+    uint32_t callback, uint32_t *previous) {
+    return dma_registration_run(memory, device, DMA_REG_BODY, index, callback, previous);
+}
+
+int musashi_boot_call_800425e0(MusashiBootMemory *memory,
+    const MusashiDmaCallbackRegistrationDevice *device, int32_t index,
+    uint32_t callback, uint32_t *previous) {
+    return dma_registration_run(memory, device, DMA_REG_VENEER, index, callback, previous);
+}
+
 static int cd_irq_pointers(MusashiBootMemory *memory) {
     unsigned i;
     uint32_t value;
@@ -14978,6 +15341,21 @@ static int cd_irq_pointers(MusashiBootMemory *memory) {
 typedef struct CdIrqReturn {
     uint32_t pc, sp, a0, a1, target;
 } CdIrqReturn;
+
+/* The accepted JALR and return chain own this device until the real JR/delay
+ * pop the carrier. An unrelated jump or stale frame cannot inherit it. */
+static int cd_irq_select_dma(FormatterCpu *cpu, const CdIrqReturn *returns,
+                             unsigned depth, const DmaRegistrationFrame *frame) {
+    int in_body = cpu->pc >= DMA_REG_BODY && cpu->pc < DMA_REG_END;
+    cpu->dma_registration = NULL;
+    if (!in_body) return !depth || returns[depth-1].target != DMA_REG_BODY;
+    if (depth != 5 || !frame->device || returns[4].target != DMA_REG_BODY ||
+        returns[4].pc != DMA_REG_VENEER+0x20u || returns[3].pc != 0x8005b908u ||
+        cpu->r[31] != returns[4].pc) return 0;
+    cpu->dma_registration = frame;
+    return 1;
+}
+
 /* A renewed non-decoder allowance requires strictly increasing output and
  * consecutive source sector identities. It cannot hide a stuck decode loop. */
 static int cd_irq_pac_progress(uint32_t start, uint32_t end, uint32_t lba,
@@ -15128,6 +15506,29 @@ static int cd_irq_call(MusashiBootMemory *memory, const FormatterCpu *cpu,
         unsigned i;
         for (i=0;i<sizeof(stream_edges)/sizeof(stream_edges[0]);++i)
             if(call==stream_edges[i][0] && target==stream_edges[i][1]) return 1;
+    }
+    /* Observed nested image calls, dispatched through the guest as usual. */
+    if (list && depth == 2 && parent == 0x8001a49cu &&
+        (call == 0x800599d8u || call == 0x800599fcu)) {
+        const CdIrqReturn *image = &returns[1];
+        const int direct = (instruction >> 26) == 3u;
+        if (image->target != 0x800599b8u || image->sp != saved_sp - 0x88u ||
+            sp != saved_sp - 0xa8u || cpu->r[31] != call + 8u ||
+            cpu->r[16] != image->a0 || cpu->r[17] != image->a1 || a1 != image->a0 ||
+            !cd_irq_ram_word(memory, 0x8006cc88u, returns[0].target) ||
+            !musashi_boot_ram_span(memory, image->a0, 8u))
+            return 0;
+
+        if (call == 0x800599d8u)
+            return direct && target == 0x80059760u && a0 == 0x80074184u;
+
+        return !direct && target == 0x8005b7b0u && a0 == 0x8005b1c4u &&
+            cpu->r[6] == 8u && cpu->r[7] == image->a1 &&
+            musashi_boot_ram_span(memory, image->a1, 1u) &&
+            cpu->gpu_io_device && cpu->gpu_io_device->write32 &&
+            cd_irq_ram_word(memory, 0x80072780u, 0x80072740u) &&
+            cd_irq_ram_word(memory, 0x80072748u, target) &&
+            cd_irq_ram_word(memory, 0x80072760u, a0);
     }
     switch (call) {
     case 0x80044544u:
@@ -15329,7 +15730,8 @@ static int cd_irq_call(MusashiBootMemory *memory, const FormatterCpu *cpu,
             target == 0x800425e0u;
     case 0x800425f8u:
         return list && depth == 4 && parent == 0x8005b908u &&
-            target == 0x80042f8cu && services->dma;
+            target == DMA_REG_BODY && a0 == 2u &&
+            (a1 == 0x8005ba90u || !a1) && services->dma;
     case 0x8001a714u:
     case 0x8001a8b4u:
         return list && depth == 1 && sp == saved_sp-0x88u && target == 0x80043994u &&
@@ -15461,10 +15863,484 @@ static int cd_irq_call(MusashiBootMemory *memory, const FormatterCpu *cpu,
     default: return 0;
     }
 }
+/* Runtime-only receipts for the installed game's independently observed IRQ
+ * entry, dispatcher, IRQ0/3 handlers and terminal BIOS service veneer. */
+typedef enum {
+    IRQ_RESUME, IRQ_DISPATCH, IRQ_VBLANK, IRQ_DMA, IRQ_RETURN,
+    IRQ_GAME_VBLANK, IRQ_SOUND_TICK, IRQ_VOICE_STATUS, IRQ_CHANNEL_TICK,
+    IRQ_CHANNEL_UPDATE, IRQ_MIX_UPDATE, IRQ_LEVELS_UPDATE, IRQ_CARD_VBLANK,
+    IRQ_CARD_INDEX, IRQ_CARD_RUN, IRQ_CARD_PUSH, IRQ_CARD_INFO, IRQ_CARD_LOAD,
+    IRQ_CARD_CLEAR_RESULT, IRQ_CARD_RESET_EVENTS, IRQ_CARD_POLL_EVENTS, IRQ_CARD_FLAGS,
+    IRQ_CARD_TEST_EVENT, IRQ_CARD_INFO_BIOS, IRQ_CARD_LOAD_BIOS, IRQ_OUTSIDE
+} IrqRegion;
+typedef struct { uint32_t start; size_t offset, length; } IrqCodeRegion;
+#define IRQ_REGION(address, field) {address, offsetof(MusashiGuestIrqImage, field), sizeof(((MusashiGuestIrqImage *)0)->field)}
+static const IrqCodeRegion irq_code[] = {
+    IRQ_REGION(0x80042780u, resume),
+    IRQ_REGION(0x800427f4u, dispatcher),
+    IRQ_REGION(0x80042ce8u, vblank),
+    IRQ_REGION(0x80042e08u, dma),
+    IRQ_REGION(0x8005ced8u, bios_return),
+    IRQ_REGION(0x8001096cu, game_vblank),
+    IRQ_REGION(0x8002cdd8u, sound_tick),
+    IRQ_REGION(0x8003d25cu, voice_status),
+    IRQ_REGION(0x8002cfe4u, channel_tick),
+    IRQ_REGION(0x80030f80u, channel_update),
+    IRQ_REGION(0x8002d320u, mix_update),
+    IRQ_REGION(0x80031be0u, levels_update),
+    IRQ_REGION(0x800616d0u, card_vblank),
+    IRQ_REGION(0x80062988u, card_index),
+    IRQ_REGION(0x8006291cu, card_run_request),
+    IRQ_REGION(0x8006289cu, card_push_request),
+    IRQ_REGION(0x8005fdd4u, card_info_request),
+    IRQ_REGION(0x80060030u, card_load_request),
+    IRQ_REGION(0x80061678u, card_clear_result),
+    IRQ_REGION(0x80061b58u, card_reset_events),
+    IRQ_REGION(0x80061c60u, card_poll_events),
+    IRQ_REGION(0x80061e18u, card_event_flags),
+    IRQ_REGION(0x8005cea8u, card_test_event),
+    IRQ_REGION(0x80062258u, card_info_bios),
+    IRQ_REGION(0x80062268u, card_load_bios)
+};
+#undef IRQ_REGION
+
+/* Read-only dispatch-table words observed in the two card request sequences. */
+static const uint32_t card_case_address[] = {0x800744e8u, 0x80074510u, 0x80074560u, 0x80074564u};
+
+static int cd_parent_map(MusashiGuestIrqImage *image, MusashiBootMemory *memory) {
+    unsigned used=0;
+    for (uint32_t pc=CODE_IMAGE_BASE; pc<CODE_IMAGE_END;) {
+        uint32_t shape, start=pc;
+        if (!cd_irq_admitted(pc,&shape)) { pc+=4u; continue; }
+        do { pc+=4u; } while (pc<CODE_IMAGE_END && cd_irq_admitted(pc,&shape));
+        unsigned size=pc-start;
+        if (size>sizeof(image->cd_code)-used ||
+            image->cd_span_count>=sizeof(image->cd_spans)/sizeof(image->cd_spans[0]))
+            return 0;
+        const uint8_t *live=musashi_boot_ram_span(memory,start,size);
+        if (!live) return 0;
+        memcpy(image->cd_code+used,live,size);
+        image->cd_spans[image->cd_span_count++]=(MusashiGuestCdCodeSpan){
+            start,(uint16_t)used,(uint16_t)size};
+        used+=size;
+    }
+    return image->cd_span_count!=0;
+}
+
+int musashi_boot_map_irq_exe(MusashiGuestIrqImage *image, MusashiBootMemory *memory,
+                              const uint8_t *exe, size_t size) {
+    if (!image) return 0;
+    memset(image, 0, sizeof(*image));
+    if (!musashi_boot_map_exe(memory, exe, size)) return 0;
+    for (unsigned i = 0; i < IRQ_OUTSIDE; ++i) {
+        const IrqCodeRegion *region = &irq_code[i];
+        const uint8_t *p = musashi_boot_ram_span(memory,region->start,region->length);
+        if (!p) return 0;
+        memcpy((uint8_t *)image + region->offset, p, region->length);
+    }
+    for (unsigned i = 0; i < sizeof(card_case_address)/sizeof(card_case_address[0]); ++i)
+        if (!musashi_boot_read32(memory, card_case_address[i], &image->card_case_targets[i]))
+            return 0;
+    if (!cd_parent_map(image,memory)) return 0;
+    image->identity = image;
+    image->memory = memory;
+    return 1;
+}
+
+static IrqRegion irq_region(uint32_t address) {
+    for (unsigned i = 0; i < IRQ_OUTSIDE; ++i)
+        if (address >= irq_code[i].start && address - irq_code[i].start < irq_code[i].length)
+            return (IrqRegion)i;
+    return IRQ_OUTSIDE;
+}
+
+static int irq_live_word(const MusashiGuestIrqImage *image, MusashiBootMemory *memory,
+                         uint32_t pc, uint32_t *word) {
+    IrqRegion i = irq_region(pc);
+    if (i == IRQ_OUTSIDE || image->identity != image || image->memory != memory ||
+        !musashi_boot_read32(memory,pc,word)) return 0;
+    const IrqCodeRegion *r = &irq_code[i];
+    const uint8_t *reference = (const uint8_t *)image + r->offset + (pc-r->start);
+    return !memcmp(reference,musashi_boot_ram_span(memory,pc,4),4);
+}
+
+/* Every ordinary data operation on the qualified handler paths addresses
+ * either its own saved stack, a registered callback/state word or the
+ * interrupt controller. The two device register permissions are direction
+ * and width specific. A changed guest pointer cannot redirect an IRQ store. */
+/* Eight software channels and 24 SPU voice envelopes are independent.
+ * Checked RAM permissions describe just the fields used by the ordinary
+ * periodic path; other sequencer states stop at their first unowned access. */
+static int irq_array_field(uint32_t address, uint32_t base, unsigned count, unsigned stride) {
+    return address >= base && address-base < count*stride && (address-base)%stride == 0;
+}
+
+/* The game submits two ordinary requests using its RAM queue. These are
+ * word accesses to the queue, readiness flags, handles and published result
+ * observed from the genuine request producers and mounted card interface. */
+static int irq_card_data(IrqRegion region, unsigned op, uint32_t a) {
+    int read = op == 35u;
+    if ((!read && op != 43u) || (a & 3u)) return 0;
+    switch (region) {
+    case IRQ_CARD_VBLANK:
+        return a == 0x80078c80u || a == 0x80078c84u ||
+            (read ? a == 0x80078cc0u :
+             a == 0x80078c88u || a == 0x80078cc4u || a == 0x80078cc8u);
+    case IRQ_CARD_RUN:
+        return a == 0x80072a34u || (read && (a == 0x80078d78u || a == 0x80078d7cu));
+    case IRQ_CARD_PUSH:
+        return a == 0x80072a34u || (!read && ((a >= 0x80078d48u && a <= 0x80078d54u) ||
+                                                a == 0x80078d7cu));
+    case IRQ_CARD_INFO:
+        return a == 0x80078c2cu || a == 0x80078c7cu || a == 0x80078d38u || a == 0x80078d48u ||
+            (read ? a == 0x80078c8cu : a == 0x80078c28u || a == 0x80078c84u);
+    case IRQ_CARD_LOAD:
+        if (a == 0x80078c38u || a == 0x80078c84u || a == 0x80078d38u) return 1;
+        if (!read) return a == 0x80078c30u || a == 0x80078c34u;
+        if (a == 0x80078c8cu) return 1;
+        for (unsigned i = 0; i < sizeof(card_case_address)/sizeof(card_case_address[0]); ++i)
+            if (a == card_case_address[i]) return 1;
+        return 0;
+    case IRQ_CARD_RESET_EVENTS:
+        return (a >= 0x80078c3cu && a <= 0x80078c58u && read) ||
+            (a >= 0x80078c5cu && a <= 0x80078c78u &&
+             (!read || (a != 0x80078c5cu && a != 0x80078c6cu)));
+    case IRQ_CARD_POLL_EVENTS:
+        return (read && a >= 0x80078c4cu && a <= 0x80078c58u) ||
+            (a >= 0x80078c5cu && a <= 0x80078c68u);
+    case IRQ_CARD_FLAGS:
+        return read && a >= 0x80078c5cu && a <= 0x80078c68u;
+    default:
+        return 0;
+    }
+}
+
+static int irq_vblank_data(IrqRegion region, unsigned op, uint32_t a) {
+    int byte_read = op == 32u || op == 36u, half_read = op == 33u || op == 37u;
+    if ((op == 35u || op == 43u) && a >= 0x8006ca4cu && a <= 0x8006cac8u && !(a & 3u))
+        return 1;
+    switch (region) {
+    case IRQ_SOUND_TICK:
+        if (op == 35u || op == 43u) return a == 0x800a4638u;
+        if (byte_read) return a == 0x800a4ee6u || a == 0x800a4f17u || a == 0x8006aef4u;
+        if (half_read) return a == 0x800a4f22u || a == 0x800a4e8eu;
+        return op == 40u && a == 0x800a4f18u;
+    case IRQ_VOICE_STATUS:
+        if (op == 35u) return a == 0x8006b54cu || a == 0x8006b0e4u;
+        if (half_read) return irq_array_field(a,0x1f801c0cu,24,16);
+        return op == 40u && irq_array_field(a,0x800a4efeu,24,1);
+    case IRQ_CHANNEL_TICK:
+        return half_read && a == 0x800a4efcu;
+    case IRQ_CHANNEL_UPDATE:
+        if (byte_read || op == 40u) return irq_array_field(a,0x800a49d6u,8,0x54u) ||
+            (byte_read && irq_array_field(a,0x800a4f0eu,8,1));
+        if (half_read) return irq_array_field(a,0x800a4992u,8,0x54u);
+        if (op == 35u) return irq_array_field(a,0x80073180u,8,4) || a == 0x800c7d2cu;
+        return op == 43u && a == 0x800c7d2cu;
+    case IRQ_MIX_UPDATE:
+        if (byte_read) return irq_array_field(a,0x800a4c6cu,8,0x48u) ||
+            irq_array_field(a,0x800a4c6du,8,0x48u);
+        return op == 35u && (a == 0x800a2b98u || a == 0x800a2ba0u ||
+                              a == 0x800c7d20u || a == 0x800c7d2cu);
+    case IRQ_LEVELS_UPDATE:
+        if (byte_read) return a == 0x800a4f17u;
+        if (half_read) return irq_array_field(a,0x800a46e8u,8,0x54u) ||
+            irq_array_field(a,0x800a46ecu,8,0x54u) || irq_array_field(a,0x800a46eeu,8,0x54u);
+        return op == 41u && (irq_array_field(a,0x800a2bb0u,8,2) ||
+                              irq_array_field(a,0x800ba108u,8,2));
+    case IRQ_CARD_INDEX:
+        return op == 35u && a == 0x80072a34u;
+    case IRQ_CARD_VBLANK: case IRQ_CARD_RUN: case IRQ_CARD_PUSH:
+    case IRQ_CARD_INFO: case IRQ_CARD_LOAD: case IRQ_CARD_RESET_EVENTS:
+    case IRQ_CARD_POLL_EVENTS: case IRQ_CARD_FLAGS:
+        return irq_card_data(region, op, a);
+    default:
+        return 0;
+    }
+}
+
+typedef struct { uint32_t call, sp; IrqRegion target; } IrqVblankCall;
+static int irq_vblank_call(uint32_t call, uint32_t sp, IrqRegion target) {
+    static const IrqVblankCall calls[] = {
+        {0x8001097cu,0x8006cab4u,IRQ_SOUND_TICK}, {0x8002cec8u,0x8006ca94u,IRQ_VOICE_STATUS},
+        {0x8002cf74u,0x8006ca94u,IRQ_CHANNEL_TICK}, {0x8002d00cu,0x8006ca74u,IRQ_CHANNEL_UPDATE},
+        {0x8002d014u,0x8006ca74u,IRQ_MIX_UPDATE}, {0x8002d01cu,0x8006ca74u,IRQ_LEVELS_UPDATE},
+        {0x800616d8u,0x8006cab4u,IRQ_CARD_INDEX}
+    };
+    for (unsigned i = 0; i < sizeof(calls)/sizeof(calls[0]); ++i)
+        if (calls[i].call == call) return calls[i].sp == sp && calls[i].target == target;
+    return 0;
+}
+
+static int irq_data_access(const FormatterCpu *cpu, uint32_t w) {
+    unsigned op = w >> 26;
+    if (op < 32) return 1;
+    uint32_t address = cpu->r[(w >> 21) & 31u] + (uint32_t)(int32_t)(int16_t)w;
+    IrqRegion region = irq_region(cpu->pc);
+    if (region >= IRQ_GAME_VBLANK && region < IRQ_OUTSIDE)
+        return irq_vblank_data(region,op,address);
+    int write = op == 41u || op == 43u;
+    if (op != 33u && op != 35u && op != 37u && !write) return 0;
+    if (address == 0x1f801070u || address == 0x1f801074u)
+        return write ? (op == 41u && address == 0x1f801070u) : op == 37u || op == 33u;
+    if (address == 0x1f8010f4u)
+        return irq_region(cpu->pc) == IRQ_DMA && (op == 35u || op == 43u);
+    if (address >= 0x8006ca80u && address <= 0x8006cb10u)
+        return (op == 35u || op == 43u) && !(address & 3u);
+    if (op == 41u) return address == 0x8006bafeu;
+    if (op == 43u) return address == 0x8006cb94u || address == 0x8006cbb8u;
+    if (op != 35u) return address == 0x8006bafcu || address == 0x8006bb2cu;
+    return !(address & 3u) &&
+        ((address >= 0x8006bb00u && address <= 0x8006bb28u) ||
+         (address >= 0x8006cb88u && address <= 0x8006cbe0u));
+}
+
+typedef struct { uint32_t address, sp; IrqRegion callee; } IrqGuestReturn;
+
+/* Direct calls have fixed destinations in the per-machine instruction image.
+ * Callback-table branches additionally bind the selected queue/table word. */
+static int irq_card_call(IrqRegion parent, IrqRegion child) {
+    switch (parent) {
+    case IRQ_CARD_VBLANK:
+        return child == IRQ_CARD_RUN || child == IRQ_CARD_INDEX;
+    case IRQ_CARD_INFO:
+        return child == IRQ_CARD_RESET_EVENTS || child == IRQ_CARD_INFO_BIOS ||
+            child == IRQ_CARD_FLAGS || child == IRQ_CARD_POLL_EVENTS || child == IRQ_CARD_CLEAR_RESULT;
+    case IRQ_CARD_LOAD:
+        return child == IRQ_CARD_PUSH || child == IRQ_CARD_RESET_EVENTS ||
+            child == IRQ_CARD_LOAD_BIOS || child == IRQ_CARD_FLAGS || child == IRQ_CARD_POLL_EVENTS;
+    case IRQ_CARD_RESET_EVENTS:
+    case IRQ_CARD_POLL_EVENTS:
+        return child == IRQ_CARD_TEST_EVENT;
+    default:
+        return 0;
+    }
+}
+
+static int irq_card_queued_handler(MusashiBootMemory *memory, IrqRegion dest, uint32_t target) {
+    uint32_t index, handler;
+    if (!musashi_boot_read32(memory, 0x80072a34u, &index) || index > 1u ||
+        !musashi_boot_read32(memory, 0x80078d78u + 4u*index, &handler) || handler != target)
+        return 0;
+    return dest == IRQ_CARD_INFO || (!index && dest == IRQ_CARD_LOAD);
+}
+
+static int irq_card_case(const MusashiGuestIrqImage *image, const FormatterCpu *cpu,
+                         uint32_t instruction, uint32_t *target) {
+    uint32_t at = cpu->r[(instruction >> 21) & 31u] + (uint32_t)(int32_t)(int16_t)instruction;
+    for (unsigned i = 0; i < sizeof(card_case_address)/sizeof(card_case_address[0]); ++i) {
+        if (at == card_case_address[i])
+            return musashi_boot_read32(image->memory, at, target) && *target == image->card_case_targets[i];
+    }
+    return 0;
+}
+
+/* The guest polls eight handles it opened, or just the four hardware
+ * handles. Check both the live handle cell and its current BIOS allocation
+ * before a generic TestEvent is allowed to consume an event. */
+static int irq_card_event_owner(const MusashiGuestIrqCard *card, uint32_t ra, uint32_t handle) {
+    uint32_t pos, saved;
+    const unsigned slot = handle & 0xffffu;
+    if (!card->registered_events || (handle >> 16) != 0xf100u || slot >= MUSASHI_BIOS_EVENTS_CAPACITY)
+        return 0;
+    if (ra >= 0x80061b70u && ra <= 0x80061be0u && (ra - 0x80061b70u) % 16u == 0)
+        pos = (ra - 0x80061b70u) / 16u;
+    else if (ra >= 0x80061cbcu && ra <= 0x80061cecu && (ra - 0x80061cbcu) % 16u == 0)
+        pos = 4u + (ra - 0x80061cbcu) / 16u;
+    else
+        return 0;
+    /* The game's eight actual OpenEvent calls register completion, error,
+     * timeout and media change in that order for each of its two classes. */
+    const unsigned event_kind = pos % 4u;
+    const uint32_t spec = event_kind == 0u ? 0x4u : event_kind == 1u ? 0x8000u :
+                          event_kind == 2u ? 0x100u : 0x2000u;
+    const MusashiBiosEventRecord *record = &card->registered_events->records[slot];
+    return musashi_boot_read32(card->memory, 0x80078c3cu + pos*4u, &saved) && saved == handle &&
+        card->registered_events->allocation_serial[slot] && record->mode == 0x1000u &&
+        (record->status == 0x2000u || record->status == 0x4000u) && record->spec == spec &&
+        record->callback == 0x800617ccu + pos*20u &&
+        record->class_word == (pos < 4u ? 0xf4000001u : 0xf0000011u);
+}
+
+static int irq_card_bios(FormatterCpu *cpu, const MusashiGuestIrqCard *card, IrqRegion region) {
+    uint32_t result = cpu->r[2];
+    if (!card || cpu->gte_load_pending || cpu->merge_pending) return 0;
+    if (region == IRQ_CARD_TEST_EVENT) {
+        int32_t status;
+        if (cpu->pc != 0xb0u || cpu->r[9] != 0x0bu ||
+            !irq_card_event_owner(card, cpu->r[31], cpu->r[4]) || !card->events || !card->events->b0_0b ||
+            !card->events->b0_0b(card->events->userdata, (int32_t)cpu->r[4], &status))
+            return 0;
+        result = (uint32_t)status;
+    } else {
+        uint32_t selector = region == IRQ_CARD_INFO_BIOS ? 0xabu : 0xacu;
+        if ((region != IRQ_CARD_INFO_BIOS && region != IRQ_CARD_LOAD_BIOS) || cpu->pc != 0xa0u ||
+            cpu->r[9] != selector || cpu->r[4] != 0u || !card->files || !card->files->file_vector ||
+            !card->files->file_vector(card->files->userdata, 0xa0u, selector, cpu->r + 4, &result))
+            return 0;
+    }
+    cpu->r[2] = result;
+    return formatter_return(cpu);
+}
+
+
+int musashi_boot_execute_guest_irq(const MusashiGuestIrqImage *image, MusashiBootMemory *memory,
+    uint32_t context, const uint32_t installed[12], const MusashiIrqDispatchDevice *io,
+    const MusashiExecutionClock *clock, MusashiDmaController *dma, MusashiGuestIrqStop *stop) {
+    return musashi_boot_execute_guest_irq_with_services(image,memory,context,installed,io,clock,dma,NULL,stop);
+}
+
 static int cd_irq_execute(MusashiBootMemory *memory,
     const MusashiCdRegisterDevice *device, const MusashiExecutionClock *clock,
     const MusashiCdIrqServices *services, MusashiCdIrqFrame *frame, uint32_t context, uint32_t target,
-    MusashiResetGraphPrefixStop *stop);
+    MusashiResetGraphPrefixStop *stop, FormatterCpu *parent);
+
+int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *image, MusashiBootMemory *memory,
+    uint32_t context, const uint32_t installed[12], const MusashiIrqDispatchDevice *io,
+    const MusashiExecutionClock *clock, MusashiDmaController *dma, const MusashiGuestIrqServices *services, MusashiGuestIrqStop *stop) {
+    const MusashiGuestIrqCd *cd = services ? services->cd : NULL;
+    const MusashiGuestIrqCard *card = services ? services->card : NULL;
+    int card_available = card && card->files && card->files->file_vector && card->events &&
+                         card->events->b0_0b && card->registered_events;
+    uint32_t selected_card_case = 0;
+    FormatterCpu cpu = {0};
+    MusashiInputDevice bus = {0};
+    IrqGuestReturn stack[8];
+    unsigned depth = 0;
+    uint32_t selected_slot = 0, selected_vblank_slot = 0;
+    uint32_t reg_address;
+    if (!stop) return 0;
+    *stop = (MusashiGuestIrqStop){0};
+    if (card && card->memory != memory) return 0;
+    if (!image || image->identity != image || image->memory != memory || !memory ||
+        !installed || context != 0x8006bb34u || !io || !io->return_from_exception ||
+        !io->read16 || !io->write16 || !clock || !clock->advance ||
+        installed[0] != 0x80042780u || installed[1] != 0x8006cb14u ||
+        installed[3] != 0x8006bafcu) return 0;
+    for (unsigned i = 0; i < 12; ++i) {
+        uint32_t live;
+        if (!musashi_boot_read32(memory, context + 4u*i, &live) || live != installed[i]) return 0;
+    }
+    if (!musashi_boot_read32(memory,0x8006cb88u,&reg_address) || reg_address != 0x1f801070u ||
+        !musashi_boot_read32(memory,0x8006cb8cu,&reg_address) || reg_address != 0x1f801074u)
+        return 0;
+    cpu.r[31] = cpu.pc = installed[0]; cpu.npc = cpu.pc+4u;
+    cpu.r[29] = installed[1]; cpu.r[30] = installed[2];
+    for (unsigned i = 0; i < 8; ++i) cpu.r[16+i] = installed[3+i];
+    cpu.r[28] = installed[11];
+    cpu.r[2] = 1; /* HookEntryInt resumes its saved context with a nonzero result. */
+    bus.userdata = io->userdata; bus.read16 = io->read16; bus.write16 = io->write16;
+    cpu.input_device = &bus;
+    const MusashiDmaCallbackRegistrationDevice dma_io = {
+        dma, musashi_dma_controller_read32, musashi_dma_controller_write32
+    };
+    cpu.irq_image = image;
+    cpu.irq_dma = dma ? &dma_io : NULL;
+    cpu.cd_spu_device = services ? services->spu : NULL;
+    cpu.clock = clock;
+    while (stop->instructions < 8192) {
+        uint32_t w, origin = cpu.pc, target = 0, live;
+        IrqRegion region = irq_region(origin);
+        stop->pc = origin;
+        if (!irq_live_word(image,memory,origin,&w) || !irq_data_access(&cpu,w)) return 0;
+        unsigned op = w >> 26, fn = w & 63u;
+        if (origin == 0x800428c4u) {
+            if (op != 35u) return 0;
+            selected_slot = cpu.r[(w >> 21) & 31u] + (uint32_t)(int32_t)(int16_t)w;
+        }
+        if (origin == 0x80042d20u) {
+            if (op != 35u) return 0;
+            selected_vblank_slot = cpu.r[(w >> 21) & 31u] + (uint32_t)(int32_t)(int16_t)w;
+        }
+        int jump = op == 2u || op == 3u || (!op && (fn == 8u || fn == 9u));
+        int cd_call = 0, card_bios = 0;
+        if (origin == 0x8006005cu && (op != 35u || !irq_card_case(image, &cpu, w, &selected_card_case)))
+            return 0;
+        if (jump) {
+            target = op ? (((origin+4u) & 0xf0000000u) | ((w & 0x03ffffffu) << 2)) :
+                          cpu.r[(w >> 21) & 31u];
+            IrqRegion dest = irq_region(target);
+            if (!op && fn == 8u && ((w >> 21) & 31u) == 31u) {
+                if (!depth || stack[depth-1].callee != region ||
+                    stack[depth-1].address != target || stack[depth-1].sp != cpu.r[29]) return 0;
+                --depth;
+            } else if (card && ((region == IRQ_CARD_TEST_EVENT && target == 0xb0u) ||
+                               ((region == IRQ_CARD_INFO_BIOS || region == IRQ_CARD_LOAD_BIOS) && target == 0xa0u))) {
+                if (!depth || op || fn != 8u || cpu.r[10] != target || stack[depth-1].callee != region ||
+                    stack[depth-1].address != cpu.r[31] || stack[depth-1].sp != cpu.r[29])
+                    return 0;
+                card_bios = 1;
+            } else if (region == IRQ_CARD_LOAD && origin == 0x80060064u && !op && fn == 8u) {
+                if (!card || dest != region || !selected_card_case || target != selected_card_case) return 0;
+                selected_card_case = 0;
+            } else if (origin == 0x8005cedcu && target == 0xb0u) {
+                if (depth != 2 || region != IRQ_RETURN || stack[0].callee != IRQ_DISPATCH ||
+                    stack[1].callee != IRQ_RETURN || stack[1].address != cpu.r[31] ||
+                    stack[1].sp != cpu.r[29] || op || fn != 8u || cpu.r[10] != target) return 0;
+            } else if (op == 2u && region == dest && region >= IRQ_GAME_VBLANK &&
+                       region < IRQ_OUTSIDE) {
+                /* A fixed in-function jump does not create an ABI return frame. */
+            } else if (origin==0x800428d4u && !op && fn==9u && target==0x80045290u) {
+                if (depth!=1 || stack[0].callee!=IRQ_DISPATCH || region!=IRQ_DISPATCH ||
+                    selected_slot!=0x8006bb08u || cpu.r[29]!=installed[1]-0x28u ||
+                    !cd_irq_ram_word(memory,selected_slot,target) || !cd || cd->memory!=memory ||
+                    !cd->registers || !cd->frame || cd->frame->busy || cd->frame->faulted ||
+                    !cd->stop) return 0;
+                cd_call = 1;
+            } else {
+                uint32_t slot = dest == IRQ_VBLANK ? 0x8006bb00u : 0x8006bb0cu;
+                uint32_t child_slot = dest == IRQ_CARD_VBLANK ? 0x8006cbb4u : 0x8006cba8u;
+                int vblank_child = origin == 0x80042d30u && depth == 2 && !op && fn == 9u &&
+                    cpu.r[29] == 0x8006caccu && (dest == IRQ_GAME_VBLANK || dest == IRQ_CARD_VBLANK) &&
+                    selected_vblank_slot == child_slot && musashi_boot_read32(memory,child_slot,&live) && live == target;
+                int card_child = card_available && depth >= 3 && stack[2].callee == IRQ_CARD_VBLANK &&
+                    ((op == 3u && irq_card_call(region, dest)) ||
+                     (region == IRQ_CARD_RUN && origin == 0x80062950u && !op && fn == 9u &&
+                      irq_card_queued_handler(memory, dest, target)));
+                int valid = card_child || vblank_child || (depth >= 3 && op == 3u && irq_vblank_call(origin,cpu.r[29],dest)) ||
+                    (origin == 0x80042788u && depth == 0 && op == 3u && dest == IRQ_DISPATCH) ||
+                    (origin == 0x800428d4u && depth == 1 && !op && fn == 9u &&
+                     (dest == IRQ_VBLANK || (dest == IRQ_DMA && dma &&
+                       musashi_boot_read32(memory,0x8006cbc0u,&reg_address) && reg_address == 0x1f8010f4u)) &&
+                     selected_slot == slot && musashi_boot_read32(memory,slot,&live) && live == target) ||
+                    (origin == 0x800429b0u && depth == 1 && op == 3u && dest == IRQ_RETURN);
+                if (!valid || depth >= sizeof(stack)/sizeof(stack[0]) || target != irq_code[dest].start)
+                    return 0;
+                stack[depth++] = (IrqGuestReturn){origin+8u,cpu.r[29],dest};
+            }
+        }
+        if (!formatter_step(memory,&cpu)) return 0;
+        ++stop->instructions;
+        if (jump) {
+            stop->pc = cpu.pc;
+            if (stop->instructions >= 8192 || !cpu.delay_slot || cpu.branch_pc != origin || cpu.pc != origin+4u ||
+                cpu.npc != target || !irq_live_word(image,memory,cpu.pc,&w) ||
+                !irq_data_access(&cpu,w) || !formatter_step(memory,&cpu)) return 0;
+            ++stop->instructions;
+            if (cpu.pc != target || cpu.npc != target+4u || cpu.delay_slot) return 0;
+            if (cd_call) {
+                if (cpu.r[31]!=origin+8u || !cd_irq_ram_word(memory,selected_slot,target))
+                    return 0;
+                int result=cd_irq_execute(memory,cd->registers,clock,cd->services,cd->frame,
+                                          context,target,cd->stop,&cpu);
+                stop->cd_instructions+=cd->frame->instructions;
+                if (!result) { stop->pc=cd->stop->call_address; return 0; }
+            }
+            if (card_bios) {
+                stop->pc = target;
+                if (!irq_card_bios(&cpu, card, region)) return 0;
+                --depth;
+            } else if (target == 0xb0u) {
+                stop->pc = target;
+                return cpu.r[9] == 0x17u && io->return_from_exception(io->userdata) ?
+                    MUSASHI_IRQ_CONTEXT_RETURN_DELEGATED : 0;
+            }
+        } else if (irq_region(cpu.pc) != region || irq_region(cpu.npc) != region) return 0;
+    }
+    return 0;
+}
+
+
 
 /* The CD IRQ frame authorizes every guest call edge (cd_irq_call); natively
  * compiled bodies would skip those checks, so the lane stays suspended. */
@@ -15474,7 +16350,7 @@ int musashi_boot_execute_cd_irq_with_services(MusashiBootMemory *memory,
     MusashiResetGraphPrefixStop *stop) {
     int result;
     musashi_native_lane_suspend(1);
-    result = cd_irq_execute(memory, device, clock, services, frame, context, target, stop);
+    result = cd_irq_execute(memory, device, clock, services, frame, context, target, stop, NULL);
     musashi_native_lane_suspend(0);
     return result;
 }
@@ -15482,11 +16358,13 @@ int musashi_boot_execute_cd_irq_with_services(MusashiBootMemory *memory,
 static int cd_irq_execute(MusashiBootMemory *memory,
     const MusashiCdRegisterDevice *device, const MusashiExecutionClock *clock,
     const MusashiCdIrqServices *services, MusashiCdIrqFrame *frame, uint32_t context, uint32_t target,
-    MusashiResetGraphPrefixStop *stop) {
+    MusashiResetGraphPrefixStop *stop, FormatterCpu *parent) {
     FormatterCpu cpu = {0};
     CdIrqReturn returns[16];
     MusashiCdIrqServices selected = {0};
     uint32_t saved_pc, saved_sp;
+    uint32_t root_return = parent ? 0x800428dcu : UINT32_MAX;
+    int root_returned = 0;
     unsigned remaining = 16384, depth = 0;
     /* 80018730 consumes 2048 compressed bytes. A 16-bit match token copies
      * at most 65 bytes (upper six bits + 2). Allowing 1025 match tokens,
@@ -15518,10 +16396,24 @@ static int cd_irq_execute(MusashiBootMemory *memory,
         !musashi_boot_read32(memory, context+4u, &saved_sp) || saved_sp != 0x8006cb14u ||
         !cd_irq_pointers(memory)) goto fault;
     if (services) selected = *services;
-    cpu.pc = target; cpu.npc = target+4u;
+    const DmaRegistrationFrame dma_frame = {memory, selected.dma, 0};
+    if (parent) {
+        if (!parent->irq_image || parent->irq_image->memory != memory ||
+            parent->irq_image->identity != parent->irq_image || parent->clock != clock ||
+            parent->pc != target || parent->npc != target+4u || parent->delay_slot ||
+            parent->branch_pc || parent->merge_pending || parent->gte_load_pending ||
+            parent->r[29] != saved_sp-0x28u || parent->r[31] != root_return ||
+            !cd_irq_ram_word(memory,0x8006bb08u,target)) goto fault;
+        cpu = *parent;
+        cpu.cd_parent_image = parent->irq_image;
+        cpu.irq_image = NULL;
+        cpu.irq_dma = NULL;
+    } else {
+        cpu.pc = target; cpu.npc = target+4u;
+        cpu.r[29] = saved_sp-0x28u;
+        cpu.r[31] = root_return;
+    }
     if (g_trace_state >= 0) musashi_trace_function_entry(cpu.pc, 0, 'd');
-    cpu.r[29] = saved_sp-0x28u;
-    cpu.r[31] = UINT_MAX;
     cpu.cd_register_device = device;
     cpu.callback_device = selected.callback_device;
     cpu.gpu_io_device = selected.gpu_io;
@@ -15536,22 +16428,21 @@ static int cd_irq_execute(MusashiBootMemory *memory,
         if (frame->faulted || !cd_irq_pointers(memory) ||
             !musashi_boot_read32(memory,context,&live_context_pc) || live_context_pc != saved_pc ||
             !musashi_boot_read32(memory,context+4u,&live_context_sp) || live_context_sp != saved_sp) break;
-        if (cpu.pc == UINT_MAX) {
-            if (depth || cpu.r[29] != saved_sp-0x28u) break;
+        if (cpu.pc == root_return) {
+            if (depth || !root_returned || cpu.r[29] != saved_sp-0x28u ||
+                cpu.r[31] != root_return || cpu.delay_slot || cpu.branch_pc ||
+                cpu.merge_pending || cpu.gte_load_pending) break;
+            if (parent) {
+                if (cpu.npc != root_return+4u || !cd_irq_ram_word(memory,0x8006bb08u,target))
+                    break;
+                memcpy(parent->r,cpu.r,sizeof(cpu.r));
+                parent->hi=cpu.hi; parent->lo=cpu.lo;
+                parent->pc=cpu.pc; parent->npc=cpu.npc;
+            }
             frame->busy = 0;
             return 1;
         }
-        if (cpu.pc == 0x80042f8cu) {
-            uint32_t previous;
-            if (!selected.dma ||
-                !musashi_boot_call_80042f8c(memory, selected.dma, (int32_t)cpu.r[4],
-                                            cpu.r[5], &previous))
-                break;
-            cpu.r[2] = previous;
-            if (depth && returns[depth-1].target == 0x80042f8cu) --depth;
-            if (!formatter_return(&cpu)) break;
-            continue;
-        }
+        if (!cd_irq_select_dma(&cpu, returns, depth, &dma_frame)) break;
         if (cpu.pc == 0x8005cea8u) {
             int32_t service_result;
             if (!selected.event || !selected.event->b0_0b ||
@@ -15692,7 +16583,7 @@ static int cd_irq_execute(MusashiBootMemory *memory,
                     selected.deliver_event;
                 transfer = 4;
             } else {
-                expected = depth ? returns[depth-1].pc : UINT_MAX;
+                expected = depth ? returns[depth-1].pc : root_return;
                 expected_sp = depth ? returns[depth-1].sp : saved_sp-0x28u;
                 accepted = instruction == MIPS_JR(31) && cpu.r[31] == expected;
                 transfer = 2;
@@ -15833,6 +16724,7 @@ static int cd_irq_execute(MusashiBootMemory *memory,
                     }
                 }
                 if (depth) --depth;
+                else root_returned = 1;
             }
         }
     }
@@ -15878,17 +16770,7 @@ MusashiResetGraphPrefixStatus musashi_boot_run_entry_with_devices(
     int32_t result;
     if (!memory || !devices || !devices->callback || !sink || !stop)
         return MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT;
-    cpu.callback_device = devices->callback;
-    cpu.cd_device = devices->cd;
-    cpu.event_device = devices->event;
-    cpu.input_device = devices->input;
-    cpu.clock = devices->clock;
-    cpu.cd_register_device = devices->cd_registers;
-    cpu.cd_spu_device = devices->cd_spu;
-    cpu.heap_device = devices->heap;
-    cpu.gpu_io_device = devices->gpu_io;
-    cpu.cpu_transfer = devices->cpu_transfer;
-    cpu.bios_image = devices->bios_image;
+    formatter_bind_startup_devices(&cpu, devices);
     cpu.pc = 0x80010000u;
     cpu.npc = cpu.pc + 4u;
     cpu.r[31] = incoming_ra;
@@ -15940,32 +16822,51 @@ int musashi_native_lane_reference_call(MusashiBootMemory *memory, uint32_t targe
     return status == MUSASHI_RESETGRAPH_PREFIX_COMPLETE && cpu.npc != UINT_MAX;
 }
 
-MusashiResetGraphPrefixStatus musashi_boot_execute_source_function(
+static MusashiResetGraphPrefixStatus execute_source_frame(
     MusashiBootMemory *memory, const MusashiStartupPrefixDevice *devices,
-    uint32_t target, MusashiConsoleSink sink, void *sink_userdata,
+    uint32_t target, uint32_t sp, uint32_t fp, uint32_t gp, int checked_irq,
+    MusashiConsoleSink sink, void *sink_userdata,
     MusashiResetGraphPrefixStop *stop) {
     FormatterCpu cpu = {0};
     int32_t result = 0;
     if (!memory || !devices || !devices->callback || !sink || !stop || (target & 3u))
         return MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT;
-    cpu.callback_device = devices->callback;
-    cpu.cd_device = devices->cd;
-    cpu.event_device = devices->event;
-    cpu.input_device = devices->input;
-    cpu.clock = devices->clock;
-    cpu.cd_register_device = devices->cd_registers;
-    cpu.cd_spu_device = devices->cd_spu;
-    cpu.heap_device = devices->heap;
-    cpu.gpu_io_device = devices->gpu_io;
-    cpu.cpu_transfer = devices->cpu_transfer;
-    cpu.bios_image = devices->bios_image;
+    formatter_bind_startup_devices(&cpu, devices);
     cpu.pc = target;
     cpu.npc = target + 4u;
-    cpu.r[28] = 0x80074750u;
-    cpu.r[29] = cpu.r[30] = 0x801ff000u;
+    cpu.r[28] = gp;
+    cpu.r[29] = sp;
+    cpu.r[30] = fp;
     cpu.r[31] = UINT_MAX;
-    return run_startup_cpu(memory, &cpu, sink, sink_userdata, &result, stop,
-                           NULL, NULL, NULL);
+    MusashiResetGraphPrefixStatus status = run_startup_cpu(
+        memory, &cpu, sink, sink_userdata, &result, stop, NULL, NULL, NULL);
+    if (checked_irq && status == MUSASHI_RESETGRAPH_PREFIX_COMPLETE &&
+        (cpu.npc == UINT_MAX || cpu.r[29] != sp)) return MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT;
+    return status;
+}
+
+MusashiResetGraphPrefixStatus musashi_boot_execute_source_function(
+    MusashiBootMemory *memory, const MusashiStartupPrefixDevice *devices,
+    uint32_t target, MusashiConsoleSink sink, void *sink_userdata,
+    MusashiResetGraphPrefixStop *stop) {
+    return execute_source_frame(memory, devices, target, 0x801ff000u, 0x801ff000u,
+                                0x80074750u, 0, sink, sink_userdata, stop);
+}
+
+MusashiResetGraphPrefixStatus musashi_boot_execute_source_card_vblank(
+    MusashiBootMemory *memory, const MusashiStartupPrefixDevice *devices,
+    uint32_t context, MusashiConsoleSink sink, void *sink_userdata,
+    MusashiResetGraphPrefixStop *stop) {
+    uint32_t resume, stack, frame, global;
+    /* The installed interrupt dispatcher and VSync reserve 0x48 bytes before
+     * invoking the card callback. Preserve the actual caller's FP and GP. */
+    if (context != 0x8006bb34u || !musashi_boot_read32(memory, context, &resume) ||
+        resume != 0x80042780u || !musashi_boot_read32(memory, context + 4u, &stack) ||
+        stack != 0x8006cb14u || !musashi_boot_read32(memory, context + 8u, &frame) ||
+        !musashi_boot_read32(memory, context + 0x2cu, &global))
+        return MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT;
+    return execute_source_frame(memory, devices, 0x800616d0u, stack - 0x48u, frame,
+                                global, 1, sink, sink_userdata, stop);
 }
 
 MusashiResetGraphPrefixStatus musashi_boot_run_8005fc68_prefix(
@@ -16204,8 +17105,7 @@ MusashiResetGraphPrefixStatus musashi_boot_run_post_entry_prefix(
     if (!memory || !device || !device->callback || !device->cd || !device->event ||
         !device->input || !sink || !result || !stop)
         return MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT;
-    if (musashi_boot_run_800141f0_callback_prefix(memory, device->callback, sink,
-                                                   userdata, result, &nested_stop) !=
+    if (run_startup_callback_prefix(memory, device, sink, userdata, result, &nested_stop) !=
         MUSASHI_RESETGRAPH_PREFIX_COMPLETE) {
         *stop = nested_stop;
         return MUSASHI_RESETGRAPH_PREFIX_UNSUPPORTED_CALL;
@@ -16418,6 +17318,13 @@ MusashiResetGraphPrefixStatus musashi_boot_run_80044d38_callback_prefix(
     cpu.r[29] = 0x801fff80u;
     cpu.r[31] = UINT_MAX;
     for (step = 0; step < FORMATTER_STEP_LIMIT; ++step) {
+        int service = registration_prefix_service(memory, &cpu);
+        if (service < 0) {
+            stop->call_address = cpu.r[31] - 8u;
+            stop->target_address = cpu.pc;
+            return MUSASHI_RESETGRAPH_PREFIX_UNSUPPORTED_CALL;
+        }
+        if (service) continue;
         if (cpu.pc == CD_INITIALIZER_STRING_EMIT) {
             if (!musashi_boot_console_string(memory, cpu.r[4], sink, userdata) ||
                 !formatter_return(&cpu))
@@ -16449,14 +17356,6 @@ MusashiResetGraphPrefixStatus musashi_boot_run_80044d38_callback_prefix(
             stop->call_address = 0x80044734u;
             stop->target_address = CD_COMMAND_STATUS;
             return MUSASHI_RESETGRAPH_PREFIX_UNSUPPORTED_CALL;
-        }
-        if (cpu.pc == CALLBACK_REGISTER_WRAPPER) {
-            if (!formatter_call(memory, &cpu, NULL, NULL)) {
-                stop->call_address = 0x80044da8u;
-                stop->target_address = CALLBACK_REGISTER_WRAPPER;
-                return MUSASHI_RESETGRAPH_PREFIX_UNSUPPORTED_CALL;
-            }
-            continue;
         }
         if (!formatter_step(memory, &cpu)) {
             stop->call_address = cpu.pc;

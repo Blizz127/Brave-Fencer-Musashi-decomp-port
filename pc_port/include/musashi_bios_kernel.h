@@ -49,6 +49,7 @@ struct MusashiBiosKernel {
     unsigned executing_priority;
     MusashiBiosExceptionBinding *exception_binding;
     int exception_required;
+    uint32_t file_error;  /* B0/54, shared by all BIOS file devices. */
 };
 
 int musashi_bios_kernel_install_exception_binding(MusashiBiosKernel *,

@@ -282,17 +282,8 @@ if(MUSASHI_BUILD_PC_PORT)
         pc_port/sio_controller.c
         pc_port/scanline_timer.c
         pc_port/irq_policy.c
-        pc_port/libetc_irq_registration.c
-        pc_port/libetc_dma_registration.c
-        pc_port/libetc_irq_veneer.c
-        pc_port/libetc_dma_veneer.c
         src/main/8001096c.c
-        pc_port/libetc_vsync_handler.c
-        pc_port/libetc_dma_irq.c
-        pc_port/libetc_irq_dispatch.c
-        pc_port/libmcrd_vblank.c
-        
-        pc_port/vblank_bindings.c
+        pc_port/irq_direct_compat.c
         src/main/80016714.c
         src/main/80029044.c
         src/main/8002906c.c
@@ -349,15 +340,26 @@ if(MUSASHI_BUILD_PC_PORT)
     target_link_libraries(musashi_boot_data_probe PRIVATE musashi_pc_port)
     add_test(NAME boot_data_boundary COMMAND musashi_boot_data_probe)
 
-    add_executable(musashi_gpu_device_probe tests/gpu_device_probe.c)
+    add_executable(musashi_gpu_device_probe tests/gpu_device_probe.c tests/owned_reset_route.c)
     target_compile_features(musashi_gpu_device_probe PRIVATE c_std_99)
     target_link_libraries(musashi_gpu_device_probe PRIVATE musashi_pc_port)
-    add_test(NAME gpu_device_boundary COMMAND musashi_gpu_device_probe)
+    add_test(NAME gpu_device_boundary COMMAND musashi_gpu_device_probe
+        "${CMAKE_CURRENT_SOURCE_DIR}/extracted/disc/files/SLUS_007.26")
+    set_tests_properties(gpu_device_boundary PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME gpu_device_direct_refusal COMMAND musashi_gpu_device_probe --direct-only)
 
-    add_executable(musashi_device_reset_probe tests/device_reset_probe.c)
+    add_executable(musashi_device_reset_probe tests/device_reset_probe.c tests/owned_reset_route.c)
     target_compile_features(musashi_device_reset_probe PRIVATE c_std_99)
     target_link_libraries(musashi_device_reset_probe PRIVATE musashi_pc_port)
-    add_test(NAME device_reset_boundary COMMAND musashi_device_reset_probe)
+    add_test(NAME device_reset_boundary COMMAND musashi_device_reset_probe
+        "${CMAKE_CURRENT_SOURCE_DIR}/extracted/disc/files/SLUS_007.26")
+    set_tests_properties(device_reset_boundary PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME device_reset_direct_refusal COMMAND musashi_device_reset_probe --direct-only)
+
+    add_executable(musashi_console_contract_probe tests/console_contract_probe.c)
+    target_compile_features(musashi_console_contract_probe PRIVATE c_std_99)
+    target_link_libraries(musashi_console_contract_probe PRIVATE musashi_pc_port)
+    add_test(NAME console_contract COMMAND musashi_console_contract_probe)
 
     add_executable(musashi_word_clear_probe tests/word_clear_probe.c)
     target_compile_features(musashi_word_clear_probe PRIVATE c_std_99)
@@ -441,21 +443,28 @@ if(MUSASHI_BUILD_PC_PORT)
             pc_port/cpu_status.c
             pc_port/mips_formatter.c
             pc_port/irq_controller.c
+            pc_port/dma_controller.c
             pc_port/boot_memory.c
-            pc_port/libetc_irq_dispatch.c
-            pc_port/libetc_vsync_handler.c
+            pc_port/irq_direct_compat.c
             src/main/8001096c.c
-            pc_port/libetc_dma_irq.c
-            pc_port/libetc_dma_registration.c
-            pc_port/libmcrd_vblank.c
-            
         )
         target_compile_features(musashi_irq_scheduler_probe PRIVATE c_std_99)
+        if(WIN32)
+            target_compile_definitions(musashi_irq_scheduler_probe PRIVATE SDL_MAIN_HANDLED)
+            # COFF resolves references in the shared guest executor before
+            # unused sections are discarded. Keep its real binding owners.
+            target_sources(musashi_irq_scheduler_probe PRIVATE
+                pc_port/startup_bindings.c
+                pc_port/callback_bindings.c
+                pc_port/event_bindings.c
+                src/main/80016714.c
+                src/main/80029044.c
+                src/main/8002906c.c)
+        endif()
         target_compile_definitions(musashi_irq_scheduler_probe PRIVATE
             MUSASHI_NATIVE_IRQ_DISPATCH=1
             MUSASHI_NATIVE_CALLBACK_HANDLER=1
             MUSASHI_NATIVE_DMA_IRQ_HANDLER=1
-            MUSASHI_NATIVE_VBLANK=1
         )
         target_include_directories(musashi_irq_scheduler_probe PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -468,6 +477,7 @@ if(MUSASHI_BUILD_PC_PORT)
         target_link_options(musashi_irq_scheduler_probe PRIVATE -Wl,--gc-sections)
         target_link_libraries(musashi_irq_scheduler_probe PRIVATE ${MUSASHI_DIGEST_LIBRARY} SDL2::SDL2)
         add_test(NAME irq_scheduler_boundary COMMAND musashi_irq_scheduler_probe)
+        set_tests_properties(irq_scheduler_boundary PROPERTIES SKIP_RETURN_CODE 77)
 
         # This one requires a real SDL/GL display because PsyCross owns the
         # VBlank thread. It returns 77 when no display can be initialized.
@@ -634,7 +644,20 @@ if(MUSASHI_BUILD_PC_PORT)
     if(TARGET musashi_native_boot)
         target_link_libraries(musashi_native_boot PRIVATE bfm_plat)
         target_compile_definitions(musashi_native_boot PRIVATE MUSASHI_WITH_BFM_PLAT=1)
-        target_sources(musashi_native_boot PRIVATE pc_port/plat_audio_sink.c pc_port/dev_menu.c)
+        target_sources(musashi_native_boot PRIVATE pc_port/plat_audio_sink.c pc_port/dev_menu.c
+            pc_port/card/card_image.c pc_port/card/card_service.c pc_port/card/card_vector.c
+            pc_port/card/card_host_storage.c pc_port/card/card_save_directory.c pc_port/card/player_card.c)
+    endif()
+    if(WIN32 AND TARGET musashi_native_boot)
+        add_executable(musashi_card_storage_path_probe tests/card/storage_probe.c
+            pc_port/card/card_host_storage.c)
+        target_include_directories(musashi_card_storage_path_probe PRIVATE pc_port/card)
+        target_link_libraries(musashi_card_storage_path_probe PRIVATE bfm_plat)
+        if(NOT CMAKE_CROSSCOMPILING)
+            add_test(NAME windows_card_long_paths COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/card/windows_long_paths.py
+                $<TARGET_FILE:musashi_card_storage_path_probe>)
+        endif()
     endif()
     # SPU core -> plat_audio_sink -> bfm_plat null sink, in-process: a CD tone
     # and an ADPCM voice (SPU RAM upload, KON) must reach the sink non-silent.
@@ -784,6 +807,10 @@ if(MUSASHI_BUILD_PC_PORT)
             set_property(TEST ${MUSASHI_TEST} APPEND PROPERTY
                 ENVIRONMENT "MUSASHI_CODE_IMAGE=${MUSASHI_CODE_IMAGE}")
         endforeach()
+        add_executable(musashi_owned_card_vblank_probe tests/owned_card_vblank_probe.c)
+        target_link_libraries(musashi_owned_card_vblank_probe PRIVATE musashi_pc_port)
+        add_test(NAME owned_card_vblank COMMAND musashi_owned_card_vblank_probe ${MUSASHI_CODE_IMAGE})
+        set_tests_properties(owned_card_vblank PROPERTIES ENVIRONMENT "MUSASHI_CODE_IMAGE=")
     endif()
 
     # No Sony PsyQ code in the port: fail configuration when a decomp source

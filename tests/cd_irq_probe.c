@@ -1,4 +1,4 @@
-#include "irq_cpu_fixture.h"
+#include "irq_cd_fixture.h"
 #include "musashi_boot_memory.h"
 #include "musashi_bios_events.h"
 #include "musashi_cd_controller.h"
@@ -20,6 +20,7 @@ typedef struct Fixture {
     MusashiBootMemory *memory;
     MusashiCdOwned *cd;
     MusashiPsyCrossIrqRuntime runtime;
+    FixtureCdIrq irq;
     MusashiCdRegisterDevice registers;
     MusashiExecutionClock clock;
     MusashiCdIrqServices services;
@@ -94,7 +95,8 @@ static int tick(void *p,uint32_t cost) {
     if (f->expected_continuation) {
         assert(f->runtime.scheduler.active_continuation==f->expected_continuation);
         assert(f->runtime.scheduler.delivering && !f->runtime.scheduler.return_consumed);
-        assert(!(f->runtime.controller.status&4)); /* CPU ACK precedes callback. */
+        if (f->runtime.cd_frame.busy)
+            assert(!(f->runtime.controller.status&4)); /* The parent acknowledged before entering CD. */
     }
     if (f->refuse_clock) return 0;
     if (f->recurse && !f->changed) {
@@ -106,11 +108,15 @@ static int tick(void *p,uint32_t cost) {
     ++f->costs; f->cycle+=cost;
     return musashi_cd_owned_advance(f->cd,f->cycle);
 }
-static void init(Fixture *f,const MusashiDiscMedia *media) {
+static void init_irq(Fixture *f,const MusashiDiscMedia *media, int scheduled) {
     MusashiCdOwnedHardware hardware={.userdata=f,.current_thread=tid,.healthy=health,.raise_irq4=raise_cd};
     memset(f,0,sizeof(*f)); f->memory=calloc(1,sizeof(*f->memory)); assert(f->memory);
     assert(musashi_psycross_irq_runtime_init(&f->runtime,f->memory,NULL));
-    fixture_irq_cpu_attach(&f->runtime.scheduler);
+    if (scheduled) {
+        fixture_cd_irq_attach(&f->irq, &f->runtime);
+    } else {
+        fixture_irq_cpu_attach(&f->runtime.scheduler);
+    }
     f->cd=musashi_cd_owned_open_bios_idle(media,&hardware,0); assert(f->cd);
     f->registers=(MusashiCdRegisterDevice){.userdata=f->cd,.read8=musashi_cd_owned_read8,.write8=musashi_cd_owned_write8};
     f->clock=(MusashiExecutionClock){f,tick};
@@ -133,6 +139,9 @@ static void init(Fixture *f,const MusashiDiscMedia *media) {
     }
     assert(musashi_psycross_irq_runtime_bind_cd(&f->runtime,&f->registers,&f->clock));
     assert(!musashi_psycross_irq_runtime_bind_cd(&f->runtime,&f->registers,&f->clock));
+}
+static void init(Fixture *f,const MusashiDiscMedia *media) {
+    init_irq(f,media,0);
 }
 static void close_fixture(Fixture *f) {
     if (f->runtime.scheduler.installed) assert(musashi_psycross_irq_scheduler_uninstall(&f->runtime.scheduler));
@@ -430,7 +439,7 @@ static void refusal(const MusashiDiscMedia *media) {
 }
 static void scheduler(const MusashiDiscMedia *media) {
     Fixture f; int token;
-    init(&f,media);
+    init_irq(&f,media,1);
     assert(!f.runtime.device.execute(f.runtime.device.userdata,f.memory,0x80045290));
     put(f.memory,0x8006cb88,0x1f801070); put(f.memory,0x8006cb8c,0x1f801074);
     assert(musashi_boot_write16(f.memory,0x8006bafc,1));
@@ -444,10 +453,16 @@ static void scheduler(const MusashiDiscMedia *media) {
     assert(f.runtime.scheduler.deliveries==1 && !f.runtime.scheduler.active_continuation);
     assert(f.runtime.scheduler.last_result==MUSASHI_IRQ_CONTEXT_RETURN_DELEGATED);
     assert(!f.runtime.controller.status && !f.runtime.cd_frame.faulted);
+    assert(f.irq.guest.stop.pc == 0xb0u && f.irq.guest.stop.instructions > 0 &&
+           f.irq.guest.stop.cd_instructions == f.runtime.cd_frame.instructions &&
+           f.runtime.cd_frame.instructions > 0);
+    assert(f.costs == f.irq.guest.stop.instructions + f.irq.guest.stop.cd_instructions);
     f.expected_continuation=NULL;
     put(f.memory,0x8006bb08,0x80045294); command(&f,0x0c);
     assert(!musashi_psycross_irq_scheduler_dispatch_pending(&f.runtime.scheduler,&token));
-    assert(f.runtime.scheduler.faulted && f.runtime.failed_target==0x80045294);
+    assert(f.runtime.scheduler.faulted && !f.runtime.scheduler.return_consumed);
+    assert(f.irq.guest.stop.pc == 0x800428d4u && f.irq.guest.stop.cd_instructions == 0);
+    assert(get(f.memory, 0x8006bb08u) == 0x80045294u);
     close_fixture(&f);
 }
 int main(int argc,char **argv) {

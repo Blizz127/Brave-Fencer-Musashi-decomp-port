@@ -14,6 +14,7 @@
 #include <errno.h>
 #ifdef _WIN32
 #include <windows.h>
+#include <wchar.h>
 #include <fcntl.h>
 #include <io.h>
 #include <sys/stat.h>
@@ -357,12 +358,17 @@ int bfm_plat_disc_read_file(const char *path, void *out, size_t cap,
 /* ---- memory cards ---- */
 
 enum { CARD_PATH_CAPACITY = 600 };
+#ifdef _WIN32
+typedef wchar_t CardPathChar;
+#else
+typedef char CardPathChar;
+#endif
 
 typedef struct CardLock {
     int held;
 #ifdef _WIN32
     HANDLE file;
-    char image_path[CARD_PATH_CAPACITY];
+    CardPathChar image_path[CARD_PATH_CAPACITY];
     /* Each directory component consumes at least one character and a separator. */
     HANDLE directories[CARD_PATH_CAPACITY / 2];
     unsigned directory_count;
@@ -394,19 +400,45 @@ int bfm_plat_memcard_set_dir(const char *dir) {
     return BFM_PLAT_OK;
 }
 
-static int card_path(unsigned slot, char *out, size_t size, const char *ext) {
+/* Keep the resolved Windows image name in its native encoding while the
+ * slot is held, including every temporary name used for atomic writes. */
+static int card_path(unsigned slot, CardPathChar *out, size_t size, const char *ext) {
 #ifdef _WIN32
+    char name[CARD_PATH_CAPACITY];
+    wchar_t input[CARD_PATH_CAPACITY];
+    DWORD n;
+    int count;
     if (card_locks[slot].held && !*ext) {
-        size_t length = strlen(card_locks[slot].image_path);
+        size_t length = wcslen(card_locks[slot].image_path);
         if (length >= size) return 0;
-        memcpy(out, card_locks[slot].image_path, length + 1);
+        wmemcpy(out, card_locks[slot].image_path, length + 1);
         return 1;
     }
-    int n = snprintf(out, size, "%s/bfm_card%u.mcd%s", card_dir, slot, ext);
+    count = snprintf(name, sizeof name, "%s/bfm_card%u.mcd%s", card_dir, slot, ext);
+    if (count < 0 || (size_t)count >= sizeof name ||
+        !MultiByteToWideChar(CP_ACP, 0, name, -1, input, CARD_PATH_CAPACITY))
+        return 0;
+    n = GetFullPathNameW(input, (DWORD)size, out, NULL);
+    if (!n || n >= size) return 0;
+    for (size_t i = 0; i < n; ++i)
+        if (out[i] == '/') out[i] = '\\';
+    /* Reserve room within legacy MAX_PATH for the later temporary suffix. */
+    if (n >= MAX_PATH - 32 && wcsncmp(out, L"\\\\?\\", 4) != 0) {
+        if (wcsncmp(out, L"\\\\", 2) == 0) {
+            if (n + 6 >= size) return 0;
+            wmemmove(out + 8, out + 2, n - 1);
+            wmemcpy(out, L"\\\\?\\UNC\\", 8);
+        } else {
+            if (n + 4 >= size) return 0;
+            wmemmove(out + 4, out, n + 1);
+            wmemcpy(out, L"\\\\?\\", 4);
+        }
+    }
+    return 1;
 #else
     int n = snprintf(out, size, "bfm_card%u.mcd%s", slot, ext);
-#endif
     return n > 0 && (size_t)n < size;
+#endif
 }
 
 #ifndef _WIN32
@@ -425,20 +457,20 @@ static int open_card_directory(void) {
 #ifdef _WIN32
 /* Windows path-based replacement needs every directory in its resolved path
  * to keep its name while the slot is owned. The drive or UNC share is the root. */
-static char *card_windows_first_directory(char *path) {
-    char *p = path;
-    if (strncmp(p, "\\\\?\\", 4) == 0) {
+static wchar_t *card_windows_first_directory(wchar_t *path) {
+    wchar_t *p = path;
+    if (wcsncmp(p, L"\\\\?\\", 4) == 0) {
         p += 4;
-        if (_strnicmp(p, "UNC\\", 4) == 0) p += 4;
+        if (_wcsnicmp(p, L"UNC\\", 4) == 0) p += 4;
         else return p[0] && p[1] == ':' && p[2] == '\\' ? p + 3 : NULL;
     } else if (p[0] && p[1] == ':' && p[2] == '\\') {
         return p + 3;
     } else if (p[0] == '\\' && p[1] == '\\') {
         p += 2;
     } else return NULL;
-    p = strchr(p, '\\');  /* server */
+    p = wcschr(p, '\\');  /* server */
     if (!p) return NULL;
-    p = strchr(p + 1, '\\');  /* share */
+    p = wcschr(p + 1, '\\');  /* share */
     return p ? p + 1 : NULL;
 }
 
@@ -447,16 +479,16 @@ static void card_windows_unpin(CardLock *lock) {
         CloseHandle(lock->directories[--lock->directory_count]);
 }
 
-static int card_windows_pin(CardLock *lock, char *path, size_t size) {
-    DWORD n = GetFullPathNameA(path, sizeof lock->image_path, lock->image_path, NULL);
-    if (!n || n >= sizeof lock->image_path || n <= sizeof ".lock" - 1 || n >= size)
-        return BFM_PLAT_INVALID;
-    memcpy(path, lock->image_path, n + 1);
-    char *p = card_windows_first_directory(lock->image_path);
+static int card_windows_pin(CardLock *lock, const wchar_t *path) {
+    size_t n = wcslen(path);
+    wchar_t *p;
+    if (n <= sizeof ".lock" - 1 || n >= CARD_PATH_CAPACITY) return BFM_PLAT_INVALID;
+    wmemcpy(lock->image_path, path, n + 1);
+    p = card_windows_first_directory(lock->image_path);
     if (!p) return BFM_PLAT_INVALID;
-    while ((p = strchr(p, '\\')) != NULL) {
+    while ((p = wcschr(p, '\\')) != NULL) {
         *p = 0;
-        HANDLE h = CreateFileA(lock->image_path, FILE_TRAVERSE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+        HANDLE h = CreateFileW(lock->image_path, FILE_TRAVERSE, FILE_SHARE_READ | FILE_SHARE_WRITE,
                                NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
         *p++ = '\\';
         if (h == INVALID_HANDLE_VALUE) {
@@ -474,16 +506,16 @@ static int card_windows_pin(CardLock *lock, char *path, size_t size) {
 /* The lock file stays in place across sessions. The OS releases ownership
  * when the handle closes, even after a process exits unexpectedly. */
 int bfm_plat_memcard_acquire(unsigned slot) {
-    char path[CARD_PATH_CAPACITY];
+    CardPathChar path[CARD_PATH_CAPACITY];
     CardLock *lock;
-    if (slot >= BFM_MEMCARD_SLOTS || !card_path(slot, path, sizeof path, ".lock"))
+    if (slot >= BFM_MEMCARD_SLOTS || !card_path(slot, path, CARD_PATH_CAPACITY, ".lock"))
         return BFM_PLAT_INVALID;
     lock = &card_locks[slot];
     if (card_held(slot)) return BFM_PLAT_NOT_READY;
 #ifdef _WIN32
-    int pinned = card_windows_pin(lock, path, sizeof path);
+    int pinned = card_windows_pin(lock, path);
     if (pinned != BFM_PLAT_OK) return pinned;
-    lock->file = CreateFileA(path, GENERIC_READ | GENERIC_WRITE, 0, NULL,
+    lock->file = CreateFileW(path, GENERIC_READ | GENERIC_WRITE, 0, NULL,
                              OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (lock->file == INVALID_HANDLE_VALUE) {
         DWORD error = GetLastError();
@@ -528,10 +560,10 @@ void bfm_plat_memcard_release(unsigned slot) {
     lock->held = 0;
 }
 
-static void card_remove_temp(const CardLock *lock, const char *tmp) {
+static void card_remove_temp(const CardLock *lock, const CardPathChar *tmp) {
 #ifdef _WIN32
     (void)lock;
-    remove(tmp);
+    _wremove(tmp);
 #else
     unlinkat(lock->dir_fd, tmp, 0);
 #endif
@@ -539,7 +571,7 @@ static void card_remove_temp(const CardLock *lock, const char *tmp) {
 
 /* O_EXCL keeps files left by interrupted writes or other sessions intact.
  * The staging file lives beside the card for atomic replacement. */
-static FILE *card_temp(const CardLock *lock, const char *path, char *tmp, size_t size) {
+static FILE *card_temp(const CardLock *lock, const CardPathChar *path, CardPathChar *tmp, size_t size) {
     unsigned i;
 #ifdef _WIN32
     unsigned long pid = GetCurrentProcessId();
@@ -549,10 +581,14 @@ static FILE *card_temp(const CardLock *lock, const char *path, char *tmp, size_t
     for (i = 0; i < 128; i++) {
         FILE *f;
         int fd;
+#ifdef _WIN32
+        int n = swprintf(tmp, size, L"%ls.tmp.%lu.%u", path, pid, i);
+#else
         int n = snprintf(tmp, size, "%s.tmp.%lu.%u", path, pid, i);
+#endif
         if (n < 0 || (size_t)n >= size) return NULL;
 #ifdef _WIN32
-        fd = _open(tmp, _O_CREAT | _O_EXCL | _O_WRONLY | _O_BINARY | _O_NOINHERIT,
+        fd = _wopen(tmp, _O_CREAT | _O_EXCL | _O_WRONLY | _O_BINARY | _O_NOINHERIT,
                    _S_IREAD | _S_IWRITE);
 #else
         fd = openat(lock->dir_fd, tmp, O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0600);
@@ -574,20 +610,20 @@ static FILE *card_temp(const CardLock *lock, const char *path, char *tmp, size_t
     return NULL;
 }
 
-static int card_replace(const CardLock *lock, const char *tmp, const char *path) {
+static int card_replace(const CardLock *lock, const CardPathChar *tmp, const CardPathChar *path) {
 #ifdef _WIN32
     (void)lock;
     /* Keep the old card if replacement fails; deleting it first loses data. */
-    return MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+    return MoveFileExW(tmp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
 #else
     return renameat(lock->dir_fd, tmp, lock->dir_fd, path) == 0;
 #endif
 }
 
-static FILE *card_open_read(unsigned slot, const char *path) {
+static FILE *card_open_read(unsigned slot, const CardPathChar *path) {
 #ifdef _WIN32
     (void)slot;
-    return fopen(path, "rb");
+    return _wfopen(path, L"rb");
 #else
     int held = card_held(slot);
     int dir = held ? card_locks[slot].dir_fd : open_card_directory();
@@ -612,13 +648,13 @@ static FILE *card_open_read(unsigned slot, const char *path) {
 }
 
 int bfm_plat_memcard_load(unsigned slot, uint8_t *card, size_t size) {
-    char path[CARD_PATH_CAPACITY];
+    CardPathChar path[CARD_PATH_CAPACITY];
     FILE *f;
     uint8_t *loaded;
     size_t got;
     int extra, failed;
     if (slot >= BFM_MEMCARD_SLOTS || !card || size != BFM_MEMCARD_SIZE ||
-        !card_path(slot, path, sizeof path, ""))
+        !card_path(slot, path, CARD_PATH_CAPACITY, ""))
         return BFM_PLAT_INVALID;
     f = card_open_read(slot, path);
     if (!f) return errno == ENOENT ? BFM_PLAT_NOT_FOUND : BFM_PLAT_ERROR;
@@ -635,24 +671,24 @@ int bfm_plat_memcard_load(unsigned slot, uint8_t *card, size_t size) {
 }
 
 int bfm_plat_memcard_save(unsigned slot, const uint8_t *card, size_t size) {
-    char path[CARD_PATH_CAPACITY], tmp[CARD_PATH_CAPACITY];
+    CardPathChar path[CARD_PATH_CAPACITY], tmp[CARD_PATH_CAPACITY];
     FILE *f;
     int temporary_lock, r, ok;
     if (slot >= BFM_MEMCARD_SLOTS || !card || size != BFM_MEMCARD_SIZE ||
-        !card_path(slot, path, sizeof path, ""))
+        !card_path(slot, path, CARD_PATH_CAPACITY, ""))
         return BFM_PLAT_INVALID;
     temporary_lock = !card_held(slot);
     if (temporary_lock) {
         r = bfm_plat_memcard_acquire(slot);
         if (r != BFM_PLAT_OK) return r;
 #ifdef _WIN32
-        if (!card_path(slot, path, sizeof path, "")) {
+        if (!card_path(slot, path, CARD_PATH_CAPACITY, "")) {
             bfm_plat_memcard_release(slot);
             return BFM_PLAT_ERROR;
         }
 #endif
     }
-    f = card_temp(&card_locks[slot], path, tmp, sizeof tmp);
+    f = card_temp(&card_locks[slot], path, tmp, CARD_PATH_CAPACITY);
     r = BFM_PLAT_ERROR;
     if (f) {
         ok = fwrite(card, 1, size, f) == size && fflush(f) == 0;

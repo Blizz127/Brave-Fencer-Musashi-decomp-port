@@ -42,7 +42,9 @@ typedef struct MusashiDmaCallbackRegistrationDevice {
     int (*write32)(void *, uint32_t address, uint32_t value);
 } MusashiDmaCallbackRegistrationDevice;
 
-/* Same completion/output/ownership contract as 800429DC above. This routine
+/* Execute the verified body in the caller's live, mapped executable. An
+ * absent or changed body refuses. Only the DICR word is a device access.
+ * Same completion/output/ownership contract as 800429DC above. This routine
  * snapshots the control pointer before publishing the callback and uses that
  * address for both device operations. Failed device access therefore leaves
  * the published callback visible. Unchanged callbacks need no device.
@@ -51,7 +53,8 @@ int musashi_boot_call_80042f8c(MusashiBootMemory *memory,
     const MusashiDmaCallbackRegistrationDevice *device, int32_t index,
     uint32_t callback, uint32_t *previous);
 
-/* Shared 800425E0 wrapper: same dispatch contract, using table slot +04. */
+/* Shared 800425E0 wrapper: execute the verified veneer with an isolated ABI
+ * stack and dispatch through its live table slot +04 into the verified body. */
 int musashi_boot_call_800425e0(MusashiBootMemory *memory,
     const MusashiDmaCallbackRegistrationDevice *device, int32_t index,
     uint32_t callback, uint32_t *previous);

@@ -5,6 +5,7 @@
  * device/BIOS backend. The pinned EXE supplies initial guest pointer cells.
  * This is a startup integration diagnostic, not interrupt delivery/menu proof. */
 #include "musashi_callback_registration.h"
+#include "irq_guest_fixture.h"
 #include "musashi_irq_controller.h"
 #ifdef MUSASHI_WITH_PSYCROSS
 #include "musashi_irq_scheduler.h"
@@ -125,6 +126,7 @@ int main(int argc, char **argv) {
     MusashiEntryState entry;
     MusashiResetGraphPrefixStop stop;
     Fixture f = {0};
+    FixtureIrqGuest guest = {0};
     MusashiIrqController standalone_irq = {0};
     MusashiCallbackDevice device = {0};
     FILE *file;
@@ -146,6 +148,7 @@ int main(int argc, char **argv) {
     exe = malloc((size_t)length);
     assert(exe && fread(exe, 1, (size_t)length, file) == (size_t)length);
     fclose(file);
+    assert(musashi_boot_map_irq_exe(&guest.image, &memory, exe, (size_t)length));
     /* Explicitly synthetic incoming RA for the entry-data loader. */
     assert(musashi_boot_load_entry(&loaded, exe, (size_t)length, 0, &entry));
     free(exe);
@@ -160,7 +163,7 @@ int main(int argc, char **argv) {
             return 77;
         }
         assert(musashi_psycross_irq_runtime_init(&runtime, &memory, NULL));
-    fixture_irq_cpu_attach(&runtime.scheduler);
+        fixture_irq_cpu_attach_guest(&runtime.scheduler, &guest);
         f.irq = &runtime.controller;
         /* This thread owns guest initialization. The source only queues. */
     }
@@ -229,10 +232,10 @@ int main(int argc, char **argv) {
     }
 #endif
 
-    /* Direct handler diagnostic after genuine table initialization. This is
-     * not a delivered VBlank: the newly cleared slots require no executor. */
+    /* The test bus supplies one VBlank after genuine table initialization.
+     * The owned instruction frame runs through the authenticated B0 return. */
     assert(word(&memory, 0x8006cbb8u) == 0);
-    assert(musashi_boot_call_80042ce8(&memory, NULL, NULL));
+    assert(fixture_irq_direct_vblank(&guest, &memory));
     assert(word(&memory, 0x8006cbb8u) == 1);
 
     /* Exercise the recovered target installed in table +04. The channel-two
@@ -259,6 +262,6 @@ int main(int argc, char **argv) {
     assert(word(&memory, 0x8006bb0cu) == 0);
     puts("CALLBACK REGISTRATION STARTUP: guest slots=0,3 enabled=0009; missing BIOS refused");
     puts("DMA REGISTRATION: channel=2 enabled, then cleared through shared C; synthetic device");
-    puts("VBLANK HANDLER: initialized empty slots, guest tick=1; direct diagnostic, no IRQ");
+    puts("VBLANK HANDLER: initialized empty slots, guest tick=1; direct IRQ-frame diagnostic");
     return 0;
 }
