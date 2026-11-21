@@ -9609,7 +9609,7 @@ enum { CODE_IMAGE_SIZE = 0x65000u, CODE_IMAGE_TEXT = 0x800u,
        CODE_IMAGE_BASE = 0x80010000u, CODE_IMAGE_END = 0x80074800u };
 #define CODE_IMAGE_DIGEST 0xc7d1ee6738871614ull
 static uint8_t *g_code_image;
-static int g_code_image_state; /* 0 unknown, 1 loaded, -1 none */
+static int g_code_image_state; /* 0 unknown, 1 verified, 2 test mutant, -1 none */
 
 static const uint8_t *code_image(void) {
     if (!g_code_image_state) {
@@ -9629,7 +9629,7 @@ static const uint8_t *code_image(void) {
             if (got == CODE_IMAGE_SIZE &&
                 (h == CODE_IMAGE_DIGEST || (mutant && mutant[0] == '1'))) {
                 g_code_image = bytes;
-                g_code_image_state = 1;
+                g_code_image_state = h == CODE_IMAGE_DIGEST ? 1 : 2;
             } else {
                 free(bytes);
                 fprintf(stderr, "native_boot: MUSASHI_CODE_IMAGE is not the SLUS-00726 EXE; ignored\n");
@@ -12696,6 +12696,7 @@ static unsigned long g_trace_seq;
 static TraceOther g_trace_other[TRACE_OTHER_MAX];
 static unsigned g_trace_other_n;
 static const MusashiNativeLaneEntry *lane_find(uint32_t pc);
+static unsigned long long g_wrapped_angle_trace_steps[3];
 
 typedef struct TraceRow { uint32_t target, caller, count; char kind; } TraceRow;
 static int trace_row_cmp(const void *a, const void *b) {
@@ -12730,6 +12731,11 @@ static void trace_dump(void) {
     out = fopen(g_trace_counts_path, "w");
     if (out) {
         fprintf(out, "# target count first_kind first_caller lane\n");
+        if (g_wrapped_angle_trace_steps[0] || g_wrapped_angle_trace_steps[1] ||
+            g_wrapped_angle_trace_steps[2])
+            fprintf(out, "# wrapped_angle_native_steps subtract=%llu return=%llu mask=%llu\n",
+                    g_wrapped_angle_trace_steps[0], g_wrapped_angle_trace_steps[1],
+                    g_wrapped_angle_trace_steps[2]);
         for (i = 0; i < n; ++i)
             fprintf(out, "%08x %u %c %08x %s\n", rows[i].target, rows[i].count,
                     rows[i].kind, rows[i].caller,
@@ -13208,7 +13214,60 @@ uint32_t musashi_native_guest_call(uint32_t target, unsigned argc,
     return v0;
 }
 
-/* 1: the lane ran the call and returned to ra; 0: not a lane call here
+#define WRAPPED_ANGLE_ENTRY UINT32_C(0x80012ab0)
+
+/* Staged host implementation of the game's (a - b) & 4095. Each caller
+ * checkpoint still sees the intermediate difference, return branch or mask.
+ * A changed fetch source retains the normal CPU path. */
+static int wrapped_angle_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
+    uint32_t offset = cpu->pc - WRAPPED_ANGLE_ENTRY, next;
+    uint64_t digest;
+    if (offset >= 12u || (offset & 3u) || cpu->merge_pending || cpu->gte_load_pending ||
+        !musashi_native_lane_usable(memory))
+        return 0;
+    if (offset == 8u) {
+        if (!cpu->delay_slot || cpu->branch_pc != WRAPPED_ANGLE_ENTRY + 4u) return 0;
+    } else if (cpu->delay_slot || cpu->branch_pc || cpu->npc != cpu->pc + 4u) return 0;
+
+    /* code_word reads the immutable EXE first, then the bus. Do not probe
+     * arbitrary owners ahead of a fetch; the ordinary CPU must call them. */
+    if (code_image()) {
+        if (g_code_image_state != 1) return 0;
+    } else {
+        if (cpu->bios_image) {
+#ifdef MUSASHI_LINKED_BIOS_EXCEPTION
+            if (cpu->bios_image->intersects != musashi_bios_exception_intersects ||
+                musashi_bios_exception_intersects(WRAPPED_ANGLE_ENTRY, 12u)) return 0;
+#else
+            return 0;
+#endif
+        }
+        if (!lane_ram_digest(memory, WRAPPED_ANGLE_ENTRY, 12u, &digest) ||
+            digest != UINT64_C(0xfa67b35cecb0ac4e)) return 0;
+    }
+    if (cpu->clock && (!cpu->clock->advance ||
+        !cpu->clock->advance(cpu->clock->userdata, 2u) ||
+        (cpu->cd_irq_frame && cpu->cd_irq_frame->faulted))) return -1;
+
+    next = cpu->npc;
+    if (offset == 0u) cpu->r[2] = cpu->r[4] - cpu->r[5];
+    if (offset == 8u) cpu->r[2] &= 4095u;
+    cpu->r[0] = 0;
+    cpu->delay_slot = offset == 4u;
+    cpu->branch_pc = cpu->delay_slot ? cpu->pc : 0u;
+    cpu->pc = next;
+    cpu->npc = cpu->delay_slot ? cpu->r[31] : next + 4u;
+    if (g_trace_state > 0) ++g_wrapped_angle_trace_steps[offset / 4u];
+    return 1;
+}
+
+int musashi_native_lane_wrapped_angle(MusashiNativeLaneCall *call) {
+    if (!g_lane_active || !call || call->memory != g_lane_active->memory ||
+        call->r != g_lane_active->cpu->r) return 0;
+    return wrapped_angle_step(call->memory, g_lane_active->cpu);
+}
+
+/* 1: native execution advanced the CPU; 0: not a lane call here
  * (the interpreter proceeds); -1: the native call aborted (refuse). */
 static int lane_try(MusashiBootMemory *memory, FormatterCpu *cpu) {
     const MusashiNativeLaneEntry *entry;
@@ -13217,10 +13276,17 @@ static int lane_try(MusashiBootMemory *memory, FormatterCpu *cpu) {
     MusashiNativeLaneCall call;
     uint32_t ra, sp;
     volatile int outcome;
+    int staged;
     entry = g_lane_count ? lane_find(cpu->pc) : NULL;
+    if (!entry && cpu->pc - WRAPPED_ANGLE_ENTRY < 12u) {
+        const MusashiNativeLaneEntry *body = lane_find(WRAPPED_ANGLE_ENTRY);
+        if (body && body->fn == musashi_native_lane_wrapped_angle) entry = body;
+    }
     if (!entry && lane_ovl_first(cpu->pc) == g_lane_ovl_count) return 0;
-    if (cpu->merge_pending || cpu->gte_load_pending || cpu->delay_slot ||
-        cpu->npc != cpu->pc + 4u || !musashi_native_lane_usable(memory))
+    staged = entry && entry->guest_pc == WRAPPED_ANGLE_ENTRY &&
+             entry->fn == musashi_native_lane_wrapped_angle;
+    if ((!staged && (cpu->merge_pending || cpu->gte_load_pending || cpu->delay_slot ||
+                    cpu->npc != cpu->pc + 4u)) || !musashi_native_lane_usable(memory))
         return 0;
     /* Overlay PCs: only the member whose bytes are resident, checked now. */
     if (!entry && !(entry = lane_find_overlay(memory, cpu->pc))) return 0;
@@ -13236,7 +13302,8 @@ static int lane_try(MusashiBootMemory *memory, FormatterCpu *cpu) {
     {
         int code = setjmp(active.abort);
         if (code == 0) {
-            outcome = entry->fn(&call) ? 1 : 0;
+            int status = entry->fn(&call);
+            outcome = staged ? status : status != 0;
         } else {
             outcome = -1;
             /* 3/4/5: a guest call from native code refused or stopped;
@@ -13248,6 +13315,7 @@ static int lane_try(MusashiBootMemory *memory, FormatterCpu *cpu) {
     }
     g_lane_active = active.prev;
     g_lane_run_frames = saved_frames;
+    if (staged) return outcome; /* The step preserved its own PC, registers and clock. */
     if (outcome < 0) {
         fprintf(stderr, "native_boot: NATIVE_LANE_ABORT pc=%08x fn=%s\n",
                 entry->guest_pc, entry->name ? entry->name : "?");

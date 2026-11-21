@@ -198,6 +198,19 @@
       "optimization": "-O2"
     },
     {
+      "name": "func_80012AB0",
+      "vram": 2147560112,
+      "size": 12,
+      "region": "main",
+      "source": "src/main/80012ab0.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independent USA executable re-derivation, published at e0b1822 with unsigned wrap made explicit at b2cc54a",
+      "source_sha256": "7e1d58c1eca9742e5c025641f349f594066b5cadd3b4eb1c4a64f8706bb7ace2",
+      "span_sha256": "5593c64c653c74ac86a845518bc03c4a704d295f02b317907fc04bc7faac4ed8"
+    },
+    {
       "name": "func_80012B04",
       "region": "main",
       "vram": 2147560196,

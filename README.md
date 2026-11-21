@@ -204,8 +204,8 @@ from unpublished port sources (windows-port `c427ee546`); this recipe does
 not build it. The packaged menu and save instructions above describe the historical binaries.
 
 The public build uses a curated main-executable registry at
-`provenance/native-main.json`. It records 256 owner-authored C sources totaling
-22,432 matched bytes. The registry includes two motion routines used by the
+`provenance/native-main.json`. It records 259 owner-authored C sources totaling
+22,612 matched bytes. The registry includes three motion routines used by the
 no-disc smoke test. The existing native-lane allowlist and compiler checks
 decide which routines the player can run as host code. Other paths use the
 interpreter. See [EXCLUDED.md](EXCLUDED.md) for the source inclusion criteria.

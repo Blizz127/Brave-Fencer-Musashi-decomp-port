@@ -232,6 +232,16 @@ at `80012E6C` and the step toward a target at `80013154`. Their earlier bodies
 were excluded in section 1. Both replacements were derived from the USA
 executable using the clean-room inputs and rebuilt byte-for-byte.
 
+The wrapped angle difference at `80012AB0` also has a clean replacement for
+the historical body listed in section 1. The September 30 independent
+recovery first appeared publicly in `e0b1822` on October 29. On November 21,
+`b2cc54a` made the subtraction explicitly unsigned. Its source and matching
+12-byte USA executable extent are identified by SHA-256 in
+`provenance/native-main.json`. With native-lane builds enabled, this entry
+uses compiled host arithmetic at each of its three guest clock boundaries.
+For live RAM, a change to the routine or an external bus owner returns its
+fetches to the CPU.
+
 These two files complete the source set used by the existing host smoke test.
 On Linux, the following commands build and exercise it without a disc.
 
