@@ -7,6 +7,10 @@
 #include "musashi_callback_registration.h"
 #include "musashi_mips_div.h"
 #include "musashi_native_lane.h"
+#ifdef MUSASHI_LINKED_BIOS_EXCEPTION
+#include "musashi_bios_exception.h"
+#endif
+#include "platform/bfm_plat_events.h"
 
 #include <limits.h>
 #include <setjmp.h>
@@ -12914,6 +12918,24 @@ int musashi_native_lane_usable(const MusashiBootMemory *memory) {
     }
     return g_lane_env && !g_lane_suspended && memory &&
         (uintptr_t)memory->bytes == (uintptr_t)MUSASHI_NATIVE_LANE_GUEST_BASE;
+}
+
+int musashi_native_lane_script_var_direct(uint32_t index, unsigned width) {
+    LaneActive *active = g_lane_active;
+    uint32_t address = BFM_GUEST_SCRIPT_VARS + index;
+    uint8_t *mapped;
+    if (!active || (width != 1u && width != 2u && width != 4u)) return 0;
+    if (address - MUSASHI_NATIVE_LANE_GUEST_BASE > MUSASHI_RAM_SIZE - width) return 0;
+    if (active->cpu->bios_image) {
+        /* Only the built-in predicate has fixed, side-effect-free ranges. */
+#ifdef MUSASHI_LINKED_BIOS_EXCEPTION
+        if (active->cpu->bios_image->intersects != musashi_bios_exception_intersects) return 0;
+#else
+        return 0;
+#endif
+    }
+    mapped = cpu_ram_span(active->memory, active->cpu, address, width);
+    return mapped && (uintptr_t)mapped == (uintptr_t)address;
 }
 
 /* Guest stack words for the lane's o32 adapter. The game may run with sp in

@@ -85,6 +85,10 @@ int musashi_native_lane_install(const MusashiNativeLaneEntry *entries,
  * MUSASHI_NATIVE_LANE_GUEST_BASE for this memory. */
 int musashi_native_lane_usable(const MusashiBootMemory *memory);
 
+/* The compiled script-variable helpers use the guest's byte index directly.
+ * Defer to the CPU for unaligned, aliased, device or shadow-owned memory. */
+int musashi_native_lane_script_var_direct(uint32_t index, unsigned width);
+
 /* Nesting suspension: while suspended, every PC runs on the interpreter.
  * Host routers whose checks count interpreted calls (the IRQ dispatcher)
  * suspend the lane for their duration. */

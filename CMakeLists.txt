@@ -281,6 +281,8 @@ if(MUSASHI_BUILD_PC_PORT)
             ${MUSASHI_GENERATED_DIR}
     )
     target_compile_features(musashi_pc_port PUBLIC c_std_99)
+    # This target links the formatter and the built-in BIOS image owner together.
+    target_compile_definitions(musashi_pc_port PRIVATE MUSASHI_LINKED_BIOS_EXCEPTION=1)
     target_link_libraries(musashi_pc_port PUBLIC musashi_shared PRIVATE OpenSSL::Crypto)
     if(MUSASHI_WITH_PSYCROSS)
         target_sources(musashi_pc_port PRIVATE
@@ -675,6 +677,24 @@ if(MUSASHI_BUILD_PC_PORT)
             bfm_plat)
         target_include_directories(musashi_native_lane PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/pc_port/include)
+
+        # Disc-free bus/host comparison for generated entry wrappers and direct callers.
+        set(script_test_dir ${MUSASHI_GENERATED_DIR}/script_variable_test)
+        add_custom_command(
+            OUTPUT ${script_test_dir}/native_lane_table.c ${script_test_dir}/libmusashi_native_lane.a
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_script_variable_fixture.py
+                    ${script_test_dir} ${MUSASHI_CLANG} ${CMAKE_AR}
+            DEPENDS tests/generate_script_variable_fixture.py tools/native_lane_gen.py
+                    provenance/native-main.json config/psyq_ranges.txt
+                    ${MUSASHI_LANE_SOURCES} ${MUSASHI_LANE_HOOK_SOURCES} ${MUSASHI_LANE_SYMBOLS}
+            VERBATIM)
+        add_executable(musashi_script_variable_probe tests/script_variable_probe.c
+                       ${script_test_dir}/native_lane_table.c)
+        target_link_libraries(musashi_script_variable_probe PRIVATE musashi_pc_port
+                              ${script_test_dir}/libmusashi_native_lane.a)
+        add_test(NAME native_lane_script_variables COMMAND musashi_script_variable_probe)
+        set_tests_properties(native_lane_script_variables PROPERTIES SKIP_RETURN_CODE 77
+            ENVIRONMENT "MUSASHI_NATIVE_LANE=1;MUSASHI_CODE_IMAGE=")
 
         add_executable(musashi_native_lane_overlay_probe tests/native_lane_overlay_probe.c)
         target_compile_features(musashi_native_lane_overlay_probe PRIVATE c_std_99)

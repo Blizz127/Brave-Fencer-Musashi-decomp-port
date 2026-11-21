@@ -1092,6 +1092,22 @@ def from_guest(expr, ty, ext):
     return f"({c_type(ty, ext)})({expr})"
 
 
+# These main-executable helpers all take a signed byte offset into the same
+# script-variable table. Their matched C dereferences the mapped host address.
+SCRIPT_VAR_WIDTH = {
+    "lane_func_800291A0": 1, "lane_func_800291B4": 1,
+    "lane_func_800291C8": 2, "lane_func_800291DC": 2,
+    "lane_func_800291F0": 4, "lane_func_80029204": 4,
+}
+
+
+def script_var_guard(target, index):
+    width = SCRIPT_VAR_WIDTH.get(target)
+    if width:
+        return f"musashi_native_lane_script_var_direct({index}, {width}u)"
+    return None
+
+
 def emit_table(admitted, out):
     defs = {}
     for a in admitted:
@@ -1127,7 +1143,7 @@ def emit_table(admitted, out):
         regs = [to_guest(f"a{i}", t, e) for i, (t, e) in enumerate(params)]
         lines.append(f"{rtype} {sym}({plist}) {{")
         target = "lane_" + callee
-        guard = None
+        guard = script_var_guard(target, regs[0] if regs else "0u")
         if target in ovl:
             # Another function of the same member: native only while its own
             # bytes are resident too (checked per call), else the interpreter.
@@ -1202,6 +1218,9 @@ def emit_table(admitted, out):
         args = ", ".join(from_guest(f"musashi_native_lane_arg(call, {i}u)", t, e)
                          for i, (t, e) in enumerate(params))
         lines.append(f"static int {wrap}(MusashiNativeLaneCall *call) {{")
+        guard = script_var_guard(d, "musashi_native_lane_arg(call, 0u)")
+        if guard:
+            lines.append(f"    if (!{guard}) return 0;")
         if not params and ret == "void":
             lines.append("    (void)call;")
         if ret == "void":
