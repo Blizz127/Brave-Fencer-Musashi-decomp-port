@@ -50,6 +50,26 @@ changelog.
 
 **Next milestone: Chapter 1 playable end to end, with saving.**
 
+### Verify the scene-object matches
+
+The November 21 source update covers 155 functions across six scene overlays,
+totaling 1,596 bytes of matching executable code. They include routines that
+update object fields and read state flags. The PC player still uses a hybrid
+runtime. These matches can be checked independently of a player build.
+
+With the matching toolchain installed and your USA disc extracted as described
+below, unpack the three scene archives into fresh directories. If you already
+have the decoded members, start with the verification commands.
+
+```sh
+for scene in 01 02 03; do
+    python3 tools/extract_cd.py "extracted/disc/files/SC${scene}.CD" --output "extracted/overlays/sc${scene}" || exit 1
+done
+python3 tools/decode_sc_overlays.py
+python3 tools/verify_registry.py --registry provenance/scene-objects.json --jobs 1
+python3 tools/check_no_retail_data.py --registry provenance/scene-objects.json --jobs 1
+```
+
 ## How to play
 
 These instructions match [bfm-r38-61c60516d](https://github.com/Blizz127/brave-fencer-musashi-decomp-port/releases/tag/bfm-r38-61c60516d).
