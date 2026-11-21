@@ -26,9 +26,16 @@ typedef struct {
     u8 pad24[0xA9 - 0x24];
     u8 direction_mode;
     u16 direction_bits;
-    u8 padAC[0x20C - 0xAC];
-    u8 direction_counter;
-    u8 pad20D[0x214 - 0x20D];
+    u8 padAC[0xB8 - 0xAC];
+    u16 animation_status;
+    u8 padBA[0x198 - 0xBA];
+    u32 effect_address;
+    u8 pad19C[0x20C - 0x19C];
+    union {
+        u8 counter;
+        s16 phase;
+    } event_progress;
+    u8 pad20E[0x214 - 0x20E];
     u8 event_state;
 } ScenePlayer;
 

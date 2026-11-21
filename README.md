@@ -52,13 +52,22 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 21 source update covers 164 functions across six scene overlays,
-totaling 2,504 bytes of matching executable code. In the opening scene, one
+The November 21 source update covers 169 functions across six scene overlays,
+totaling 3,076 bytes of matching executable code. In the opening scene, one
 routine calls the handler selected by the player state byte. Another sets the
 facing direction and counts frames. A separate scene event uses that timer
-to advance its state on the 31st call from a fresh counter. The first opening handler clears eight
-event flags and installs the scene camera callback. A host test exercises that
-registration and the main event counter. The PC player still uses a hybrid runtime. These matches can be checked independently of a player build.
+to advance its state on the 31st call from a fresh counter. The first opening handler
+clears eight event flags and installs a camera callback. The next three handlers
+switch the camera, wait on the direction timer, select animation records and
+release the linked effect. Their no-disc test follows the normal and skip paths
+with synthetic flags, animation responses and effect objects. The PC player
+still uses a hybrid runtime.
+
+Run the middle-state component test with a C compiler installed.
+
+```sh
+python3 -m unittest discover -s tests -p test_scene_opening_event.py
+```
 
 With the matching toolchain installed and your USA disc extracted as described
 below, unpack the three scene archives into fresh directories. If you already
