@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "targets": {
+    "main_0010": {
+      "kind": "blob",
+      "file": "extracted/overlays/main/0010.bin",
+      "base": 2148199928,
+      "sha256": "97933aae35fd27e3917866e4f9c7ef5716850c7efda3f96719496c9ba5b86246"
+    }
+  },
+  "matches": [
+    {
+      "name": "func_800D1EBC",
+      "vram": 2148343484,
+      "size": 156,
+      "region": "main_0010",
+      "source": "src/overlays/main_0010/800d1ebc.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    }
+  ]
+}

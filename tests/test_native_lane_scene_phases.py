@@ -1,0 +1,60 @@
+"""The countdown and fade callbacks still need the guest bus and event timing."""
+from pathlib import Path
+import shutil
+import sys
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+import native_lane_gen as lane
+
+
+PHASES = (
+    ("sc02_0039", 0x8016EE40, 84),
+    ("sc02_0039", 0x8017CE40, 64),
+    ("sc02_0039", 0x8017CEFC, 32),
+    ("sc02_0039", 0x8017CF58, 116),
+    ("sc02_0039", 0x8017CFF4, 40),
+    ("main_0010", 0x800D1EBC, 156),
+)
+
+
+@pytest.mark.parametrize("member,pc,size", PHASES)
+def test_phase_source_stays_interpreted(member, pc, size, tmp_path, monkeypatch):
+    source = ROOT / "src/overlays" / member / f"{pc:08x}.c"
+    row = dict(name=f"func_{pc:08X}", vram=pc, size=size, source=str(source), region=member)
+    (tmp_path / "ir").mkdir()
+
+    def check(entry, info=None):
+        return lane.build_one(entry, tmp_path, {}, {}, "clang", info)
+
+    assert check(row).get("rule") == "timing"
+    copy = tmp_path / f"{pc:08x}.c"
+    copy.write_bytes(source.read_bytes())
+    alternate = dict(row, region="sc99_0001", source=str(copy))
+    assert check(alternate).get("rule") == "timing"
+    copy.write_text(f"int {row['name']}(int x) {{ return x + 1; }}\n")
+    assert check(dict(alternate, region=member)).get("rule") == "timing"
+    assert check(alternate, dict(member=member)).get("rule") == "timing"
+
+    # Model another member with exactly the same complete guest body at this PC.
+    data = bytes(size)
+    info = dict(member="sc99_0001", vram=pc, start=0, code=[(pc, pc + size)], data=data)
+    monkeypatch.setitem(lane.SCENE_PHASE_EXTENTS[pc], member, (size, lane.fnv1a64(data)))
+    assert check(alternate, info).get("rule") == "timing"
+    if not all(shutil.which(tool) for tool in ("clang", "nm")):
+        pytest.skip("clang and nm required for the independent-source control")
+    assert check(alternate, dict(info, data=b"\x01" + data[1:]))["admitted"]
+    assert check(alternate)["admitted"]
+
+
+@pytest.mark.skipif(not shutil.which("clang"), reason="clang required to inspect the dispatcher")
+def test_phase_dispatch_rejects_host_function_table(tmp_path):
+    source = ROOT / "src/overlays/sc02_0039/8017cf1c.c"
+    row = dict(name="func_8017CF1C", vram=0x8017CF1C, size=60, source=str(source),
+               region="sc02_0039")
+    (tmp_path / "ir").mkdir()
+    result = lane.build_one(row, tmp_path, {}, {}, "clang")
+    assert result.get("rule") == "layout"
+    assert result.get("detail") == "array of pointers"

@@ -1046,9 +1046,23 @@ FOREST_FLOOR_EXTENTS = {
 }
 
 
-def forest_floor_source_only(entry, src, info):
+# These scene phase callbacks call back into guest code. Several of their
+# complete extents also appear at the same PC in another room.
+SCENE_PHASE_EXTENTS = {
+    0x8016EE40: dict.fromkeys(
+        ("sc02_0039", "sc01_0077", "sc02_0035", "sc03_0001", "main_0012"),
+        (84, 0x0A847F9F21DC5E21)),
+    0x800D1EBC: {"main_0010": (156, 0xE217FA964716E7AA)},
+    0x8017CE40: {"sc02_0039": (64, 0x355752678B5D9877)},
+    0x8017CEFC: {"sc02_0039": (32, 0x2C9907A07EA811E0)},
+    0x8017CF58: {"sc02_0039": (116, 0xC884BB9EE9CCB8C7)},
+    0x8017CFF4: {"sc02_0039": (40, 0xD306FAFD358F3CBE)},
+}
+
+
+def overlay_extent_source_only(entry, src, info, extents):
     pc = entry["vram"]
-    variants = FOREST_FLOOR_EXTENTS.get(pc)
+    variants = extents.get(pc)
     if not variants:
         return False
     if entry.get("region") in variants or (info and info["member"] in variants):
@@ -1060,6 +1074,10 @@ def forest_floor_source_only(entry, src, info):
         if src.resolve() == known or (known.is_file() and src.read_bytes() == known.read_bytes()):
             return True
     return False
+
+
+def forest_floor_source_only(entry, src, info):
+    return overlay_extent_source_only(entry, src, info, FOREST_FLOOR_EXTENTS)
 
 
 def scene_player_motion_source_only(entry, src, info):
@@ -1096,6 +1114,8 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
             raise Reject("source", "wrapped-angle step requires the verified clean source")
         if forest_floor_source_only(entry, src, info):
             raise Reject("memory", "floor collision requires checked guest memory and instruction timing")
+        if overlay_extent_source_only(entry, src, info, SCENE_PHASE_EXTENTS):
+            raise Reject("timing", "scene phase requires verified guest calls and event timing")
         if scene_player_motion_source_only(entry, src, info):
             raise Reject("memory", "SC01 player motion requires checked guest memory and instruction timing")
         if vram in DENY:

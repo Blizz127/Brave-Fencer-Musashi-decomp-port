@@ -42,8 +42,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 21 source update covers 214 functions across seven scene overlays,
-totaling 11,372 bytes of matching executable code. In the opening scene, one
+The November 21 source update covers 220 functions across seven scene overlays,
+totaling 11,768 bytes of matching executable code. In the opening scene, one
 routine calls the handler selected by the player state byte. Another sets the
 facing direction and counts frames. A separate scene event uses that timer
 to advance its state on the 31st call from a fresh counter. The first opening handler
@@ -71,6 +71,14 @@ the original memory access and timing behavior, so the native dispatcher
 defers them in both scene members that share these bodies.
 Run the synthetic cases with
 `python3 -m unittest discover -s tests -p test_scene_geometry.py`.
+
+A separate three-phase scene callback starts a fade, counts down ten updates,
+issues two sound commands on expiry, and polls the fade result. Six matched
+SC02/0039 functions cover this sequence, including dispatch and fade setup.
+A seventh function in MAIN/0010 chooses which fade to poll. The no-disc host
+test runs all three phases with synthetic scene state and checks every 16-bit
+actor ID in the setup routine. The hybrid player retains guest execution for
+these paths. Run `python3 -m unittest discover -s tests -p test_scene_phase.py`.
 
 Sixteen SC01/0000 functions read directional input, update actor velocity and
 position, and check whether the current player state allows an action. The host
@@ -155,6 +163,8 @@ disc and verify its registry.
 python3 tools/extract_cd.py extracted/disc/files/MAIN.CD --output extracted/overlays/main
 python3 tools/verify_registry.py --registry provenance/resident-inventory.json --jobs 1
 python3 tools/check_no_retail_data.py --registry provenance/resident-inventory.json --jobs 1
+python3 tools/verify_registry.py --registry provenance/main0010-scene-fade.json --jobs 1
+python3 tools/check_no_retail_data.py --registry provenance/main0010-scene-fade.json --jobs 1
 ```
 
 ### Verify the menu counter callbacks
