@@ -801,6 +801,17 @@
       "optimization": "-O2"
     },
     {
+      "name": "func_80171B4C",
+      "region": "sc01_0077",
+      "vram": 2148997964,
+      "size": 280,
+      "source": "src/overlays/sc01_0077/80171b4c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "rodata_base": 2149420104
+    },
+    {
       "name": "func_80172588",
       "region": "sc01_0077",
       "vram": 2149000584,
@@ -816,6 +827,16 @@
       "vram": 2149013400,
       "size": 8,
       "source": "src/overlays/sc01_0077/80175798.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_8017DE84",
+      "region": "sc01_0077",
+      "vram": 2149047940,
+      "size": 60,
+      "source": "src/overlays/sc01_0077/8017de84.c",
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2"
