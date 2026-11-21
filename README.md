@@ -52,12 +52,13 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 21 source update covers 158 functions across six scene overlays,
-totaling 2,004 bytes of matching executable code. In the opening scene, one
+The November 21 source update covers 164 functions across six scene overlays,
+totaling 2,504 bytes of matching executable code. In the opening scene, one
 routine calls the handler selected by the player state byte. Another sets the
 facing direction and counts frames. A separate scene event uses that timer
-to advance its state on the 31st call from a fresh counter. The PC player still uses a hybrid
-runtime. These matches can be checked independently of a player build.
+to advance its state on the 31st call from a fresh counter. The first opening handler clears eight
+event flags and installs the scene camera callback. A host test exercises that
+registration and the main event counter. The PC player still uses a hybrid runtime. These matches can be checked independently of a player build.
 
 With the matching toolchain installed and your USA disc extracted as described
 below, unpack the three scene archives into fresh directories. If you already
@@ -187,8 +188,8 @@ not build it. Public player instructions above describe the release
 artifact, not the older source snapshot's menu behavior.
 
 The public build uses a curated main-executable registry at
-`provenance/native-main.json`. It records 254 owner-authored C sources totaling
-22,288 matched bytes. The registry includes two motion routines used by the
+`provenance/native-main.json`. It records 255 owner-authored C sources totaling
+22,412 matched bytes. The registry includes two motion routines used by the
 no-disc smoke test. The existing native-lane allowlist and compiler checks
 decide which routines the player can run as host code. Other paths use the
 interpreter. See [EXCLUDED.md](EXCLUDED.md) for the source inclusion criteria.

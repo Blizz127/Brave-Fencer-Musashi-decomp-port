@@ -581,6 +581,26 @@
       "optimization": "-O2"
     },
     {
+      "name": "func_8012A018",
+      "vram": 2148704280,
+      "size": 48,
+      "region": "sc01_0077",
+      "source": "src/overlays/sc01_0077/8012a018.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_8012A048",
+      "vram": 2148704328,
+      "size": 76,
+      "region": "sc01_0077",
+      "source": "src/overlays/sc01_0077/8012a048.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
       "name": "func_801320D0",
       "region": "sc01_0077",
       "vram": 2148737232,
@@ -771,6 +791,16 @@
       "optimization": "-O2"
     },
     {
+      "name": "func_8016F398",
+      "vram": 2148987800,
+      "size": 120,
+      "region": "sc01_0077",
+      "source": "src/overlays/sc01_0077/8016f398.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
       "name": "func_80171A04",
       "region": "sc01_0077",
       "vram": 2148997636,
@@ -822,6 +852,16 @@
       "optimization": "-O2"
     },
     {
+      "name": "func_80174E9C",
+      "vram": 2149011100,
+      "size": 56,
+      "region": "sc01_0077",
+      "source": "src/overlays/sc01_0077/80174e9c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
       "name": "func_80175798",
       "region": "sc01_0077",
       "vram": 2149013400,
@@ -832,11 +872,31 @@
       "optimization": "-O2"
     },
     {
+      "name": "func_8017D900",
+      "vram": 2149046528,
+      "size": 140,
+      "region": "sc01_0077",
+      "source": "src/overlays/sc01_0077/8017d900.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
       "name": "func_8017DE84",
       "region": "sc01_0077",
       "vram": 2149047940,
       "size": 60,
       "source": "src/overlays/sc01_0077/8017de84.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_8017DEC0",
+      "vram": 2149048000,
+      "size": 60,
+      "region": "sc01_0077",
+      "source": "src/overlays/sc01_0077/8017dec0.c",
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2"

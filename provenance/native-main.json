@@ -88,6 +88,16 @@
       "optimization": "-O0"
     },
     {
+      "name": "func_800118AC",
+      "vram": 2147555500,
+      "size": 124,
+      "region": "main",
+      "source": "src/main/800118ac.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O0"
+    },
+    {
       "name": "func_80011B7C",
       "region": "main",
       "vram": 2147556220,
