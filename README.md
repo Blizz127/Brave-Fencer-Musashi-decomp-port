@@ -37,8 +37,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 21 source update covers 178 functions across seven scene overlays,
-totaling 4,464 bytes of matching executable code. In the opening scene, one
+The November 21 source update covers 187 functions across seven scene overlays,
+totaling 6,096 bytes of matching executable code. In the opening scene, one
 routine calls the handler selected by the player state byte. Another sets the
 facing direction and counts frames. A separate scene event uses that timer
 to advance its state on the 31st call from a fresh counter. The first opening handler
@@ -47,6 +47,12 @@ switch the camera, wait on the direction timer, select animation records and
 release the linked effect. Their no-disc test follows the normal and skip paths
 with synthetic flags, animation responses and effect objects. The PC player
 still uses a hybrid runtime.
+
+In Chapter 1 room 3008, three trunks form the river crossing. Nine matched
+functions cover the request to start the fall, actor initialization, standing,
+rotation and settling. On the original USA disc, each trunk reached its settled
+state 102 VSyncs after its fall began. The no-disc host test exercises all three
+actors. Run it on Linux with `CC=gcc tests/run_forest_log_probes.sh`.
 
 Room 3050 uses a facing selector and two signed-coordinate tests in scene
 member SC02/0039. When a position falls inside the bounds, the predicates
