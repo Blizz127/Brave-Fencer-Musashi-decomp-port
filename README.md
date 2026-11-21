@@ -37,8 +37,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 21 source update covers 170 functions across six scene overlays,
-totaling 3,152 bytes of matching executable code. In the opening scene, one
+The November 21 source update covers 173 functions across six scene overlays,
+totaling 3,608 bytes of matching executable code. In the opening scene, one
 routine calls the handler selected by the player state byte. Another sets the
 facing direction and counts frames. A separate scene event uses that timer
 to advance its state on the 31st call from a fresh counter. The first opening handler
@@ -81,6 +81,14 @@ Buying an item priced at 80 changes a stored balance of 100 to 92, displayed as
 1,000 and 920. The wallet test checks arithmetic at the signed 32-bit limits
 and verifies that a declined purchase preserves the balance. Run it with
 `python3 -m unittest discover -s tests -p test_shop_wallet.py`.
+
+Three scene routines pack the balance into decimal digits, build the seven
+wallet sprites and refresh the five variable digits. The host packet builder takes the guest address explicitly so its GPU
+links are independent of where the host allocates the buffer. Run
+`python3 -m unittest discover -s tests -p test_shop_wallet_hud.py` to exercise
+a purchase through all four wallet routines using synthetic packets. The decimal
+conversion test covers every stored balance and signed shift boundaries. Run it
+with `python3 -m unittest discover -s tests -p test_shop_wallet_bcd.py`.
 
 For the original code comparison, extract the resident archive from your USA
 disc and verify its registry.
