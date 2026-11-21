@@ -888,6 +888,37 @@ static int plot_drawn(MusashiGpuController *controller, int x, int y,
     return controller->faulted ? 0 : 1;
 }
 
+/* Test integer sample points. In screen coordinates, an edge directed
+ * upwards or a horizontal one directed right owns its boundary when the
+ * triangle has positive area. Reverse those directions for opposite winding.
+ * Keep edge ownership separate from the unmodified interpolation weights. */
+typedef struct {
+    int positive, edge0, edge1, edge2;
+} TriangleCoverage;
+
+static int edge_limit(int x0, int y0, int x1, int y1, int positive) {
+    int inclusive = y1 < y0 || (y1 == y0 && x1 > x0);
+    if (positive) return inclusive ? 0 : 1;
+    return inclusive ? -1 : 0;
+}
+
+static TriangleCoverage triangle_coverage(int x0, int y0, int x1, int y1,
+                                          int x2, int y2, long long area) {
+    TriangleCoverage rule;
+    rule.positive = area > 0;
+    rule.edge0 = edge_limit(x1, y1, x2, y2, rule.positive);
+    rule.edge1 = edge_limit(x2, y2, x0, y0, rule.positive);
+    rule.edge2 = edge_limit(x0, y0, x1, y1, rule.positive);
+    return rule;
+}
+
+static int covers_sample(const TriangleCoverage *rule,
+                         long long w0, long long w1, long long w2) {
+    if (rule->positive)
+        return w0 >= rule->edge0 && w1 >= rule->edge1 && w2 >= rule->edge2;
+    return w0 <= rule->edge0 && w1 <= rule->edge1 && w2 <= rule->edge2;
+}
+
 static int fill_triangle(MusashiGpuController *controller,
                          int x0, int y0, int x1, int y1, int x2, int y2,
                          uint16_t color) {
@@ -904,6 +935,7 @@ static int fill_triangle(MusashiGpuController *controller,
     if (!clip_triangle(controller, &minx, &miny, &maxx, &maxy)) return 1;
     area = (long long)(x1 - x0) * (y2 - y0) - (long long)(y1 - y0) * (x2 - x0);
     if (!area) return 1;
+    TriangleCoverage coverage = triangle_coverage(x0, y0, x1, y1, x2, y2, area);
     for (y = miny; y <= maxy; ++y) {
         for (x = minx; x <= maxx; ++x) {
             long long w0 = (long long)(x1 - x) * (y2 - y) -
@@ -912,9 +944,7 @@ static int fill_triangle(MusashiGpuController *controller,
                            (long long)(y2 - y) * (x0 - x);
             long long w2 = (long long)(x0 - x) * (y1 - y) -
                            (long long)(y0 - y) * (x1 - x);
-            if (area > 0) {
-                if (w0 < 0 || w1 < 0 || w2 < 0) continue;
-            } else if (w0 > 0 || w1 > 0 || w2 > 0) continue;
+            if (!covers_sample(&coverage, w0, w1, w2)) continue;
             if (!plot_drawn(controller, x, y, color)) return 0;
         }
     }
@@ -1000,6 +1030,7 @@ static int fill_textured_triangle(MusashiGpuController *controller,
     if (!clip_triangle(controller, &minx, &miny, &maxx, &maxy)) return 1;
     area = (long long)(x1 - x0) * (y2 - y0) - (long long)(y1 - y0) * (x2 - x0);
     if (!area) return 1;
+    TriangleCoverage coverage = triangle_coverage(x0, y0, x1, y1, x2, y2, area);
     for (y = miny; y <= maxy; ++y) {
         for (x = minx; x <= maxx; ++x) {
             long long w0 = (long long)(x1 - x) * (y2 - y) -
@@ -1011,9 +1042,7 @@ static int fill_textured_triangle(MusashiGpuController *controller,
             uint16_t texel = 0;
             long long u_num, v_num;
             int u, v;
-            if (area > 0) {
-                if (w0 < 0 || w1 < 0 || w2 < 0) continue;
-            } else if (w0 > 0 || w1 > 0 || w2 > 0) continue;
+            if (!covers_sample(&coverage, w0, w1, w2)) continue;
             u_num = (long long)w0 * (long long)u0 + (long long)w1 * (long long)u1 + (long long)w2 * (long long)u2;
             v_num = (long long)w0 * (long long)v0 + (long long)w1 * (long long)v1 + (long long)w2 * (long long)v2;
             u = (int)(u_num / area);
@@ -1050,6 +1079,7 @@ static int fill_gouraud_triangle(MusashiGpuController *controller,
     if (!clip_triangle(controller, &minx, &miny, &maxx, &maxy)) return 1;
     area = (long long)(x1 - x0) * (y2 - y0) - (long long)(y1 - y0) * (x2 - x0);
     if (!area) return 1;
+    TriangleCoverage coverage = triangle_coverage(x0, y0, x1, y1, x2, y2, area);
 
     for (y = miny; y <= maxy; ++y) {
         for (x = minx; x <= maxx; ++x) {
@@ -1063,9 +1093,7 @@ static int fill_gouraud_triangle(MusashiGpuController *controller,
             int r, g, b;
             uint16_t color;
 
-            if (area > 0) {
-                if (w0 < 0 || w1 < 0 || w2 < 0) continue;
-            } else if (w0 > 0 || w1 > 0 || w2 > 0) continue;
+            if (!covers_sample(&coverage, w0, w1, w2)) continue;
 
             r_num = w0 * r0 + w1 * r1 + w2 * r2;
             g_num = w0 * g0 + w1 * g1 + w2 * g2;
@@ -1110,6 +1138,7 @@ static int fill_textured_gouraud_triangle(MusashiGpuController *controller,
     if (!clip_triangle(controller, &minx, &miny, &maxx, &maxy)) return 1;
     area = (long long)(x1 - x0) * (y2 - y0) - (long long)(y1 - y0) * (x2 - x0);
     if (!area) return 1;
+    TriangleCoverage coverage = triangle_coverage(x0, y0, x1, y1, x2, y2, area);
 
     for (y = miny; y <= maxy; ++y) {
         for (x = minx; x <= maxx; ++x) {
@@ -1123,9 +1152,7 @@ static int fill_textured_gouraud_triangle(MusashiGpuController *controller,
             long long u_num, v_num;
             int u, v;
 
-            if (area > 0) {
-                if (w0 < 0 || w1 < 0 || w2 < 0) continue;
-            } else if (w0 > 0 || w1 > 0 || w2 > 0) continue;
+            if (!covers_sample(&coverage, w0, w1, w2)) continue;
 
             u_num = (long long)w0 * (long long)u0 + (long long)w1 * (long long)u1 + (long long)w2 * (long long)u2;
             v_num = (long long)w0 * (long long)v0 + (long long)w1 * (long long)v1 + (long long)w2 * (long long)v2;
@@ -1255,8 +1282,8 @@ static int prim_commit(MusashiGpuController *controller) {
         int dest_y = signed11((controller->prim_data[1] >> 16) + (uint32_t)oy, 0);
         unsigned width, height;
         if ((opcode & 0x18u) == 0x00u) {
-            width = controller->prim_data[2] & 0xffffu;
-            height = controller->prim_data[2] >> 16;
+            width = controller->prim_data[2] & 0x3ffu;
+            height = (controller->prim_data[2] >> 16) & 0x1ffu;
         } else if ((opcode & 0x18u) == 0x08u) {
             width = 1; height = 1;
         } else if ((opcode & 0x18u) == 0x10u) {
@@ -1280,8 +1307,8 @@ static int prim_commit(MusashiGpuController *controller) {
         unsigned v0 = (controller->prim_data[2] >> 8) & 0xffu;
         unsigned width, height;
         if ((opcode & 0x18u) == 0x00u) {
-            width = controller->prim_data[3] & 0xffffu;
-            height = controller->prim_data[3] >> 16;
+            width = controller->prim_data[3] & 0x3ffu;
+            height = (controller->prim_data[3] >> 16) & 0x1ffu;
         } else if ((opcode & 0x18u) == 0x08u) {
             width = 1; height = 1;
         } else if ((opcode & 0x18u) == 0x10u) {
@@ -1292,7 +1319,7 @@ static int prim_commit(MusashiGpuController *controller) {
         int minx, miny, maxx, maxy;
         int px, py;
         if (!width || !height) return 1;
-        if (!controller->backend.read_vram || width > 1024u || height > 512u) return 0;
+        if (!controller->backend.read_vram) return 0;
         minx = dest_x;
         miny = dest_y;
         maxx = dest_x + (int)width - 1;

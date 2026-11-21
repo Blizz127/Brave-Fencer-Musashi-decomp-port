@@ -986,14 +986,14 @@ class GpuControllerTests(unittest.TestCase):
             self.assertEqual(self.write(word), 1)
         return writes, reads
 
-    def _polygon(self, opcode, positions, high_bits=0):
-        words = [(opcode << 24) | 0x808080]
+    def _polygon(self, opcode, positions, high_bits=0, color=0x808080, tpage=0x106):
+        words = [(opcode << 24) | color]
         for i, (x, y) in enumerate(positions):
             if i and opcode & 0x10:
-                words.append(0x808080)
+                words.append(color)
             words.append(((y & 0x7FF) << 16) | (x & 0x7FF) | high_bits)
             if opcode & 4:
-                words.append(0x01060000 if i == 1 else 0)
+                words.append(tpage << 16 if i == 1 else 0)
         for word in words:
             self.assertEqual(self.write(word), 1, hex(word))
 
@@ -1012,6 +1012,82 @@ class GpuControllerTests(unittest.TestCase):
                     self.assertEqual(bool(reads), visible and bool(opcode & 4))
                     if opcode & 4:
                         self.assertEqual(self.controller.draw_mode & 0x1FF, 0x106)
+
+    def test_integer_samples_on_slanted_triangle_edges(self):
+        # Rows read back by the SCPH-5501 gpuraster 01TRI probe. Sampling
+        # at half-pixel centers would add a pixel on the empty top row.
+        vertices = [(1, 2), (11, 5), (4, 11)]
+        rows = [(2, 4), (2, 7), (2, 10), (3, 9),
+                (3, 8), (3, 7), (4, 6), (4, 5)]
+        expected = {(x, y) for y, (first, last) in enumerate(rows, 3)
+                    for x in range(first, last + 1)}
+        for order in (vertices, vertices[::-1]):
+            writes, _ = self._geometry_probe(area=(0, 0, 14, 14))
+            self._polygon(0x20, order)
+            self.assertEqual(set(writes), expected)
+
+    def test_split_square_samples_each_pixel_once(self):
+        a, b, c, d = (0, 0), (10, 0), (0, 10), (10, 10)
+        expected_points = {(x, y) for x in range(10) for y in range(10)}
+        for attributes in (0, 4, 16, 20):
+            for semi in (0, 2):
+                for packets in (([a, b, c, d],), ([a, b, c], [c, d, b]),
+                                ([a, d, b], [d, a, c])):
+                    with self.subTest(attributes=attributes, semi=semi, packets=packets):
+                        pixels = {}
+                        writes = []
+
+                        def store(_, x, y, sample):
+                            writes.append((x, y))
+                            pixels[x, y] = sample
+                            return 1
+
+                        def read(_, x, y, out):
+                            # Direct-colour texture page 6, UV=(0,0), STP set.
+                            out[0] = 0x8001 if (x, y) == (384, 0) else pixels.get((x, y), 0)
+                            return 1
+
+                        self.store_cb, self.read_cb = STORE(store), READ(read)
+                        self.controller.backend.store_vram = self.store_cb
+                        self.controller.backend.read_vram = self.read_cb
+                        self.assertEqual(self.write(0xE3000000), 1)
+                        self.assertEqual(self.write(0xE4004010), 1)
+                        self.assertEqual(self.write(0xE1000020), 1)  # B+F
+                        textured = bool(attributes & 4)
+                        for vertices in packets:
+                            opcode = 0x20 | attributes | semi | (8 if len(vertices) == 4 else 0)
+                            self._polygon(opcode, vertices, color=0x808080 if textured else 8,
+                                          tpage=0x126)
+                        self.assertEqual(set(writes), expected_points)
+                        self.assertEqual(len(writes), 100)
+                        self.assertEqual(set(pixels.values()), {0x8001 if textured else 1})
+
+    def test_blended_quad_matches_hardware_color_samples(self):
+        # The SCPH-5501 gpuraster 09STM readback used these four backgrounds
+        # and a 5-bit foreground of 16 per channel in additive mode.
+        back = [0x0000, 0x2108, 0x5EF7, 0x7FFF]
+        for opcode in (0x2A, 0x3A, 0x2F):
+            with self.subTest(opcode=opcode):
+                pixels = {(x, 0): value for x, value in enumerate(back)}
+
+                def read(_, x, y, out):
+                    out[0] = 0xC210 if (x, y) == (384, 0) else pixels.get((x, y), 0)
+                    return 1
+
+                def store(_, x, y, color):
+                    pixels[x, y] = color
+                    return 1
+
+                self.store_cb, self.read_cb = STORE(store), READ(read)
+                self.controller.backend.store_vram = self.store_cb
+                self.controller.backend.read_vram = self.read_cb
+                for word in (0xE3000000, 0xE4000404, 0xE1000020):
+                    self.assertEqual(self.write(word), 1)
+                self._polygon(opcode, [(0, 0), (4, 0), (0, 1), (4, 1)], tpage=0x126)
+                expected = [0x4210, 0x6318, 0x7FFF, 0x7FFF]
+                self.assertEqual(set(pixels), {(x, 0) for x in range(4)})
+                self.assertEqual([pixels[x, 0] for x in range(4)],
+                                 [p | (0x8000 if opcode & 4 else 0) for p in expected])
 
     def test_quad_checks_only_edges_of_its_two_triangles(self):
         # B and C form the common edge. Either distant outer vertex may
@@ -1153,8 +1229,9 @@ class GpuControllerTests(unittest.TestCase):
             self.assertEqual(self.controller.prim_needed, 0)
             self.assertGreater(len(stored), 0)
             self.assertEqual(stored.get((0, 0)), 0x001F)  # pure red
-            self.assertEqual(stored.get((16, 0)), 0x03E0)  # pure green
-            self.assertEqual(stored.get((0, 16)), 0x7C00)  # pure blue
+            self.assertNotIn((16, 0), stored)
+            self.assertNotIn((0, 16), stored)
+            self.assertEqual(stored[(0, 8)], 0x3C0F)  # halfway from red to blue
             mid = stored.get((8, 0))
             self.assertIsNotNone(mid)
             self.assertGreater(mid & 0x1F, 0)
@@ -1193,9 +1270,12 @@ class GpuControllerTests(unittest.TestCase):
             self.assertEqual(self.controller.prim_needed, 0)
             self.assertGreater(len(stored), 0)
             self.assertEqual(stored.get((0, 0)), 0x001F)    # red
-            self.assertEqual(stored.get((16, 0)), 0x03E0)   # green
-            self.assertEqual(stored.get((0, 16)), 0x7C00)   # blue
-            self.assertEqual(stored.get((16, 16)), 0x7FFF)  # white
+            self.assertNotIn((16, 0), stored)
+            self.assertEqual(stored[(8, 0)], 0x01EF)  # halfway from red to green
+            self.assertNotIn((0, 16), stored)
+            self.assertEqual(stored[(0, 8)], 0x3C0F)  # halfway from red to blue
+            self.assertNotIn((16, 16), stored)
+            self.assertEqual(stored[(12, 12)], 0x5EEF)  # towards white in the second triangle
 
             self.assertEqual(bool(back_reads), bool(opcode & 2))
 
@@ -1360,6 +1440,25 @@ class GpuControllerTests(unittest.TestCase):
             self.assertEqual(self.write(0x00000808), 1)  # uv3=(8,8)
             self.assertEqual(self.controller.prim_needed, 0)
             self.assertGreater(len(stored), 0)
+
+    def test_variable_rectangle_dimensions_ignore_upper_bits(self):
+        # GP0 rendering rectangles have a different size encoding from VRAM transfers.
+        for opcode in (0x60, 0x65):
+            for width, height, visible_w, visible_h in (
+                    (1024, 2, 0, 2), (1025, 2, 1, 2), (1039, 2, 15, 2),
+                    (2, 512, 2, 0), (2, 513, 2, 1), (2, 1027, 2, 3)):
+                with self.subTest(opcode=opcode, width=width, height=height):
+                    writes, reads = self._geometry_probe(area=(0, 0, 31, 31))
+                    self.assertEqual(self.write(0xE1000106), 1)
+                    self.assertEqual(self.write((opcode << 24) | 0x808080), 1)
+                    self.assertEqual(self.write((4 << 16) | 4), 1)
+                    if opcode & 4:
+                        self.assertEqual(self.write(0), 1)
+                    self.assertEqual(self.write((height << 16) | width), 1)
+                    expected = {(4 + x, 4 + y) for x in range(visible_w)
+                                for y in range(visible_h)}
+                    self.assertEqual(set(writes), expected)
+                    self.assertEqual(bool(reads), bool(expected) and bool(opcode & 4))
 
     def test_gp0_cpu_to_vram_without_backend_refuses(self):
         before = bytes(self.controller)
