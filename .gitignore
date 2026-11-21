@@ -20,6 +20,9 @@
 *.IMG
 *.ISO
 *.mcd
+*.mcd.lock
+*.mcd.tmp
+*.mcd.tmp.*
 *.mcr
 *.srm
 *.gme

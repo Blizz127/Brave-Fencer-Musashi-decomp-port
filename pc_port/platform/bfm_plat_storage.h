@@ -70,6 +70,13 @@ int bfm_plat_disc_read_file(const char *path, void *out, size_t cap,
  * (the common emulator .mcd layout). Saves are written to a temp file and
  * renamed. A missing card loads as BFM_PLAT_NOT_FOUND. */
 int bfm_plat_memcard_set_dir(const char *dir);
+/* Acquire before loading or creating a writable copy. Each slot has one
+ * owning process. A competing process gets BFM_PLAT_NOT_READY on acquire
+ * or save and may still load the committed image. Calls within the owner
+ * share the session and must be serialized by the caller. Release the slot
+ * before selecting another save directory. */
+int bfm_plat_memcard_acquire(unsigned slot);
+void bfm_plat_memcard_release(unsigned slot);
 int bfm_plat_memcard_load(unsigned slot, uint8_t *card, size_t size);
 int bfm_plat_memcard_save(unsigned slot, const uint8_t *card, size_t size);
 
