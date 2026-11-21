@@ -40,6 +40,7 @@ void musashi_psyx_shutdown(void);
 #include <string.h>
 #include "platform.h"
 #include "musashi_sha256_digest.h"
+#include "platform/bfm_plat_sha256.h"
 #include <signal.h>
 #include <unistd.h>
 #include <sys/stat.h>
