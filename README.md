@@ -107,6 +107,24 @@ python3 tools/verify_registry.py --registry provenance/resident-inventory.json -
 python3 tools/check_no_retail_data.py --registry provenance/resident-inventory.json --jobs 1
 ```
 
+### Verify the menu counter callbacks
+
+Two callbacks in menu overlay MAIN/0012 increment the same 16-bit counter.
+When the counter starts at 65,535, each callback stores zero and returns
+65,536. The compiled C matches all 28 bytes of each original function.
+The no-disc test checks both callbacks at every starting value and checks
+that the neighboring halfwords keep their values. The player still uses its
+existing hybrid dispatch for this menu.
+
+```sh
+python3 -m unittest discover -s tests -p test_menu_counter.py
+python3 tools/verify_registry.py --registry provenance/native-main0012-menu-counter.json --jobs 1
+python3 tools/check_no_retail_data.py --registry provenance/native-main0012-menu-counter.json --jobs 1
+```
+
+The two registry commands use MAIN member 0012 extracted from your USA disc
+and the matching toolchain.
+
 ## How to play
 
 Build the Linux player and launch it with the `.cue` from your own USA disc.

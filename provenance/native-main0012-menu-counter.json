@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "targets": {
+    "main_0012": {
+      "kind": "blob",
+      "file": "extracted/overlays/main/0012.bin",
+      "base": 2148532568,
+      "sha256": "7bf686da174e6bd98cab8e742af629ba4168cff76e3be4e367cb69f783af070c"
+    }
+  },
+  "matches": [
+    {
+      "name": "func_8017C24C",
+      "region": "main_0012",
+      "vram": 2149040716,
+      "size": 28,
+      "source": "src/overlays/main_0012/8017c24c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_8017C348",
+      "region": "main_0012",
+      "vram": 2149040968,
+      "size": 28,
+      "source": "src/overlays/main_0012/8017c348.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    }
+  ]
+}
