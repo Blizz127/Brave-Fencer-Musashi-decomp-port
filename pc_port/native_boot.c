@@ -20,6 +20,7 @@
 #include "musashi_gte_owner.h"
 #include "musashi_bios_card.h"
 #include "musashi_sio_controller.h"
+#include "musashi_host_gamepad.h"
 #include "musashi_bios_backup_unit.h"
 #include "musashi_bios_input.h"
 #include "musashi_source_clock.h"
@@ -273,6 +274,7 @@ static int select_opening_overlay(NativeBoot *boot) {
 
 static int native_devices_shutdown(NativeBoot *boot) {
     if (boot->irq.scheduler.installed) return 0;
+    musashi_host_gamepad_close();
     if (boot->gpu_dma) {
         if (!musashi_gpu_dma2_close(boot->gpu_dma)) return 0;
         boot->gpu_dma = NULL;
@@ -1076,80 +1078,12 @@ static int sample_keyboard_pad(void *userdata, uint16_t *buttons) {
         if ((SDL_GetModState() & KMOD_RSHIFT) != 0)
             sampled &= (uint16_t)~(1u << 11);
 
-        /* Gamepad / GameController support */
-        {
-            static SDL_GameController *s_gamepad = NULL;
-            static unsigned s_gamepad_retry = 0;
-            /* Look again about once a second until a controller is attached,
-             * so one connected after start (or reconnected) is picked up. */
-            if (s_gamepad && !SDL_GameControllerGetAttached(s_gamepad)) {
-                SDL_GameControllerClose(s_gamepad);
-                s_gamepad = NULL;
-            }
-            if (!s_gamepad && s_gamepad_retry++ % 60u == 0u) {
-                if (!SDL_WasInit(SDL_INIT_GAMECONTROLLER))
-                    SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER);
-                for (int c = 0; c < SDL_NumJoysticks(); ++c) {
-                    if (SDL_IsGameController(c)) {
-                        s_gamepad = SDL_GameControllerOpen(c);
-                        if (s_gamepad) {
-                            fprintf(stderr, "native_boot: GameController attached: %s\n",
-                                    SDL_GameControllerName(s_gamepad));
-                            break;
-                        }
-                    }
-                }
-            }
-            if (s_gamepad && SDL_GameControllerGetAttached(s_gamepad)) {
-                if (SDL_GameControllerGetButton(s_gamepad, SDL_CONTROLLER_BUTTON_DPAD_UP))
-                    sampled &= (uint16_t)~(1u << 4);
-                if (SDL_GameControllerGetButton(s_gamepad, SDL_CONTROLLER_BUTTON_DPAD_RIGHT))
-                    sampled &= (uint16_t)~(1u << 5);
-                if (SDL_GameControllerGetButton(s_gamepad, SDL_CONTROLLER_BUTTON_DPAD_DOWN))
-                    sampled &= (uint16_t)~(1u << 6);
-                if (SDL_GameControllerGetButton(s_gamepad, SDL_CONTROLLER_BUTTON_DPAD_LEFT))
-                    sampled &= (uint16_t)~(1u << 7);
-                if (SDL_GameControllerGetButton(s_gamepad, SDL_CONTROLLER_BUTTON_A))
-                    sampled &= (uint16_t)~(1u << 14); /* Cross / Jump */
-                if (SDL_GameControllerGetButton(s_gamepad, SDL_CONTROLLER_BUTTON_X))
-                    sampled &= (uint16_t)~(1u << 15); /* Square / Attack */
-                if (SDL_GameControllerGetButton(s_gamepad, SDL_CONTROLLER_BUTTON_B))
-                    sampled &= (uint16_t)~(1u << 13); /* Circle / Secondary */
-                if (SDL_GameControllerGetButton(s_gamepad, SDL_CONTROLLER_BUTTON_Y))
-                    sampled &= (uint16_t)~(1u << 12); /* Triangle */
-                if (SDL_GameControllerGetButton(s_gamepad, SDL_CONTROLLER_BUTTON_START))
-                    sampled &= (uint16_t)~(1u << 3);
-                if (SDL_GameControllerGetButton(s_gamepad, SDL_CONTROLLER_BUTTON_BACK))
-                    sampled &= (uint16_t)~(1u << 0);
-                if (SDL_GameControllerGetButton(s_gamepad, SDL_CONTROLLER_BUTTON_LEFTSHOULDER))
-                    sampled &= (uint16_t)~(1u << 10); /* L1 */
-                if (SDL_GameControllerGetButton(s_gamepad, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER))
-                    sampled &= (uint16_t)~(1u << 11); /* R1 */
-                if (SDL_GameControllerGetAxis(s_gamepad, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 16000)
-                    sampled &= (uint16_t)~(1u << 8); /* L2 */
-                if (SDL_GameControllerGetAxis(s_gamepad, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 16000)
-                    sampled &= (uint16_t)~(1u << 9); /* R2 */
-
-                int16_t axis_x = SDL_GameControllerGetAxis(s_gamepad, SDL_CONTROLLER_AXIS_LEFTX);
-                int16_t axis_y = SDL_GameControllerGetAxis(s_gamepad, SDL_CONTROLLER_AXIS_LEFTY);
-                int16_t axis_rx = SDL_GameControllerGetAxis(s_gamepad, SDL_CONTROLLER_AXIS_RIGHTX);
-                int16_t axis_ry = SDL_GameControllerGetAxis(s_gamepad, SDL_CONTROLLER_AXIS_RIGHTY);
-                if (axis_x < -10000) sampled &= (uint16_t)~(1u << 7); /* Left */
-                if (axis_x > 10000) sampled &= (uint16_t)~(1u << 5);  /* Right */
-                if (axis_y < -10000) sampled &= (uint16_t)~(1u << 4); /* Up */
-                if (axis_y > 10000) sampled &= (uint16_t)~(1u << 6);  /* Down */
-
-                if (axis_x < -3000 || axis_x > 3000)
-                    stick_lx = (uint8_t)(((axis_x >> 8) + 128) & 0xff);
-                if (axis_y < -3000 || axis_y > 3000)
-                    stick_ly = (uint8_t)(((axis_y >> 8) + 128) & 0xff);
-                if (axis_rx < -3000 || axis_rx > 3000)
-                    stick_rx = (uint8_t)(((axis_rx >> 8) + 128) & 0xff);
-                if (axis_ry < -3000 || axis_ry > 3000)
-                    stick_ry = (uint8_t)(((axis_ry >> 8) + 128) & 0xff);
-            }
-        }
-
+        MusashiHostGamepad pad = musashi_host_gamepad_sample();
+        sampled &= pad.buttons;
+        stick_lx = pad.lx;
+        stick_ly = pad.ly;
+        stick_rx = pad.rx;
+        stick_ry = pad.ry;
     }
 
     /* Host hold: xdotool/Xwayland often never reaches SDL_GetKeyboardState.
@@ -1568,12 +1502,11 @@ static int dev_menu_write32(void *u, uint32_t a, uint32_t v) {
     return musashi_boot_write32(&((NativeBoot *)u)->memory, a, v);
 }
 
-/* Edges of F1/arrows/Enter/Esc and of the first controller's L3+R3 (or
+/* Edges of F1/arrows/Enter/Esc and of the active controller's L3+R3 (or
  * Guide), d-pad, left stick, A and B. Reads state only; native_boot's own
  * VBlank SDL_PollEvent keeps it current. */
 static unsigned dev_menu_poll_keys(void) {
-    static SDL_GameController *pad;
-    static unsigned prev, retry;
+    static unsigned prev;
     unsigned held = 0, pressed;
     int n = 0;
     const Uint8 *k = SDL_GetKeyboardState(&n);
@@ -1586,28 +1519,7 @@ static unsigned dev_menu_poll_keys(void) {
         if (k[SDL_SCANCODE_ESCAPE] || k[SDL_SCANCODE_BACKSPACE] || k[SDL_SCANCODE_V])
             held |= MUSASHI_DEV_KEY_BACK;
     }
-    if (pad && !SDL_GameControllerGetAttached(pad)) {
-        SDL_GameControllerClose(pad);
-        pad = NULL;
-    }
-    if (!pad && SDL_WasInit(SDL_INIT_GAMECONTROLLER) && retry++ % 60u == 0u) {
-        int j;
-        for (j = 0; j < SDL_NumJoysticks() && !pad; ++j)
-            if (SDL_IsGameController(j)) pad = SDL_GameControllerOpen(j);
-    }
-    if (pad) {
-        int ly = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY);
-        if ((SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_LEFTSTICK) &&
-             SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_RIGHTSTICK)) ||
-            SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_GUIDE))
-            held |= MUSASHI_DEV_KEY_TOGGLE;
-        if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_UP) || ly < -16000)
-            held |= MUSASHI_DEV_KEY_UP;
-        if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_DOWN) || ly > 16000)
-            held |= MUSASHI_DEV_KEY_DOWN;
-        if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_A)) held |= MUSASHI_DEV_KEY_OK;
-        if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_B)) held |= MUSASHI_DEV_KEY_BACK;
-    }
+    held |= musashi_host_gamepad_menu_keys();
     pressed = held & ~prev;
     prev = held;
     return pressed;

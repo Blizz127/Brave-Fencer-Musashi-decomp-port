@@ -372,7 +372,7 @@ if(MUSASHI_BUILD_PC_PORT)
         target_include_directories(musashi_x11_nograb PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/pc_port/include)
         target_link_libraries(musashi_x11_nograb PRIVATE ${CMAKE_DL_LIBS})
-        add_executable(musashi_native_boot pc_port/native_boot.c)
+        add_executable(musashi_native_boot pc_port/native_boot.c pc_port/host_gamepad.c)
         target_link_options(musashi_native_boot PRIVATE -Wl,--gc-sections)
         target_compile_features(musashi_native_boot PRIVATE c_std_99)
         target_link_libraries(musashi_native_boot PRIVATE musashi_pc_port musashi_x11_nograb ${CMAKE_DL_LIBS})
