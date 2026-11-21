@@ -72,7 +72,7 @@ if(MUSASHI_BUILD_PC_PORT AND MUSASHI_WITH_PSYCROSS)
             "layer would be missing from the build")
     endif()
     # Keep the ignored upstream checkout intact. Both native and source-step
-    # probes use this exact, count-checked signed-translation adaptation.
+    # probes use the same signed-translation and NCLIP flag corrections.
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     set(MUSASHI_GTE_UPSTREAM "${MUSASHI_PSYCROSS_DIR}/src/gte/PsyX_GTE.cpp")
     set(MUSASHI_GTE_PREPARED "${CMAKE_CURRENT_BINARY_DIR}/generated/PsyX_GTE.cpp")

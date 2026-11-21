@@ -42,6 +42,7 @@ INFERRED: dict[int, tuple[str, str]] = {
     0x800596F4: ("DrawSync", "main loop: func_800596F4(0) right before VSync (vendor src/boot.c)"),
     0x80059658: ("SetDispMask", "called with 1 after the first frame is set up (resident md_MAIN_003)"),
     # libgte matrix routines named from how libgs uses them (repo decomp C)
+    0x800495EC: ("NormalClip", "Three packed screen points select the signed projected triangle area and update MAC0 and FLAG."),
     0x8004978C: ("RotMatrix", "three angles through the packed sin/cos table D_8006DF1C into m; GsSortSprite calls it with (0, 0, rotate/360)"),
     0x8004901C: ("ScaleMatrix", "column scaling m[i][j] * v[j] >> 12; GsSortSprite calls it with (scalex, scaley, 0)"),
     0x800484EC: ("ApplyMatrixLV", "func_80053050/80052FCC call it as (m, m2->t, &v) for the translation part of a coordinate product"),
@@ -148,6 +149,7 @@ TABLE: dict[str, Status] = {
     "ApplyMatrixSV": Status(P, 3, 1, "bfm_psyq_ApplyMatrixSV", "GTE bridge (gte_owner lease); sets the rotation matrix like Psy-Q"),
     "RotTransSV": Status(P, 3, 0, "bfm_psyq_RotTransSV", "GTE bridge (gte_owner lease); long *flag via a host temporary"),
     "RotTransPers": Status(P, 4, 1, "bfm_psyq_RotTransPers", "GTE bridge (gte_owner lease); long *p/*flag via host temporaries"),
+    "NormalClip": Status(P, 3, 1, "bfm_psyq_NormalClip", "GTE bridge computes the signed area of three packed screen points"),
     "RotTransPers3": Status(P, 8, 1, "bfm_psyq_RotTransPers3", "GTE bridge (gte_owner lease); args 5-8 from the guest stack; long * via temporaries"),
     "RotTransPers4": Status(P, 10, 1, "bfm_psyq_RotTransPers4", "GTE bridge (gte_owner lease); args 5-10 from the guest stack; long * via temporaries"),
     "RotMatrixYXZ": Status(H, 2, 1, "bfm_psyq_RotMatrixYXZ", "exact port of func_80049A1C over the guest table D_8006DF1C (PsyCross's differs by 1-2)"),

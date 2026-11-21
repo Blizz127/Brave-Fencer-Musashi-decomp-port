@@ -10,7 +10,7 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
 
-def test_exact_six_changes_and_drift_rejection():
+def test_exact_changes_and_drift_rejection():
     source = (ROOT / "tools/third_party/psycross/src/gte/PsyX_GTE.cpp").read_text()
     generated = module.prepare(source)
     restored = generated
@@ -23,6 +23,12 @@ def test_exact_six_changes_and_drift_rejection():
             module.prepare(source.replace(old, "0", 1))
         with pytest.raises(ValueError):
             module.prepare(source + old)
-    assert restored == source
+    assert restored.count(module.NCLIP_KEEP_FLAGS) == 1
+    assert restored.replace(module.NCLIP_KEEP_FLAGS, module.NCLIP_END) == source
+    with pytest.raises(ValueError):
+        module.prepare(source.replace(module.NCLIP_END, ""))
+    with pytest.raises(ValueError):
+        module.prepare(source.replace("C2_FLAG = 0;\n\n\tswitch (GTE_FUNCT(gteop(op)))", ""))
+
     with pytest.raises(ValueError):
         module.prepare(generated)

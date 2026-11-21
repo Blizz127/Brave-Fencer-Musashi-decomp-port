@@ -34,7 +34,8 @@ typedef struct PsyqRow {
     BfmPsyqStatus status;
 } PsyqRow;
 
-#define BFM_PSYQ(pc, n, st, ac, ret, w) {{pc, 2u * 8u, lane_psyq_##n, #n, ac, ret}, st},
+#define BFM_PSYQ(pc, n, st, ac, ret, w) \
+    {{pc, 16u, lane_psyq_##n, #n, ac, ret}, st},
 static const PsyqRow kPsyqRows[] = {
 #include "psyq/bfm_psyq_compat.def"
 };
@@ -95,7 +96,11 @@ size_t musashi_native_lane_psyq_entries(MusashiNativeLaneEntry *out, size_t cap,
         cls = musashi_native_lane_psyq_is_device(row->entry.name) ? MUSASHI_PSYQ_LANE_DEVICE
                                                                   : MUSASHI_PSYQ_LANE_PURE;
         if (!(classes & cls)) continue;
-        if (out && n < cap) out[n] = row->entry;
+        if (out && n < cap) {
+            out[n] = row->entry;
+            /* Nine register-only instructions, including the return delay. */
+            if (row->entry.fn == lane_psyq_NormalClip) out[n].cost_cycles = 18u;
+        }
         ++n;
     }
     return n;

@@ -1018,7 +1018,8 @@ bfm.on("frame_end", function() if seen.late == nil then
         else:
             self.skipTest("PsyCross not fetched (tools/fetch_toolchains.sh)")
         d = self.fresh("gte")
-        inc = ["-I", str(psyc / "include"), "-I", str(psyc / "src")]
+        # Exercise the same integer GTE as the player.
+        inc = ["-DUSE_PGXP=0", "-I", str(psyc / "include"), "-I", str(psyc / "src")]
         objs = []
 
         def cc(args, out):
@@ -1029,7 +1030,11 @@ bfm.on("frame_end", function() if seen.late == nil then
             str(psyc / "src/psx/LIBGTE.C")], "libgte.o")
         cc(["gcc", "-c", "-O1", "-w", "-x", "c", "-std=gnu11", "-include", "assert.h", *inc,
             str(psyc / "src/psx/INLINE_C.C")], "inline_c.o")
-        cc(["g++", "-c", "-O1", "-w", *inc, str(psyc / "src/gte/PsyX_GTE.cpp")], "gte.o")
+        prepared = d / "PsyX_GTE.cpp"
+        subprocess.run(["python3", str(ROOT / "tools/prepare_psycross_gte.py"),
+                        str(psyc / "src/gte/PsyX_GTE.cpp"), str(prepared)], check=True)
+        cc(["g++", "-c", "-O1", "-w", *inc, "-I", str(psyc / "src/gte"),
+            str(prepared)], "gte.o")
         cc(["g++", "-c", "-O1", "-w", *inc, str(psyc / "src/gte/half_float.cpp")], "half.o")
         cc(["gcc", "-c", "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-DBFM_PLAT_WITH_PSYCROSS",
             "-include", "assert.h", "-I", str(PLAT), "-I", str(psyc / "include"),

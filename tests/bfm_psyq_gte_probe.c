@@ -74,6 +74,47 @@ static void coord(uint32_t a, uint32_t flag, const int16_t r9[9], int32_t tx, in
     w32(a + 0x48, (int32_t)super);
 }
 
+static void check_normal_clip(void) {
+    static const struct {
+        uint32_t points[3];
+        uint32_t area;
+        uint32_t flag;
+    } cases[] = {
+        {{0, 5u, 7u << 16}, 35u, 0},
+        {{0, 7u << 16, 5u}, (uint32_t)-35, 0},
+        {{0xfffdfffbu, 0x00010001u, 0x00050007u}, 0, 0},
+        {{0x80008000u, 0x80007fffu, 0x7fff8000u}, 0xfffe0001u, 0x80010000u},
+        {{0x80008000u, 0x7fff8000u, 0x80007fffu}, 0x0001ffffu, 0x80008000u},
+        {{0xfffcfffdu, 0x0003ffffu, 0xffff0004u}, (uint32_t)-43, 0},
+    };
+    const uint32_t saved_depth = MFC2(19);
+    const uint32_t saved_matrix = CFC2(0);
+    uint32_t before[32];
+    int i, reg;
+    for (i = 0; i < (int)(sizeof cases / sizeof cases[0]); ++i) {
+        const uint32_t *p = cases[i].points;
+        int begin_before = begins, end_before = ends;
+        uint32_t commands_before = cmds;
+        memcpy(before, R, sizeof before);
+        CHECK(call("NormalClip", p[0], p[1], p[2], before[7]));
+        CHECK(R[2] == cases[i].area && MFC2(24) == cases[i].area);
+        CHECK(CFC2(31) == cases[i].flag);
+        for (reg = 0; reg < 3; ++reg)
+            CHECK(MFC2(12 + reg) == p[reg]);
+        CHECK(MFC2(19) == saved_depth && CFC2(0) == saved_matrix);
+        for (reg = 0; reg < 32; ++reg)
+            if (reg != 2 && (reg < 4 || reg > 6)) CHECK(R[reg] == before[reg]);
+        CHECK(begins == begin_before + 1 && ends == end_before + 1 && cmds == commands_before + 1);
+    }
+    /* Refusing the lease preserves the previous result and shared GTE state. */
+    allow = 0;
+    CHECK(!call("NormalClip", 0, 1, 1u << 16, R[7]));
+    CHECK(R[2] == cases[i - 1].area && MFC2(24) == cases[i - 1].area);
+    CHECK(MFC2(12) == cases[i - 1].points[0] && MFC2(13) == cases[i - 1].points[1]);
+    CHECK(MFC2(14) == cases[i - 1].points[2] && CFC2(31) == cases[i - 1].flag);
+    allow = 1;
+}
+
 int main(void) {
     static const int16_t ident[9] = {4096, 0, 0, 0, 4096, 0, 0, 0, 4096};
     static const int32_t t1000[3] = {0, 0, 1000};
@@ -260,6 +301,8 @@ int main(void) {
     }
     printf("bridge begins %d ends %d commands %u\n", begins, ends, (unsigned)cmds);
     CHECK(ends == begins - 1);
+    check_normal_clip();
+    CHECK(ends == begins - 2);
     printf("ok gte\n");
     return 0;
 }

@@ -99,6 +99,10 @@ class NativeLaneGeneratorTest(unittest.TestCase):
         else:
             self.assertNotIn("wrap_80019064", self.table)
 
+    def test_normal_clip_has_no_sequenced_host_hook(self):
+        self.assertNotIn("800495ec", self.report["psyq_hooked"])
+        self.assertIn("8003b280", self.report["psyq_hooked"])
+
     def test_table_compiles(self):
         cc = shutil.which("cc")
         if not cc:

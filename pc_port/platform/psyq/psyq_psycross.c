@@ -233,6 +233,14 @@ int bfm_psyq_RotTransPers(uint32_t *r) {
     return 1;
 }
 
+/* NormalClip takes three packed screen coordinates by value. */
+int bfm_psyq_NormalClip(uint32_t *r) {
+    GTE_BEGIN();
+    r[2] = (uint32_t)NormalClip((int32_t)r[4], (int32_t)r[5], (int32_t)r[6]);
+    GTE_END(1);
+    return 1;
+}
+
 /* RotTransPers3(v0, v1, v2, sxy0, sxy1, sxy2, p, flag) -> SZ3 >> 2 */
 int bfm_psyq_RotTransPers3(uint32_t *r) {
     SVECTOR *v[3];

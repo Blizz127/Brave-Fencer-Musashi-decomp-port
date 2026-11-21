@@ -9,12 +9,12 @@ and every `asm/overlays/*/*.s`); 37884 `jal`/`j` call sites into the Psy-Q range
 
 | Status | Entry points | Call sites |
 |---|---|---|
-| psycross | 33 (15.6%) | 11770 (31.1%) |
+| psycross | 34 (16.0%) | 11777 (31.1%) |
 | hle | 50 (23.6%) | 18095 (47.8%) |
-| stub-TBD | 129 (60.8%) | 8019 (21.2%) |
-| **covered (psycross + hle)** | **83 / 212 (39.2%)** | **29865 / 37884 (78.8%)** |
+| stub-TBD | 128 (60.4%) | 8012 (21.1%) |
+| **covered (psycross + hle)** | **84 / 212 (39.6%)** | **29872 / 37884 (78.9%)** |
 
-Named: 135 / 212 entry points (vendor symbols, libgte instruction shape, or 28 inferred
+Named: 136 / 212 entry points (vendor symbols, libgte instruction shape, or 29 inferred
 from call context: see `INFERRED` in tools/psyq_compat_status.py). The rest are listed
 by address and Psy-Q object for later naming.
 
@@ -122,7 +122,7 @@ by address and Psy-Q object for later naming.
 | `0x8004945C` | RotTransSV | libgte8 |  | 1083 | 84 | psycross | GTE bridge (gte_owner lease); long *flag via a host temporary |
 | `0x8004955C` | RotTransPers | libgte8 |  | 1228 | 82 | psycross | GTE bridge (gte_owner lease); long *p/*flag via host temporaries |
 | `0x8004958C` | RotTransPers3 | libgte8 |  | 6 | 2 | psycross | GTE bridge (gte_owner lease); args 5-8 from the guest stack; long * via temporaries |
-| `0x800495EC` | *unnamed* | libgte9 |  | 7 | 4 | stub-TBD | not in PsyCross; an HLE on the gteRegs bank via the bridge is possible |
+| `0x800495EC` | NormalClip | libgte9 |  | 7 | 4 | psycross | GTE bridge computes the signed area of three packed screen points |
 | `0x8004961C` | RotTransPers4 | libgte10 |  | 11 | 8 | psycross | GTE bridge (gte_owner lease); args 5-10 from the guest stack; long * via temporaries |
 | `0x8004969C` | RotNclip4 | libgte11 |  | 4 | 4 | stub-TBD | not in PsyCross; an HLE on the gteRegs bank via the bridge is possible |
 | `0x8004974C` | *unnamed* | libgte11 |  | 8 | 8 | stub-TBD | not in PsyCross; an HLE on the gteRegs bank via the bridge is possible |

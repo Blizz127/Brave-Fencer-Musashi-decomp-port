@@ -1030,9 +1030,9 @@
   },
   {
    "addr": "0x800495EC",
-   "name": "func_800495EC",
-   "name_source": "unnamed",
-   "evidence": null,
+   "name": "NormalClip",
+   "name_source": "inferred",
+   "evidence": "Three packed screen points select the signed projected triangle area and update MAC0 and FLAG.",
    "segment": "libgte9",
    "object": null,
    "callsites": 7,
