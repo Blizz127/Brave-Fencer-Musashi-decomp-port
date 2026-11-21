@@ -42,8 +42,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 21 source update covers 188 functions across seven scene overlays,
-totaling 6,556 bytes of matching executable code. In the opening scene, one
+The November 21 source update covers 190 functions across seven scene overlays,
+totaling 6,800 bytes of matching executable code. In the opening scene, one
 routine calls the handler selected by the player state byte. Another sets the
 facing direction and counts frames. A separate scene event uses that timer
 to advance its state on the 31st call from a fresh counter. The first opening handler
@@ -64,7 +64,8 @@ member SC02/0039. When a position falls inside the bounds, the predicates
 use the signed area of three projected points. In an original-disc attract
 run, 25 sampled selector calls agreed with the compiled C result, including
 16 signed-area calls. A fourth matched scene function updates the camera
-position and facing. Its host test links six original-matching smoothing
+position and facing. Two other matches initialize the camera and select its
+callback from the scene table. The camera update test links six original-matching smoothing
 functions and supplies test matrix callbacks. The facing routines still need
 the original memory access and timing behavior, so the native dispatcher
 defers them in both scene members that share these bodies.

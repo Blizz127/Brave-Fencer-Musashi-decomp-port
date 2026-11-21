@@ -1,4 +1,5 @@
 #include "player_direction.h"
+#include "../src/overlays/sc02_0039/camera.h"
 
 #include <assert.h>
 #include <stddef.h>
@@ -21,7 +22,8 @@ void (*D_8018A740[])(u8 *) = {
     unexpected_state, func_8017DEFC, func_8017DF5C, func_8017DFD8, unexpected_state
 };
 
-u8 D_800AE648[0x40], D_80126948[0xA4];
+u8 D_800AE648[0x40];
+FacingActor D_80126948;
 s32 D_80126954, D_8012695C;
 s16 D_80126968, D_8012696A, D_8012696C, D_80126976, D_80126978, D_8012697A;
 u16 D_80126980, D_80126940, D_80126B5E, D_80126B62, D_80126B66;
@@ -124,7 +126,7 @@ static void check_route(int bypass, int simultaneous_flags)
 {
     u8 *bytes = (u8 *)&player;
     memset(&player, 0, sizeof(player));
-    memset(D_80126948, 0xA5, sizeof(D_80126948));
+    memset(&D_80126948, 0xA5, sizeof(D_80126948));
     angles = cleanups = allocations = record_count = flag_reads = releases = 0;
     skip = bypass;
     finished = 0;
@@ -142,7 +144,7 @@ static void check_route(int bypass, int simultaneous_flags)
     assert(D_80126980 == 0x8035 && D_80126954 == 350 && D_8012695C == 600);
     assert(D_80126968 == 450 && D_8012696A == 1536 && D_8012696C == 0);
     assert(D_80126976 == 320 && D_80126978 == 0 && D_8012697A == 320);
-    assert(word(D_80126948) == 0x8017DA08u && D_80126948[4] == 0);
+    assert(word((u8 *)&D_80126948) == 0x8017DA08u && D_80126948.mode == 0);
     assert(D_80126940 == 15 && D_80126942 == 37 && D_80126944 == 42);
 
     for (unsigned i = 1; i <= 30; ++i) {

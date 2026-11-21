@@ -976,10 +976,11 @@ DENY = {
     0x8002FF0C: "no comparable differential case yet (interpreter refused every case)",
 }
 
-# These facing routines use borrowed guest pointers. Their native wrappers
-# bypass alignment and bus ownership checks and do not reproduce guest timing.
-# SC02/0039 and SC03/0108 share the complete extents at the same addresses.
+# The scene camera setup writes the shared actor and invokes guest callbacks.
+# It and the facing routines require checked guest accesses and path timing.
+# The three facing extents also occur in SC03/0108.
 FACING_EXTENTS = {
+    0x8017D01C: (184, 0x031C09BFB0E714BE),
     0x8017D484: (368, 0x0FBC2305FFE0240E),
     0x8017D5F4: (184, 0x7E49C97F155040C8),
     0x8017D6AC: (184, 0x67821A3E1D2AE386),

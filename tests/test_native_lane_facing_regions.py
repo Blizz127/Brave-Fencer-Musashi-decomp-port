@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 import native_lane_gen as lane
 
 
-@pytest.mark.parametrize("pc", (0x8017D484, 0x8017D5F4, 0x8017D6AC))
+@pytest.mark.parametrize("pc", (0x8017D01C, 0x8017D484, 0x8017D5F4, 0x8017D6AC))
 def test_facing_region_admission(pc, tmp_path, monkeypatch):
     registry = json.loads((ROOT / "provenance/scene-objects.json").read_text())
     row = next(r for r in registry["matches"] if r["vram"] == pc and r["region"] == "sc02_0039")
@@ -41,3 +41,13 @@ def test_facing_region_admission(pc, tmp_path, monkeypatch):
     different = dict(info, data=b"\x01" + data[1:])
     assert check(other, different)["admitted"]
     assert check(other, None)["admitted"]
+
+
+@pytest.mark.skipif(not shutil.which("clang"), reason="clang is required to inspect generated IR")
+def test_camera_dispatcher_rejects_host_sized_callback_array(tmp_path):
+    registry = json.loads((ROOT / "provenance/scene-objects.json").read_text())
+    row = next(r for r in registry["matches"] if r["vram"] == 0x8017D0D4 and r["region"] == "sc02_0039")
+    (tmp_path / "ir").mkdir()
+    result = lane.build_one(row, tmp_path, {}, {}, "clang")
+    assert result.get("rule") == "layout"
+    assert result.get("detail") == "array of pointers"

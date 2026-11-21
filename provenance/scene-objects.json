@@ -1568,6 +1568,26 @@
       "optimization": "-O2"
     },
     {
+      "name": "func_8017D01C",
+      "region": "sc02_0039",
+      "vram": 2149044252,
+      "size": 184,
+      "source": "src/overlays/sc02_0039/8017d01c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_8017D0D4",
+      "region": "sc02_0039",
+      "vram": 2149044436,
+      "size": 60,
+      "source": "src/overlays/sc02_0039/8017d0d4.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
       "name": "func_8017D2B8",
       "region": "sc02_0039",
       "vram": 2149044920,

@@ -11,8 +11,9 @@ typedef struct {
     s32 x, y, z;
 } WideVector;
 
-typedef struct {
-    u8 reserved0[5];
+typedef struct FacingActor {
+    u8 callback_address[4]; /* Provider stores a little-endian guest address. */
+    u8 mode;
     u8 phase;
     u8 reserved6[2];
     s32 distance, target_distance;
@@ -25,5 +26,9 @@ typedef struct {
     s16 facing;
 } FacingActor;
 
+typedef void (*SceneCameraHandler)(FacingActor *);
+
+extern void func_8017D0D4(FacingActor *actor);
+extern s32 func_8017D01C(void);
 extern void func_8017D2B8(FacingActor *actor, s16 facing, SceneVector *position);
 #endif
