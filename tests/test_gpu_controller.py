@@ -163,6 +163,20 @@ class GpuControllerTests(unittest.TestCase):
         self.assertEqual(self.lib.musashi_gpu_controller_init(
             C.byref(self.controller), C.byref(self.backend)), 1)
 
+    def test_gp0_09_is_one_ready_gated_noop_between_environment_commands(self):
+        self.assertEqual(self.write(0xE1000125), 1)
+        before = self.controller.accepted_gp0_words
+        self.ready_value = 0
+        self.assertEqual(self.write(0x09543210), 0)
+        self.assertEqual(self.controller.accepted_gp0_words, before)
+        self.ready_value = 1
+        self.assertEqual(self.write(0x09543210), 1)
+        self.assertEqual(self.controller.accepted_gp0_words, before + 1)
+        self.assertEqual(self.controller.draw_mode, 0x125)
+        self.assertEqual(self.controller.drawn_pixels, 0)
+        self.assertEqual(self.write(0xE200101E), 1)
+        self.assertEqual(self.controller.texture_window, 0x101E)
+
     def test_fill_partial_packet_and_real_descriptor(self):
         fills = []
         def accept(_, candidate):
