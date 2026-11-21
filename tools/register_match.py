@@ -60,6 +60,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("vram", nargs="?", type=lambda value: int(value, 0))
     parser.add_argument("source", nargs="?", type=Path)
     parser.add_argument("--optimization", default="-O2")
+    parser.add_argument("--no-schedule-insns2", action="store_true",
+                        help="disable instruction scheduling after register allocation")
     parser.add_argument("--size", type=lambda value: int(value, 0),
                         help="override the splat size when splat split one real function into several")
     parser.add_argument("--recovery", default="c", choices=("c", "assembly", "mixed", "unclassified"))
@@ -146,6 +148,8 @@ def prepare(args, entries: list[dict]) -> tuple[dict, int | None]:
         "extent": "function",
         "optimization": args.optimization,
     }
+    if args.no_schedule_insns2:
+        entry["no_schedule_insns2"] = True
     if args.rodata_base is not None:
         entry["rodata_base"] = args.rodata_base
     if args.assembler:

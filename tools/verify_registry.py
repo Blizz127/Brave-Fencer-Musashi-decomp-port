@@ -41,6 +41,11 @@ def plan(entry: dict[str, Any], targets: dict[str, Any], candidate: Path) -> tup
     # Most of the executable is identified as -O2; an entry only needs this
     # when it does not match at that default, which build_candidate.py itself
     # already assumes.
+    no_schedule_insns2 = entry.get("no_schedule_insns2", False)
+    if not isinstance(no_schedule_insns2, bool):
+        raise RetailError(f"{entry['name']}: no_schedule_insns2 must be a boolean")
+    if no_schedule_insns2:
+        build.append("--no-schedule-insns2")
     optimization = entry.get("optimization")
     if optimization:
         # The "=" form is required: argparse reads a bare "-O0" as another

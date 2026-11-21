@@ -63,7 +63,7 @@ u8 *bfm_opening_guest_ptr(u32 token)
 }
 
 /* The timer runs the scene's direction code with deterministic angle and cleanup providers. */
-s16 func_8004CFEC(s32 dx, s32 dz)
+s32 func_8004CFEC(s32 dx, s32 dz)
 {
     assert(dx == 0 && dz == 7);
     ++angles;

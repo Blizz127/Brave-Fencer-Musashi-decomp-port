@@ -19,7 +19,7 @@ u8 *bfm_opening_guest_ptr(u32 address)
     return (u8 *)&link;
 }
 
-s16 func_8004CFEC(s32 dx, s32 dz)
+s32 func_8004CFEC(s32 dx, s32 dz)
 {
     assert(dx == 4 && dz == -7);
     assert(player.direction_mode == 0x41);

@@ -259,11 +259,15 @@ def cpp_command(cpp: Path, source: Path, includes: list[Path] | None = None) -> 
 
 
 def cc1_command(
-    cc1: Path, preprocessed: Path, output: Path, *, optimization: str = "-O2", gp: str = "-G0"
+    cc1: Path, preprocessed: Path, output: Path, *, optimization: str = "-O2", gp: str = "-G0",
+    no_schedule_insns2: bool = False,
 ) -> list[str]:
+    optimization_flags = [optimization]
+    if no_schedule_insns2:
+        optimization_flags.append("-fno-schedule-insns2")
     return [
         str(cc1),
-        optimization,
+        *optimization_flags,
         gp,
         "-mips1",
         "-mcpu=3000",
@@ -478,6 +482,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="assemble with GNU as instead of maspsx/ASPSX (default: ASPSX)")
     parser.add_argument("--output", type=Path, required=True, help="where to write the extracted bytes")
     parser.add_argument("--optimization", default="-O2")
+    parser.add_argument("--no-schedule-insns2", action="store_true",
+                        help="disable instruction scheduling after register allocation")
     parser.add_argument("--gp", default="-G0")
     parser.add_argument("--include", type=Path, action="append", default=[])
     parser.add_argument(
@@ -540,7 +546,8 @@ def main(argv: list[str] | None = None) -> int:
             includes = default_include_dirs(repo) + list(args.include)
             _run(cpp_command(cpp, source, includes), "cpp", stdout=preprocessed)
             _run(
-                cc1_command(cc1, preprocessed, assembly, optimization=args.optimization, gp=args.gp),
+                cc1_command(cc1, preprocessed, assembly, optimization=args.optimization, gp=args.gp,
+                            no_schedule_insns2=args.no_schedule_insns2),
                 "cc1",
             )
             if args.assembler == "gnu":
@@ -629,9 +636,10 @@ def main(argv: list[str] | None = None) -> int:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_bytes(extracted)
 
+            scheduling_flag = " -fno-schedule-insns2" if args.no_schedule_insns2 else ""
             print(
                 f"CANDIDATE symbol={args.symbol} toolchain={toolchain.name} "
-                f"aspsx={toolchain.aspsx_version} {args.optimization} {args.gp}"
+                f"aspsx={toolchain.aspsx_version} {args.optimization}{scheduling_flag} {args.gp}"
             )
             print(f"  size=0x{size:X} words={size // WORD_SIZE} output={args.output}")
             if args.keep_intermediates:

@@ -4,13 +4,7 @@
 #include "opening_event.h"
 
 extern u32 D_801151D4;
-/* The original caller consumes the full return register. The host angle
- * provider has a signed halfword result. Only its low twelve bits are used. */
-#if HISTORICAL_OPENING_ABI
 extern s32 func_8004CFEC(s32 dx, s32 dz);
-#else
-extern s16 func_8004CFEC(s32 dx, s32 dz);
-#endif
 extern s32 func_80146D90(void *o);
 
 s32 func_80171B4C(ScenePlayer *o, s32 n)

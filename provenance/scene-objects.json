@@ -32,6 +32,12 @@
       "base": 2148696408,
       "sha256": "6fcb360e5153a15d587216d4ae12f3ab05997a4055f3056b68b63c540085a145"
     },
+    "sc02_0039": {
+      "kind": "blob",
+      "file": "extracted/overlays/sc02/0039.pac0.bin",
+      "base": 2148696408,
+      "sha256": "de1b1945e0d9314a1080c54a3ec53c07dadb270dda3abf1ac40ca2a43d5f5d87"
+    },
     "sc03_0001": {
       "kind": "blob",
       "file": "extracted/overlays/sc03/0001.pac0.bin",
@@ -1470,6 +1476,38 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2"
+    },
+    {
+      "name": "func_8017D484",
+      "region": "sc02_0039",
+      "vram": 2149045380,
+      "size": 368,
+      "source": "src/overlays/sc02_0039/8017d484.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_8017D5F4",
+      "region": "sc02_0039",
+      "vram": 2149045748,
+      "size": 184,
+      "source": "src/overlays/sc02_0039/8017d5f4.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "no_schedule_insns2": true
+    },
+    {
+      "name": "func_8017D6AC",
+      "region": "sc02_0039",
+      "vram": 2149045932,
+      "size": 184,
+      "source": "src/overlays/sc02_0039/8017d6ac.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "no_schedule_insns2": true
     },
     {
       "name": "func_801320D0",
