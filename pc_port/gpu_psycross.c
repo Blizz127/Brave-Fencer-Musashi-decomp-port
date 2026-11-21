@@ -1,4 +1,5 @@
 #include "musashi_gpu_psycross.h"
+#include "musashi_present_viewport.h"
 
 #include <SDL.h>
 #include <stdlib.h>
@@ -472,8 +473,7 @@ int musashi_gpu_psycross_present(MusashiGpuPsyCross *gpu) {
     glDrawBuffer(GL_BACK);
     glDisable(GL_SCISSOR_TEST);
     glColorMaski(0, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-    /* Stretch the GP1 display rect to the whole drawable. Integer letterbox
-     * left a black band through the window (GL y=0 is the bottom). */
+    /* Windowed scanout stretches with the window. Fullscreen fits the 4:3 picture. */
     {
         int dw = 1280, dh = 960;
         GLint prev_viewport[4];
@@ -486,9 +486,16 @@ int musashi_gpu_psycross_present(MusashiGpuPsyCross *gpu) {
         glViewport(0, 0, dw, dh);
         glClearColor(0.f, 0.f, 0.f, 1.f);
         glClear(GL_COLOR_BUFFER_BIT);
-        if (gpu->display_enabled)
+        if (gpu->display_enabled) {
+            if (window && (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN)) {
+                int viewport[4];
+                musashi_present_viewport(dw, dh, 4.0 / 3.0, 0, viewport);
+                glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+            }
             blit_ok = blit_vram(gpu);
+        }
         if (g_overlay) {
+            glViewport(0, 0, dw, dh);
             g_overlay_height = dh;
             glEnable(GL_SCISSOR_TEST);
             g_overlay(g_overlay_user, dw, dh);

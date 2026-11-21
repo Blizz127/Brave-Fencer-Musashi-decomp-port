@@ -158,7 +158,11 @@ Controls: a game controller (first connected SDL GameController) or keyboard.
   left/right Ctrl L2/R2.
 
 Requires glibc 2.38+ and the system's OpenGL, X11 or Wayland, and ALSA or
-PulseAudio/PipeWire libraries. Run ./launch.sh; extra arguments go to the port.
+PulseAudio/PipeWire libraries. The launcher passes extra arguments to the port.
+For borderless desktop fullscreen, run ./launch.sh --fullscreen. The CPU
+renderer fits the 4:3 picture inside the screen. Use --windowed for a
+1280x960 window. Without either flag the player reads BFM_FULLSCREEN, then
+[video] fullscreen in the port config.ini. Windowed is the default.
 Log of the last run: ~/.local/state/bfm-port/last-run.log.
 Dev menu (off by default): BFM_DEV_MENU=1 ./launch.sh, then F1 or L3+R3.
 TXT

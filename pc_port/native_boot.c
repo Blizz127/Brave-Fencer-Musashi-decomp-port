@@ -3542,6 +3542,48 @@ static void dump_display_vram(NativeBoot *boot) {
     }
 }
 
+static int host_fullscreen_requested(void) {
+    const char *env = getenv("BFM_FULLSCREEN");
+    if (env) {
+        if (!SDL_strcasecmp(env, "1") || !SDL_strcasecmp(env, "on") ||
+            !SDL_strcasecmp(env, "true") || !SDL_strcasecmp(env, "yes")) return 1;
+        if (!SDL_strcasecmp(env, "0") || !SDL_strcasecmp(env, "off") ||
+            !SDL_strcasecmp(env, "false") || !SDL_strcasecmp(env, "no")) return 0;
+    }
+#ifdef MUSASHI_WITH_BFM_PLAT
+    BfmPlatConfig cfg;
+    char path[1024];
+    bfm_plat_config_defaults(&cfg);
+    if (bfm_plat_config_default_path(path, sizeof path) == BFM_PLAT_OK &&
+        bfm_plat_config_load_file(&cfg, path) == BFM_PLAT_OK)
+        return cfg.fullscreen;
+#endif
+    return 0;
+}
+
+static void host_window_open(void) {
+    int fullscreen = host_fullscreen_requested();
+    int width = 1280, height = 960;
+    SDL_Window *window;
+    if (fullscreen && SDL_InitSubSystem(SDL_INIT_VIDEO) == 0) {
+        SDL_DisplayMode mode;
+        if (SDL_GetDesktopDisplayMode(0, &mode) == 0 && mode.w > 0 && mode.h > 0) {
+            width = mode.w;
+            height = mode.h;
+        }
+        SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    }
+    /* Size the GL back buffer before creation. Desktop fullscreen preserves
+     * the display mode and can then restore the usual windowed dimensions. */
+    PsyX_Initialise("Brave Fencer Musashi - native VRAM", width, height, 0);
+    window = SDL_GL_GetCurrentWindow();
+    if (fullscreen && window) {
+        if (SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP) != 0)
+            fprintf(stderr, "native_boot: fullscreen unavailable (%s)\n", SDL_GetError());
+        SDL_SetWindowSize(window, 1280, 960);
+    }
+}
+
 static void host_window_inspect(SDL_Window *window) {
     int width = 0, height = 0;
     int (*set_focusable)(SDL_Window *, int);
@@ -3555,7 +3597,8 @@ static void host_window_inspect(SDL_Window *window) {
      * Xwayland + SDL_PumpEvents was forcing X input focus back every TAP.
      * When MUSASHI_INTERACTIVE=1 is set, allow focus for playable interaction. */
     SDL_GetWindowSize(window, &width, &height);
-    if (width != 1280 || height != 960)
+    if (!(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) &&
+        (width != 1280 || height != 960))
         SDL_SetWindowSize(window, 1280, 960);
     SDL_SetWindowAlwaysOnTop(window, SDL_FALSE);
     SDL_SetWindowGrab(window, SDL_FALSE);
@@ -3937,6 +3980,10 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--dev-menu") == 0) {
             setenv("BFM_DEV_MENU", "1", 1);
+        } else if (strcmp(argv[i], "--fullscreen") == 0) {
+            setenv("BFM_FULLSCREEN", "1", 1);
+        } else if (strcmp(argv[i], "--windowed") == 0) {
+            setenv("BFM_FULLSCREEN", "0", 1);
         } else if (strcmp(argv[i], "--disc") == 0 && i + 1 < argc) {
             disc_path = argv[++i];
         } else if (strcmp(argv[i], "--headless") == 0) {
@@ -4006,7 +4053,8 @@ int main(int argc, char **argv) {
                 bin_path = "extracted/disc/disc.bin";
         } else {
             fputs("usage: musashi_native_boot --disc <your .cue or .bin>\n"
-                  "       musashi_native_boot <SLUS_007.26> [cue bin]\n", stderr);
+                  "       musashi_native_boot <SLUS_007.26> [cue bin]\n"
+                  "       [--fullscreen | --windowed]\n", stderr);
             return 2;
         }
     }
@@ -4057,7 +4105,7 @@ int main(int argc, char **argv) {
     SDL_SetHint(SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED, "1");
     SDL_SetHint("SDL_WINDOW_ACTIVATE_WHEN_RAISED", "0");
     SDL_SetHint("SDL_WINDOW_ACTIVATE_WHEN_SHOWN", "0");
-    PsyX_Initialise("Brave Fencer Musashi - native VRAM", 1280, 960, 0);
+    host_window_open();
     fprintf(stderr, "native_boot: VIDEO_SOURCE mode=%d policy=NTSC selected_before_worker=1\n",
             GetVideoMode());
     if (!SDL_GL_GetCurrentWindow() || !g_intrMutex) {

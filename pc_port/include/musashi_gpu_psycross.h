@@ -52,8 +52,8 @@ int musashi_gpu_psycross_read_vram(MusashiGpuPsyCross *, unsigned x, unsigned y,
                                   unsigned width, unsigned height,
                                   uint16_t *out, uint32_t out_halfwords);
 
-/* Presentation: integer-scaled VRAM blit that fills the drawable.
- * Leftover letterbox is black. GP1 display-on blits the canonical VRAM
+/* Presentation fills a window and fits 4:3 inside desktop fullscreen.
+ * Unused space is black. GP1 display-on blits the canonical VRAM
  * rectangle. Preserves VRAM. Refuses an active PsyCross scene or queued
  * geometry. */
 int musashi_gpu_psycross_present(MusashiGpuPsyCross *);
