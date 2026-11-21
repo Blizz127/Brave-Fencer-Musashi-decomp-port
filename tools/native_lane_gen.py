@@ -984,6 +984,14 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
     tag = f"{member}_{vram:08x}" if member else f"{vram:08x}"
     work = out / "ir"
     try:
+        # The matching menu-item C has no player timing/interrupt qualification.
+        # Different members can independently implement a function at this PC.
+        if (vram == 0x8017ceb8 or name.lower() == "func_8017ceb8") and (
+                member == "main_0012" or
+                src.resolve() == ROOT / "src/overlays/main_0012/8017ceb8.c" or
+                hashlib.sha256(src.read_bytes()).hexdigest() ==
+                "fe54e82ba5ccfd0720da3f72d022febe8510a568c65fede72a8650ed6cb39c2f"):
+            raise Reject("deny", "MAIN member 0012 first card-menu item is source-only")
         if vram in DENY:
             raise Reject("deny", DENY[vram])
         if member == "sc03_0001" and vram in (0x8018C89C, 0x8018C8D4):
