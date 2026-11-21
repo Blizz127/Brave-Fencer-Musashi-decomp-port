@@ -6,7 +6,7 @@ the game as compiled host code and uses a CPU interpreter for the rest.
 
 ## Player downloads and source builds
 
-**November 21, 2026. For new Linux installs, build from the current source.**
+**November 21, 2026. For new Linux and Windows x64 installs, build from the current source.**
 We downloaded every historical player package from the public releases and
 checked its published size and SHA-256. All 22 distinct Linux and Windows
 executables contain a 36-byte game dispatch table. Nineteen also contain a
@@ -19,9 +19,11 @@ menu has an empty warp list. A Linux player built at commit `7fd45d2` was
 checked for both tables and both strings. Qualification of a replacement
 download, including an in-game save and cold Continue, is in progress.
 
-The [Linux build instructions](#build-from-source) cover dependencies, disc
-verification and launching the game. The [setup guide](docs/SETUP.md) records
-controls and save paths for existing installations.
+The Linux instructions cover disc verification, the build and the first
+launch. Windows x64 users can cross-build the player on Linux with Zig and the
+two pinned development SDKs. The Windows checks used Wine. Both builds run a
+hybrid engine and require your own USA disc.
+[Build on Linux](#build-from-source) · [Cross-build for Windows x64](docs/SETUP.md#cross-build-the-current-windows-x64-player-on-linux) · [Controls and save paths](docs/SETUP.md)
 
 ## About this project
 This is a passion project. I'm working hard on it, but it's made for fun and for everyone's enjoyment — free, non-commercial, and made by a fan. If you enjoy it, that's the whole point.
