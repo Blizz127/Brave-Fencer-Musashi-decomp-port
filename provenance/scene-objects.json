@@ -2108,6 +2108,46 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2"
+    },
+    {
+      "name": "func_80134510",
+      "vram": 2148746512,
+      "size": 232,
+      "region": "sc01_0077",
+      "source": "src/overlays/sc01_0077/80134510.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_801345F8",
+      "vram": 2148746744,
+      "size": 424,
+      "region": "sc01_0077",
+      "source": "src/overlays/sc01_0077/801345f8.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_801347A0",
+      "vram": 2148747168,
+      "size": 648,
+      "region": "sc01_0077",
+      "source": "src/overlays/sc01_0077/801347a0.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_80134A28",
+      "vram": 2148747816,
+      "size": 76,
+      "region": "sc01_0077",
+      "source": "src/overlays/sc01_0077/80134a28.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
     }
   ]
 }

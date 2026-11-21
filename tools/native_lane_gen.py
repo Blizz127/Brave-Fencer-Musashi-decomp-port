@@ -1010,6 +1010,45 @@ SC01_PLAYER_MOTION_EXTENTS = {
 }
 
 
+# The forest floor query and its explicitly identified variants need checked
+# guest loads, exception handling and timing before player dispatch.
+FOREST_FLOOR_EXTENTS = {
+    0x80134510: {
+        "sc01_0077": (232, 0xCB033B4706965762),
+        "main_0012": (232, 0xD45CC4EC505088D6),
+        "sc02_0035": (232, 0xB122B781A31FF157),
+    },
+    0x801345F8: {
+        "sc01_0077": (424, 0xF2C4C0EB8C6E5FAF),
+        "main_0012": (424, 0x059F1C87841DD46E),
+    },
+    0x801347A0: {
+        "sc01_0077": (648, 0x0697C6B29C8DF08A),
+        "main_0012": (648, 0xE8F7E0CB1848B05E),
+    },
+    0x80134A28: {
+        "sc01_0077": (76, 0xA9B0AB85FCCB0E61),
+        "main_0012": (76, 0xA9B0AB85FCCB0E61),
+    },
+}
+
+
+def forest_floor_source_only(entry, src, info):
+    pc = entry["vram"]
+    variants = FOREST_FLOOR_EXTENTS.get(pc)
+    if not variants:
+        return False
+    if entry.get("region") in variants or (info and info["member"] in variants):
+        return True
+    if info and (entry["size"], member_digest(info, pc, entry["size"])) in variants.values():
+        return True
+    for member in variants:
+        known = ROOT / "src/overlays" / member / f"{pc:08x}.c"
+        if src.resolve() == known or (known.is_file() and src.read_bytes() == known.read_bytes()):
+            return True
+    return False
+
+
 def scene_player_motion_source_only(entry, src, info):
     pc = entry["vram"]
     extent = SC01_PLAYER_MOTION_EXTENTS.get(pc)
@@ -1042,6 +1081,8 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
         if wrapped_angle and (size != 12 or hashlib.sha256(src.read_bytes()).hexdigest() !=
                 "7e1d58c1eca9742e5c025641f349f594066b5cadd3b4eb1c4a64f8706bb7ace2"):
             raise Reject("source", "wrapped-angle step requires the verified clean source")
+        if forest_floor_source_only(entry, src, info):
+            raise Reject("memory", "floor collision requires checked guest memory and instruction timing")
         if scene_player_motion_source_only(entry, src, info):
             raise Reject("memory", "SC01 player motion requires checked guest memory and instruction timing")
         if vram in DENY:

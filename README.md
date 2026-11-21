@@ -42,8 +42,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 21 source update covers 206 functions across seven scene overlays,
-totaling 8,264 bytes of matching executable code. In the opening scene, one
+The November 21 source update covers 210 functions across seven scene overlays,
+totaling 9,644 bytes of matching executable code. In the opening scene, one
 routine calls the handler selected by the player state byte. Another sets the
 facing direction and counts frames. A separate scene event uses that timer
 to advance its state on the 31st call from a fresh counter. The first opening handler
@@ -79,6 +79,12 @@ and movement limits. Fifteen of these functions also match the forest overlay
 SC01/0077 byte for byte. The sixteenth reads a different scene table there.
 The player continues to interpret this code. Run the component and native
 selection tests with `python3 -m pytest -q tests/test_scene_player_motion.py`.
+
+Four linked SC01/0077 floor-collision routines lower a point to the first
+intersecting face in a grid cell and return its slope class. The component test
+covers face order, plane boundaries, material selection and collision scratch
+state on a late miss. The player interprets these routines. Run
+`python3 -m pytest -q tests/test_forest_floor.py`.
 
 Run the middle-state component test with a C compiler installed.
 
