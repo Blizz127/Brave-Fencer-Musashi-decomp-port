@@ -185,12 +185,12 @@ from unpublished port sources (windows-port `c427ee546`); this recipe does
 not build it. Public player instructions above describe the release
 artifact, not the older source snapshot's menu behavior.
 
-This repository holds the port (`pc_port/`), its tools (`tools/`), tests,
-configuration and documentation, and the owner-authored matched C that the
-port compiles natively (`src/main/`, 252 functions, with their entries in
-`provenance/matches.json`: addresses, sizes and source paths only). All of it
-is the owner's original work. See [EXCLUDED.md](EXCLUDED.md) for what is left
-out and why.
+The public build uses a curated main-executable registry at
+`provenance/native-main.json`. It records 254 owner-authored C sources totaling
+22,288 matched bytes. The registry includes two motion routines used by the
+no-disc smoke test. The existing native-lane allowlist and compiler checks
+decide which routines the player can run as host code. Other paths use the
+interpreter. See [EXCLUDED.md](EXCLUDED.md) for the source inclusion criteria.
 
 Matched C is a reimplementation of the game's own code, written so that the
 original compiler reproduces the original machine code. It is published for
@@ -219,29 +219,40 @@ A build needs the following:
    (the patch is `tools/patches/psycross-local.patch`, made against
    `e56e4cde`). `./tools/fetch_lua.sh` fetches Lua for mod
    scripts. This step is optional.
-3. **Your own disc, at build time.** `tools/native_lane_gen.py` reads
-   `extracted/disc/files/SLUS_007.26` and `extracted/overlays/main/0003.bin`
-   to verify what it compiles. The tools create both files from your disc:
+3. **Prepare your USA disc for the player build.** The extracted executable
+   supplies the initial values used to check guest globals. To reproduce the
+   matching checks, generate its identity after extraction.
 
    ```sh
-   # dumpsxiso from https://github.com/Lameguy64/mkpsxiso, built into
-   # tools/third_party/mkpsxiso/build/; chdman (MAME) on PATH
    python3 tools/register_retail.py "/path/to/Brave Fencer Musashi (USA).chd"
    python3 tools/extract_retail.py "/path/to/Brave Fencer Musashi (USA).chd"
-   python3 tools/extract_cd.py extracted/disc/files/MAIN.CD --output extracted/overlays/main
+   python3 tools/identify_retail.py extracted/disc/files
+   python3 tools/verify_registry.py --registry provenance/native-main.json --jobs 1
+   python3 tools/check_no_retail_data.py --registry provenance/native-main.json --jobs 1
    ```
 
-   These commands check your CHD against the pinned size and SHA-256 of the
-   USA release. They write the BIN/CUE and the disc files to the ignored
-   `extracted/` directory.
-4. **Configure and build:**
+4. **Build and launch the Linux player.** This configuration uses the published
+   main-executable routines. The runtime reads game assets from your disc.
 
    ```sh
-   cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-         -DMUSASHI_NATIVE_LANE=ON -DMUSASHI_LANE_OWN_CODE_ONLY=ON
-   cmake --build build -j"$(nproc)"
+   cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+         -DMUSASHI_NATIVE_LANE=ON -DMUSASHI_LANE_OWN_CODE_ONLY=ON \
+         -DMUSASHI_LANE_OVERLAY_MEMBERS=
+   cmake --build build --parallel 4 --target musashi_native_boot
    build/musashi_native_boot --disc extracted/disc/disc.cue
    ```
+
+To build the native function library on Linux without a disc or PsyCross, use
+the following target. The generator omits functions whose 32-bit guest globals
+need checking against the original executable. The player and the differential
+runtime tests still require your disc.
+
+```sh
+cmake -S . -B build-source -DMUSASHI_WITH_PSYCROSS=OFF \
+      -DMUSASHI_NATIVE_LANE=ON -DMUSASHI_LANE_OWN_CODE_ONLY=ON \
+      -DMUSASHI_LANE_OVERLAY_MEMBERS=
+cmake --build build-source --parallel 4 --target musashi_native_lane_gen
+```
 
 Full build instructions will be in BUILD.md (to be added). Also see
 [docs/PC-PORT.md](docs/PC-PORT.md) and

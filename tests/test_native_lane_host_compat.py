@@ -13,12 +13,27 @@ No game data.
 from pathlib import Path
 import sys
 import unittest
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import native_lane_gen as g  # noqa: E402
 
 
 class HostCompat(unittest.TestCase):
+    def test_absolute_global_requires_its_missing_disc_evidence(self):
+        ir = "%value = load i32, ptr inttoptr (i64 2147549184 to ptr)"
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "SLUS_007.26"
+            with patch.object(g, "MAIN_EXE", path), patch.object(g, "_MAIN_EXE_BYTES", None):
+                g.check_device_pointers("%value = add i32 %x, 1")
+                with self.assertRaisesRegex(g.Reject, "no executable"):
+                    g.check_device_pointers(ir)
+            path.write_bytes(b"unrecognized input")
+            with patch.object(g, "MAIN_EXE", path), patch.object(g, "_MAIN_EXE_BYTES", None):
+                with self.assertRaisesRegex(ValueError, "does not match"):
+                    g.check_device_pointers(ir)
+
     def test_register_pins_stripped(self):
         src = ('register s32 a asm("$5") = 1;\n'
                'register s32 (*fn)(void *) __asm__("$3") = *(void **)p;\n'

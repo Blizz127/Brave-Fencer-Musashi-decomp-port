@@ -596,9 +596,22 @@ if(MUSASHI_BUILD_PC_PORT)
             "comma-separated overlay members for the native lane")
         string(REPLACE "," ";" MUSASHI_LANE_OVERLAY_LIST "${MUSASHI_LANE_OVERLAY_MEMBERS}")
         set(MUSASHI_LANE_OVERLAY_GLOBS)
+        set(MUSASHI_LANE_MEMBER_INPUTS)
         foreach(member IN LISTS MUSASHI_LANE_OVERLAY_LIST)
             list(APPEND MUSASHI_LANE_OVERLAY_GLOBS
-                ${CMAKE_CURRENT_SOURCE_DIR}/src/overlays/${member}/*.c)
+                "${CMAKE_CURRENT_SOURCE_DIR}/src/overlays/${member}/*.c")
+            file(GLOB layout CONFIGURE_DEPENDS
+                "${CMAKE_CURRENT_SOURCE_DIR}/config/overlay_${member}.yaml")
+            if(layout)
+                set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${layout}")
+                file(STRINGS "${layout}" target_line REGEX "^[ 	]*target_path:[ 	]+[^ 	]+" LIMIT_COUNT 1)
+                if(target_line)
+                    string(REGEX REPLACE "^[ 	]*target_path:[ 	]+([^ 	#]+).*" "\\1" member_path "${target_line}")
+                    file(GLOB member_blob CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${member_path}")
+                    list(APPEND MUSASHI_LANE_MEMBER_INPUTS ${member_blob})
+                endif()
+                list(APPEND MUSASHI_LANE_MEMBER_INPUTS ${layout})
+            endif()
         endforeach()
         file(GLOB MUSASHI_LANE_SOURCES CONFIGURE_DEPENDS
             ${CMAKE_CURRENT_SOURCE_DIR}/src/main/*.c ${MUSASHI_LANE_OVERLAY_GLOBS})
@@ -612,15 +625,36 @@ if(MUSASHI_BUILD_PC_PORT)
             set(MUSASHI_LANE_OWN_CODE_FLAG --own-code-only
                 --only ${CMAKE_CURRENT_SOURCE_DIR}/config/lane_own_code_allow.txt)
         endif()
+        # An extract or a full local registry can appear after the first configure.
+        file(GLOB MUSASHI_LOCAL_MATCHES CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/provenance/matches.json")
+        file(GLOB MUSASHI_LANE_EXE CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/extracted/disc/files/SLUS_007.26")
+        file(GLOB MUSASHI_LANE_SYMBOLS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/config/*sym*.txt")
+        file(GENERATE OUTPUT "${MUSASHI_LANE_DIR}/proof-inputs.txt"
+            CONTENT "${MUSASHI_LANE_EXE}\n${MUSASHI_LOCAL_MATCHES}\n${MUSASHI_LANE_SYMBOLS}\n${MUSASHI_LANE_MEMBER_INPUTS}\n")
+        if(MUSASHI_LOCAL_MATCHES)
+            set(MUSASHI_LANE_REGISTRY "${MUSASHI_LOCAL_MATCHES}")
+        else()
+            set(MUSASHI_LANE_REGISTRY "${CMAKE_CURRENT_SOURCE_DIR}/provenance/native-main.json")
+        endif()
         add_custom_command(
             OUTPUT ${MUSASHI_LANE_DIR}/native_lane_table.c
                    ${MUSASHI_LANE_DIR}/libmusashi_native_lane.a
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/native_lane_gen.py
                     --out ${MUSASHI_LANE_DIR} --clang ${MUSASHI_CLANG} --ar ${CMAKE_AR} --jobs 4
+                    --registry "${MUSASHI_LANE_REGISTRY}"
                     --overlay-members "${MUSASHI_LANE_OVERLAY_MEMBERS}"
                     ${MUSASHI_LANE_OWN_CODE_FLAG}
             DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/native_lane_gen.py
-                    ${CMAKE_CURRENT_SOURCE_DIR}/provenance/matches.json
+                    ${MUSASHI_LANE_REGISTRY}
+                    ${MUSASHI_LANE_DIR}/proof-inputs.txt
+                    ${MUSASHI_LANE_EXE}
+                    ${MUSASHI_LANE_MEMBER_INPUTS}
+                    ${MUSASHI_LANE_SYMBOLS}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tools/psyq_manifest.py
+                    ${CMAKE_CURRENT_SOURCE_DIR}/config/psyq_ranges.txt
+                    ${CMAKE_CURRENT_SOURCE_DIR}/config/lane_own_code_allow.txt
                     ${MUSASHI_LANE_SOURCES}
                     ${MUSASHI_LANE_HOOK_SOURCES}
                     ${CMAKE_CURRENT_SOURCE_DIR}/pc_port/platform/psyq/bfm_psyq_compat.def

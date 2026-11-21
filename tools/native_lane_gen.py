@@ -41,6 +41,7 @@ Rules (each rejection names the first rule that failed, in report.json):
 """
 import argparse
 import concurrent.futures
+import hashlib
 import json
 import os
 import re
@@ -52,6 +53,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RAM_LO, RAM_HI = 0x80010000, 0x80200000
 HOST_TARGET = "x86_64-unknown-linux-gnu"
+
+
+def load_matches(path=None):
+    if path is None:
+        path = ROOT / "provenance/matches.json"
+        if not path.is_file():
+            path = ROOT / "provenance/native-main.json"
+    return json.loads(path.read_text())["matches"]
+
+
 def host_long(text):
     """PS1 `long` is 32-bit: rewrite lone `long` / `long int` to `int` for the
     LP64 host, keeping `long long` (64-bit on both)."""
@@ -204,7 +215,11 @@ def member_info(member):
     path = ROOT / tp.group(1)
     if not path.exists() or not code:
         return None
-    return dict(member=member, path=path, vram=vram, start=start, code=code, data=path.read_bytes())
+    data = path.read_bytes()
+    digest = re.search(r"^sha1:\s*([0-9a-fA-F]{40})\s*$", text, flags=re.M)
+    if not digest or hashlib.sha1(data).hexdigest() != digest.group(1).lower():
+        raise ValueError(f"The extracted overlay does not match its configuration: {member}")
+    return dict(member=member, path=path, vram=vram, start=start, code=code, data=data)
 
 
 MAIN_EXE = ROOT / "extracted/disc/files/SLUS_007.26"
@@ -222,7 +237,15 @@ def guest_word(addr, info=None):
         if 0 <= off <= len(info["data"]) - 4:
             return int.from_bytes(info["data"][off:off + 4], "little")
     if _MAIN_EXE_BYTES is None:
-        _MAIN_EXE_BYTES = MAIN_EXE.read_bytes() if MAIN_EXE.exists() else b""
+        try:
+            data = MAIN_EXE.read_bytes()
+        except FileNotFoundError:
+            _MAIN_EXE_BYTES = b""
+        else:
+            if hashlib.sha256(data).hexdigest() != (
+                    "66371c3a7517e9eabd7cb6cf0c5abffe7296bd4bac29c85b8bf7bb9db349714a"):
+                raise ValueError("The extracted SLUS_007.26 does not match the USA executable")
+            _MAIN_EXE_BYTES = data
     off = addr - 0x80010000 + 0x800
     if 0x800 <= off <= len(_MAIN_EXE_BYTES) - 4:
         return int.from_bytes(_MAIN_EXE_BYTES[off:off + 4], "little")
@@ -238,6 +261,8 @@ def check_device_pointers(ir, info=None):
     for m in re.finditer(r"load (?:i32|ptr), ptr inttoptr \(i64 (\d+) to ptr\)", ir):
         addr = int(m.group(1))
         word = guest_word(addr, info)
+        if word is None and not _MAIN_EXE_BYTES:
+            raise Reject("memory", f"no executable to check global at {addr:08x}")
         if word is not None and IO_LO <= word < IO_HI:
             raise Reject("memory", f"device pointer {addr:08x} -> {word:08x}")
 
@@ -1015,7 +1040,7 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
                     source=entry["source"], admitted=False, rule=e.rule, detail=e.detail)
 
 
-def psyq_hooked(hooks):
+def psyq_hooked(hooks, registry=None):
     """PsyQ compat-table entry points (pc_port/platform/psyq/bfm_psyq_compat.def)
     whose body contains a PC the port sequences or observes: the lane must
     not run those natively either. A body without a registry size ends at
@@ -1025,7 +1050,8 @@ def psyq_hooked(hooks):
         return []
     pcs = [int(m.group(1), 16) for m in
            re.finditer(r"^BFM_PSYQ\((0x[0-9A-Fa-f]+),", defs.read_text(), flags=re.M)]
-    registry = json.loads((ROOT / "provenance/matches.json").read_text())["matches"]
+    if registry is None:
+        registry = load_matches()
     sizes = {m["vram"]: m.get("size") for m in registry if m["region"] == "main"}
     starts = sorted(set(sizes) | set(pcs))
     blocked = []
@@ -1221,13 +1247,14 @@ def third_party_derived(m):
     return src.exists() and bool(THIRD_PARTY_MARK.search(src.read_text(errors="replace")[:2000]))
 
 
-def candidates(only=None, excluded=None):
+def candidates(only=None, excluded=None, registry=None):
     """Game-code candidates. Sony PsyQ library ranges (config/psyq_ranges.txt)
     never enter the lane: their entry points belong to PsyCross/HLE."""
     sys.path.insert(0, str(ROOT / "tools"))
     import psyq_manifest
     psyq = psyq_manifest.ranges()
-    registry = json.loads((ROOT / "provenance/matches.json").read_text())["matches"]
+    if registry is None:
+        registry = load_matches()
     picked = []
     for m in registry:
         if m["region"] != "main" or m.get("recovery") != "c":
@@ -1250,8 +1277,9 @@ def candidates(only=None, excluded=None):
     return picked
 
 
-def overlay_candidates(members, only=None):
-    registry = json.loads((ROOT / "provenance/matches.json").read_text())["matches"]
+def overlay_candidates(members, only=None, registry=None):
+    if registry is None:
+        registry = load_matches()
     return [m for m in registry if m["region"] in members and m.get("recovery") == "c"
             and (ROOT / m["source"]).exists() and (not only or m["vram"] in only)]
 
@@ -1269,7 +1297,9 @@ def main():
     ap.add_argument("--overlay-members", default="",
                     help="comma-separated overlay members to compile (e.g. main_0003); each needs "
                          "config/overlay_<m>.yaml and its extracted member file for the digests")
+    ap.add_argument("--registry", type=Path, help="matching registry to use for candidate and hook extents")
     args = ap.parse_args()
+    registry = load_matches(args.registry)
     out = args.out
     (out / "ir").mkdir(parents=True, exist_ok=True)
     def pcs(path):
@@ -1280,7 +1310,7 @@ def main():
     symbols = load_symbol_addrs()
     hooks = hooked_pcs()
     psyq_excluded = []
-    todo = [m for m in candidates(only, psyq_excluded) if m["vram"] not in exclude]
+    todo = [m for m in candidates(only, psyq_excluded, registry) if m["vram"] not in exclude]
     if args.own_code_only:
         kept = [m for m in todo if not third_party_derived(m)]
         print(f"native_lane_gen: own-code-only: {len(todo) - len(kept)} third-party-derived "
@@ -1293,7 +1323,7 @@ def main():
             missing.append(mem)  # no config or no local member file: stays interpreted
         else:
             infos[mem] = info
-    ovl_todo = [m for m in overlay_candidates(set(infos), only) if m["vram"] not in exclude]
+    ovl_todo = [m for m in overlay_candidates(set(infos), only, registry) if m["vram"] not in exclude]
     if args.own_code_only:
         ovl_kept = [m for m in ovl_todo if not third_party_derived(m)]
         print(f"native_lane_gen: own-code-only: {len(ovl_todo) - len(ovl_kept)} third-party-derived "
@@ -1325,7 +1355,7 @@ def main():
     # the thunk runs the guest words. Duplicate definitions cannot occur:
     # each TU defines only its own registry function under lane_func_*.
     direct, thunk = emit_table(admitted, out)
-    blocked = psyq_hooked(hooks)
+    blocked = psyq_hooked(hooks, registry)
     with open(out / "native_lane_table.c", "a") as table:
         table.write("\n/* PsyQ compat entries whose body holds a port-sequenced PC. */\n")
         table.write("const uint32_t musashi_native_lane_hooked_psyq[] = {\n")

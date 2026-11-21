@@ -46,7 +46,11 @@ class PsyqExclusionTest(unittest.TestCase):
     def test_native_lane_never_takes_psyq_candidates(self):
         import native_lane_gen
         excluded = []
-        for m in native_lane_gen.candidates(excluded=excluded):
+        registry = native_lane_gen.load_matches()
+        # The public source registry omits SDK routines. Supply one address
+        # without code and require the generator to reject it before lookup.
+        registry.append(dict(vram=0x800425B0, region="main", recovery="c"))
+        for m in native_lane_gen.candidates(excluded=excluded, registry=registry):
             self.assertIsNone(psyq_manifest.psyq_segment(m["vram"]), m["name"])
         self.assertIn(0x800425B0, excluded)
 

@@ -24,8 +24,9 @@ Everything below was left out. When in doubt, a file was excluded.
 compiles natively: 252 of the 264 functions in `config/lane_own_code_allow.txt`
 (`src/main/`, registry origin empty, no upstream marker in the source, and
 text similarity against the upstream decompilation clear), plus the small
-runtime shims in `src/shared/`. Their registry entries are in
-`provenance/matches.json` (addresses, sizes, paths only).
+runtime shims in `src/shared/`. Their public registry entries are in
+`provenance/native-main.json` (matching metadata only). The registry also
+records two independently re-derived motion routines in the no-disc smoke test.
 
 | Path | Files | Reason |
 |---|---:|---|

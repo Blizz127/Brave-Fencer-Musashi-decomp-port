@@ -487,7 +487,7 @@ int main(int argc, char **argv) {
     size_t exe_size, member_size, i, n = 0, table_count = 0;
     uint32_t vram, fstart, load_off, load_end;
     const char *member;
-    MusashiNativeLaneEntry *table;
+    const MusashiNativeLaneEntry *table;
     MusashiNativeLaneOverlayEntry mine[MAX_ENTRIES];
     unsigned counts[7] = {0}, bad = 0;
     if (argc != 8) {
@@ -530,10 +530,15 @@ int main(int argc, char **argv) {
         ++n;
     }
     if (!n) { fprintf(stderr, "overlay_lane: no overlay entries for %s\n", member); return 1; }
+#ifdef MUSASHI_WITH_PSYCROSS
     table = musashi_native_lane_psyq_merge(musashi_native_lane_generated, musashi_native_lane_generated_count,
                                            MUSASHI_PSYQ_LANE_PURE, &table_count);
     if (!table) return 1;
     musashi_native_lane_psyq_bind(memory, NULL);
+#else
+    table = musashi_native_lane_generated;
+    table_count = musashi_native_lane_generated_count;
+#endif
     if (musashi_native_lane_install(table, table_count) < 0 ||
         musashi_native_lane_install_overlay(mine, n) < 0) {
         fprintf(stderr, "overlay_lane: table rejected\n");

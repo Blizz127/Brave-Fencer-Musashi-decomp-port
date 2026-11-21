@@ -44,10 +44,27 @@ class NativeLaneGeneratorTest(unittest.TestCase):
             raise unittest.SkipTest("clang unavailable")
         cls._tmp = tempfile.TemporaryDirectory(prefix="musashi-lane-")
         cls.out = Path(cls._tmp.name)
+        full_registry = ROOT / "provenance/matches.json"
+        cls.expected = dict(EXPECT)
+        registry_args = []
+        if not full_registry.is_file():
+            public_cases = (0x80019064, 0x8001C044, 0x80014CF8, 0x80015310, 0x8001CFDC)
+            cls.expected = {pc: EXPECT[pc] for pc in public_cases}
+            # Exercise SDK-range exclusion even when the public manifest contains
+            # exclusively game functions. These fixture entries have no code.
+            metadata = json.loads((ROOT / "provenance/native-main.json").read_text())
+            metadata["matches"].extend(dict(region="main", vram=pc, recovery="c")
+                                       for pc in PSYQ)
+            test_registry = cls.out / "registry.json"
+            test_registry.write_text(json.dumps(metadata))
+            registry_args = ["--registry", str(test_registry)]
+        cls.has_exe = (ROOT / "extracted/disc/files/SLUS_007.26").is_file()
+        if not cls.has_exe:
+            cls.expected[0x80019064] = (False, "memory")
         only = cls.out / "only.txt"
-        only.write_text("".join(f"{pc:08x}\n" for pc in (*EXPECT, *PSYQ, *CALLEES)))
+        only.write_text("".join(f"{pc:08x}\n" for pc in (*cls.expected, *PSYQ, *CALLEES)))
         subprocess.run([sys.executable, str(GEN), "--out", str(cls.out), "--clang", cls.clang,
-                        "--jobs", "2", "--only", str(only)], check=True, timeout=300,
+                        "--jobs", "2", "--only", str(only), *registry_args], check=True, timeout=300,
                        capture_output=True)
         cls.report = json.loads((cls.out / "report.json").read_text())
         cls.table = (cls.out / "native_lane_table.c").read_text()
@@ -58,7 +75,7 @@ class NativeLaneGeneratorTest(unittest.TestCase):
 
     def test_decisions(self):
         got = {f["vram"]: f for f in self.report["functions"]}
-        for pc, (admitted, rule) in EXPECT.items():
+        for pc, (admitted, rule) in self.expected.items():
             entry = got[pc]
             self.assertEqual(entry["admitted"], admitted, (hex(pc), entry))
             if not admitted:
@@ -69,14 +86,18 @@ class NativeLaneGeneratorTest(unittest.TestCase):
 
     def test_table_shape(self):
         # Admitted entry, marshalled through the register ABI.
-        self.assertIn('{0x80019064u, 36u, wrap_80019064, "func_80019064", 1u, 0u},', self.table)
+        self.assertIn('{0x8001c044u, 66u, wrap_8001c044, "func_8001C044", 0u, 0u},', self.table)
         # func_80016714 has a bespoke binding, so natively compiled callers
         # reach its guest words through the interpreter thunk.
         self.assertIn("musashi_native_guest_call(0x80016714u, 2u, args, NULL)", self.table)
         # Guest symbols are absolute guest addresses, never host relocations.
-        lane_ir = (self.out / "ir" / "80019064.lane.ll").read_text()
-        self.assertIn("inttoptr (i64 2147960768 to ptr)", lane_ir)  # D_800747C0
-        self.assertNotIn("@D_800747C0", lane_ir)
+        if self.has_exe:
+            self.assertIn('{0x80019064u, 36u, wrap_80019064, "func_80019064", 1u, 0u},', self.table)
+            lane_ir = (self.out / "ir" / "80019064.lane.ll").read_text()
+            self.assertIn("inttoptr (i64 2147960768 to ptr)", lane_ir)
+            self.assertNotIn("@D_800747C0", lane_ir)
+        else:
+            self.assertNotIn("wrap_80019064", self.table)
 
     def test_table_compiles(self):
         cc = shutil.which("cc")

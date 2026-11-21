@@ -140,7 +140,7 @@ int main(int argc, char **argv) {
     uint8_t *image, *reference, *exe;
     FILE *file;
     size_t exe_size, i, table_count = 0;
-    MusashiNativeLaneEntry *table;
+    const MusashiNativeLaneEntry *table;
     unsigned counts[6] = {0}, functions_same = 0, functions_bad = 0;
     const char *only = getenv("MUSASHI_LANE_PROBE_ONLY");
     if (argc != 2) {
@@ -163,11 +163,16 @@ int main(int argc, char **argv) {
     }
     /* Generated decomp C plus port-plat's pure PsyQ wrappers (no GTE owner
      * here, so the GTE-state wrappers refuse and prove only the fallback). */
+#ifdef MUSASHI_WITH_PSYCROSS
     table = musashi_native_lane_psyq_merge(musashi_native_lane_generated,
                                            musashi_native_lane_generated_count,
                                            MUSASHI_PSYQ_LANE_PURE, &table_count);
     if (!table) return 1;
     musashi_native_lane_psyq_bind(memory, NULL);
+#else
+    table = musashi_native_lane_generated;
+    table_count = musashi_native_lane_generated_count;
+#endif
     if (musashi_native_lane_install(table, table_count) < 0) {
         fprintf(stderr, "native_lane: table rejected\n");
         return 1;
