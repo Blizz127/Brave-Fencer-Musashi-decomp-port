@@ -44,4 +44,9 @@ s32 func_801345F8(FloorGrid *grid, FloorPoint *start, FloorPoint *end);
 s32 func_801347A0(s16 five_planes, FloorFace *face, FloorPoint *vertices, s32 *distances);
 s32 func_80134A28(FloorPoint *normal, FloorPoint *point, s32 distance);
 
+extern FloorPoint *D_801870B8;
+s32 func_80134A74(s32 flags, u16 x, u16 z, FloorGrid *grid);
+s32 func_80134C20(s16 flags, FloorFace *face, FloorPoint *vertices, s32 *distances);
+s32 func_80134FB8(FloorPoint *normal, FloorPoint *point, s32 distance);
+
 #endif

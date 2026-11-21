@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include "forest_floor.h"
 
-FloorPoint *D_801870AC, *D_801870B0, *D_801870B4;
+FloorPoint *D_801870AC, *D_801870B0, *D_801870B4, *D_801870B8;
 FloorPoint D_801152A8;
 FloorGrid *D_801D94F0;
 u16 D_801D9500;
@@ -14,6 +14,28 @@ static s32 distances[5];
 static u16 cells[2], ids[2];
 static FloorGrid grid;
 static FloorFace *short_face, *long_face;
+static FloorPoint movement;
+static unsigned callback_calls;
+
+void func_80047E98(FloorPoint *input, FloorPoint *output)
+{
+    /* Stand-in for the external VectorNormalSS service. */
+    assert(input == &movement && output == input);
+    assert(input->x == 0 && input->y == 768 && input->z == 0);
+    assert(probes[2].x == 11 && probes[2].y == 100 && probes[2].z == 21);
+    assert(D_801152A8.y == (u16)-100 && D_801152A8.w == 17);
+    *output = (FloorPoint){2048, (u16)-4096, 4096, 0};
+    callback_calls++;
+}
+
+static void start_contact(void)
+{
+    probes[0] = (FloorPoint){11, 6, 21, 4};
+    probes[1] = (FloorPoint){11, 774, 21, 4};
+    movement = (FloorPoint){0, 768, 0, 0};
+    D_801870B8 = &movement;
+    callback_calls = 0;
+}
 
 static void set_face(FloorFace *face, unsigned count, u16 flags)
 {
@@ -93,6 +115,40 @@ static void misses(void)
     }
 }
 
+static void moving_contact(void)
+{
+    for (unsigned i = 0; i < 9; ++i) {
+        s32 flags = 1;
+        reset(-100);
+        start_contact();
+        switch (i) {
+        case 0: break; /* The last, five-plane face succeeds. */
+        case 1: distances[4]--; break;
+        case 2: short_face->flags |= 0x100; long_face->flags |= 0x100; break;
+        case 3: flags = 0; short_face->flags |= 0x200; long_face->flags |= 0x200; break;
+        case 4: flags = 0; short_face->flags |= 0x100; long_face->flags |= 0x100; break;
+        case 5: grid.x0++; break;
+        case 6: cells[1] = 0; break;
+        case 7: distances[0] = 0; break;
+        case 8: distances[1]--; break;
+        }
+        int hit = func_80134A74(flags, 11, 21, &grid);
+        if (i == 0 || i == 1 || i == 4) {
+            assert(hit && callback_calls == 1);
+            assert(D_801D9500 == (i == 1 ? 0x11 : i == 4 ? 0x122 : 0x22));
+            assert(probes[2].x == 10 && probes[2].y == 102 && probes[2].z == 19);
+        } else {
+            assert(!hit && !callback_calls && D_801152A8.w == 9);
+            assert(D_801D9500 == (i == 3 ? 0x211 : 0xc4));
+            if (i == 2 || i == 3 || i == 8) {
+                assert(probes[2].x == 11 && probes[2].y == 100 && probes[2].z == 21);
+            } else {
+                assert(probes[2].x == 1 && probes[2].y == 2 && probes[2].z == 3);
+            }
+        }
+    }
+}
+
 int main(void)
 {
     assert(sizeof(FloorPoint) == 8 && sizeof(FloorPlane) == 4);
@@ -102,6 +158,7 @@ int main(void)
     assert(short_face && long_face);
     hit_and_selection();
     misses();
+    moving_contact();
     FloorPoint negative = {0x8000, 0x8000, 0x8000, 0};
     assert(func_80134A28(&negative, &negative, INT32_MAX) == 0x3fffffff);
     free(long_face);

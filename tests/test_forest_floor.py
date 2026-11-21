@@ -11,7 +11,8 @@ def test_forest_floor(tmp_path):
     subprocess.run([
         "cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-I", ROOT / "include",
         ROOT / "tests/forest_floor_probe.c", sources / "80134510.c", sources / "801345f8.c",
-        sources / "801347a0.c", sources / "80134a28.c", "-o", binary,
+        sources / "801347a0.c", sources / "80134a28.c", sources / "80134a74.c",
+        sources / "80134c20.c", sources / "80134fb8.c", "-o", binary,
     ], check=True)
     subprocess.run([binary], check=True)
 

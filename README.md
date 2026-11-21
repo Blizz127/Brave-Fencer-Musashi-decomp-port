@@ -42,8 +42,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 21 source update covers 210 functions across seven scene overlays,
-totaling 9,644 bytes of matching executable code. In the opening scene, one
+The November 21 source update covers 213 functions across seven scene overlays,
+totaling 11,068 bytes of matching executable code. In the opening scene, one
 routine calls the handler selected by the player state byte. Another sets the
 facing direction and counts frames. A separate scene event uses that timer
 to advance its state on the 31st call from a fresh counter. The first opening handler
@@ -85,6 +85,12 @@ intersecting face in a grid cell and return its slope class. The component test
 covers face order, plane boundaries, material selection and collision scratch
 state on a late miss. The player interprets these routines. Run
 `python3 -m pytest -q tests/test_forest_floor.py`.
+
+Three additional forest routines test a moving segment against the faces in
+its grid cell. An accepted contact calls the original VectorNormalSS service
+before applying the final position adjustment. The public compatibility entry
+for that service is a stub. The linked C test supplies a synthetic result and
+checks the caller's correction, face material and scratch state.
 
 Run the middle-state component test with a C compiler installed.
 
