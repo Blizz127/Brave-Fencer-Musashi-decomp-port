@@ -1,8 +1,3 @@
-/* syscall(SYS_memfd_create) and ftruncate for the guest window are POSIX/GNU,
- * hidden under a strict -std=c99 build (the probe tests compile this file so). */
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE
-#endif
 #include "musashi_boot_memory.h"
 #include "musashi_callback_registration.h"
 #include "musashi_mips_div.h"
@@ -17,9 +12,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
-#include <sys/syscall.h>
-#include <unistd.h>
 
 /* noinline is load-bearing, not a hint. Inlined into a caller whose table
  * size is a compile-time constant, a table scan gets unrolled and GCC's
@@ -12666,37 +12658,7 @@ typedef struct LaneActive {
 static LaneRunFrame *g_lane_run_frames;
 static LaneActive *g_lane_active;
 
-void *musashi_native_lane_map_guest(size_t size, int *scratchpad_aliased) {
-    /* One shared memfd backs the guest window at 0x80000000; its page at
-     * offset MUSASHI_RAM_SIZE (MusashiBootMemory.scratchpad, page aligned) is
-     * mapped a second time at 0x1F800000, so natively compiled code that
-     * dereferences a scratchpad pointer sees the interpreter's scratchpad. */
-    long page = sysconf(_SC_PAGESIZE);
-    size_t total = (size + (size_t)page - 1u) & ~((size_t)page - 1u);
-    int fd = (int)syscall(SYS_memfd_create, "musashi-guest", 0u);
-    void *window, *pad;
-    if (scratchpad_aliased) *scratchpad_aliased = 0;
-    if (fd < 0) return NULL;
-    if (ftruncate(fd, (off_t)total) != 0) { close(fd); return NULL; }
-    window = mmap((void *)(uintptr_t)MUSASHI_NATIVE_LANE_GUEST_BASE, total, PROT_READ | PROT_WRITE,
-                  MAP_SHARED | 0x100000 /* MAP_FIXED_NOREPLACE */, fd, 0);
-    if (window == MAP_FAILED || (uintptr_t)window != MUSASHI_NATIVE_LANE_GUEST_BASE) {
-        if (window != MAP_FAILED) munmap(window, total);
-        close(fd);
-        return NULL;
-    }
-    if ((MUSASHI_RAM_SIZE % (uint32_t)page) == 0u && total > MUSASHI_RAM_SIZE) {
-        pad = mmap((void *)(uintptr_t)0x1f800000u, (size_t)page, PROT_READ | PROT_WRITE,
-                   MAP_SHARED | 0x100000, fd, (off_t)MUSASHI_RAM_SIZE);
-        if (pad != MAP_FAILED && (uintptr_t)pad == 0x1f800000u) {
-            if (scratchpad_aliased) *scratchpad_aliased = 1;
-        } else if (pad != MAP_FAILED) {
-            munmap(pad, (size_t)page);
-        }
-    }
-    close(fd);
-    return window;
-}
+/* musashi_native_lane_map_guest is host-specific: pc_port/platform/. */
 
 uint32_t musashi_native_lane_current(void) {
     return g_lane_active ? g_lane_active->guest_pc : 0u;

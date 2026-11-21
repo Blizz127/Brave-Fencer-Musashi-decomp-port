@@ -38,8 +38,8 @@ void musashi_psyx_shutdown(void);
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <dlfcn.h>
-#include <openssl/sha.h>
+#include "platform.h"
+#include "musashi_sha256_digest.h"
 #include <signal.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -2790,7 +2790,7 @@ static void observe_entry(void *userdata, const MusashiEntryCpuSnapshot *cpu) {
     }
     if (cpu->pc == 0x80045698u) {
         const uint8_t *pvd = musashi_boot_ram_span(&boot->memory, cpu->r[16], 2048);
-        uint8_t raw[MUSASHI_DISC_RAW_SECTOR_SIZE], digest[SHA256_DIGEST_LENGTH];
+        uint8_t raw[MUSASHI_DISC_RAW_SECTOR_SIZE], digest[32];
         int valid = pvd != NULL;
         /* Read-only verification after the source read returns. The disc
          * comparison never supplies bytes to guest RAM or alters CD state. */
@@ -2799,21 +2799,21 @@ static void observe_entry(void *userdata, const MusashiEntryCpuSnapshot *cpu) {
             memcmp(pvd, raw+24, 2048) == 0;
         fprintf(stderr,"native_boot: PVD_RETURN pc=%08x result=%08x address=%08x valid=%d bytes=2048 retail_exact=%d sha256=",
                 cpu->pc,cpu->r[2],cpu->r[16],valid,exact);
-        if (valid && SHA256(pvd,2048,digest))
+        if (valid && musashi_sha256_digest(pvd,2048,digest))
             for (i=0;i<sizeof(digest);++i) fprintf(stderr,"%02x",digest[i]);
         fputc('\n',stderr);
     }
     if (cpu->pc == 0x80045744u) {
         uint32_t lba = 0;
         const uint8_t *data = musashi_boot_ram_span(&boot->memory,cpu->r[16],2048);
-        uint8_t raw[MUSASHI_DISC_RAW_SECTOR_SIZE],digest[SHA256_DIGEST_LENGTH];
+        uint8_t raw[MUSASHI_DISC_RAW_SECTOR_SIZE],digest[32];
         int valid = data && musashi_boot_read32(&boot->memory,cpu->r[29]+0x18u,&lba);
         int exact = valid && boot->media &&
             musashi_disc_media_read_sector(boot->media,lba,raw,sizeof(raw)) &&
             memcmp(data,raw+24,2048) == 0;
         fprintf(stderr,"native_boot: PATH_TABLE_READ_RETURN result=%08x lba=%u address=%08x valid=%d bytes=2048 retail_exact=%d sha256=",
                 cpu->r[2],lba,cpu->r[16],valid,exact);
-        if (valid && SHA256(data,2048,digest))
+        if (valid && musashi_sha256_digest(data,2048,digest))
             for (i=0;i<sizeof(digest);++i) fprintf(stderr,"%02x",digest[i]);
         fputc('\n',stderr);
     }
@@ -2829,7 +2829,7 @@ static void observe_entry(void *userdata, const MusashiEntryCpuSnapshot *cpu) {
     if (cpu->pc == 0x80045a50u) {
         uint32_t lba = 0;
         const uint8_t *data = musashi_boot_ram_span(&boot->memory,cpu->r[16],2048);
-        uint8_t raw[MUSASHI_DISC_RAW_SECTOR_SIZE],digest[SHA256_DIGEST_LENGTH];
+        uint8_t raw[MUSASHI_DISC_RAW_SECTOR_SIZE],digest[32];
         /* The source directory ordinal selects the live path-cache extent.
          * This comparison is diagnostic only, after the real CD read. */
         int valid = data && cpu->r[22] >= 1u && cpu->r[22] <= 128u &&
@@ -2839,7 +2839,7 @@ static void observe_entry(void *userdata, const MusashiEntryCpuSnapshot *cpu) {
             memcmp(data,raw+24,2048) == 0;
         fprintf(stderr,"native_boot: DIRECTORY_READ_RETURN result=%08x ordinal=%u lba=%u address=%08x valid=%d bytes=2048 retail_exact=%d sha256=",
                 cpu->r[2],cpu->r[22],lba,cpu->r[16],valid,exact);
-        if (valid && SHA256(data,2048,digest))
+        if (valid && musashi_sha256_digest(data,2048,digest))
             for (i=0;i<sizeof(digest);++i) fprintf(stderr,"%02x",digest[i]);
         fputc('\n',stderr);
     }
@@ -3118,7 +3118,7 @@ static void observe_entry(void *userdata, const MusashiEntryCpuSnapshot *cpu) {
         fprintf(stderr,"native_boot: LIST_REQUEST_RETURN result=%08x\n",cpu->r[2]);
         if (cpu->r[2]) {
             const uint8_t *data=musashi_boot_ram_span(&boot->memory,0x80180000u,0xe40u);
-            uint8_t raw[MUSASHI_DISC_RAW_SECTOR_SIZE],digest[SHA256_DIGEST_LENGTH];
+            uint8_t raw[MUSASHI_DISC_RAW_SECTOR_SIZE],digest[32];
             /* Read-only comparison against the source's actual E40 request.
              * These media reads never populate guest RAM or CD state. */
             int exact=data && boot->media &&
@@ -3127,7 +3127,7 @@ static void observe_entry(void *userdata, const MusashiEntryCpuSnapshot *cpu) {
                 musashi_disc_media_read_sector(boot->media,228,raw,sizeof(raw)) &&
                 memcmp(data+2048,raw+24,0xe40u-2048)==0;
             fprintf(stderr,"native_boot: LIST_PAYLOAD address=80180000 bytes=3648 valid=%d retail_exact=%d sha256=",data!=NULL,exact);
-            if (data && SHA256(data,0xe40u,digest))
+            if (data && musashi_sha256_digest(data,0xe40u,digest))
                 for (i=0;i<sizeof(digest);++i) fprintf(stderr,"%02x",digest[i]);
             fputc('\n',stderr);
             const uint8_t *tail=musashi_boot_ram_span(&boot->memory,0x80180e40u,448);
@@ -3200,6 +3200,10 @@ static const char *cache_exe_from_disc(const MusashiDiscMedia *media) {
     char dir[4096];
     const char *cache = getenv("XDG_CACHE_HOME"), *home = getenv("HOME");
     uint8_t *exe = malloc(0x65000u);
+#ifdef _WIN32
+    /* %LOCALAPPDATA%\bfm-port: machine-local, like ~/.cache. */
+    if (!cache || !cache[0]) cache = getenv("LOCALAPPDATA");
+#endif
     size_t size = 0;
     FILE *file;
     int ok;
@@ -3259,8 +3263,8 @@ static int load_exe(NativeBoot *boot, const char *path) {
 
 static void report_exe_identity(const char *path) {
     FILE *file = fopen(path, "rb");
-    unsigned char digest[SHA256_DIGEST_LENGTH];
-    char hex[SHA256_DIGEST_LENGTH * 2 + 1];
+    unsigned char digest[32];
+    char hex[32 * 2 + 1];
     long size = -1;
     unsigned i;
     fprintf(stderr,
@@ -3270,18 +3274,18 @@ static void report_exe_identity(const char *path) {
     if (!file) {
         fputs("  problem:  cannot be opened\n", stderr);
     } else {
-        SHA256_CTX ctx;
+        BfmPlatSha256 ctx;
         unsigned char buffer[65536];
         size_t got;
-        SHA256_Init(&ctx);
+        bfm_plat_sha256_init(&ctx);
         size = 0;
         while ((got = fread(buffer, 1, sizeof(buffer), file)) > 0) {
-            SHA256_Update(&ctx, buffer, got);
+            bfm_plat_sha256_update(&ctx, buffer, got);
             size += (long)got;
         }
         fclose(file);
-        SHA256_Final(digest, &ctx);
-        for (i = 0; i < SHA256_DIGEST_LENGTH; ++i) sprintf(hex + 2 * i, "%02x", digest[i]);
+        bfm_plat_sha256_final(&ctx, digest);
+        for (i = 0; i < 32; ++i) sprintf(hex + 2 * i, "%02x", digest[i]);
         fprintf(stderr, "  size:     %ld bytes (expected 413696)\n"
                         "  sha256:   %s\n", size, hex);
     }
@@ -3610,12 +3614,12 @@ static void host_window_inspect(SDL_Window *window) {
     SDL_SetWindowTitle(window,
                        interactive ? "Brave Fencer Musashi - native PC (Interactive)"
                                    : "Brave Fencer Musashi - native VRAM");
-    set_focusable = (int (*)(SDL_Window *, int))dlsym(RTLD_DEFAULT, "SDL_SetWindowFocusable");
+    set_focusable = (int (*)(SDL_Window *, int))musashi_host_symbol("SDL_SetWindowFocusable");
     if (set_focusable)
         set_focusable(window, interactive ? 1 : 0);
-    get_props = (unsigned (*)(SDL_Window *))dlsym(RTLD_DEFAULT, "SDL_GetWindowProperties");
-    get_ptr = (void *(*)(unsigned, const char *, void *))dlsym(RTLD_DEFAULT, "SDL_GetPointerProperty");
-    get_num = (long long (*)(unsigned, const char *, long long))dlsym(RTLD_DEFAULT, "SDL_GetNumberProperty");
+    get_props = (unsigned (*)(SDL_Window *))musashi_host_symbol("SDL_GetWindowProperties");
+    get_ptr = (void *(*)(unsigned, const char *, void *))musashi_host_symbol("SDL_GetPointerProperty");
+    get_num = (long long (*)(unsigned, const char *, long long))musashi_host_symbol("SDL_GetNumberProperty");
     if (get_props && get_ptr && get_num) {
         unsigned props = get_props(window);
         void *dpy = get_ptr(props, "SDL.window.x11.display", NULL);
@@ -3651,7 +3655,6 @@ static void hold_window(NativeBoot *boot) {
 
 #ifdef MUSASHI_NATIVE_LANE_TABLE
 #include <stddef.h>
-#include <sys/mman.h>
 #include "musashi_native_lane.h"
 #include "musashi_native_lane_psyq.h"
 #ifndef MAP_FIXED_NOREPLACE
@@ -3678,27 +3681,6 @@ _Static_assert(sizeof(((NativeBoot *)0)->ram_mirror_guard) % 4096u == 0u,
  * so the boot owner, whose first member is guest RAM, is placed at host
  * 0x80000000. Without that window the lane stays off and the interpreter
  * runs every word, exactly as without MUSASHI_NATIVE_LANE. */
-/* A host fault inside natively compiled decomp C names the lane function
- * (async-signal-safe formatting only), then exits 139. */
-static void lane_fault(int sig, siginfo_t *info, void *context) {
-    char buf[128];
-    static const char hex[] = "0123456789abcdef";
-    uint64_t addr = (uint64_t)(uintptr_t)info->si_addr;
-    uint32_t pc = musashi_native_lane_current();
-    int i, n = 0;
-    const char *head = "native_boot: HOST_FAULT addr=";
-    (void)context;
-    while (*head) buf[n++] = *head++;
-    for (i = 60; i >= 0; i -= 4) buf[n++] = hex[(addr >> i) & 15u];
-    head = " lane_pc=";
-    while (*head) buf[n++] = *head++;
-    for (i = 28; i >= 0; i -= 4) buf[n++] = hex[(pc >> i) & 15u];
-    buf[n++] = '\n';
-    (void)!write(2, buf, (size_t)n);
-    signal(sig, SIG_DFL);
-    raise(sig);
-}
-
 static NativeBoot *native_boot_owner(NativeBoot *fallback) {
     const char *value = getenv("MUSASHI_NATIVE_LANE");
     void *window;
@@ -3712,18 +3694,13 @@ static NativeBoot *native_boot_owner(NativeBoot *fallback) {
         }
         if (!aliased)
             fprintf(stderr, "native_boot: NATIVE_LANE scratchpad alias at 1f800000 unavailable\n");
-        if (mprotect(((NativeBoot *)window)->ram_mirror_guard,
-                     sizeof(((NativeBoot *)window)->ram_mirror_guard), PROT_NONE) != 0)
+        if (musashi_host_protect_none(((NativeBoot *)window)->ram_mirror_guard,
+                                      sizeof(((NativeBoot *)window)->ram_mirror_guard)) != 0)
             fprintf(stderr, "native_boot: NATIVE_LANE mirror guard unavailable\n");
     }
-    {
-        struct sigaction action;
-        memset(&action, 0, sizeof action);
-        action.sa_sigaction = lane_fault;
-        action.sa_flags = SA_SIGINFO;
-        sigaction(SIGSEGV, &action, NULL);
-        sigaction(SIGBUS, &action, NULL);
-    }
+    /* A host fault inside natively compiled decomp C names the lane function,
+     * then exits 139. */
+    musashi_host_install_fault_report();
     {
         /* Generated decomp C plus port-plat's PsyQ compat wrappers. The
          * device-level wrappers bypass the emulated GPU/CD/IRQ timing, so

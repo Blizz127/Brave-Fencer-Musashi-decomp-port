@@ -1,6 +1,6 @@
 #include "musashi_boot_memory.h"
 
-#include <openssl/evp.h>
+#include "musashi_sha256_digest.h"
 #include <stdatomic.h>
 #include <string.h>
 
@@ -81,12 +81,11 @@ int musashi_boot_map_exe(MusashiBootMemory *memory, const uint8_t *exe,
         0x72, 0x96, 0xbd, 0x4b, 0xac, 0x29, 0xc8, 0x5b,
         0x8b, 0xf7, 0xbb, 0x9d, 0xb3, 0x49, 0x71, 0x4a
     };
-    uint8_t digest[EVP_MAX_MD_SIZE];
-    unsigned int digest_size = 0;
+    uint8_t digest[32];
     if (!memory || !exe || exe_size != 0x65000u)
         return 0;
-    if (EVP_Digest(exe, exe_size, digest, &digest_size, EVP_sha256(), NULL) != 1 ||
-        digest_size != sizeof(expected) || memcmp(digest, expected, sizeof(expected)))
+    if (!musashi_sha256_digest(exe, exe_size, digest) ||
+        memcmp(digest, expected, sizeof(expected)))
         return 0;
 
     memmove(memory->bytes + 0x10000u, exe + 0x800u, 0x64800u);

@@ -1,6 +1,6 @@
 #include "musashi_disc_media.h"
 
-#include <openssl/evp.h>
+#include "musashi_sha256_digest.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,13 +28,11 @@ static int hex_value(char value) {
 
 static int sha256_matches(const unsigned char *data, size_t size,
                           const char *expected_hex) {
-    unsigned char digest[EVP_MAX_MD_SIZE];
-    unsigned int digest_size = 0;
+    unsigned char digest[32];
     size_t i;
 
     if (!data || !expected_hex || strlen(expected_hex) != 64u ||
-        EVP_Digest(data, size, digest, &digest_size, EVP_sha256(), NULL) != 1 ||
-        digest_size != 32u)
+        !musashi_sha256_digest(data, size, digest))
         return 0;
     for (i = 0; i < 32u; ++i) {
         int high = hex_value(expected_hex[i * 2u]);
@@ -175,16 +173,31 @@ static long file_size(const char *path) {
     return length;
 }
 
+static int cue_file_is_absolute(const char *name) {
+#ifdef _WIN32
+    if (name[0] == '\\' || (name[0] && name[1] == ':')) return 1;
+#endif
+    return name[0] == '/';
+}
+
 /* Up to eight FILE entries of a cue sheet, resolved against its folder. */
 static int cue_files(const char *cue_path, char files[][4096], int max) {
     FILE *cue = fopen(cue_path, "r");
-    char line[4096], dir[4096];
+    char line[4096];
     const char *slash = strrchr(cue_path, '/');
     int count = 0;
+#ifdef _WIN32
+    /* Windows paths may use either separator (and "C:disc.cue" names a folder by drive). */
+    {
+        const char *back = strrchr(cue_path, '\\');
+        if (back && (!slash || back > slash)) slash = back;
+        if (!slash && cue_path[0] && cue_path[1] == ':') slash = cue_path + 1;
+    }
+#endif
     if (!cue) return -1;
-    snprintf(dir, sizeof dir, "%.*s", slash ? (int)(slash - cue_path) : 0, cue_path);
     while (fgets(line, sizeof line, cue)) {
         char *p = line, *name, *end;
+        size_t prefix, name_length;
         while (*p == ' ' || *p == '\t') ++p;
         if (strncmp(p, "FILE", 4) != 0 || (p[4] != ' ' && p[4] != '\t')) continue;
         p += 5;
@@ -198,8 +211,14 @@ static int cue_files(const char *cue_path, char files[][4096], int max) {
         }
         if (!end || end == name || count >= max) { fclose(cue); return -1; }
         *end = '\0';
-        if (name[0] == '/' || !slash) snprintf(files[count], 4096, "%s", name);
-        else snprintf(files[count], 4096, "%s/%s", dir, name);
+        prefix = slash && !cue_file_is_absolute(name) ? (size_t)(slash + 1 - cue_path) : 0;
+        name_length = (size_t)(end - name);
+        if (prefix >= sizeof(files[0]) || name_length >= sizeof(files[0]) - prefix) {
+            fclose(cue);
+            return -1;
+        }
+        memcpy(files[count], cue_path, prefix);
+        memcpy(files[count] + prefix, name, name_length + 1);
         ++count;
     }
     fclose(cue);
@@ -209,6 +228,7 @@ static int cue_files(const char *cue_path, char files[][4096], int max) {
 MusashiDiscMedia *musashi_disc_media_open_image(const char *path, char *why,
                                                 size_t why_size) {
     char files[8][4096];
+    size_t track_sizes[8];
     int count, i;
     size_t offset = 0;
     unsigned char *image;
@@ -222,14 +242,18 @@ MusashiDiscMedia *musashi_disc_media_open_image(const char *path, char *why,
         count = cue_files(path, files, 8);
         if (count <= 0) REFUSE("%s could not be read as a cue sheet.", path);
     } else {
-        snprintf(files[0], sizeof files[0], "%s", path);
+        if (strlen(path) >= sizeof files[0]) REFUSE("The disc image path is too long.");
+        memcpy(files[0], path, strlen(path) + 1u);
         count = 1;
     }
     for (i = 0; i < count; ++i) {
         long length = file_size(files[i]);
         if (length < 0) REFUSE("The disc image file %s is missing.", files[i]);
-        if ((unsigned long)length > PINNED_BIN_SIZE - offset) offset = PINNED_BIN_SIZE + 1u;
-        else offset += (size_t)length;
+        if ((unsigned long)length > PINNED_BIN_SIZE - offset)
+            REFUSE("%s is not a complete image of Brave Fencer Musashi (USA, SLUS-00726): "
+                   "the size does not match.", path);
+        track_sizes[i] = (size_t)length;
+        offset += track_sizes[i];
     }
     if (offset != PINNED_BIN_SIZE)
         REFUSE("%s is not a complete image of Brave Fencer Musashi (USA, SLUS-00726): "
@@ -237,12 +261,11 @@ MusashiDiscMedia *musashi_disc_media_open_image(const char *path, char *why,
     image = malloc(PINNED_BIN_SIZE);
     if (!image) REFUSE("Not enough memory to load the disc image.");
     for (offset = 0, i = 0; i < count; ++i) {
-        size_t length = (size_t)file_size(files[i]);
-        if (!read_file_bytes(files[i], image + offset, length)) {
+        if (!read_file_bytes(files[i], image + offset, track_sizes[i])) {
             free(image);
             REFUSE("The disc image file %s could not be read.", files[i]);
         }
-        offset += length;
+        offset += track_sizes[i];
     }
     if (!sha256_matches(image, PINNED_BIN_SIZE,
                         "0a53702937d74e20d99fee9a29a80f7e91da762e66958819d531173939a50879")) {

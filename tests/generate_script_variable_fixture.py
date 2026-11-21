@@ -13,7 +13,7 @@ ACCESSORS = (
 )
 
 
-def main(out, clang, ar):
+def main(out, clang, ar, host_target=None):
     out.mkdir(parents=True, exist_ok=True)
     registry = json.loads((ROOT / "provenance/native-main.json").read_text())
     matched = {row["vram"]: row for row in registry["matches"] if row["region"] == "main"}
@@ -40,7 +40,8 @@ extern {result} {callee}({params});
     manifest = out / "fixture.json"
     manifest.write_text(json.dumps({"matches": rows}))
     subprocess.run([sys.executable, ROOT / "tools/native_lane_gen.py", "--registry", manifest,
-                    "--own-code-only", "--out", out, "--clang", clang, "--ar", ar, "--jobs", "1"],
+                    "--own-code-only", "--out", out, "--clang", clang, "--ar", ar, "--jobs", "1",
+                    *(["--host-target", host_target] if host_target else [])],
                    check=True)
     report = json.loads((out / "report.json").read_text())
     if report["admitted"] != len(rows) or report["call_stubs"]["direct"] != len(ACCESSORS):
@@ -48,4 +49,5 @@ extern {result} {callee}({params});
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]).resolve(), sys.argv[2], sys.argv[3])
+    main(Path(sys.argv[1]).resolve(), sys.argv[2], sys.argv[3],
+         sys.argv[4] if len(sys.argv) > 4 else None)

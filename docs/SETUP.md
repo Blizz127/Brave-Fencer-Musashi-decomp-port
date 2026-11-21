@@ -171,6 +171,40 @@ The package review found both game tables in its player.
 - Interrupts can arrive late at native/interpreted call edges (IRQ-GAP-D011).
 - Whole-game completion is unverified.
 
+## Cross-build the current Windows x64 player on Linux
+
+The public player compiles admitted game routines to x86-64 Windows code and runs other paths through its MIPS interpreter. Use the source checkout, pinned PsyCross dependency and USA disc preparation described in the repository README. The original disc stays on your machine. The build host needs Zig 0.13.0, CMake, Ninja, Clang, Python and GNU binutils.
+
+Set `win_deps` to an absolute directory for the Windows development SDKs. Verify the downloaded archives before extracting them.
+
+| SDK archive | SHA-256 | Extract under |
+| --- | --- | --- |
+| [SDL2 2.32.10 MinGW development archive](https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-devel-2.32.10-mingw.tar.gz) | `83a5d74012311edc3c0d40ea6faecbe57ad692aa033fa5dc273cc937e3938ff2` | `$win_deps/sdl2` |
+| [OpenAL Soft 1.25.1 binaries](https://openal-soft.org/openal-binaries/openal-soft-1.25.1-bin.zip) | `0915af01928b17e46f7c59ffc44a7413486bbef8424a3465109f489a80cb68a2` | `$win_deps/openal` |
+
+Run these commands from the source root. `SOURCE_DATE_EPOCH` gives repeated links of the same sources and inputs a stable PE timestamp.
+
+```sh
+export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+cmake -S . -B build-windows -G Ninja \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/zig-windows.cmake" \
+  -DMUSASHI_WINDOWS_DEPS="$win_deps" \
+  -DMUSASHI_NATIVE_LANE=ON -DMUSASHI_LANE_OWN_CODE_ONLY=ON \
+  -DMUSASHI_LANE_OVERLAY_MEMBERS= -DMUSASHI_LANE_JOBS=1
+cmake --build build-windows --parallel 1 --target musashi_native_boot
+cp "$win_deps/sdl2/SDL2-2.32.10/x86_64-w64-mingw32/bin/SDL2.dll" build-windows/
+cp "$win_deps/openal/openal-soft-1.25.1-bin/bin/Win64/soft_oal.dll" build-windows/OpenAL32.dll
+```
+
+Keep the two DLLs beside `musashi_native_boot.exe` on the Windows machine. Launch it with your own USA disc image from PowerShell.
+
+```powershell
+.\musashi_native_boot.exe --disc "C:\Games\Musashi\disc.cue"
+```
+
+The native-lane differential probe can also be built as `musashi_native_lane_probe` in the same build directory. Pass the path to your extracted `SLUS_007.26` when running its executable. Its output distinguishes equal, different, failed and non-comparable cases. The Windows testing reported for this source port uses Wine.
+
 ## Troubleshooting
 
 | Symptom | Action |

@@ -22,12 +22,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
+#ifdef _WIN32
+#include <windows.h>
+#include <wchar.h>
+#else
 #include <sys/wait.h>
 #include <unistd.h>
-
-#ifndef MAP_FIXED_NOREPLACE
-#define MAP_FIXED_NOREPLACE 0x100000
 #endif
 
 extern const MusashiNativeLaneEntry musashi_native_lane_generated[];
@@ -44,17 +44,69 @@ enum Outcome { SAME, DIFFERENT, NATIVE_FAILED, NOT_COMPARABLE, MIRROR_FAULT, WRA
  * and guest address arithmetic wraps at 32 bits where host pointer
  * arithmetic does not. The probe's absurd arguments (arena pointers used as
  * array indices) reach both; anything else is a real failure. */
-static void on_fault(int sig, siginfo_t *info, void *context) {
-    uint64_t address = (uint64_t)(uintptr_t)info->si_addr;
-    (void)sig; (void)context;
+static int fault_outcome(uint64_t address) {
     if (address < 0x00800000u || (address >= 0x80200000u && address < 0x80800000u) ||
         (address >= 0xa0000000u && address < 0xa0800000u))
-        _exit(MIRROR_FAULT);
+        return MIRROR_FAULT;
     if (address >= 0x100000000ull)
-        _exit(WRAP_FAULT);
+        return WRAP_FAULT;
     fprintf(stderr, "native_lane: fault address %llx\n", (unsigned long long)address);
-    _exit(128 + SIGSEGV);
+    return 128 + SIGSEGV;
 }
+
+#ifdef _WIN32
+static LONG WINAPI on_fault(EXCEPTION_POINTERS *info) {
+    const EXCEPTION_RECORD *record = info->ExceptionRecord;
+    if (record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || record->NumberParameters < 2)
+        return EXCEPTION_CONTINUE_SEARCH;
+    ExitProcess((UINT)fault_outcome((uint64_t)record->ExceptionInformation[1]));
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+/* Re-exec the same program and preserve the original quoted disc path.
+ * Each pattern has its own process and guest window, as it does with fork. */
+static int windows_child_case(size_t index, unsigned pattern) {
+    const wchar_t *original = GetCommandLineW();
+    size_t capacity = wcslen(original) + 64;
+    wchar_t *command = malloc(capacity * sizeof(*command));
+    wchar_t executable[32768];
+    STARTUPINFOW startup = {0};
+    PROCESS_INFORMATION process = {0};
+    DWORD length, status = NATIVE_FAILED;
+    int created;
+    if (!command) return NATIVE_FAILED;
+    length = GetModuleFileNameW(NULL, executable, sizeof(executable) / sizeof(*executable));
+    if (!length || length >= sizeof(executable) / sizeof(*executable) ||
+        swprintf(command, capacity, L"%ls --case %lu %u", original,
+                 (unsigned long)index, pattern) < 0) {
+        free(command);
+        return NATIVE_FAILED;
+    }
+    startup.cb = sizeof(startup);
+    created = CreateProcessW(executable, command, NULL, NULL, FALSE, 0,
+                             NULL, NULL, &startup, &process);
+    free(command);
+    if (!created) return NATIVE_FAILED;
+    if (WaitForSingleObject(process.hProcess, 15000) == WAIT_OBJECT_0) {
+        if (!GetExitCodeProcess(process.hProcess, &status)) status = NATIVE_FAILED;
+    } else {
+        TerminateProcess(process.hProcess, NATIVE_FAILED);
+        WaitForSingleObject(process.hProcess, INFINITE);
+    }
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return status <= WRAP_FAULT ? (int)status : NATIVE_FAILED;
+}
+
+/* The parent watchdog covers both the bounded reference and the native call. */
+static void case_alarm(unsigned seconds) { (void)seconds; }
+#else
+static void on_fault(int sig, siginfo_t *info, void *context) {
+    (void)sig; (void)context;
+    _exit(fault_outcome((uint64_t)(uintptr_t)info->si_addr));
+}
+#define case_alarm alarm
+#endif
 
 static uint32_t rng_state = 0x1234567u;
 static uint32_t rng(void) {
@@ -95,19 +147,19 @@ static int run_case(MusashiBootMemory *memory, const uint8_t *image,
         uint8_t *start = malloc(MUSASHI_RAM_SIZE);
         if (!start) return NOT_COMPARABLE;
         memcpy(start, memory->bytes, MUSASHI_RAM_SIZE);
-        alarm(5);
+        case_alarm(5);
         ok = musashi_native_lane_reference_call(memory, entry->guest_pc, args, argc,
                                                 STACK_TOP, 0, &ref_v0, NULL);
-        alarm(0);
+        case_alarm(0);
         if (!ok) { free(start); return NOT_COMPARABLE; }
         memcpy(reference, memory->bytes, MUSASHI_RAM_SIZE);
         memcpy(memory->bytes, start, MUSASHI_RAM_SIZE);
         free(start);
     }
-    alarm(5);
+    case_alarm(5);
     ok = musashi_native_lane_reference_call(memory, entry->guest_pc, args, argc,
                                             STACK_TOP, 1, &lane_v0, NULL);
-    alarm(0);
+    case_alarm(0);
     if (!ok) return NATIVE_FAILED;
     if (entry->returns && ref_v0 != lane_v0) {
         fprintf(stderr, "native_lane: %s pattern %u v0 interp=%08x native=%08x\n",
@@ -143,7 +195,12 @@ int main(int argc, char **argv) {
     const MusashiNativeLaneEntry *table;
     unsigned counts[6] = {0}, functions_same = 0, functions_bad = 0;
     const char *only = getenv("MUSASHI_LANE_PROBE_ONLY");
-    if (argc != 2) {
+#ifdef _WIN32
+    int child = argc == 5 && strcmp(argv[2], "--case") == 0;
+#else
+    int child = 0;
+#endif
+    if (argc != 2 && !child) {
         fprintf(stderr, "usage: %s SLUS_007.26\n", argv[0]);
         return 2;
     }
@@ -185,12 +242,28 @@ int main(int argc, char **argv) {
     reference = malloc(MUSASHI_RAM_SIZE);
     if (!image || !reference) return 1;
     memcpy(image, memory->bytes, MUSASHI_RAM_SIZE);
+#ifdef _WIN32
+    if (child) {
+        char *end_index, *end_pattern;
+        unsigned long index = strtoul(argv[3], &end_index, 10);
+        unsigned long pattern = strtoul(argv[4], &end_pattern, 10);
+        if (end_index == argv[3] || *end_index || index >= table_count ||
+            end_pattern == argv[4] || *end_pattern || pattern >= PATTERNS)
+            return NATIVE_FAILED;
+        SetUnhandledExceptionFilter(on_fault);
+        return run_case(memory, image, &table[index], (unsigned)pattern, reference);
+    }
+#endif
     for (i = 0; i < table_count; ++i) {
         const MusashiNativeLaneEntry *entry = &table[i];
         unsigned pattern, same = 0, bad = 0;
         if (only && strtoul(only, NULL, 16) != entry->guest_pc) continue;
         for (pattern = 0; pattern < PATTERNS; ++pattern) {
-            int status, outcome;
+            int outcome;
+#ifdef _WIN32
+            outcome = windows_child_case(i, pattern);
+#else
+            int status;
             pid_t child;
             fflush(stderr);
             child = fork();
@@ -207,6 +280,7 @@ int main(int argc, char **argv) {
             if (child < 0 || waitpid(child, &status, 0) != child) return 1;
             if (WIFEXITED(status)) outcome = WEXITSTATUS(status);
             else outcome = -WTERMSIG(status);
+#endif
             if (outcome < 0) {
                 /* The bounds-checked interpreter cannot fault, and its step
                  * limit ends well inside the alarm: this is the native run. */
