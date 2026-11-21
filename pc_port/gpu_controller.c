@@ -907,21 +907,30 @@ static int fill_triangle(MusashiGpuController *controller,
     return 1;
 }
 
+/* Each E2 mask bit selects one of bits 3..7 in the incoming coordinate. */
+static unsigned window_coordinate(unsigned coordinate, unsigned mask, unsigned offset) {
+    mask = (mask & 31u) << 3;
+    return ((coordinate & ~mask) | ((offset << 3) & mask)) & 255u;
+}
+
 static int sample_texel(MusashiGpuController *controller,
                         unsigned fmt, unsigned tx, unsigned ty,
                         unsigned clut_x, unsigned clut_y,
                         unsigned u, unsigned v, uint16_t *out) {
     uint16_t packed = 0;
     unsigned sx, sy, index;
+    unsigned window = controller->texture_window;
     if (!controller->backend.read_vram) return 0;
+    u = window_coordinate(u, window, window >> 10);
+    v = window_coordinate(v, window >> 5, window >> 15);
     if (fmt == 2u) {
-        sx = tx + (u & 255u);
-        sy = ty + (v & 255u);
+        sx = tx + u;
+        sy = ty + v;
         return controller->backend.read_vram(controller->backend.userdata,
                 (uint16_t)(sx & 1023u), (uint16_t)(sy & 511u), out);
     } else if (fmt == 1u) {
-        sx = tx + ((u & 255u) >> 1);
-        sy = ty + (v & 255u);
+        sx = tx + (u >> 1);
+        sy = ty + v;
         if (!controller->backend.read_vram(controller->backend.userdata,
                 (uint16_t)(sx & 1023u), (uint16_t)(sy & 511u), &packed))
             return 0;
@@ -930,8 +939,8 @@ static int sample_texel(MusashiGpuController *controller,
                 (uint16_t)((clut_x + index) & 1023u),
                 (uint16_t)(clut_y & 511u), out);
     } else if (fmt == 0u) {
-        sx = tx + ((u & 255u) >> 2);
-        sy = ty + (v & 255u);
+        sx = tx + (u >> 2);
+        sy = ty + v;
         if (!controller->backend.read_vram(controller->backend.userdata,
                 (uint16_t)(sx & 1023u), (uint16_t)(sy & 511u), &packed))
             return 0;

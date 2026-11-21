@@ -1096,6 +1096,55 @@ class GpuControllerTests(unittest.TestCase):
             self.assertEqual(stored.get((16, 16)), 0x7FFF)  # white
 
             self.assertEqual(bool(back_reads), bool(opcode & 2))
+    def test_texture_window_selects_bits_before_texel_and_palette_lookup(self):
+        pixels = {}
+
+        def read_pixel(_, x, y, out):
+            out[0] = pixels.get((x, y), 0)
+            return 1
+
+        def write_pixel(_, x, y, value):
+            pixels[x, y] = value
+            return 1
+
+        self.read_cb = READ(read_pixel)
+        self.store_cb = STORE(write_pixel)
+        self.controller.backend.read_vram = self.read_cb
+        self.controller.backend.store_vram = self.store_cb
+
+        def packet(*words):
+            for word in words:
+                self.assertEqual(self.write(word), 1)
+
+        def sprite(x, u, v, clut=0):
+            packet(0x65808080, 300 << 16 | x, clut << 16 | v << 8 | u, 0x00010001)
+
+        packet(0xE3000000, 0xE407FFFF, 0xE5000000, 0xE1000105)
+        pixels.update({(341, 9): 0x001F, (357, 9): 0x7C00,
+                       (493, 213): 0x4210, (357, 149): 0x03E0})
+        # Readbacks were checked with the same GP0 commands in a synthetic PS-X executable.
+        packet(0xE2000000)
+        sprite(128, 21, 9)
+        packet(0xE200101E)
+        sprite(129, 21, 9)
+        packet(0xE2000000)
+        sprite(130, 0xAD, 0xD5)
+        packet(0xE2011155)
+        sprite(131, 0xAD, 0xD5)
+        self.assertEqual([pixels.get((x, 300)) for x in range(128, 132)],
+                         [0x001F, 0x7C00, 0x4210, 0x03E0])
+
+        # For U=37 the four-bit path selects the second nibble of word 9,
+        # and the eight-bit path selects the high byte of word 18.
+        palette = (42 << 6) | 2
+        pixels.update({(329, 9): 0x0040, (338, 9): 0xC700,
+                       (32 + 4, 42): 0x1234, (32 + 199, 42): 0x5678})
+        packet(0xE200101E, 0xE1000005)
+        sprite(132, 21, 9, palette)
+        packet(0xE1000085)
+        sprite(133, 21, 9, palette)
+        self.assertEqual([pixels.get((x, 300)) for x in (132, 133)], [0x1234, 0x5678])
+
     def test_gp0_poly_gt3_textured_gouraud_triangle(self):
         for opcode in (0x34, 0x35):
             self.setUp()
