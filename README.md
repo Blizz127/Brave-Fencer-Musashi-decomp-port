@@ -42,8 +42,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 21 source update covers 230 functions across seven scene overlays,
-totaling 16,500 bytes of matching executable code. In the opening scene, one
+The November 21 source update covers 231 functions across seven scene overlays,
+totaling 16,748 bytes of matching executable code. In the opening scene, one
 routine calls the handler selected by the player state byte. Another sets the
 facing direction and counts frames. A separate scene event uses that timer
 to advance its state on the 31st call from a fresh counter. The first opening handler
@@ -79,6 +79,13 @@ A seventh function in MAIN/0010 chooses which fade to poll. The no-disc host
 test runs all three phases with synthetic scene state and checks every 16-bit
 actor ID in the setup routine. The hybrid player retains guest execution for
 these paths. Run `python3 -m unittest discover -s tests -p test_scene_phase.py`.
+
+Room 3050 also has a matched 248-byte frame update. Retail execution
+reached its return sequence during the idle demonstration. It calls
+scene services in order, updates a frame counter and conditionally processes
+the room's object block. A host test supplies the 19 service functions and
+checks their order, the optional calls and counter wraparound. The player
+continues to execute this scene update as guest code.
 
 The same scene descriptors also contain a two-phase callback. Its setup starts
 a second fade, resets its level and advances the actor phase. The next phase

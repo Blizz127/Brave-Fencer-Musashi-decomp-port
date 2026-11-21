@@ -1061,6 +1061,14 @@ FOREST_FLOOR_EXTENTS = {
 # These scene phase callbacks call back into guest code. Several of their
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    # The per-frame update runs the same guest calls with a member-specific object.
+    0x801287B8: {
+        "main_0012": (248, 0x7003DEEF5601FA29),
+        "sc01_0005": (248, 0x08B946C9DB1D0CE5),
+        "sc01_0077": (248, 0x9A7880EE7ECA1D79),
+        "sc02_0039": (248, 0xBEA43DF222B8BA28),
+        "sc03_0001": (248, 0xFF9FB166A2180DC7),
+    },
     0x8016EE40: dict.fromkeys(
         ("sc02_0039", "sc01_0077", "sc02_0035", "sc03_0001", "main_0012"),
         (84, 0x0A847F9F21DC5E21)),
