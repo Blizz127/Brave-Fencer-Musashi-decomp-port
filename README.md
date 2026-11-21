@@ -258,8 +258,8 @@ from unpublished port sources (windows-port `c427ee546`); this recipe does
 not build it. The packaged menu and save instructions above describe the historical binaries.
 
 The public build uses a curated main-executable registry at
-`provenance/native-main.json`. It records 260 owner-authored C sources totaling
-23,368 matched bytes. The registry includes three motion routines used by the
+`provenance/native-main.json`. It records 261 owner-authored C sources totaling
+23,880 matched bytes. The registry includes three motion routines used by the
 no-disc smoke test. The existing native-lane allowlist and compiler checks
 decide which routines the player can run as host code. Other paths use the
 interpreter. See [EXCLUDED.md](EXCLUDED.md) for the source inclusion criteria.
@@ -271,6 +271,13 @@ The original game was observed inside the handler and just after it returned
 in room 3050. The host test uses generated model records and six test writers
 to check primitive selection, cursor updates and changes to a group's count.
 The public player still uses guest execution for this path.
+
+The 512-byte sound-channel release routine also matches the USA executable.
+The original game reached it during startup. A generated host test checks its
+callback order, voice and slot state, and restoration of the busy flag.
+Guest records use four-byte callback addresses. The Linux x64 host needs a
+separate representation for its eight-byte callback pointers, and the player
+retains guest execution for this routine. Audio output has not been compared.
 
 Matched C is a reimplementation of the game's own code, written so that the
 original compiler reproduces the original machine code. It is published for

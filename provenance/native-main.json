@@ -2574,6 +2574,16 @@
       "extent": "function",
       "optimization": "-O2",
       "rodata_base": 2147953660
+    },
+    {
+      "name": "func_80030D80",
+      "vram": 2147683712,
+      "size": 512,
+      "region": "main",
+      "source": "src/main/80030d80.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
     }
   ]
 }
