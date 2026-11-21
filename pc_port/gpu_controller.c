@@ -1570,6 +1570,14 @@ static int prim_word(MusashiGpuController *controller, uint32_t word) {
         controller->accepted_gp0_words++;
         if (controller->prim_got == controller->prim_needed) {
             int accepted = prim_commit(controller);
+            opcode = controller->prim_data[0] >> 24;
+            if (accepted && !controller->faulted && opcode >= 0x24u &&
+                opcode <= 0x3fu && (opcode & 4u)) {
+                /* The second vertex sets the page for subsequent primitives. */
+                uint32_t uv1 = controller->prim_data[(opcode & 0x10u) ? 5 : 4];
+                controller->draw_mode = (controller->draw_mode & ~0x1ffu) |
+                                        ((uv1 >> 16) & 0x1ffu);
+            }
             if (!accepted)
                 fprintf(stderr, "gpu_controller: prim_commit FAILED op=%02x needed=%u got=%u w0=%08x\n",
                         controller->prim_data[0] >> 24, controller->prim_needed, controller->prim_got,

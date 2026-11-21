@@ -1096,6 +1096,67 @@ class GpuControllerTests(unittest.TestCase):
             self.assertEqual(stored.get((16, 16)), 0x7FFF)  # white
 
             self.assertEqual(bool(back_reads), bool(opcode & 2))
+
+    def test_polygon_page_selects_the_next_sprite_texture(self):
+        pixels = {(341, 9): 0x001F, (405, 9): 0x7C00}
+
+        def read_pixel(_, x, y, out):
+            out[0] = pixels.get((x, y), 0)
+            return 1
+
+        def write_pixel(_, x, y, value):
+            pixels[x, y] = value
+            return 1
+
+        self.read_cb = READ(read_pixel)
+        self.store_cb = STORE(write_pixel)
+        self.controller.backend.read_vram = self.read_cb
+        self.controller.backend.store_vram = self.store_cb
+        uv = (9 << 8) | 21
+        words = [
+            0xE3000000, 0xE407FFFF, 0xE5000000, 0xE2000000, 0xE1000705,
+            0x65808080, (300 << 16) | 128, uv, 0x00010001,
+            0x25808080, (320 << 16) | 128, uv, (320 << 16) | 130,
+            (0x126 << 16) | uv, (322 << 16) | 128, uv,
+            0x65808080, (300 << 16) | 129, uv, 0x00010001,
+        ]
+        for word in words:
+            self.assertEqual(self.write(word), 1)
+        # Independent synthetic GPUREAD and GPUSTAT observations.
+        self.assertEqual(pixels[128, 300] | (pixels[129, 300] << 16), 0x7C00001F)
+        self.assertEqual(self.read()[1] & 0x1FF, 0x126)
+
+    def test_polygon_page_commits_only_after_a_complete_accepted_packet(self):
+        for opcode, length, uv1 in ((0x24, 7, 4), (0x2F, 9, 4),
+                                    (0x36, 9, 5), (0x3D, 12, 5)):
+            with self.subTest(opcode=hex(opcode)):
+                self.controller.raster_disabled = 1
+                self.assertEqual(self.write(0xE1001005), 1)
+                words = [opcode << 24] + [0] * (length - 1)
+                words[uv1] = 0xF1260000
+                for word in words[:-1]:
+                    self.assertEqual(self.write(word), 1)
+                self.assertEqual(self.controller.draw_mode, 0x1005)
+                self.assertEqual(self.write(words[-1]), 1)
+                self.assertEqual(self.controller.draw_mode, 0x1126)
+        # An untextured Gouraud triangle has no texture page.
+        for word in (0x30808080, 0, 0, 0, 0x01420000, 0x01110000):
+            self.assertEqual(self.write(word), 1)
+        self.assertEqual(self.controller.draw_mode, 0x1126)
+        # A FIFO reset discards an incomplete packet including its UV1 word.
+        for word in (0x25808080, 0, 0, 2, 0x01040000):
+            self.assertEqual(self.write(word), 1)
+        self.assertEqual(self.write(0x01000000, GPUSTAT), 1)
+        self.assertEqual(self.controller.draw_mode, 0x1126)
+        # The CPU renderer refuses this triangle because it has no VRAM reader.
+        self.controller.raster_disabled = 0
+        for word in (0xE407FFFF, 0x25808080, 0, 0, 2, 0x01040000, 2 << 16):
+            self.assertEqual(self.write(word), 1)
+        self.assertEqual(self.write(0), 0)
+        self.assertEqual(self.controller.draw_mode, 0x1126)
+        self.assertEqual(self.write(0xE1000105), 1)
+        self.assertEqual(self.read()[1] & 0x1FF, 0x105)
+
     def test_texture_window_selects_bits_before_texel_and_palette_lookup(self):
         pixels = {}
 
