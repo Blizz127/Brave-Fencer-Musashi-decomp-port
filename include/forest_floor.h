@@ -77,6 +77,10 @@ extern FloorMatrix D_801D9504;
 extern FloorBox D_801D9524;
 s32 func_80135480(FloorContactRecord *record, u32 packed, FloorPoint *near_point, FloorPoint *far_point);
 
+s32 func_80135EB0(FloorBox *box, s32 flags);
+s32 func_80136334(FloorBox *box, s32 flags, s16 z);
+s32 func_801365B8(FloorBox *box, s32 flags, s16 x);
+s32 func_80136824(FloorBox *box, s32 flags, s16 y);
 s32 func_80135888(FloorContactRecord *record, s32 packed, FloorPoint *start, FloorPoint *end);
 
 extern FloorPoint D_80126720;
