@@ -8,7 +8,7 @@
  * original declaration. */
 
 #include "psx_types.h"
-s32 func_80012E6C();
+s32 func_80012E6C(s16 from, s16 to, s16 t, s16 k, s16 *flag);
 s32 func_80012E0C(s32 a0, s32 a1, s32 a2, s32 a3) {
     s16 tmp = 4;
     if ((s16)a0 == (s16)a1) {

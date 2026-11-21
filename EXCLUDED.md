@@ -211,3 +211,25 @@ with them (every default target, PsyCross on) as it did before.
 As a result, this tree cannot rebuild the released native lane or its
 Psy-Q classes. The released builds also need the private core. The public
 `pc_port/` is the earlier core plus this newer host layer.
+
+## November 21, 2026 motion routines
+
+The public tree now includes independently written C for the signed angle step
+at `80012E6C` and the step toward a target at `80013154`. Their earlier bodies
+were excluded in section 1. Both replacements were derived from the USA
+executable using the clean-room inputs and rebuilt byte-for-byte.
+
+These two files complete the source set used by the existing host smoke test.
+On Linux, the following commands build and exercise it without a disc.
+
+```sh
+cmake -S . -B build -DMUSASHI_WITH_PSYCROSS=OFF
+cmake --build build --target musashi_pc_smoke --parallel 2
+ctest --test-dir build -R '^musashi_pc_smoke$' --output-on-failure
+```
+
+The public caller declarations now agree with their definitions. Seven motion
+routines and callers reproduced their retail instruction bytes. Across 4,000
+input sets, the seven host functions returned the same values as the local USA
+executable in the reference interpreter. A playable route still depends on the
+hybrid runtime.

@@ -1,3 +1,4 @@
+#include <limits.h>
 #include <stdio.h>
 
 #include "musashi_port.h"
@@ -7,7 +8,7 @@
 #endif
 
 extern int func_80012AB0(int a, int b);
-extern short func_80012E6C(int arg0, int arg1, short arg2, short arg3, short *arg4);
+extern int func_80012E6C(short from, short to, short t, short k, short *flag);
 extern short func_8001311C(short arg0, short arg1, short arg2);
 
 int main(void) {
@@ -24,13 +25,17 @@ int main(void) {
         fputs("musashi_pc_smoke: little-endian probe failed\n", stderr);
         return 1;
     }
-    if (func_80012AB0(7, 3) != 4) {
+    if (func_80012AB0(7, 3) != 4 || func_80012AB0(INT_MIN, 1) != 0xFFF ||
+        func_80012AB0(INT_MAX, -1) != 0) {
         fputs("musashi_pc_smoke: matched decomp function failed\n", stderr);
         return 1;
     }
     {
         short interpolation = 1;
-        if (func_80012E6C(0x0FF0, 0x0010, 0, 0, &interpolation) != 32) {
+        if (func_80012E6C(0x0FF0, 0x0010, 0, 0, &interpolation) != 32 ||
+            func_80012E6C(20, 17, 2, 3, &interpolation) != -4 ||
+            func_80012E6C(0, 1, 8, 1, &interpolation) != 1 ||
+            func_80012E6C(1, 0, 8, 1, &interpolation) != -1) {
             fputs("musashi_pc_smoke: matched angle function failed\n", stderr);
             return 1;
         }
