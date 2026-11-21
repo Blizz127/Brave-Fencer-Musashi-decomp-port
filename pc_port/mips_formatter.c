@@ -11,6 +11,7 @@
 
 #include <limits.h>
 #include <setjmp.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -4229,6 +4230,18 @@ typedef struct {
     const uint32_t *words;
 } FormatterRange;
 
+/* Every stored pointer identifies an immutable range of resident executable
+ * addresses admitted regardless of the current CPU and overlay. */
+enum { RESIDENT_RANGE_SLOTS = 16 };
+static _Atomic(const FormatterRange *) g_resident_ranges[RESIDENT_RANGE_SLOTS];
+
+static unsigned resident_range_slot(uint32_t pc) {
+    return (pc >> 8) & (RESIDENT_RANGE_SLOTS - 1u);
+}
+
+static void remember_resident_range(const FormatterRange *table, const FormatterRange *hit,
+                                    uint32_t pc);
+
 static int formatter_range_word(const FormatterRange *ranges, size_t count,
                                 uint32_t pc, uint32_t *out) {
     size_t low = 0u;
@@ -4241,6 +4254,7 @@ static int formatter_range_word(const FormatterRange *ranges, size_t count,
         } else if (pc >= ranges[middle].end) {
             low = middle + 1u;
         } else {
+            remember_resident_range(ranges, &ranges[middle], pc);
             *out = ranges[middle].words[(pc - ranges[middle].start) / 4u];
             return 1;
         }
@@ -10237,6 +10251,13 @@ static int code_site(uint32_t pc, unsigned group, uint32_t instruction) {
         word == instruction;
 }
 
+static void remember_resident_range(const FormatterRange *table, const FormatterRange *hit,
+                                    uint32_t pc) {
+    if (table == kFormatterRanges0 || table == kFormatterRanges1 ||
+        table == kFormatterRanges2 || table == kFormatterRanges3)
+        atomic_store_explicit(&g_resident_ranges[resident_range_slot(pc)], hit, memory_order_relaxed);
+}
+
 static int formatter_admitted(const FormatterCpu *cpu, uint32_t *out);
 
 
@@ -10321,20 +10342,28 @@ static int reset_fill_word(MusashiBootMemory *memory, uint32_t pc, uint32_t *out
 }
 
 static int formatter_fetch(MusashiBootMemory *memory, const FormatterCpu *cpu, uint32_t *out) {
+    const FormatterRange *resident = NULL;
     uint32_t shape;
-    if (cpu && cpu->dma_registration) {
+    if (!cpu || (cpu->pc & 3u)) return 0;
+    if (cpu->dma_registration) {
         if (cpu->irq_image || cpu->registration_stack) return 0;
         return dma_registration_word(memory, cpu->dma_registration, cpu->pc, out);
     }
-    if (cpu && cpu->irq_image) return irq_live_word(cpu->irq_image,memory,cpu->pc,out);
-    if (cpu && reset_calls_guest_fill(cpu)) return reset_fill_word(memory, cpu->pc, out);
-    if (cpu && registration_code_pc(cpu->pc))
+    if (cpu->irq_image) return irq_live_word(cpu->irq_image,memory,cpu->pc,out);
+    if (reset_calls_guest_fill(cpu)) return reset_fill_word(memory, cpu->pc, out);
+    if (registration_code_pc(cpu->pc))
         return registration_code_word(memory, cpu->pc, out);
-    if (!formatter_admitted(cpu, &shape)) {
-        if (cpu && cpu->pc >= 0x8006291cu && cpu->pc < 0x80062998u)
+    if (cpu->pc >= CODE_IMAGE_BASE && cpu->pc < CODE_IMAGE_END)
+        resident = atomic_load_explicit(&g_resident_ranges[resident_range_slot(cpu->pc)],
+                                        memory_order_relaxed);
+    if ((!resident || cpu->pc < resident->start || cpu->pc >= resident->end) &&
+        !formatter_admitted(cpu, &shape)) {
+        if (cpu->pc >= 0x8006291cu && cpu->pc < 0x80062998u)
             return card_vblank_helper_word(memory, cpu->pc, out);
         return 0;
     }
+    /* Fetch the current word even on an admission hit. BIOS callbacks, the
+     * EXE test image and writable guest RAM each retain their read semantics. */
     return code_word(memory, cpu, cpu->pc, out);
 }
 
