@@ -1040,6 +1040,9 @@ FOREST_FLOOR_EXTENTS = {
         "sc01_0077": (76, 0xA9B0AB85FCCB0E61),
         "sc02_0035": (76, 0xA9B0AB85FCCB0E61),
     },
+    0x80136A94: {
+        "sc01_0077": (304, 0x907C1DF3E1989D4C),
+    },
 }
 
 

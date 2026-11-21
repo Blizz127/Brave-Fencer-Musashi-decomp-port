@@ -49,4 +49,13 @@ s32 func_80134A74(s32 flags, u16 x, u16 z, FloorGrid *grid);
 s32 func_80134C20(s16 flags, FloorFace *face, FloorPoint *vertices, s32 *distances);
 s32 func_80134FB8(FloorPoint *normal, FloorPoint *point, s32 distance);
 
+/* Only the three translation words at +0x48 is consumed by the contact update. */
+typedef struct {
+    u8 before_translation[0x48];
+    u32 x, y, z;
+} FloorContactRecord;
+
+extern FloorPoint D_80126720;
+void func_80136A94(s32 rotate, FloorContactRecord *record, FloorPoint *output, void *matrix);
+
 #endif

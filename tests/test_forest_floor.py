@@ -43,3 +43,13 @@ def test_floor_sources_stay_interpreted(tmp_path, monkeypatch):
                 mp.setattr(lane, "member_digest", lambda *args: None)
                 assert not lane.forest_floor_source_only(row, alternative, info)
             assert not lane.forest_floor_source_only(row, alternative, None)
+
+
+def test_forest_contact_transform(tmp_path):
+    binary = tmp_path / "contact-transform"
+    subprocess.run([
+        "cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-I", ROOT / "include",
+        ROOT / "tests/forest_contact_transform_probe.c",
+        ROOT / "src/overlays/sc01_0077/80136a94.c", "-o", binary,
+    ], check=True)
+    subprocess.run([binary], check=True)

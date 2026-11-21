@@ -42,8 +42,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 21 source update covers 213 functions across seven scene overlays,
-totaling 11,068 bytes of matching executable code. In the opening scene, one
+The November 21 source update covers 214 functions across seven scene overlays,
+totaling 11,372 bytes of matching executable code. In the opening scene, one
 routine calls the handler selected by the player state byte. Another sets the
 facing direction and counts frames. A separate scene event uses that timer
 to advance its state on the 31st call from a fresh counter. The first opening handler
@@ -91,6 +91,12 @@ its grid cell. An accepted contact calls the original VectorNormalSS service
 before applying the final position adjustment. The public compatibility entry
 for that service is a stub. The linked C test supplies a synthetic result and
 checks the caller's correction, face material and scratch state.
+
+The forest contact transform applies the actor's translation to the selected
+contact and a second point. With rotation enabled it also transforms both
+points and the saved normal through two resident geometry services. Its
+component test checks in-place outputs, call order and 16-bit coordinate
+wraparound. The player still interprets this routine.
 
 Run the middle-state component test with a C compiler installed.
 
