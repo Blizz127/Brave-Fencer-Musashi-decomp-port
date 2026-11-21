@@ -349,26 +349,8 @@ static int blit_vram(MusashiGpuPsyCross *gpu) {
     static int ready_blit;
     unsigned width = gpu->display.width ? gpu->display.width : 320u;
     unsigned height = gpu->display.height ? gpu->display.height : 240u;
+    /* GP1 selects the visible page while GP0 can draw to a different page. */
     unsigned x = gpu->display.x, y = gpu->display.y;
-    /* The frame is drawn into the clip page. When that page does not overlap
-     * the GP1 display origin, the origin is the other buffer (the backdrop
-     * left at y=0) and the window never shows the 3D scene. */
-    if (gpu->clip_x2 > gpu->clip_x1 && gpu->clip_y2 > gpu->clip_y1) {
-        int disp_bottom = (int)y + (int)height - 1;
-        int overlaps = gpu->clip_y2 >= (int)y && gpu->clip_y1 <= disp_bottom &&
-                       gpu->clip_x2 >= (int)x && gpu->clip_x1 <= (int)x + (int)width - 1;
-        unsigned dw = (unsigned)(gpu->clip_x2 - gpu->clip_x1 + 1);
-        unsigned dh = (unsigned)(gpu->clip_y2 - gpu->clip_y1 + 1);
-        if (!overlaps && gpu->clip_x1 >= 0 && gpu->clip_y1 >= 0 &&
-            dw >= 256u && dw <= 640u && dh >= 200u && dh <= 480u &&
-            (unsigned)gpu->clip_x1 + dw <= 1024u &&
-            (unsigned)gpu->clip_y1 + dh <= 512u) {
-            x = (unsigned)gpu->clip_x1;
-            y = (unsigned)gpu->clip_y1;
-            width = dw;
-            height = dh;
-        }
-    }
     uint16_t *src;
     unsigned char *rgba;
     unsigned i, j;

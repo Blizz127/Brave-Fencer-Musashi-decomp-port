@@ -3,6 +3,7 @@
 #include <SDL.h>
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "../tools/third_party/psycross/src/gpu/PsyX_GPU.h"
 #include "PsyX/PsyX_render.h"
@@ -105,6 +106,145 @@ static void fill_probe(MusashiGpuPsyCross *gpu, MusashiGpuBackend *backend) {
     assert(controller.completed_fills==1 && controller.filled_pixels==640*480);
 }
 
+/* Sample the default framebuffer after blitting, before SDL swaps buffers. */
+static void read_scanout_pixel(void *user, int width, int height) {
+    GLint previous;
+    glGetIntegerv(GL_READ_BUFFER, &previous);
+    glReadBuffer(GL_BACK);
+    glReadPixels(width / 2, height / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, user);
+    glReadBuffer((GLenum)previous);
+}
+
+static void display_page_probe(MusashiGpuPsyCross *gpu, MusashiGpuBackend *backend) {
+    MusashiGpuController controller = {0};
+    static const struct {
+        unsigned display_y, draw_y;
+        unsigned char red, blue;
+    } frames[] = {{0, 240, 255, 0}, {240, 240, 0, 255}, {240, 0, 0, 255}};
+    unsigned char pixel[4];
+    unsigned i;
+    int matched = 1;
+
+    assert(musashi_gpu_controller_init(&controller, backend));
+    /* Fill two independent 256x240 pages with red and blue. */
+    for (i = 0; i < 2; ++i) {
+        assert(musashi_gpu_controller_write32(&controller, MUSASHI_GPU_GP0,
+                                              i ? 0x02ff0000u : 0x020000ffu));
+        assert(musashi_gpu_controller_write32(&controller, MUSASHI_GPU_GP0, (i * 240u) << 16));
+        assert(musashi_gpu_controller_write32(&controller, MUSASHI_GPU_GP0, (240u << 16) | 256u));
+    }
+    assert(musashi_gpu_controller_write32(&controller, MUSASHI_GPU_GP1, 0x03000000u));
+    musashi_gpu_psycross_set_overlay(read_scanout_pixel, pixel);
+    for (i = 0; i < sizeof(frames) / sizeof(frames[0]); ++i) {
+        unsigned y = frames[i].draw_y;
+        assert(musashi_gpu_controller_write32(&controller, MUSASHI_GPU_GP0,
+                                              0xe3000000u | (y << 10)));
+        assert(musashi_gpu_controller_write32(&controller, MUSASHI_GPU_GP0,
+                                              0xe4000000u | ((y + 239u) << 10) | 255u));
+        assert(musashi_gpu_controller_write32(&controller, MUSASHI_GPU_GP1,
+                                              0x05000000u | (frames[i].display_y << 10)));
+        memset(pixel, 0, sizeof(pixel));
+        assert(musashi_gpu_psycross_present(gpu));
+        if (pixel[0] != frames[i].red || pixel[1] != 0 || pixel[2] != frames[i].blue) {
+            fprintf(stderr, "display y=%u, draw y=%u: RGB %u,%u,%u (expected %u,0,%u)\n",
+                    frames[i].display_y, y, pixel[0], pixel[1], pixel[2],
+                    frames[i].red, frames[i].blue);
+            matched = 0;
+        }
+    }
+    musashi_gpu_psycross_set_overlay(NULL, NULL);
+    assert(matched);
+}
+
+/* RGB identifies the absolute VRAM column and row, including alternating lines. */
+static uint16_t chart_color(unsigned x, unsigned y) {
+    unsigned red = (x ^ (x >> 5)) & 31u;
+    unsigned green = (y ^ (y >> 5)) & 31u;
+    unsigned blue = (y & 1u) ? 31u : 0u;
+    return (uint16_t)(red | (green << 5) | (blue << 10));
+}
+
+typedef struct ChartView {
+    unsigned origin_x, origin_y, rows;
+    unsigned differences;
+} ChartView;
+
+static void read_chart(void *userdata, int width, int height) {
+    ChartView *view = userdata;
+    size_t size = (size_t)width * height * 4u;
+    unsigned char *pixels = malloc(size);
+    GLint buffer;
+    int x, y;
+    assert(pixels && width == 640 && height == 480);
+    glGetIntegerv(GL_READ_BUFFER, &buffer);
+    glReadBuffer(GL_BACK);
+    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    glReadBuffer((GLenum)buffer);
+    for (y = 0; y < height; ++y) {
+        unsigned sy = view->origin_y + ((unsigned)y * view->rows) / (unsigned)height;
+        for (x = 0; x < width; ++x) {
+            unsigned sx = view->origin_x + (unsigned)x / 2u;
+            unsigned color = chart_color(sx, sy);
+            const unsigned char *actual = pixels + 4u * ((size_t)(height - 1 - y) * width + x);
+            unsigned c;
+            for (c = 0; c < 3; ++c) {
+                unsigned five = (color >> (5u * c)) & 31u;
+                if (actual[c] != ((five << 3) | (five >> 2))) {
+                    ++view->differences;
+                    break;
+                }
+            }
+        }
+    }
+    free(pixels);
+}
+
+static void display_field_probe(MusashiGpuPsyCross *gpu, MusashiGpuBackend *backend) {
+    static uint16_t chart[512][1024];
+    static const struct { unsigned mode, dx, dy, cx, cy, rows; } frames[] = {
+        {0x01, 38, 7, 600,   0, 240}, /* offscreen in X */
+        {0x01, 38, 7,  64, 256, 240}, /* offscreen in Y */
+        {0x25, 41, 9, 600,  16, 480}, /* all 480 lines, both fields visible */
+        {0x25, 41, 9,  64,   0, 480}  /* overlapping draw area control */
+    };
+    MusashiGpuController controller = {0};
+    unsigned i, x, y, field, mismatches = 0;
+    assert(musashi_gpu_controller_init(&controller, backend));
+    for (y = 0; y < 512; ++y)
+        for (x = 0; x < 1024; ++x)
+            chart[y][x] = chart_color(x, y);
+    GR_CopyVRAM(&chart[0][0], 0, 0, 1024, 512, 0, 0);
+    assert(musashi_gpu_controller_write32(&controller, MUSASHI_GPU_GP1, 0x03000000u));
+    for (i = 0; i < sizeof(frames) / sizeof(frames[0]); ++i) {
+        ChartView view = {frames[i].dx, frames[i].dy, frames[i].rows, 0};
+        assert(musashi_gpu_controller_write32(&controller, MUSASHI_GPU_GP1,
+                                              0x08000000u | frames[i].mode));
+        assert(musashi_gpu_controller_write32(&controller, MUSASHI_GPU_GP1,
+                                              0x05000000u | (view.origin_y << 10) | view.origin_x));
+        assert(controller.display.width == 320 && controller.display.height == view.rows);
+        assert(musashi_gpu_controller_write32(&controller, MUSASHI_GPU_GP0,
+                                              0xe3000000u | (frames[i].cy << 10) | frames[i].cx));
+        assert(musashi_gpu_controller_write32(&controller, MUSASHI_GPU_GP0,
+                                              0xe4000000u | ((frames[i].cy + 239u) << 10) |
+                                              (frames[i].cx + 319u)));
+        musashi_gpu_psycross_set_overlay(read_chart, &view);
+        for (field = 0; field < 2; ++field) {
+            uint32_t status;
+            assert(musashi_gpu_controller_read32(&controller, MUSASHI_GPU_GP1, &status));
+            assert((status >> 31) == field);
+            view.differences = 0;
+            assert(musashi_gpu_psycross_present(gpu));
+            fprintf(stderr, "chart mode=%02x display=%u,%u clip=%u,%u parity=%u wrong=%u/307200\n",
+                    frames[i].mode, view.origin_x, view.origin_y, frames[i].cx, frames[i].cy,
+                    field, view.differences);
+            mismatches += view.differences;
+            assert(musashi_gpu_controller_vblank(&controller));
+        }
+    }
+    musashi_gpu_psycross_set_overlay(NULL, NULL);
+    assert(!mismatches);
+}
+
 int main(void) {
     MusashiGpuPsyCross gpu = {0}, competing = {0};
     MusashiGpuBackend backend, unused;
@@ -119,7 +259,7 @@ int main(void) {
     Foreign args = {&gpu, &backend};
     SDL_Thread *thread;
     assert(!musashi_gpu_psycross_init(&gpu, &backend));
-    PsyX_Initialise("Musashi GPU backend probe", 320, 240, 0);
+    PsyX_Initialise("Musashi GPU backend probe", 640, 480, 0);
     if (!SDL_GL_GetCurrentContext() || !SDL_GL_GetCurrentWindow()) {
         musashi_psyx_shutdown();
         return 77;
@@ -329,9 +469,11 @@ int main(void) {
     StoreImage(&rect, (u_long *)&readback);
     assert(readback == sentinel && gpu.presentations == 1);
     glDeleteFramebuffers(1, &borrowed_framebuffer);
+    display_field_probe(&gpu, &backend);
+    display_page_probe(&gpu, &backend);
     assert(musashi_gpu_psycross_shutdown(&gpu));
     assert(backend.ready(backend.userdata) < 0);
     musashi_psyx_shutdown();
-    puts("GPU BACKEND OBSERVED: actual drawenv/queue reset, VRAM preserved, blank output; display-on accepted");
+    puts("GPU BACKEND OBSERVED: actual drawenv/queue reset, VRAM preserved, blank output, GP1 scanout across two drawing pages");
     return 0;
 }
