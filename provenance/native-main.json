@@ -1605,6 +1605,16 @@
       "optimization": "-O2"
     },
     {
+      "name": "func_800291B4",
+      "region": "main",
+      "vram": 2147652020,
+      "size": 20,
+      "source": "src/main/800291b4.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
       "name": "func_800291C8",
       "region": "main",
       "vram": 2147652040,

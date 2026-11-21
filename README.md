@@ -73,6 +73,23 @@ python3 tools/verify_registry.py --registry provenance/scene-objects.json --jobs
 python3 tools/check_no_retail_data.py --registry provenance/scene-objects.json --jobs 1
 ```
 
+### Verify the inventory operations
+
+Five resident functions find an empty slot, add and date an item, find the first
+matching item, and remove it. The host test links these functions to the game's
+script-variable accessors. It checks all 4,096 slot occupancy patterns and all
+65,536 acquisition-day values. To run it without a disc, use
+`python3 -m unittest discover -s tests -p test_resident_inventory.py`.
+
+For the original code comparison, extract the resident archive from your USA
+disc and verify its registry.
+
+```sh
+python3 tools/extract_cd.py extracted/disc/files/MAIN.CD --output extracted/overlays/main
+python3 tools/verify_registry.py --registry provenance/resident-inventory.json --jobs 1
+python3 tools/check_no_retail_data.py --registry provenance/resident-inventory.json --jobs 1
+```
+
 ## How to play
 
 These instructions match [bfm-r38-61c60516d](https://github.com/Blizz127/brave-fencer-musashi-decomp-port/releases/tag/bfm-r38-61c60516d).
@@ -188,8 +205,8 @@ not build it. Public player instructions above describe the release
 artifact, not the older source snapshot's menu behavior.
 
 The public build uses a curated main-executable registry at
-`provenance/native-main.json`. It records 255 owner-authored C sources totaling
-22,412 matched bytes. The registry includes two motion routines used by the
+`provenance/native-main.json`. It records 256 owner-authored C sources totaling
+22,432 matched bytes. The registry includes two motion routines used by the
 no-disc smoke test. The existing native-lane allowlist and compiler checks
 decide which routines the player can run as host code. Other paths use the
 interpreter. See [EXCLUDED.md](EXCLUDED.md) for the source inclusion criteria.
