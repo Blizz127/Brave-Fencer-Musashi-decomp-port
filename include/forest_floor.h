@@ -45,15 +45,39 @@ s32 func_801347A0(s16 five_planes, FloorFace *face, FloorPoint *vertices, s32 *d
 s32 func_80134A28(FloorPoint *normal, FloorPoint *point, s32 distance);
 
 extern FloorPoint *D_801870B8;
-s32 func_80134A74(s32 flags, u16 x, u16 z, FloorGrid *grid);
+s32 func_80134A74(s32 flags, s16 x, s16 z, FloorGrid *grid);
 s32 func_80134C20(s16 flags, FloorFace *face, FloorPoint *vertices, s32 *distances);
 s32 func_80134FB8(FloorPoint *normal, FloorPoint *point, s32 distance);
 
-/* Only the three translation words at +0x48 is consumed by the contact update. */
+/* The rotation occupies five words at +0x34. The translation follows at +0x48. */
+typedef union {
+    s16 coefficients[10];
+    s32 pairs[5];
+} FloorRotation;
+
 typedef struct {
-    u8 before_translation[0x48];
+    u8 before_scale[0x18];
+    s16 scale_x, scale_y, scale_z;
+    u8 before_rotation[0x16];
+    FloorRotation rotation;
     u32 x, y, z;
 } FloorContactRecord;
+
+typedef struct {
+    FloorRotation rotation;
+    u32 x, y, z;
+} FloorMatrix;
+
+typedef struct {
+    u32 next;
+    s16 xlo, xhi, ylo, yhi, zlo, zhi;
+} FloorBox;
+
+extern FloorMatrix D_801D9504;
+extern FloorBox D_801D9524;
+s32 func_80135480(FloorContactRecord *record, u32 packed, FloorPoint *near_point, FloorPoint *far_point);
+
+s32 func_80135888(FloorContactRecord *record, s32 packed, FloorPoint *start, FloorPoint *end);
 
 extern FloorPoint D_80126720;
 void func_80136A94(s32 rotate, FloorContactRecord *record, FloorPoint *output, void *matrix);

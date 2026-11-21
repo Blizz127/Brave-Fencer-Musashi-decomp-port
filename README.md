@@ -42,8 +42,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 21 source update covers 220 functions across seven scene overlays,
-totaling 11,768 bytes of matching executable code. In the opening scene, one
+The November 21 source update covers 222 functions across seven scene overlays,
+totaling 13,252 bytes of matching executable code. In the opening scene, one
 routine calls the handler selected by the player state byte. Another sets the
 facing direction and counts frames. A separate scene event uses that timer
 to advance its state on the 31st call from a fresh counter. The first opening handler
@@ -105,6 +105,13 @@ contact and a second point. With rotation enabled it also transforms both
 points and the saved normal through two resident geometry services. Its
 component test checks in-place outputs, call order and 16-bit coordinate
 wraparound. The player still interprets this routine.
+
+The forest segment query now has matching C for its model selector and caller.
+The selector can reject the segment or produce one of four model modes. The
+caller searches a grid or a linked list and transforms the first hit. The
+linked-list face test and external matrix services still require the guest
+runtime. The host test supplies controlled results for those boundaries.
+Run `python3 -m pytest -q tests/test_forest_contact_selection.py`.
 
 Run the middle-state component test with a C compiler installed.
 

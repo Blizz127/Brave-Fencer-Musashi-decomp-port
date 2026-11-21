@@ -8,7 +8,7 @@ typedef u32 ContactAddress;
 typedef uintptr_t ContactAddress;
 #endif
 
-s32 func_80134A74(s32 flags, u16 x, u16 z, FloorGrid *grid)
+s32 func_80134A74(s32 flags, s16 x, s16 z, FloorGrid *grid)
 {
     s32 width;
     s16 column;
@@ -32,11 +32,11 @@ s32 func_80134A74(s32 flags, u16 x, u16 z, FloorGrid *grid)
     u8 *ids;
 #endif
 
-    column = (((x + 0x8000) >> 7) & 0x1FF) - grid->x0;
+    column = ((((u16)x + 0x8000) >> 7) & 0x1FF) - grid->x0;
     width = grid->w;
     if ((u32)(column & 0xFFFF) >= (u32)width)
         return 0;
-    row = (((z + 0x8000) >> 7) & 0x1FF) - grid->z0;
+    row = ((((u16)z + 0x8000) >> 7) & 0x1FF) - grid->z0;
     if ((u32)(row & 0xFFFF) >= grid->h)
         return 0;
     slot = ((u16)row * (u32)width + (u16)column) * 2u;

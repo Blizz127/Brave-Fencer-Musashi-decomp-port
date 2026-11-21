@@ -1043,6 +1043,14 @@ FOREST_FLOOR_EXTENTS = {
     0x80136A94: {
         "sc01_0077": (304, 0x907C1DF3E1989D4C),
     },
+    0x80135480: {
+        "sc01_0077": (1032, 0x5221F6D7176211A0),
+        "main_0012": (1032, 0x8648A6C117ABCBC4),
+    },
+    0x80135888: {
+        "sc01_0077": (452, 0x8EE787ADB445A8F7),
+        "main_0012": (452, 0xEC327F42C79F1489),
+    },
 }
 
 
@@ -1068,6 +1076,10 @@ def overlay_extent_source_only(entry, src, info, extents):
     if entry.get("region") in variants or (info and info["member"] in variants):
         return True
     if info and (entry["size"], member_digest(info, pc, entry["size"])) in variants.values():
+        return True
+    # The first published forest grid query used unsigned formal coordinates.
+    if pc == 0x80134A74 and hashlib.sha256(src.read_bytes()).hexdigest() == (
+            "fe9e81f74f9e7bcf91978313554fa7061d2b19d74e7438334240edc82f6a9629"):
         return True
     for member in variants:
         known = ROOT / "src/overlays" / member / f"{pc:08x}.c"
