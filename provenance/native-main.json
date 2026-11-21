@@ -2563,6 +2563,17 @@
       "source": "src/main/8003fa54.c",
       "recovery": "c",
       "extent": "function"
+    },
+    {
+      "name": "func_80026D64",
+      "region": "main",
+      "vram": 2147642724,
+      "size": 756,
+      "source": "src/main/80026d64.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "rodata_base": 2147953660
     }
   ]
 }

@@ -1,6 +1,6 @@
 /* Owner re-derivation from retail assembly (clean input set). */
 /* Model draw: builds the object's local matrix, resolves its world/screen matrices through its parent coordinate, stores them back, then submits every part of its zero-terminated part list. */
-#include "psx_types.h"
+#include "model_draw.h"
 
 /* 4.12 rotation plus translation (0x20 bytes). */
 typedef struct {
@@ -35,16 +35,6 @@ typedef struct {
     u32 light;  /* guest pointer: three 0x10-byte light records, then 8-byte colour cues */
 } Obj;
 
-/* Part draw request handed to the primitive builders. */
-typedef struct {
-    u32 attr;
-    u32 unk4;
-    u32 unk8;
-    u32 unkC;
-    u32 unk10;
-    u32 unk14;
-} DrawArg;
-
 typedef struct {
     u32 unk0;
     u32 unk4;
@@ -52,11 +42,6 @@ typedef struct {
     u32 unkC;
     u32 unk10;
 } AnimRec;
-
-/* Per-buffer draw context (0x14 bytes), indexed by D_800B9A02. */
-typedef struct {
-    u8 pad[0x14];
-} OtRec;
 
 extern u16 D_800B9A02;
 extern u32 D_80062BA8;
@@ -80,7 +65,6 @@ extern void func_8002109C(u32, u32 *);
 /* The retail call sites pass a second argument (the cue pointer) that the body never reads. */
 extern void func_80021120(u32 *, u32);
 extern void func_80057094(DrawArg *, OtRec *, s32, u32);
-extern void func_800243EC(DrawArg *, OtRec *, s32);
 extern void func_80027BF0(DrawArg *, OtRec *, s32);
 extern void func_80055D40(DrawArg *, OtRec *, s32, u32);
 extern void func_800CAE80(DrawArg *, OtRec *, s32);
