@@ -976,6 +976,15 @@ DENY = {
     0x8002FF0C: "no comparable differential case yet (interpreter refused every case)",
 }
 
+# These facing routines use borrowed guest pointers. Their native wrappers
+# bypass alignment and bus ownership checks and do not reproduce guest timing.
+# SC02/0039 and SC03/0108 share the complete extents at the same addresses.
+FACING_EXTENTS = {
+    0x8017D484: (368, 0x0FBC2305FFE0240E),
+    0x8017D5F4: (184, 0x7E49C97F155040C8),
+    0x8017D6AC: (184, 0x67821A3E1D2AE386),
+}
+
 
 def build_one(entry, out, symbols, hooks, clang, info=None):
     vram, size, src = entry["vram"], entry["size"], ROOT / entry["source"]
@@ -994,6 +1003,13 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
             raise Reject("deny", "MAIN member 0012 first card-menu item is source-only")
         if vram in DENY:
             raise Reject("deny", DENY[vram])
+        facing = FACING_EXTENTS.get(vram)
+        if facing:
+            source = ROOT / "src/overlays/sc02_0039" / f"{vram:08x}.c"
+            if (src.resolve() == source or
+                    (info is not None and size == facing[0] and member_digest(info, vram, size) == facing[1]) or
+                    (info is None and source.is_file() and src.read_bytes() == source.read_bytes())):
+                raise Reject("memory", "facing region requires checked guest accesses and path timing")
         if member == "sc03_0001" and vram in (0x8018C89C, 0x8018C8D4):
             raise Reject("memory", "signed menu table index can reach a guest RAM mirror")
         for pc, kind in hooks.items():

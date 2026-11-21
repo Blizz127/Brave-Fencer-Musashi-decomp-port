@@ -12,7 +12,7 @@ typedef struct {
 } Obj;
 
 extern s16 D_80126B3C;
-extern s32 func_80012B04(s16 a0, s16 a1, s32 a2);
+extern s32 func_80012B04(s16 a0, s16 a1, s16 a2);
 extern u16 D_8011F9C8;
 extern void func_80171A1C(Obj *o);
 extern void func_80174650(Obj *o);
