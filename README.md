@@ -37,8 +37,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 21 source update covers 176 functions across seven scene overlays,
-totaling 4,344 bytes of matching executable code. In the opening scene, one
+The November 21 source update covers 178 functions across seven scene overlays,
+totaling 4,464 bytes of matching executable code. In the opening scene, one
 routine calls the handler selected by the player state byte. Another sets the
 facing direction and counts frames. A separate scene event uses that timer
 to advance its state on the 31st call from a fresh counter. The first opening handler
@@ -97,6 +97,14 @@ links are independent of where the host allocates the buffer. Run
 a purchase through all four wallet routines using synthetic packets. The decimal
 conversion test covers every stored balance and signed shift boundaries. Run it
 with `python3 -m unittest discover -s tests -p test_shop_wallet_bcd.py`.
+
+Two bakery routines look up a message on the current menu page and store its
+reference. The original purchase handler selects entry 1 after a purchase,
+entry 2 for a full inventory and entry 3 when funds are insufficient. The
+message contents come from the player's disc. Run the no-disc lookup test
+with `python3 -m unittest discover -s tests -p test_shop_menu_messages.py`.
+The hybrid player retains guest execution for these two routines because the
+signed page index can reach mirrored guest RAM.
 
 For the original code comparison, extract the resident archive from your USA
 disc and verify its registry.

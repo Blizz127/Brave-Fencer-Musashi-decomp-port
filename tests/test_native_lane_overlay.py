@@ -8,10 +8,15 @@ payload is loaded as the game's loader leaves it: from the member's header
 subsegment (or first code subsegment) to its end marker, at the yaml's
 vram mapping.
 """
+import hashlib
+import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
+import sys
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -54,9 +59,57 @@ class OverlayLane(unittest.TestCase):
             self.assertIn("negative_ran_native=0", summary[0])
 
 
+class OverlayAdmission(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("clang"), "requires clang")
+    def test_shop_messages_require_a_bus_aware_lookup(self):
+        shop = "sc03_0001"
+        other = "sc99_9999"
+        lookup, latch, caller = 0x8018C89C, 0x8018C8D4, 0x8018C918
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "tools").mkdir()
+            (root / "config").mkdir()
+            for tool in ("native_lane_gen.py", "psyq_manifest.py"):
+                shutil.copy(ROOT / "tools" / tool, root / "tools" / tool)
+            shutil.copy(ROOT / "config/psyq_ranges.txt", root / "config")
+
+            # The leaves are safe arithmetic in both members. Only the admission
+            # decision for these two identities should send the caller to guest code.
+            for pc in (lookup, latch):
+                (root / f"{pc:x}.c").write_text(
+                    f"unsigned func_{pc:08X}(unsigned x) {{ return x + 1u; }}\n")
+            (root / f"{caller:x}.c").write_text(
+                "extern unsigned func_8018C89C(unsigned), func_8018C8D4(unsigned);\n"
+                "unsigned func_8018C918(unsigned x) { return func_8018C8D4(func_8018C89C(x)); }\n")
+
+            rows = []
+            for member, pcs in ((shop, (lookup, latch, caller)), (other, (lookup, latch))):
+                data = member.encode().ljust(256, b".")
+                (root / member).write_bytes(data)
+                (root / "config" / f"overlay_{member}.yaml").write_text(
+                    f"sha1: {hashlib.sha1(data).hexdigest()}\ntarget_path: {member}\n"
+                    f"- name: {member}\n  type: code\n  start: 0x0\n  vram: {lookup:#x}\n"
+                    "  subsegments:\n    - [0x0, c]\n- [0x100]\n")
+                rows.extend(dict(region=member, name=f"func_{pc:08X}", vram=pc, size=4,
+                                 recovery="c", source=f"{pc:x}.c") for pc in pcs)
+            registry = root / "rows.json"
+            registry.write_text(json.dumps({"matches": rows}))
+            only = root / "only.txt"
+            only.write_text(f"{lookup:x}\n{latch:x}\n{caller:x}\n")
+            out = root / "generated"
+            subprocess.run([sys.executable, root / "tools/native_lane_gen.py", "--out", out,
+                            "--registry", registry, "--only", only, "--own-code-only", "--jobs", "1",
+                            "--overlay-members", f"{shop},{other}"], check=True, capture_output=True)
+            report = json.loads((out / "report.json").read_text())
+            held = {(r["member"], r["vram"], r["rule"]) for r in report["functions"]
+                    if not r["admitted"]}
+            self.assertEqual(held, {(shop, lookup, "memory"), (shop, latch, "memory")})
+            self.assertEqual(report["admitted"], 3)
+            self.assertEqual(report["call_stubs"]["interpreter_thunk"], 2)
+
+
 class LoadPlan(unittest.TestCase):
     def test_header_to_end(self):
-        import tempfile
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "config").mkdir()
             (Path(d) / "config" / "overlay_main_0003.yaml").write_text(

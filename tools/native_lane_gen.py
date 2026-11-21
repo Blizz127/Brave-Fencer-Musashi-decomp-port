@@ -986,6 +986,8 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
     try:
         if vram in DENY:
             raise Reject("deny", DENY[vram])
+        if member == "sc03_0001" and vram in (0x8018C89C, 0x8018C8D4):
+            raise Reject("memory", "signed menu table index can reach a guest RAM mirror")
         for pc, kind in hooks.items():
             if not vram <= pc < vram + size:
                 continue
