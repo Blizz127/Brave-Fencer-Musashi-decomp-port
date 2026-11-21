@@ -13255,16 +13255,12 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
             address != 0x1f801074u || cpu->r[3] != address) return formatter_refuse0(__LINE__, cpu->pc);
     }
     if (cpu->pc == 0x80019b30u) {
-        static const uint32_t targets[9] = {
-            0x80019b38u,0x80019ba8u,0x80019bf8u,0x80019c3cu,
-            0x80019c98u,0x80019da0u,0x80019e64u,0x80019f50u,0x80019fc4u
-        };
         uint32_t state, table_target;
         if (!code_site(0x80019b30u, 6u, instruction) ||
             !musashi_boot_read32(memory,0x800ae6f0u,&state) ||
-            state >= 9u || !targets[state] || cpu->r[3] != state ||
-            !musashi_boot_read32(memory,0x80072a4cu+4u*state,&table_target) ||
-            table_target != targets[state] || cpu->r[2] != table_target)
+            state >= MUSASHI_LIST_STATE_COUNT || cpu->r[3] != state ||
+            !musashi_boot_read32(memory, MUSASHI_LIST_TARGET_BASE + 4u * state, &table_target) ||
+            !musashi_boot_list_target_matches(state, table_target) || cpu->r[2] != table_target)
             return formatter_refuse0(__LINE__, cpu->pc);
     }
     /* LB executes like LBU/LH/LW (immediate write; Psy-Q's assembler keeps

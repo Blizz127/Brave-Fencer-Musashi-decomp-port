@@ -1,6 +1,7 @@
 #include "musashi_boot_memory.h"
 
 #include <openssl/evp.h>
+#include <stdatomic.h>
 #include <string.h>
 
 uint8_t *musashi_boot_ram_span(MusashiBootMemory *memory,
@@ -59,6 +60,16 @@ int musashi_boot_call_800426d4(MusashiBootMemory *memory, uint16_t *result) {
     return result && musashi_boot_read16(memory, 0x8006bafeu, result);
 }
 
+/* Every admitted executable has the same digest. Independent memory instances
+ * can map concurrently. Each slot becomes usable once its verified value is
+ * available, and every subsequent mapping stores the same value. */
+static _Atomic(uint32_t) list_targets[MUSASHI_LIST_STATE_COUNT];
+
+int musashi_boot_list_target_matches(uint32_t state, uint32_t target) {
+    return state < MUSASHI_LIST_STATE_COUNT && target != 0 &&
+           target == atomic_load_explicit(&list_targets[state], memory_order_relaxed);
+}
+
 int musashi_boot_map_exe(MusashiBootMemory *memory, const uint8_t *exe,
                          size_t exe_size) {
     /* provenance/exe_identity.json; hashing includes the header and padding.
@@ -79,6 +90,11 @@ int musashi_boot_map_exe(MusashiBootMemory *memory, const uint8_t *exe,
         return 0;
 
     memmove(memory->bytes + 0x10000u, exe + 0x800u, 0x64800u);
+    for (uint32_t state = 0; state < MUSASHI_LIST_STATE_COUNT; ++state) {
+        uint32_t target = 0;
+        musashi_boot_read32(memory, MUSASHI_LIST_TARGET_BASE + 4u * state, &target);
+        atomic_store_explicit(&list_targets[state], target, memory_order_relaxed);
+    }
     return 1;
 }
 

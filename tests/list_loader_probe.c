@@ -39,6 +39,8 @@ int main(int argc,char **argv) {
     assert(!fseek(file,0,SEEK_END)); size=ftell(file); assert(size>0);
     rewind(file); exe=malloc((size_t)size); assert(exe);
     assert(fread(exe,1,(size_t)size,file)==(size_t)size); fclose(file);
+    /* Before any map this process has no canonical dispatch targets. */
+    assert(!musashi_boot_list_target_matches(0, 1));
     for (unsigned deliver=0;deliver<2;++deliver) {
         FormatterCpu cpu; Fixture f={0,0,(int)deliver};
         MusashiExecutionClock clock={&f,advance};
@@ -58,16 +60,19 @@ int main(int argc,char **argv) {
             assert(get(0x8006baa0)==1 && get(0x8006ba9c)==77);
         } else assert(cpu.pc>=0x800424e4 && cpu.pc<0x80042570 && get(0x8006cbb8)==0);
     }
-    for(unsigned state=0;state<11;++state) for(unsigned corrupt=0;corrupt<2;++corrupt) {
+    for(unsigned state=0;state<11;++state) for(unsigned corrupt=0;corrupt<3;++corrupt) {
         FormatterCpu cpu; Fixture f={0}; MusashiExecutionClock clock={&f,advance};
         memset(&memory,0,sizeof(memory)); assert(musashi_boot_map_exe(&memory,exe,(size_t)size));
         put(0x800ae6f0,state);
-        if(corrupt) put(0x80072a4c+4*state,0x80019b38+4);
+        if(corrupt == 1 && state < 9)
+            put(MUSASHI_LIST_TARGET_BASE + 4u * state, get(MUSASHI_LIST_TARGET_BASE + 4u * state) ^ 4u);
+        if(corrupt == 2)
+            put(MUSASHI_LIST_TARGET_BASE + 4u * ((state + 1u) % 9u), 0);
         init(&cpu); cpu.pc=0x80019af8;cpu.npc=cpu.pc+4;cpu.clock=&clock;
         for(unsigned step=0;step<20 && cpu.pc!=0x80019b30;++step) assert(formatter_step(&memory,&cpu));
         assert(cpu.pc==0x80019b30);
         FormatterCpu before=cpu; unsigned cycles=f.cycles;
-        if(corrupt || state>=9) {
+        if(corrupt == 1 || state>=9) {
             assert(!formatter_step(&memory,&cpu));
             assert(memcmp(&before,&cpu,sizeof(cpu))==0 && cycles==f.cycles);
         } else {

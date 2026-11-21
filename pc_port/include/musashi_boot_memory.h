@@ -15,6 +15,12 @@
 struct MusashiBootMemory;
 int musashi_boot_map_exe(struct MusashiBootMemory *, const uint8_t *, size_t);
 
+/* LIST state dispatch in the pinned game executable. The canonical targets are
+ * learned from a successful mapping and checked against the live guest word. */
+#define MUSASHI_LIST_STATE_COUNT 9u
+#define MUSASHI_LIST_TARGET_BASE 0x80072a4cu
+int musashi_boot_list_target_matches(uint32_t state, uint32_t target);
+
 /* Caller-owned, initialized backing storage. Byte views may overlap; never
  * cast them to host structs/pointers. Scalar access is explicitly little endian.
  * No synchronization: the owner must serialize all access and loading. */
