@@ -42,8 +42,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 21 source update covers 222 functions across seven scene overlays,
-totaling 13,252 bytes of matching executable code. In the opening scene, one
+The November 21 source update covers 226 functions across seven scene overlays,
+totaling 13,456 bytes of matching executable code. In the opening scene, one
 routine calls the handler selected by the player state byte. Another sets the
 facing direction and counts frames. A separate scene event uses that timer
 to advance its state on the 31st call from a fresh counter. The first opening handler
@@ -79,6 +79,13 @@ A seventh function in MAIN/0010 chooses which fade to poll. The no-disc host
 test runs all three phases with synthetic scene state and checks every 16-bit
 actor ID in the setup routine. The hybrid player retains guest execution for
 these paths. Run `python3 -m unittest discover -s tests -p test_scene_phase.py`.
+
+The same scene descriptors also contain a two-phase callback. Its setup starts
+a second fade, resets its level and advances the actor phase. The next phase
+polls the fade and returns whether its low 16 bits are nonzero. All four
+matched routines retain guest execution in the player. The no-disc test checks
+callback order, phase wraparound and the poll result. Run
+`python3 -m unittest discover -s tests -p test_scene_fade_companion.py`.
 
 Sixteen SC01/0000 functions read directional input, update actor velocity and
 position, and check whether the current player state allows an action. The host

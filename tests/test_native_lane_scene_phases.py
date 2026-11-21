@@ -12,9 +12,12 @@ import native_lane_gen as lane
 
 PHASES = (
     ("sc02_0039", 0x8016EE40, 84),
+    ("sc02_0039", 0x8017CDD8, 68),
+    ("sc02_0039", 0x8017CE1C, 36),
     ("sc02_0039", 0x8017CE40, 64),
     ("sc02_0039", 0x8017CEFC, 32),
     ("sc02_0039", 0x8017CF58, 116),
+    ("sc02_0039", 0x8017CFCC, 40),
     ("sc02_0039", 0x8017CFF4, 40),
     ("main_0010", 0x800D1EBC, 156),
 )
@@ -50,9 +53,10 @@ def test_phase_source_stays_interpreted(member, pc, size, tmp_path, monkeypatch)
 
 
 @pytest.mark.skipif(not shutil.which("clang"), reason="clang required to inspect the dispatcher")
-def test_phase_dispatch_rejects_host_function_table(tmp_path):
-    source = ROOT / "src/overlays/sc02_0039/8017cf1c.c"
-    row = dict(name="func_8017CF1C", vram=0x8017CF1C, size=60, source=str(source),
+@pytest.mark.parametrize("pc", (0x8017CD9C, 0x8017CF1C))
+def test_phase_dispatch_rejects_host_function_table(pc, tmp_path):
+    source = ROOT / "src/overlays/sc02_0039" / f"{pc:08x}.c"
+    row = dict(name=f"func_{pc:08X}", vram=pc, size=60, source=str(source),
                region="sc02_0039")
     (tmp_path / "ir").mkdir()
     result = lane.build_one(row, tmp_path, {}, {}, "clang")
