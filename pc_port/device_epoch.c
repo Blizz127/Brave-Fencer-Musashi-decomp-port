@@ -12,6 +12,11 @@ static int to_cycle(const MusashiDeviceEpoch *epoch, uint64_t tick,
     uint64_t elapsed, whole, fraction;
     if (tick < epoch->origin_tick) return 0;
     elapsed = tick - epoch->origin_tick;
+    /* The guest-clock source already measures device cycles. */
+    if (epoch->frequency == MUSASHI_DEVICE_CLOCK_HZ) {
+        *cycle = elapsed;
+        return 1;
+    }
     whole = elapsed / epoch->frequency;
     fraction = (elapsed % epoch->frequency) * MUSASHI_DEVICE_CLOCK_HZ /
                epoch->frequency;
@@ -22,6 +27,11 @@ static int to_cycle(const MusashiDeviceEpoch *epoch, uint64_t tick,
 
 static int to_tick(const MusashiDeviceEpoch *epoch, uint64_t cycle,
                     uint64_t *tick) {
+    if (epoch->frequency == MUSASHI_DEVICE_CLOCK_HZ) {
+        if (cycle > UINT64_MAX - epoch->origin_tick) return 0;
+        *tick = epoch->origin_tick + cycle;
+        return 1;
+    }
     uint64_t whole = cycle / MUSASHI_DEVICE_CLOCK_HZ;
     uint64_t product = (cycle % MUSASHI_DEVICE_CLOCK_HZ) * epoch->frequency;
     uint64_t fraction = product / MUSASHI_DEVICE_CLOCK_HZ +

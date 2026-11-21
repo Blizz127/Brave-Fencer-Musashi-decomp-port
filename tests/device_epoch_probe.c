@@ -147,6 +147,21 @@ static void test_owner_stall_and_overflow(void) {
     assert(!musashi_device_epoch_sync(&epoch) && epoch.faulted && !f.advances);
 }
 
+static void test_equal_clock_origin_near_limit(void) {
+    Fixture f = {0};
+    MusashiDeviceEpoch epoch;
+    MusashiDeviceEpochAdapter adapter = {&f,owner,collect,wait_until,device_advance,edge};
+    f.owner = 7;
+    f.frequency = MUSASHI_DEVICE_CLOCK_HZ;
+    f.now = UINT64_MAX - 2;
+    assert(musashi_device_epoch_init(&epoch, &adapter));
+    assert(musashi_device_epoch_advance_cost(&epoch, 2));
+    assert(f.now == UINT64_MAX && epoch.cycle == 2 && f.wait_calls == 1);
+    assert(!musashi_device_epoch_advance_cost(&epoch, 1));
+    assert(epoch.faulted && !strcmp(epoch.fault_reason, "host-wait"));
+    assert(epoch.cycle == 2 && f.wait_calls == 1);
+}
+
 static void test_fractional_conversion_and_initial_refusal(void) {
     Fixture f = {0};
     MusashiDeviceEpoch epoch, before;
@@ -181,6 +196,7 @@ int main(void) {
     test_partial_failure_keeps_remaining_metadata();
     test_refused_clocks_and_metadata();
     test_owner_stall_and_overflow();
+    test_equal_clock_origin_near_limit();
     test_fractional_conversion_and_initial_refusal();
     return 0;
 }
