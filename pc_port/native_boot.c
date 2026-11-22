@@ -662,7 +662,7 @@ static void observe_gpu_dma(NativeBoot *boot, const char *stage) {
     }
     {
         static uint64_t n;
-        if (!log_sample(&n, 8u, 1024u) && !state.fault) return;
+        if (!log_sample(&n, 8u, 1024u) && !state.fault && strcmp(stage, "STOP") != 0) return;
     }
     fprintf(stderr,"native_boot: GPU_DMA2 stage=%s readable=1 cycle=%llu due=%llu "
             "starts=%llu transfers=%llu fetched=%llu accepted=%llu start_madr=%08x "
