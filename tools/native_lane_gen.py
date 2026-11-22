@@ -1081,6 +1081,8 @@ FOREST_FLOOR_EXTENTS = {
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    # The controller can issue two draws and reread target state between callbacks.
+    0x80165E90: {"sc02_0039": (276, 0x616A9BEC6ADB779B)},
     # Actor steps depend on the view query and may run repeatedly in the same caller.
     0x8015094C: {"sc02_0039": (292, 0xEB82E1745D606C6D)},
     # The external drawing services are represented by caller-specific observation adapters.
