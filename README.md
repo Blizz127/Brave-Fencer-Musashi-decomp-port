@@ -48,8 +48,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 22 source update covers 281 regional function matches across seven scene overlays,
-totaling 34,996 bytes. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 22 source update covers 283 regional function matches across seven scene overlays,
+totaling 35,920 bytes. Four mine routines scan floor probes and pass their position to the map lookup.
 The mine collision code intersects the probe with a face and tests its side planes.
 A mine actor scheduler updates eligible actors and copies their positions to attached objects.
 Two earlier passes select actors for updates. A separate routine counts down a signed timer and adjusts the actor’s scale.
@@ -230,6 +230,14 @@ captured forest player, the comparison reached a collision routine that uses the
 guest scratchpad stack. Changing one actor field in that capture produced a
 transition from kind 0, action 1 to kind 2, action 0 in both versions before
 the same boundary. The standard player executes this action on the guest CPU.
+
+Two forest collision functions scan up to 96 actor slots twice. A contact can
+push the actor sideways or snap its coordinates to a surface. The actor's
+flags disabled the scan in a captured forest state. Offline tests using that
+room's geometry and constructed inputs reached six hits in 440 original
+contact calls. The compiled callers reproduced the coordinates when supplied
+with the recorded contact results. The standard player runs both routines on
+the guest CPU.
 
 Another actor routine copies its coordinates into the endpoint before calling
 the model-grid sweep in mode one. A hit writes the corrected coordinates

@@ -1068,6 +1068,8 @@ FOREST_FLOOR_EXTENTS = {
     0x80136824: {"sc02_0039": (624, 0xA6220B515717317C), "sc01_0077": (624, 0x441BAD6497EB45EC)},
     0x8014E5B4: {"sc01_0077": (236, 0x657C3615E0C9AA5A)},
     0x8014E83C: dict.fromkeys(("sc01_0077", "main_0012"), (248, 0x2B785897CD72D1DF)),
+    0x8014E98C: dict.fromkeys(("sc01_0077", "main_0012"), (192, 0x3306C00B358039CB)),
+    0x8014EA4C: dict.fromkeys(("sc01_0077", "main_0012"), (732, 0xD359EE3EC66A0766)),
     0x8016380C: {"main_0012": (148, 0x71854F0B6BBDC749)},
     0x801638A0: {"main_0012": (176, 0x6D0F1DABAABF3689)},
 }
@@ -1151,13 +1153,18 @@ def overlay_extent_source_only(entry, src, info, extents):
 # A scan of 96 slots must observe actor changes between successive guest loads.
 # Earlier independent sources can be supplied to the generator without member data.
 FOREST_ACTOR_EARLIER_SOURCES = {
+    # Earlier forest sources use native-width slot comparisons or opaque scene callbacks.
+    0x8014E98C: {"e553536d769677663fc542846a9246b969dea63116592025ef5e228ef2788f4d"},
+    0x8014EA4C: {"95b8243f0e1262b8cceae7e23ca4756bdee24546ed273fca7a54c1a544cce109"},
     # This earlier sweep passed game addresses directly and skipped timed callbacks.
     0x80133784: {"6efbc131378b644fa5e4e98b800cc159e9c732d26d98a380ca87e22bc4e054a9"},
     0x8014E5B4: {
+        "984d28309e384a1bbd6602aaf5e69a2d2b12e86138358e110d18aa62cb6d8652",
         "467fd42cda68349c509b667ee5ddddc4eeeb72bbd9278ff4adb3c575e8a94016",
         "50f6317326671bb5620ea61a6921b4ae2e9e3222a282366c9cbf26463102e7a2",
     },
     0x8014E83C: {
+        "5a1363a246b5aa847ba8b4c51aba6a16571bd31382b243c4ba551f3e4ecba4ff",
         "0429456444e876365fe1c70afb5d7755eb2c2c90522c99a4982d57132af9f907",
         "10e4d54b8f6f354d30cf1d10b67852647cd97d1dbc352c28e5b55b3ba7d89056",
     },
