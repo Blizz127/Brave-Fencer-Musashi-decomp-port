@@ -1,6 +1,6 @@
 /* Owner re-derivation from retail assembly (clean input set). */
 /* Stops the current voice, starts sound `id` on a new handle and records whether it is still busy. */
-#include "psx_types.h"
+#include "game_track_state.h"
 
 extern s16 D_800A46A2;
 extern s16 D_800A46A0;
@@ -10,7 +10,6 @@ extern s16 D_800A46D2;
 extern s32 D_800652F0[];
 extern void func_8002ED90(void);
 extern void func_800415A8(s32 handle);
-extern s32 func_80041A80(s32 arg, s32 mode, s32 sound);
 extern s32 func_800419B0(s32 handle);
 
 s32 func_8002FDE8(s32 id, s32 arg1)

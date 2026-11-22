@@ -2626,6 +2626,17 @@
       "extent": "function",
       "optimization": "-O2",
       "origin": "Independently reconstructed from the USA game executable. Its one call to the external transfer-stop service gives the same short function body as earlier implementations."
+    },
+    {
+      "name": "func_8002FF0C",
+      "region": "main",
+      "vram": 2147680012,
+      "size": 664,
+      "source": "src/main/8002ff0c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA game executable. Original execution verified the game track and bank-slot state. Sound services remain external."
     }
   ]
 }

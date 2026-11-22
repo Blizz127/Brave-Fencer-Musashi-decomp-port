@@ -529,8 +529,8 @@ from unpublished port sources (windows-port `c427ee546`); this recipe does
 not build it. The packaged menu and save instructions above describe the historical binaries.
 
 The public build uses a curated main-executable registry at
-`provenance/native-main.json`. It records 264 owner-authored C sources totaling
-28,372 matched bytes. The registry includes three motion routines used by the
+`provenance/native-main.json`. It records 265 owner-authored C sources totaling
+29,036 matched bytes. The registry includes three motion routines used by the
 no-disc smoke test. The existing native-lane allowlist and compiler checks
 decide which routines the player can run as host code. Other paths use the
 interpreter. See [EXCLUDED.md](EXCLUDED.md) for the source inclusion criteria.
@@ -544,6 +544,10 @@ The game disc reader advances requests through 11 states. Its 1,540-byte
 state machine matches the original instructions and jump table. A Linux host
 test covers seeks, retries, transfers and error recovery with synthetic drive
 responses. The ordinary player still executes the routine on the guest CPU.
+
+The 664-byte track-start routine opens a sound bank and advances its pending
+request. Host tests cover bank reuse, failure returns and changes made by sound
+services between calls. The player still runs this routine on the guest CPU.
 
 Two game sound-transfer routines match all 52 original instructions. Host tests
 cover successful writes, refused transfers and 32-bit cursor wrapping. The

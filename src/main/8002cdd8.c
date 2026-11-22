@@ -1,6 +1,6 @@
 /* Owner re-derivation from retail assembly (clean input set). */
 /* Sound driver tick: queued command, master-fade step, channel update and bookkeeping. */
-#include "psx_types.h"
+#include "game_track_state.h"
 
 extern void func_8002CFE4(void);
 extern void func_8002D904(s32);
@@ -11,7 +11,6 @@ extern s32 func_8003C4F0(s32);
 extern void func_8003D25C(s32, s32, u8 *);
 extern u16 D_8006A990;
 extern u8 D_8006AEF4;
-extern s32 D_800A4638;
 extern s16 D_800A4E86;
 extern s16 D_800A4E8A;
 extern u16 D_800A4E8E;
@@ -34,7 +33,7 @@ void func_8002CDD8(void)
     u16 level;
 
     cmd = D_800A4F22;
-    tick = &D_800A4638;
+    tick = &D_800A4638.tick;
     *tick += 1;
     if (cmd != 0) {
         D_8006A990 = cmd;

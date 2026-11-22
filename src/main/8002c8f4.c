@@ -1,5 +1,7 @@
 /* Resident sound startup. Record sizes and field widths describe the game's
  * writable state. Service implementations are supplied by the caller's build. */
+#include "game_track_state.h"
+
 typedef unsigned char Byte;
 typedef short Half;
 typedef int Word;
@@ -42,7 +44,7 @@ extern SoundSlot D_800A4640[];
 extern SoundEntry D_800A46E8[8];
 extern SoundChannel D_800A4988[8];
 extern SoundVoice D_800A4C68[8];
-extern Word D_800A4E68, D_800A463C, D_800A4638;
+extern Word D_800A4E68, D_800A463C;
 extern Word D_800A4654, D_800A466C, D_800A4684, D_800A469C;
 extern Word D_800A2B98, D_800C7D20, D_800C7D2C, D_800A2BA0;
 extern Word D_800A4EE8, D_800A4EEC, D_800A4F24;
@@ -86,7 +88,7 @@ void func_8002C8F4(void)
     D_800A4F19 = 1;
     D_800A4EF6 = 1;
     D_800A463C = 0x1010;
-    D_800A4638 = 0;
+    D_800A4638.tick = 0;
     D_800A4E7A = 0;
     D_800A46E4 = 0;
     D_800A4654 = 0x10000;

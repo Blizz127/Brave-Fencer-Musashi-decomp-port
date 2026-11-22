@@ -22,7 +22,7 @@ def test_sound_startup_state_and_calls(compiler, tmp_path):
     subprocess.run([
         compiler, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
         "-fno-strict-aliasing", "-fno-pie", "-no-pie", "-fsanitize=undefined",
-        "-fno-sanitize-recover=all", root / "tests/sound_startup_probe.c",
+        "-fno-sanitize-recover=all", "-I", root / "include", root / "tests/sound_startup_probe.c",
         *bindings, "-o", program,
     ], check=True)
     subprocess.run([program], check=True)
