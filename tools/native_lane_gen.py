@@ -1057,6 +1057,8 @@ FOREST_FLOOR_EXTENTS = {
         "sc01_0077": (452, 0x8EE787ADB445A8F7),
         "main_0012": (452, 0xEC327F42C79F1489),
     },
+    0x80133784: {"sc01_0077": (812, 0xFE2D6B192DBC08CA)},
+    0x801343C4: {"sc01_0077": (332, 0xB19C8B5B64754AC3)},
     0x80133AB0: {"sc01_0077": (548, 0x9894996A69C12F1B)},
     0x80135004: {"sc01_0077": (356, 0x982B71CC5AB6E562)},
     0x80135A4C: {"sc01_0077": (724, 0xAC6B91F466F71566)},
@@ -1130,6 +1132,8 @@ def overlay_extent_source_only(entry, src, info, extents):
 # A scan of 96 slots must observe actor changes between successive guest loads.
 # Earlier independent sources can be supplied to the generator without member data.
 FOREST_ACTOR_EARLIER_SOURCES = {
+    # This earlier sweep passed game addresses directly and skipped timed callbacks.
+    0x80133784: {"6efbc131378b644fa5e4e98b800cc159e9c732d26d98a380ca87e22bc4e054a9"},
     0x8014E5B4: {
         "467fd42cda68349c509b667ee5ddddc4eeeb72bbd9278ff4adb3c575e8a94016",
         "50f6317326671bb5620ea61a6921b4ae2e9e3222a282366c9cbf26463102e7a2",

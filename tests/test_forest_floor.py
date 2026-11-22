@@ -106,3 +106,23 @@ def test_model_grid_face_order_and_material(tmp_path):
         "-o", binary,
     ], check=True)
     subprocess.run([binary], check=True)
+
+
+def test_grid_controllers_retry_and_slope(tmp_path):
+    binary = tmp_path / "grid-controllers"
+    sources = ROOT / "src/overlays/sc01_0077"
+    subprocess.run([
+        "cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-I", ROOT / "include",
+        ROOT / "tests/forest_grid_controllers_probe.c", sources / "80133784.c",
+        sources / "801343c4.c", "-o", binary,
+    ], check=True)
+    subprocess.run([binary], check=True)
+
+
+def test_grid_origin_overlaps_contact_fields(tmp_path):
+    binary = tmp_path / "grid-contact-alias"
+    subprocess.run([
+        "cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-I", ROOT / "include",
+        ROOT / "tests/forest_grid_scalar_alias_probe.c", "-o", binary,
+    ], check=True)
+    subprocess.run([binary], check=True)

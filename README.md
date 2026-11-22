@@ -42,8 +42,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 22 source update covers 262 functions across seven scene overlays,
-totaling 28,276 bytes of matching executable code. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 22 source update covers 264 functions across seven scene overlays,
+totaling 29,420 bytes of matching executable code. Four mine routines scan floor probes and pass their position to the map lookup.
 The mine collision code intersects the probe with a face and tests its side planes.
 A mine actor scheduler updates eligible actors and copies their positions to attached objects.
 A separate mine routine saves the positions of 20 slots and updates each active slot’s target after its handler returns.
@@ -161,6 +161,12 @@ the guest CPU.
 The grid query computes the movement vector, visits short and long faces in
 cell order, and records the selected material. The standard player executes
 the query on the guest CPU.
+
+Two forest controllers use the grid query. One retries with the destination
+cell after a miss across a 128-unit boundary. The other tests an endpoint
+sweep and classifies the contact slope. Its distance mode calls the original
+square-root service. Both controllers execute on the guest CPU in the standard
+player.
 
 A matching actor routine gathers the current coordinates, tests the segment
 from the previous position and writes the corrected coordinates on a hit.
