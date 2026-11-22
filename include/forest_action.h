@@ -34,7 +34,7 @@ s32 func_801488A8(ForestActionPlayer *);
 s32 func_801496D4(ForestActionPlayer *);
 s32 func_80149704(ForestActionPlayer *);
 s32 func_801498E0(u32 actor_address);
-void func_80149954(ForestActionPlayer *);
+s32 func_80149954(ForestActionPlayer *);
 s32 func_80149A64(ForestActionPlayer *);
 s32 func_80149AA8(ForestActionPlayer *);
 void func_80149AD4(ForestActionPlayer *);

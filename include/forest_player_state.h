@@ -3,9 +3,18 @@
 
 #include "psx_types.h"
 
+typedef union {
+    s32 word;
+    struct { u16 low; s16 high; } halves;
+} ForestPlayerWord;
+
 typedef struct {
     u16 kind, action;
-    u8 pad04[0x40];
+    u8 pad04[0x24 - 4];
+    ForestPlayerWord field_24;
+    u8 pad28[4];
+    ForestPlayerWord field_2c;
+    u8 pad30[0x44 - 0x30];
     u32 flags;
     u8 pad48[4];
     u8 state, phase;
@@ -19,8 +28,10 @@ typedef struct {
     u16 sequence_flags;
     u8 padd6[0xdd - 0xd6];
     u8 mode;
-    u8 padde[0x234 - 0xde];
-    u32 step, counter;
+    u8 padde[0x16e - 0xde];
+    u16 field_16e;
+    u8 pad170[0x234 - 0x170];
+    u32 step, counter, field_23c;
 } ForestPlayerState;
 
 extern ForestPlayerState D_80126B58;
