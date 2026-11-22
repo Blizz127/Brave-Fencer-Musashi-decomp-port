@@ -18,6 +18,10 @@ typedef union {
         u32 model_address;
         u8 tail[0xe8];
     } placed;
+    struct {
+        u8 before_parameter[0x70];
+        s16 parameter;
+    } gate;
 } Actor33A;
 
 typedef void (*Actor33APhase)(Actor33A *actor);
@@ -35,8 +39,10 @@ u32 bfm_room_33a_acquire_model(void);
 void bfm_room_33a_initialize_model(u32 model_address);
 #endif
 
+void func_8012AD44(u8 *actor, u16 phase);
 void func_8012C098(char *actor);
 void func_801814B0(Actor33A *actor);
 void func_801814EC(Actor33A *actor);
+void func_80181550(Actor33A *actor);
 
 #endif

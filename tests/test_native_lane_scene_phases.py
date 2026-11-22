@@ -17,6 +17,7 @@ PHASES = (
     ("sc03_0116", 0x80180FF8, 48),
     ("sc03_0116", 0x801814B0, 60),
     ("sc03_0116", 0x801814EC, 100),
+    ("sc03_0116", 0x80181550, 48),
     ("sc03_0116", 0x80182378, 60),
     ("sc03_0116", 0x801825A8, 176),
     ("sc02_0039", 0x8017E910, 272),
@@ -171,7 +172,7 @@ PHASES = (
 
 
 
-@pytest.mark.parametrize("pc,extent", ((0x80180FBC, 60), (0x80180FF8, 48), (0x801814B0, 60), (0x801814EC, 100), (0x80182378, 60), (0x801825A8, 176)))
+@pytest.mark.parametrize("pc,extent", ((0x80180FBC, 60), (0x80180FF8, 48), (0x801814B0, 60), (0x801814EC, 100), (0x80181550, 48), (0x80182378, 60), (0x801825A8, 176)))
 def test_room_304c_callbacks_use_their_complete_bodies(tmp_path, monkeypatch, pc, extent):
     source = tmp_path / "independent.c"
     source.write_text("int independent(void) { return 3; }\n")
