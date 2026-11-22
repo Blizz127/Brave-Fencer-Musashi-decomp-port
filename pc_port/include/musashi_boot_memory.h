@@ -243,6 +243,10 @@ typedef struct MusashiCdDevice {
     const struct MusashiBiosEventTable *metadata_events;
     uint64_t (*metadata_descriptor)(void *, const MusashiBootMemory *,
         const struct MusashiBiosEventTable *, int32_t fd, uint32_t position, uint32_t count);
+    /* Returns the same completed read identity on each inspection. A null
+     * output validates the existing bytes without copying them. */
+    uint64_t (*copy_completed_metadata)(void *, const MusashiBootMemory *,
+        const struct MusashiBiosEventTable *, int32_t fd, uint64_t open_id, uint8_t out[640]);
 } MusashiCdDevice;
 
 /* Start from mapped EXE bytes, executing its source-owned CRT and caller on

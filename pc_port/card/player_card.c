@@ -68,6 +68,24 @@ static int deliver(void *context, uint32_t group, uint32_t spec)
     return 1;
 }
 
+static const CsCompletedRead metadata_transfer = {512u, 0x80075a40u, 640u};
+
+static void remember_metadata(void *context, unsigned slot, int32_t fd, uint64_t open_id,
+                              const CsCompletedRead *transfer, const uint8_t *bytes)
+{
+    MusashiPlayerCard *card = context;
+    if (slot != 0 || fd != 2 || transfer->position != metadata_transfer.position ||
+        transfer->destination != metadata_transfer.destination ||
+        transfer->count != metadata_transfer.count) return;
+    /* Re-reading even identical bytes on the same fd earns a different ID.
+     * Never recycle an ID. Ordinary card I/O still works after exhaustion. */
+    card->metadata_open_id = 0;
+    if (!open_id || card->metadata_read_id == UINT64_MAX) return;
+    ++card->metadata_read_id;
+    if (musashi_sha256_digest(bytes, transfer->count, card->metadata_digest))
+        card->metadata_open_id = open_id;
+}
+
 int musashi_player_card_open(MusashiPlayerCard *card, MusashiBootMemory *memory,
                              MusashiBiosEvents *events, const char *directory)
 {
@@ -76,7 +94,7 @@ int musashi_player_card_open(MusashiPlayerCard *card, MusashiBootMemory *memory,
     card->memory = memory;
     card->events = events;
     card->storage = cs_storage_create();
-    card->service = cs_create(host);
+    card->service = cs_create_with_read_observer(host, remember_metadata);
     if (!card->storage || !card->service) {
         musashi_player_card_close(card);
         return 0;
@@ -112,10 +130,24 @@ uint64_t musashi_player_card_metadata_descriptor(const MusashiPlayerCard *card,
     const uint8_t *row = memory->bytes + (0x80076044u - 0x80000000u);
     if (memcmp(path, "bu00:", 5) || memchr(path + 5, 0, 19) || path[24] ||
         memcmp(path + 5, row, 20)) return 0;
-    static const CsCompletedRead metadata_read = {512, 0x80075a40u, 640};
     return cs_async_read_descriptor(card->service, card, 0, fd, (const char *)path + 5,
                                     row, 8192, position, count,
-                                    position == 1152 ? &metadata_read : NULL);
+                                    position == 1152 ? &metadata_transfer : NULL);
+}
+
+uint64_t musashi_player_card_copy_completed_metadata(const MusashiPlayerCard *card,
+                     const MusashiBootMemory *memory, const MusashiBiosEvents *events,
+                     int32_t fd, uint64_t open_id, uint8_t out[640])
+{
+    if (!card || !open_id || card->metadata_open_id != open_id ||
+        musashi_player_card_metadata_descriptor(card, memory, events, fd, 1152u, 0) != open_id)
+        return 0;
+    const uint8_t *live = memory->bytes + (metadata_transfer.destination - 0x80000000u);
+    uint8_t digest[32];
+    if (!musashi_sha256_digest(live, metadata_transfer.count, digest) ||
+        memcmp(digest, card->metadata_digest, sizeof digest)) return 0;
+    if (out) memmove(out, live, metadata_transfer.count);
+    return card->metadata_read_id;
 }
 
 int musashi_player_card_finish(MusashiPlayerCard *card)

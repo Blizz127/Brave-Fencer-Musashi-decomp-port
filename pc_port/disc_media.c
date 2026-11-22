@@ -447,8 +447,13 @@ static int musashi_main12_transfer_matches(const MusashiMain12Owner *owner, cons
             return 0;
     } else if (!transfer_range_matches(source, live, 0, MAIN12_STATE)) return 0;
     if (!mailbox) return transfer_range_matches(source, live, MAIN12_STATE + 1u, MAIN12_BYTES);
-    return transfer_range_matches(source, live, MAIN12_STATE + 1u, MAIN12_MAILBOX) &&
-        transfer_range_matches(source, live, MAIN12_MAILBOX + 16u, MAIN12_BYTES);
+    if (!transfer_range_matches(source, live, MAIN12_STATE + 1u, MAIN12_MAILBOX)) return 0;
+    if (!installed || !owner->row_pointer_written)
+        return transfer_range_matches(source, live, MAIN12_MAILBOX + 16u, MAIN12_BYTES);
+    const uint32_t cell = MUSASHI_MAIN12_ROW_CELL - 0x80128158u;
+    return le32(live + cell) == MUSASHI_MAIN12_ROW_DATA &&
+        transfer_range_matches(source, live, MAIN12_MAILBOX + 16u, cell) &&
+        transfer_range_matches(source, live, cell + 4u, MAIN12_BYTES);
 }
 
 MusashiMain12Owner *musashi_main12_open(MusashiGuestIrqImage *image,

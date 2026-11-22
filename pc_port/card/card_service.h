@@ -49,6 +49,17 @@ typedef struct {
    before destruction or stopping the host. Guest callbacks may query status;
    the host must not re-enter other service calls from a host callback. */
 CardService *cs_create(CsHost host);
+
+typedef struct {
+    uint32_t position, destination, count;
+} CsCompletedRead;
+/* Delivered after a full asynchronous read reaches guest memory. The bytes
+   are the host's read result and are valid only during this callback. Like
+   other callbacks it runs on the serialized service and must not reenter it. */
+typedef void (*CsAsyncReadObserver)(void *context, unsigned slot, int32_t fd,
+                                   uint64_t open_id, const CsCompletedRead *transfer,
+                                   const uint8_t *bytes);
+CardService *cs_create_with_read_observer(CsHost host, CsAsyncReadObserver observer);
 void cs_destroy(CardService *s);
 /* Verify an existing medium without changing its contents, or initialize
    absent backing storage through create-if-absent. CS_MEDIA_UNFORMATTED
@@ -69,9 +80,6 @@ void cs_media_changed(CardService *s, unsigned slot);
    here. Returns 0 on an invalid fd or a collision with a live card handle. */
 int cs_reserve_fd(CardService *s, int32_t fd, int reserved);
 int32_t cs_open(CardService *s, uint32_t path, uint32_t mode);
-typedef struct {
-    uint32_t position, destination, count;
-} CsCompletedRead;
 
 /* Pure inspection of one literal, async read-only handle. Both queues and
    their notifications must be idle. The entire row must match the latest

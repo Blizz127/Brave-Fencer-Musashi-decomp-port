@@ -379,6 +379,13 @@ static uint64_t player_metadata_descriptor(void *userdata, const MusashiBootMemo
     return musashi_player_card_metadata_descriptor(&boot->file_card,memory,events,fd,position,count);
 }
 
+static uint64_t player_copy_completed_metadata(void *userdata, const MusashiBootMemory *memory,
+    const MusashiBiosEvents *events, int32_t fd, uint64_t open_id, uint8_t out[640]) {
+    NativeBoot *boot = userdata;
+    return musashi_player_card_copy_completed_metadata(&boot->file_card, memory, events,
+                                                      fd, open_id, out);
+}
+
 static int player_file_vector(void *userdata, uint32_t vector, uint32_t selector,
                               const uint32_t args[4], uint32_t *v0) {
     NativeBoot *boot = userdata;
@@ -4531,6 +4538,7 @@ int main(int argc, char **argv) {
             boot.cd.file_vector = player_file_vector;
             boot.cd.metadata_events = &boot.bios.events;
             boot.cd.metadata_descriptor = player_metadata_descriptor;
+            boot.cd.copy_completed_metadata = player_copy_completed_metadata;
         } else fputs("Memory card slot 1 unavailable: file service could not start.\n", stderr);
     }
 #endif

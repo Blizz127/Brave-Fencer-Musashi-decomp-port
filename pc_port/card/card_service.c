@@ -40,6 +40,7 @@ typedef struct {
 } CardPath;
 struct CardService {
     CsHost host;
+    CsAsyncReadObserver read_observer;
     int initialized, started, files, error, ignore_next_change, pumping;
     unsigned last_port;
     uint64_t last_open_id;
@@ -59,12 +60,17 @@ static CardImage image_of(CardService *s) {
 }
 
 CardService *cs_create(CsHost host) {
+    return cs_create_with_read_observer(host, NULL);
+}
+
+CardService *cs_create_with_read_observer(CsHost host, CsAsyncReadObserver observer) {
     CardService *s;
     if (!host.map || !host.snapshot || !host.commit || !host.event) return NULL;
     s = calloc(1, sizeof *s);
     if (s) {
         unsigned slot;
         s->host = host;
+        s->read_observer = observer;
         for (slot = 0; slot < SLOT_COUNT; ++slot) s->slots[slot].status = 1;
     }
     return s;
@@ -373,6 +379,9 @@ static uint32_t file_transfer(CardService *s, Descriptor *d, uint32_t addr,
         if (d->mode & 0x8000u) {
             s->completed_read = (CsCompletedRead){d->position, addr, count};
             s->completed_open_id = d->open_id;
+            if (s->read_observer)
+                s->read_observer(s->host.context, d->slot, (int32_t)(d - s->descriptors),
+                                 d->open_id, &s->completed_read, out);
         }
     }
     d->position += count;

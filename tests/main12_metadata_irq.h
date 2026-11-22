@@ -5,7 +5,10 @@
 
 typedef struct {
     MusashiBiosEvents bank;
-    unsigned seeks, reads, polls;
+    unsigned seeks, reads, polls, closes, captures;
+    uint64_t open_id, read_id;
+    uint8_t payload[640];
+    int closed, fail_close, change_at_close;
     uint32_t position;
     int pending;
 } MetadataFile;
@@ -26,8 +29,21 @@ static uint64_t metadata_id(void *userdata, const MusashiBootMemory *ram,
     const MusashiBiosEvents *bank, int32_t fd, uint32_t position, uint32_t count)
 {
     const MetadataFile *file = userdata;
-    return ram == &machine && bank == &file->bank && fd == 2 && !file->pending &&
-        position == file->position && count == (position == 512 ? 640u : 0u) ? 1u : 0u;
+    return ram == &machine && bank == &file->bank && fd == 2 && !file->closed && !file->pending &&
+        position == file->position && count == (position == 512 ? 640u : 0u) ? file->open_id : 0u;
+}
+
+static uint64_t metadata_copy(void *userdata, const MusashiBootMemory *ram,
+    const MusashiBiosEvents *bank, int32_t fd, uint64_t open_id, uint8_t out[640])
+{
+    MetadataFile *file = userdata;
+    if (!open_id || metadata_id(userdata, ram, bank, fd, 1152, 0) != open_id ||
+        memcmp(ram->bytes + 0x75a40u, file->payload, sizeof file->payload)) return 0;
+    if (out) {
+        ++file->captures;
+        memcpy(out, file->payload, sizeof file->payload);
+    }
+    return file->read_id;
 }
 
 static int metadata_vector(void *userdata, uint32_t vector, uint32_t selector,
@@ -35,7 +51,13 @@ static int metadata_vector(void *userdata, uint32_t vector, uint32_t selector,
 {
     MetadataFile *file = userdata;
     CHECK(vector == 0xb0u && args[0] == 2u && !file->pending);
-    if (selector == 0x33u) {
+    if (selector == 0x36u) {
+        CHECK(!file->closed && file->position == 1152);
+        ++file->closes;
+        file->closed = !file->fail_close;
+        if (file->change_at_close) machine.bytes[0x75a40u + 319u] ^= 1;
+        *result = file->closed ? 2u : UINT32_MAX;
+    } else if (selector == 0x33u) {
         CHECK(!file->position && args[1] == 512 && !args[2]);
         ++file->seeks;
         *result = file->position = 512;
@@ -73,11 +95,177 @@ static unsigned metadata_irq(const MusashiGuestIrqCard *card, int expected)
     return stop.instructions;
 }
 
-static void check_metadata_irq(void)
+enum MetadataCloseCase { CLOSE_OK, CLOSE_NO_WITNESS, CLOSE_NEW_EVENT, CLOSE_FAILED, CLOSE_CHANGED, CLOSE_PRELOADED };
+
+static void metadata_at(FormatterCpu *cpu, uint32_t pc)
 {
-    MetadataFile file = {0}, foreign = {0};
+    cpu->pc = pc; cpu->npc = pc + 4u;
+}
+
+static FormatterCpu metadata_foreground(MusashiCdDevice *files, MusashiEventDevice *polls,
+                                        const uint8_t row[40])
+{
+    FormatterCpu cpu = entry(callback_pc);
+    cpu.cd_device = files; cpu.event_device = polls;
+    CHECK(formatter_step(&machine, &cpu) && cpu.main12_callback_frame == owner);
+    metadata_at(&cpu, MAIN12_SERVICE);
+    cpu.r[6] = MAIN12_MAILBOX; cpu.r[31] = MAIN12_SERVICE_RETURN;
+    CHECK(formatter_step(&machine, &cpu) && cpu.main12_card_service);
+
+    /* Supply the synthetic directory return and opened file descriptor to the same
+     * foreground hooks used by the mounted player. No completed read is seeded. */
+    memcpy(machine.scratchpad + 0x2f8u, row, 40);
+    metadata_at(&cpu, 0xb0u);
+    cpu.r[9] = 0x42; cpu.r[31] = 0x80062128u;
+    cpu.r[4] = 0x1f8002d8u; cpu.r[5] = 0x1f8002f8u;
+    main12_card_file_result(&machine, &cpu, cpu.r[5], 0);
+    CHECK(cpu.main12_directory_found && owner->directory_valid);
+    metadata_at(&cpu, 0x8002c2b8u); cpu.r[31] = 0x8002c148u;
+    CHECK(cpu_write8(&machine, &cpu, MAIN12_MAILBOX + 1u, 1));
+    CHECK(cpu_write8(&machine, &cpu, MAIN12_MAILBOX + 1u, 7));
+    metadata_at(&cpu, 0x8017d0bcu);
+    CHECK(cpu_write8(&machine, &cpu, MAIN12_MAILBOX + 9u, 7));
+
+    metadata_at(&cpu, 0xb0u);
+    cpu.r[9] = 0x32; cpu.r[31] = 0x800602c8u; cpu.r[29] = 0x1f800338u;
+    cpu.r[4] = 0x80078ca0u; cpu.r[5] = 0x8001u;
+    main12_card_file_result(&machine, &cpu, 2, 0);
+    CHECK(owner->directory_fd_token && owner->metadata_read.files == files);
+    return cpu;
+}
+
+static int metadata_stop_after_vector(void *unused, const void *state)
+{
+    (void)unused;
+    return ((const FormatterCpu *)state)->pc == 0xb0u;
+}
+
+static void refused_mailbox_step(FormatterCpu cpu)
+{
+    const FormatterCpu before = cpu;
+    const unsigned previous_calls = clock_calls, stage = owner->menu_metadata.stage;
+    const uint64_t previous_cycles = cycles;
+    memcpy(&before_step, &machine, sizeof machine);
+    int stepped = formatter_step(&machine, &cpu);
+    if (stepped) fprintf(stderr, "Unexpected metadata store at %08x with base %08x and value %u\n",
+                         before.pc, before.r[19], before.r[2]);
+    CHECK(!stepped);
+    CHECK(before.pc == cpu.pc && before.npc == cpu.npc && !memcmp(before.r, cpu.r, sizeof cpu.r));
+    CHECK(!memcmp(&before_step, &machine, sizeof machine) && stage == owner->menu_metadata.stage);
+    CHECK(clock_calls == previous_calls && cycles == previous_cycles);
+}
+
+typedef struct { unsigned calls, cost; int alter_payload; } MetadataClock;
+
+static int metadata_store_clock(void *userdata, uint32_t cycles_requested)
+{
+    MetadataClock *clock = userdata;
+    ++clock->calls;
+    clock->cost += cycles_requested;
+    if (!clock->alter_payload) return 0;
+    machine.bytes[0x75a40u + 639u] ^= 1;
+    return 1;
+}
+
+static void metadata_close(FormatterCpu cpu, MetadataFile *file, enum MetadataCloseCase which)
+{
+    uint32_t state;
+    CHECK(musashi_boot_read32(&machine, 0x8007609cu, &state) && state == 7);
+    if (which == CLOSE_PRELOADED) {
+        metadata_put(0x8007609cu, 8);
+    } else {
+        metadata_at(&cpu, 0x8002b29cu);
+        cpu.r[31] = 0x8002b0ecu; cpu.r[29] = 0x1f800368u;
+        cpu.r[1] = 0x80070000u;
+        cpu.r[3] = 8u;
+        uint64_t before_cycles = cycles;
+        CHECK(formatter_step(&machine, &cpu) && cycles == before_cycles + 3u);
+    }
+    CHECK(musashi_boot_read32(&machine, 0x8007609cu, &state) && state == 8);
+    metadata_at(&cpu, 0xb0u);
+    cpu.r[9] = 0x36; cpu.r[4] = 2; cpu.r[31] = 0x800603e8u; cpu.r[29] = 0x1f800350u;
+    if (which == CLOSE_NO_WITNESS) {
+        CHECK(!file->captures && owner->menu_metadata.stage == MAIN12_METADATA_NONE);
+    } else {
+        CHECK(file->captures == 1 && owner->menu_metadata.stage == MAIN12_METADATA_READ);
+        CHECK(owner->menu_metadata.open_id == file->open_id && owner->menu_metadata.read_id == file->read_id);
+        CHECK(!memcmp(owner->menu_metadata.bytes, file->payload, sizeof file->payload));
+        CHECK(main12_closing_read(&machine, &cpu) == file->read_id);
+        ++file->open_id; CHECK(!main12_closing_read(&machine, &cpu)); --file->open_id;
+        ++file->read_id; CHECK(!main12_closing_read(&machine, &cpu)); --file->read_id;
+        machine.bytes[0x75a40u + 639u] ^= 1;
+        CHECK(!main12_closing_read(&machine, &cpu));
+        machine.bytes[0x75a40u + 639u] ^= 1;
+    }
+    if (which == CLOSE_NEW_EVENT) {
+        int32_t handle, status;
+        const uint64_t previous = file->bank.allocation_serial[7];
+        CHECK(musashi_bios_events_close(&file->bank, (int32_t)0xf1000007u, &status));
+        CHECK(musashi_bios_events_open(&file->bank, 0xf0000011u, 0x2000, 0x1000,
+                                      0x800617ccu + 7u * 20u, &handle));
+        CHECK((uint32_t)handle == 0xf1000007u && file->bank.allocation_serial[7] != previous);
+        CHECK(musashi_bios_events_enable(&file->bank, handle, &status));
+        CHECK(!main12_closing_read(&machine, &cpu));
+    }
+    MusashiCallbackDevice pause = callbacks;
+    pause.checkpoint = metadata_stop_after_vector;
+    cpu.callback_device = &pause;
+    MusashiResetGraphPrefixStop stop = {0};
+    int32_t result = 0;
+    CHECK(run_startup_cpu_loop(&machine, &cpu, NULL, NULL, &result, &stop, NULL, NULL, NULL) ==
+          MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT);
+    CHECK(stop.call_address == 0x800603e8u && cpu.pc == stop.call_address && file->closes == 1);
+    CHECK(cpu.r[2] == (which == CLOSE_FAILED ? UINT32_MAX : 2u) && !owner->directory_fd_token);
+    CHECK(file->closed == (which != CLOSE_FAILED));
+    cpu.callback_device = &callbacks;
+    CHECK(owner->menu_metadata.stage == (which == CLOSE_OK || which == CLOSE_PRELOADED ?
+          MAIN12_METADATA_CLOSED : MAIN12_METADATA_NONE));
+
+    /* The two store frames use the observed mailbox base and return stack.
+     * Each instruction is fetched by the existing mounted formatter. */
+    cpu.r[19] = MAIN12_MAILBOX; cpu.r[31] = 0x8002be1cu; cpu.r[29] = 0x1f800368u;
+    metadata_at(&cpu, 0x8002c2c8u); cpu.r[2] = 1;
+    refused_mailbox_step(cpu); /* Ready cannot precede menu state 8. */
+    metadata_at(&cpu, 0x8002c2b8u); cpu.r[2] = 8;
+    if (which != CLOSE_OK) { refused_mailbox_step(cpu); return; }
+    machine.bytes[0x75a40u] ^= 1;
+    refused_mailbox_step(cpu);
+    machine.bytes[0x75a40u] ^= 1;
+    cpu.r[19] = 0x8007609bu; /* Displaced destination already contains 8. */
+    refused_mailbox_step(cpu);
+    cpu.r[19] = MAIN12_MAILBOX;
+    metadata_put(0x8007609cu, 0x10008u);
+    refused_mailbox_step(cpu);
+    metadata_put(0x8007609cu, 8);
+    MetadataClock clock = {0};
+    MusashiExecutionClock hold = {&clock, metadata_store_clock};
+    cpu.clock = &hold;
+    refused_mailbox_step(cpu);
+    CHECK(clock.calls == 1 && clock.cost == 3);
+    clock.alter_payload = 1;
+    CHECK(!formatter_step(&machine, &cpu) && cpu.pc == 0x8002c2b8u);
+    CHECK(clock.calls == 2 && clock.cost == 6 && owner->menu_metadata.stage == MAIN12_METADATA_CLOSED);
+    CHECK(owner->mailbox[1] == 7 && machine.bytes[(MAIN12_MAILBOX & 0x1fffffu) + 1] == 7);
+    machine.bytes[0x75a40u + 639u] ^= 1;
+    cpu.clock = &clock_source;
+    unsigned start = clock_calls;
+    uint64_t start_cycles = cycles;
+    CHECK(formatter_step(&machine, &cpu) && owner->menu_metadata.stage == MAIN12_METADATA_STATE);
+    CHECK(owner->mailbox[1] == 8 && machine.bytes[(MAIN12_MAILBOX & 0x1fffffu) + 1] == 8);
+    metadata_at(&cpu, 0x8002c2c8u); cpu.r[2] = 1;
+    CHECK(formatter_step(&machine, &cpu) && owner->menu_metadata.stage == MAIN12_METADATA_READY);
+    CHECK(owner->mailbox[4] == 1 && machine.bytes[(MAIN12_MAILBOX & 0x1fffffu) + 4] == 1);
+    CHECK(clock_calls == start + 2u && cycles == start_cycles + 6u);
+    puts("The resident state store preceded close. Menu state 8 and ready 1 took two guest stores and six cycles.");
+}
+
+static void check_metadata_case(enum MetadataCloseCase which)
+{
+    MetadataFile file = {.open_id=37, .read_id=89, .fail_close=which == CLOSE_FAILED,
+                         .change_at_close=which == CLOSE_CHANGED}, foreign = {0};
     MusashiCdDevice files = {.userdata=&file, .file_vector=metadata_vector,
-        .metadata_events=&file.bank, .metadata_descriptor=metadata_id};
+        .metadata_events=&file.bank, .metadata_descriptor=metadata_id,
+        .copy_completed_metadata=which == CLOSE_NO_WITNESS ? NULL : metadata_copy};
     MusashiEventDevice polls = {.userdata=&file, .b0_0b=metadata_poll, .registered_owner=metadata_poll_owner};
     MusashiGuestIrqCard card = {.memory=&machine, .files=&files, .events=&polls, .registered_events=&file.bank};
     seed_machine();
@@ -106,11 +294,9 @@ static void check_metadata_irq(void)
     CHECK(row);
     memset(row, 0, sizeof owner->directory_row);
     memcpy(row, "TEST", 4);
-    memcpy(owner->directory_row, row, sizeof owner->directory_row);
-    owner->directory_valid = 1;
-    owner->directory_fd_token = 1;
-    owner->metadata_read.files = &files;
-    owner->metadata_read.events = &file.bank;
+    FormatterCpu foreground = metadata_foreground(&files, &polls, row);
+    metadata_put(0x8007609cu, 7);
+    CHECK(owner->directory_fd_token == file.open_id);
 
     CHECK(irq_metadata_entry(&irq, &card, 0));
     row[0] ^= 1u;
@@ -149,10 +335,23 @@ static void check_metadata_irq(void)
     CHECK(!irq_metadata_entry(&irq, &card, 30)); /* The completion flag alone cannot make the request ready. */
     file.pending = 0;
     file.position = 1152;
+    for (unsigned i = 0; i < sizeof file.payload; ++i) file.payload[i] = (uint8_t)(i*11u + 9u);
+    memcpy(machine.bytes + 0x75a40u, file.payload, sizeof file.payload);
     unsigned complete_steps = metadata_irq(&card, 1);
     CHECK(file.seeks == 1 && file.reads == 1 && file.polls == 12 && !owner->metadata_read.phase);
     CHECK(cd_irq_ram_word(&machine, 0x80078c80u, 0) && cd_irq_ram_word(&machine, 0x80078c88u, 1));
     CHECK(cd_irq_ram_word(&machine, 0x80072a34u, UINT32_MAX));
-    printf("Metadata IRQ returned after %u/%u/%u guest steps with one seek, one read and 12 event polls.\n",
+    metadata_close(foreground, &file, which);
+    if (which == CLOSE_OK) printf("Metadata IRQ returned after %u/%u/%u guest steps with one seek, one read and 12 event polls.\n",
            seek_steps, read_steps, complete_steps);
+}
+
+static void check_metadata_irq(void)
+{
+    check_metadata_case(CLOSE_NO_WITNESS);
+    check_metadata_case(CLOSE_NEW_EVENT);
+    check_metadata_case(CLOSE_FAILED);
+    check_metadata_case(CLOSE_CHANGED);
+    check_metadata_case(CLOSE_PRELOADED);
+    check_metadata_case(CLOSE_OK);
 }

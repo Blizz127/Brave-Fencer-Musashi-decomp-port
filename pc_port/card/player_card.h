@@ -16,6 +16,8 @@ typedef struct MusashiPlayerCard {
     MusashiBootMemory *event_memory;
     uint64_t last_vblank;
     int slot0_mounted;
+    uint64_t metadata_open_id, metadata_read_id;
+    uint8_t metadata_digest[32];
 } MusashiPlayerCard;
 
 /* The player owns the first slot. A missing directory leaves the device
@@ -29,6 +31,12 @@ int musashi_player_card_open(MusashiPlayerCard *, MusashiBootMemory *,
 uint64_t musashi_player_card_metadata_descriptor(const MusashiPlayerCard *,
                              const MusashiBootMemory *, const MusashiBiosEvents *,
                              int32_t fd, uint32_t position, uint32_t count);
+/* Return this mounted instance's ID for the exact completed metadata read.
+ * NULL output validates without copying. On refusal the output is untouched.
+ * Compare the ID earned by the IRQ with the live pre-close result. */
+uint64_t musashi_player_card_copy_completed_metadata(const MusashiPlayerCard *,
+                             const MusashiBootMemory *, const MusashiBiosEvents *,
+                             int32_t fd, uint64_t open_id, uint8_t out[640]);
 int musashi_player_card_finish(MusashiPlayerCard *);
 void musashi_player_card_close(MusashiPlayerCard *);
 void musashi_player_card_pulse(MusashiPlayerCard *, uint64_t source_vblank);

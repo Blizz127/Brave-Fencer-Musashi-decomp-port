@@ -3,6 +3,8 @@
 
 #include "musashi_main12.h"
 
+enum { MUSASHI_MAIN12_ROW_CELL = 0x80185af0u, MUSASHI_MAIN12_ROW_DATA = 0x80075ad0u };
+
 /* Allocated only for a successfully verified disc mount, outside guest RAM. */
 struct MusashiMain12Owner {
     MusashiGuestIrqImage *image;
@@ -17,6 +19,7 @@ struct MusashiMain12Owner {
     uint8_t directory_valid;
     uint64_t directory_fd_token;
     uint8_t menu_word_changed;
+    uint8_t row_pointer_written;
     int installed;
     struct {
         const MusashiCdDevice *files;
@@ -24,6 +27,15 @@ struct MusashiMain12Owner {
         uint64_t descriptor, allocation[8];
         unsigned phase;
     } metadata_read;
+    struct {
+        const MusashiCdDevice *files;
+        const MusashiBiosEvents *events;
+        const void *file_userdata;
+        uint64_t open_id, read_id, allocation[8];
+        unsigned stage;
+        uint8_t status_written;
+        uint8_t bytes[640];
+    } menu_metadata;
 };
 
 #endif
