@@ -2,21 +2,27 @@
 #define MUSASHI_MDEC_DECODE_H
 /* Integer reference model of the documented PSX MDEC pipeline.
  * https://psx-spx.consoledev.net/macroblockdecodermdec/
- * Uses the uploaded quantization and scale tables. Numeric rounding follows
- * the documented low-level model; hardware-exact IDCT rounding is not claimed.
+ * Uses the uploaded quantization and scale tables. Retained fixed-point
+ * precision is checked against hardware measurements of isolated AC inputs.
  */
 static int mdec_floor(int64_t n, int divisor) {
     return (int)(n >= 0 ? n/divisor : -((-n+divisor-1)/divisor));
 }
 static int mdec_clip(int n,int lo,int hi) { return n<lo?lo:n>hi?hi:n; }
 static int mdec_signed10(unsigned n) { return (int)(n&1023u)-((n&512u)?1024:0); }
+/* Both table products retain six fractional bits until pixel packing. */
+enum { MDEC_SAMPLE_UNIT = 64 };
+
 static void mdec_idct(int *block,const int16_t *scale) {
     int temp[64]; unsigned pass,x,y,z;
     for(pass=0;pass<2;pass++) {
+        /* The uploaded coefficients use 16 fractional bits. On the first
+         * pass convert from whole input coefficients to the sample scale. */
+        const int divisor = pass == 0 ? 65536 / MDEC_SAMPLE_UNIT : 65536;
         for(y=0;y<8;y++)for(x=0;x<8;x++) {
             int64_t sum=0;
-            for(z=0;z<8;z++)sum+=(int64_t)block[y+z*8]*mdec_floor(scale[x+z*8],8);
-            temp[x+y*8]=mdec_floor(sum+4095,8192);
+            for(z=0;z<8;z++)sum+=(int64_t)block[y+z*8]*scale[x+z*8];
+            temp[x+y*8]=mdec_floor(sum+divisor/2-1,divisor);
         }
         memcpy(block,temp,sizeof(temp));
     }
@@ -41,16 +47,18 @@ static int mdec_block(MusashiMdecController *d,unsigned *cursor,int *b,const uin
     }
     mdec_idct(b,d->scale); return 1;
 }
-/* Convert a clipped, biased component to the nearest RGB555 level. At the
+/* Convert a clipped, biased fixed-point component directly to RGB555. At the
  * upper endpoint the rounded value stays at the brightest five-bit level. */
 static unsigned mdec_rgb5(int component) {
-    unsigned rounded = (unsigned)(component + 4) >> 3;
+    unsigned rounded = (unsigned)(component + 4 * MDEC_SAMPLE_UNIT) / (8 * MDEC_SAMPLE_UNIT);
     return rounded > 31u ? 31u : rounded;
 }
 /* The converter keeps nine signed bits before saturating the output. */
 static int mdec_color_component(int component) {
-    int signed9 = (int)((unsigned)(component + 256) & 511u) - 256;
-    return mdec_clip(signed9, -128, 127) + 128;
+    const int sign = 256 * MDEC_SAMPLE_UNIT;
+    int signed9 = (int)((unsigned)(component + sign) & (unsigned)(2 * sign - 1)) - sign;
+    return mdec_clip(signed9, -128 * MDEC_SAMPLE_UNIT, 127 * MDEC_SAMPLE_UNIT)
+           + 128 * MDEC_SAMPLE_UNIT;
 }
 static int mdec_decode_frame(MusashiMdecController *d) {
     unsigned cursor=0,depth=(d->command>>27)&3u,bytes=depth==3?512:768;
@@ -76,7 +84,10 @@ static int mdec_decode_frame(MusashiMdecController *d) {
                 if(d->command&0x02000000u)pixel|=0x8000u;
                 out[0]=(uint8_t)pixel;out[1]=(uint8_t)(pixel>>8);
             } else {
-                for(i=0;i<3;i++)out[i]=(uint8_t)(rgb[i]^((d->command&0x04000000u)?128:0));
+                for(i=0;i<3;i++) {
+                    unsigned rounded = (unsigned)(rgb[i] + MDEC_SAMPLE_UNIT / 2) / MDEC_SAMPLE_UNIT;
+                    out[i]=(uint8_t)(rounded^((d->command&0x04000000u)?128u:0u));
+                }
             }
         }
         d->output_size+=bytes;

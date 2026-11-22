@@ -30,7 +30,7 @@ void transform(int *b,const int16_t *s) { mdec_idct(b,s); }
                 for y in range(8):
                     for x in range(8):
                         expected=amplitude*basis[index%8][x]*basis[index//8][y]/8
-                        assert abs(b[y*8+x]-expected)<2.1, (index,x,y,b[y*8+x],expected)
+                        assert abs(b[y*8+x]/64-expected)<0.05, (index,x,y,b[y*8+x],expected)
 
 
 def test_rgb555_rounding_signed_and_mask(tmp_path):
@@ -79,19 +79,25 @@ uint32_t first_pixel(uint32_t mode, int cr, int cb, int y, unsigned quant) {
         cr, cb = (y % 13) - 6, (y % 23) - 11
         color = pixel(0x30000000, cr, cb, y)
         assert pixel(0x34000000, cr, cb, y) == color ^ 0x808080
-        expected = 0
+        packed = pixel(0x38000000, cr, cb, y)
         for channel in range(3):
             value = (color >> (8 * channel)) & 255
             level, remainder = divmod(value, 8)
-            if remainder >= 4 and level < 31:
-                level += 1
+            result = (packed >> (5 * channel)) & 31
+            if remainder == 4:
+                # An already rounded 8-bit sample can conceal which side
+                # of the 5-bit midpoint the shared internal sample occupied.
+                assert result in (level, min(31, level + 1))
+            else:
+                expected = min(31, level + (remainder > 4))
+                assert result == expected
+            if result > level:
                 rounded_up.add(channel)
             if value >= 252:
                 saturated.add(channel)
-            expected |= level << (5 * channel)
-        for flags, output_mask in [(0, 0), (0x04000000, 0x4210),
-                                   (0x02000000, 0x8000), (0x06000000, 0xc210)]:
-            assert pixel(0x38000000 | flags, cr, cb, y) == expected ^ output_mask
+        for flags, output_mask in [(0x04000000, 0x4210), (0x02000000, 0x8000),
+                                   (0x06000000, 0xc210)]:
+            assert pixel(0x38000000 | flags, cr, cb, y) == packed ^ output_mask
     assert rounded_up == saturated == {0, 1, 2}
 
     # Measured on SCPH-5501 using DC-only inputs and a uniform quantizer of 4.
