@@ -4920,6 +4920,16 @@
       "optimization": "-O2",
       "recovery": "c",
       "extent": "function"
+    },
+    {
+      "name": "func_8014FA70",
+      "vram": 2148858480,
+      "size": 336,
+      "region": "sc02_0039",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "source": "src/overlays/sc02_0039/8014fa70.c"
     }
   ]
 }

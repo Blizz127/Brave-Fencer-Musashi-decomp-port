@@ -1085,6 +1085,7 @@ TOWER_POOL_PRIOR_SOURCE = "37f8c8016ea1b697c77467c8ee51f6fe1f89930cfacf04a68d81b
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    0x8014FA70: {"sc02_0039": None},
     # Tower resource instructions are shared by all scene members.
     0x8012913C: {"sc02_0005": None},
     0x801291C0: {"sc02_0005": None},
@@ -1681,6 +1682,11 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
                 raise Reject("timing", "tower actor allocation requires its room state and guest call timing")
         if overlay_extent_source_only(entry, src, info, SCENE_PHASE_EXTENTS):
             raise Reject("timing", "scene operation requires instruction-level guest state and event timing")
+        # This player wrapper shares its instructions with MAIN. Its terrain query identifies the mine.
+        if (vram == 0x8014FA70 and entry["size"] == 336 and info and info.get("data") is not None and
+                member_digest(info, vram, 336) == 0x219DBA359D04D973 and
+                member_digest(info, 0x80133784, 812) == 0x309DE57F9074D361):
+            raise Reject("timing", "mine terrain action requires its room query and event ordering")
         if forest_action_source_only(entry, src, info):
             raise Reject("timing", "forest action requires ordered guest services and state updates")
         if forest_event_source_only(entry, src, info):
