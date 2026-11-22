@@ -2604,6 +2604,28 @@
       "optimization": "-O2",
       "rodata_base": 2147953300,
       "origin": "Independently reconstructed from the USA game executable with prior knowledge of the project CD callback adapter, registration patch and tests. Device transfers, drawing and playback remain external calls."
+    },
+    {
+      "name": "func_8002FC64",
+      "region": "main",
+      "vram": 2147679332,
+      "size": 176,
+      "source": "src/main/8002fc64.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA game executable and the sector callback contract. An earlier separate project match exists. The sound services remain external."
+    },
+    {
+      "name": "func_8002FDC8",
+      "region": "main",
+      "vram": 2147679688,
+      "size": 32,
+      "source": "src/main/8002fdc8.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA game executable. Its one call to the external transfer-stop service gives the same short function body as earlier implementations."
     }
   ]
 }
