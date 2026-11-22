@@ -1085,6 +1085,8 @@ TOWER_POOL_PRIOR_SOURCE = "37f8c8016ea1b697c77467c8ee51f6fe1f89930cfacf04a68d81b
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    0x8017FF8C: {"sc02_0005": (100, 0x7C0B44E8DBD7119A)},
+    0x8017FFF0: {"sc02_0005": (112, 0x407B1C410C020ED8)},
     # Actor cleanup has the same instructions in other scene members.
     0x8012CAE4: {"sc02_0005": None},
     0x8014FA70: {"sc02_0039": None},
@@ -1273,6 +1275,13 @@ TOWER_EARLIER_CALLERS = {
 }
 
 
+# Detached copies of the two Tower introduction callbacks also require guest timing.
+TOWER_INTRO_SOURCE_HASHES = {
+    0x8017FF8C: "c8719c350874a9a81367d3bd62508d3595a56368601c288dcc45e25621c6c937",
+    0x8017FFF0: "7621a18e7fc92be495fb76204810db643e9379099ba87e454668308648c92701",
+}
+
+
 def overlay_extent_source_only(entry, src, info, extents):
     pc = entry["vram"]
     variants = extents.get(pc)
@@ -1281,7 +1290,14 @@ def overlay_extent_source_only(entry, src, info, extents):
     if entry.get("region") in variants or (info and info["member"] in variants):
         return True
     # A member with a shared original body is identified only by its room or source.
-    if info and any(variants.values()) and (entry["size"], member_digest(info, pc, entry["size"])) in variants.values():
+    if pc in TOWER_INTRO_SOURCE_HASHES:
+        if src.is_file() and hashlib.sha256(src.read_bytes()).hexdigest() == TOWER_INTRO_SOURCE_HASHES[pc]:
+            return True
+        # Custom registries can report another size. Identify the whole verified callback.
+        size, digest = variants["sc02_0005"]
+        if info and all(key in info for key in ("vram", "start", "data")) and member_digest(info, pc, size) == digest:
+            return True
+    elif info and any(variants.values()) and (entry["size"], member_digest(info, pc, entry["size"])) in variants.values():
         return True
     previous = TOWER_EARLIER_CALLERS.get(pc)
     if previous and hashlib.sha256(src.read_bytes()).hexdigest() in previous:

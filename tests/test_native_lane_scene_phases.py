@@ -12,6 +12,8 @@ import native_lane_gen as lane
 
 
 PHASES = (
+    ("sc02_0005", 0x8017FF8C, 100),
+    ("sc02_0005", 0x8017FFF0, 112),
     ("sc02_0039", 0x8014FA70, 336),
     ("sc02_0005", 0x8012913C, 132),
     ("sc02_0005", 0x801291C0, 96),
@@ -331,6 +333,25 @@ def test_tower_resources_preserve_shared_room_owners(pc, size, tmp_path):
     assert hold(row, copied, physical, variants)
     assert hold(dict(row, region="sc02_0005"), other, physical, variants)
     assert hold(row, other, dict(physical, member="sc02_0005"), variants)
+
+
+@pytest.mark.parametrize("pc,size", ((0x8017FF8C, 100), (0x8017FFF0, 112)))
+def test_tower_intro_detached_source_and_verified_extent(tmp_path, monkeypatch, pc, size):
+    original = ROOT / "src/overlays/sc02_0005" / f"{pc:08x}.c"
+    copied = tmp_path / "renamed.c"
+    copied.write_bytes(original.read_bytes())
+    row = dict(vram=pc, region="sc99_0001", size=4)
+    monkeypatch.setattr(lane, "ROOT", tmp_path)
+    guard = lane.overlay_extent_source_only
+    assert guard(row, copied, None, lane.SCENE_PHASE_EXTENTS)
+    copied.write_text("/* independently authored control */\n")
+    assert not guard(row, copied, None, lane.SCENE_PHASE_EXTENTS)
+    assert not guard(row, copied, dict(member="sc99_0001"), lane.SCENE_PHASE_EXTENTS)
+    data = bytes(size)
+    info = dict(member="sc99_0001", vram=pc, start=0, data=data)
+    monkeypatch.setitem(lane.SCENE_PHASE_EXTENTS[pc], "sc02_0005", (size, lane.fnv1a64(data)))
+    assert guard(row, copied, info, lane.SCENE_PHASE_EXTENTS)
+    assert not guard(row, copied, dict(info, data=data[:-1]), lane.SCENE_PHASE_EXTENTS)
 
 
 def test_mine_slot_guard_preserves_other_regional_initializers():
