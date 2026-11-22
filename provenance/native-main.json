@@ -2580,6 +2580,18 @@
       "extent": "function",
       "optimization": "-O2",
       "origin": "Independently reconstructed from the USA game executable. The game code expands directory records. All external services are opaque in the host test."
+    },
+    {
+      "name": "func_80019AF8",
+      "vram": 2147588856,
+      "size": 1540,
+      "region": "main",
+      "source": "src/main/80019af8.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "rodata_base": 2147953228,
+      "origin": "Independently reconstructed from the USA game executable with prior knowledge of the project disc-stream dispatch adapters and test. The game advances an active disc request. Playback and platform services remain external calls."
     }
   ]
 }
