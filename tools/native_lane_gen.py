@@ -1085,6 +1085,10 @@ TOWER_POOL_PRIOR_SOURCE = "37f8c8016ea1b697c77467c8ee51f6fe1f89930cfacf04a68d81b
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    0x8017D2E0: {"sc03_0109": (164, 0xACBD125C7ED85BB9)},
+    0x8017D384: {"sc03_0109": (60, 0xFAB1DF77A867F056)},
+    0x8017F07C: {"sc03_0113": (164, 0xAD79B5CCBA7AF226)},
+    0x8017F120: {"sc03_0113": (60, 0xBDA91C55D2623999)},
     0x8017E640: {"sc02_0039": (280, 0x5776B1218AB5E953)},
     # The five lower camera routines share their instructions with other room members.
     0x8017E26C: {"sc02_0005": (220, 0x474D323D3770728D)},
@@ -1316,6 +1320,11 @@ def overlay_extent_source_only(entry, src, info, extents):
         return False
     if entry.get("region") in variants or (info and info["member"] in variants):
         return True
+    # Compare a mine entrance callback at its complete original extent even when the
+    # supplied registry reports only a prefix or includes the following function.
+    if pc in (0x8017D2E0, 0x8017D384, 0x8017F07C, 0x8017F120) and info and all(key in info for key in ("vram", "start", "data")):
+        if any(member_digest(info, pc, size) == digest for size, digest in variants.values()):
+            return True
     # A member with a shared original body is identified only by its room or source.
     if pc in TOWER_INTRO_SOURCE_HASHES:
         if src.is_file() and hashlib.sha256(src.read_bytes()).hexdigest() == TOWER_INTRO_SOURCE_HASHES[pc]:

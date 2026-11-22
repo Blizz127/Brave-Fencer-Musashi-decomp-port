@@ -12,6 +12,10 @@ import native_lane_gen as lane
 
 
 PHASES = (
+    ("sc03_0109", 0x8017D2E0, 164),
+    ("sc03_0109", 0x8017D384, 60),
+    ("sc03_0113", 0x8017F07C, 164),
+    ("sc03_0113", 0x8017F120, 60),
     ("sc02_0039", 0x8017E640, 280),
     ("sc02_0005", 0x8017E26C, 220),
     ("sc02_0005", 0x80129FF4, 36),
@@ -167,6 +171,9 @@ def test_phase_source_stays_interpreted(member, pc, size, tmp_path, monkeypatch)
     info = dict(member="sc99_0001", vram=pc, start=0, code=[(pc, pc + size)], data=data)
     monkeypatch.setitem(lane.SCENE_PHASE_EXTENTS[pc], member, (size, lane.fnv1a64(data)))
     assert check(alternate, info).get("rule") == "timing"
+    if member in ("sc03_0109", "sc03_0113"):
+        for reported_size in (size - 4, size + 4):
+            assert check(dict(alternate, size=reported_size), info).get("rule") == "timing"
     if not all(shutil.which(tool) for tool in ("clang", "nm")):
         pytest.skip("clang and nm required for the independent-source control")
     assert check(alternate, dict(info, data=b"\x01" + data[1:]))["admitted"]
