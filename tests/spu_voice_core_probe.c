@@ -152,6 +152,11 @@ static void test_twenty_four_and_refusals(void) {
     assert(!musashi_spu_cd_audio_write16(a,0x1f801d88,1)); /* no invented fresh RAM */
     upload(a,0,7); wr(a,0xd88,1); assert(!musashi_spu_cd_audio_advance(a,80*768));
     assert(state(a).faulted && state(a).sample_index==0 && voice(a,0).pending_on);
+    assert(sink.frames==0 && sink.calls==0 && voice(a,0).decoded_samples==0);
+    {
+        unsigned char capture[2];
+        assert(!musashi_spu_cd_audio_copy_ram(a,0x800,capture,sizeof(capture)));
+    }
     assert(musashi_spu_cd_audio_destroy(a));
     memset(&sink,0,sizeof(sink)); a=create(&sink); upload(a,1,7); configure(a,0,0,0); wr(a,0xd88,1);
     advance(a,80); assert(voice(a,0).endx && voice(a,0).envelope==0);
@@ -168,6 +173,35 @@ static void test_capture_status_and_filter_refusal(void) {
     assert(!musashi_spu_cd_audio_write16(a,0x1f801d88,1));
     assert(!voice(a,0).pending_on);
     assert(musashi_spu_cd_audio_destroy(a));
+}
+static void test_predictor_feedback(void) {
+    /* Unity pitch. A filter-0 block ends in +4096, then zero residuals
+     * isolate each predictor. The first two predictions are exact integers.
+     * Expected post-envelope taps use the independent VAG sample prefix
+     * and the four p=0 Gaussian products. */
+    static const int taps[5][4]={
+        {-1,607,2869,599}, {-1,606,3438,3823}, {-1,606,3962,7226},
+        {-1,606,3800,5897}, {-1,606,4028,7710}
+    };
+    unsigned f;
+    for(f=0;f<5;++f) {
+        Sink sink={0}; MusashiSpuCdAudio *a=create(&sink);
+        unsigned i; unsigned char captured[8];
+        wr(a,0xdac,4); wr(a,0xda6,0x200);
+        for(i=0;i<7;++i) wr(a,0xda8,0);
+        wr(a,0xda8,0x1000);
+        wr(a,0xda8,0x0100|(f<<4));
+        for(i=0;i<7;++i) wr(a,0xda8,0);
+        configure(a,1,0,0); wr(a,0xd88,2); advance(a,32);
+        assert(voice(a,1).decoded_blocks==2);
+        assert(musashi_spu_cd_audio_copy_ram(a,0x800+28*2,captured,sizeof(captured)));
+        for(i=0;i<4;++i) {
+            int value=captured[2*i]|(captured[2*i+1]<<8);
+            if(value>=32768) value-=65536;
+            assert(value==taps[f][i]);
+        }
+        assert(musashi_spu_cd_audio_destroy(a));
+    }
 }
 static void test_queue_transaction(void) {
     Sink sa={0}, sb={0}; MusashiSpuCdAudio *a=create(&sa),*b=create(&sb);
@@ -188,6 +222,6 @@ static void test_queue_transaction(void) {
 }
 int main(void) {
     test_ram_and_manual_status(); test_keys_envelope_and_disabled_entry();
-    test_pcm_mutations_and_chunking(); test_twenty_four_and_refusals(); test_capture_status_and_filter_refusal(); test_queue_transaction();
+    test_predictor_feedback(); test_pcm_mutations_and_chunking(); test_twenty_four_and_refusals(); test_capture_status_and_filter_refusal(); test_queue_transaction();
     puts("SPU_VOICE_CORE_PASS"); return 0;
 }

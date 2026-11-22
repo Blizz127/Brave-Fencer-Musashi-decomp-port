@@ -210,8 +210,8 @@ static void voice_envelope_source(SpuVoice *v) {
 static void voice_envelope(SpuVoice *v) {
     voice_envelope_source(v);
 }
-/* Only startup filter0 is admitted. Nonzero predictors need independent SPU
- * rounding validation (XA rounding must not be silently substituted). */
+/* Key-on admits filter 0; subsequent blocks may use predictors 1 through 4.
+ * Exact SPU predictor rounding remains unverified. */
 static int voice_decode(SpuVoice *v, const uint8_t b[16]) {
     unsigned filter=b[0]>>4, shift=b[0]&15u, i;
     if(filter>4 || shift>12 || (b[1]&0xf8u) || v->blocks==UINT64_MAX) return 0;
@@ -219,13 +219,16 @@ static int voice_decode(SpuVoice *v, const uint8_t b[16]) {
     static const int k1[5] = { 0, 0, -52, -55, -60 };
     int64_t f0 = k0[filter];
     int64_t f1 = k1[filter];
+    int16_t previous=v->history[3], older=v->history[2];
     for(i=0;i<28;++i) {
         int nibble=(b[2+i/2]>>((i&1u)*4))&15;
         int64_t raw, s;
         if(nibble&8) nibble-=16;
         raw=voice_floor((int64_t)nibble*4096,(int64_t)1<<shift);
-        s = raw + (v->history[3] * f0 + v->history[2] * f1 + 32) / 64;
-        v->decoded[i]=voice_clamp(s);
+        s = raw + (previous * f0 + older * f1 + 32) / 64;
+        older=previous;
+        previous=voice_clamp(s);
+        v->decoded[i]=previous;
     }
     v->flags=b[1];
     if(v->flags&4u) { v->repeat=v->cursor; v->reg[7]=(uint16_t)(v->repeat/8u); }
@@ -247,9 +250,9 @@ static int voice_next(SpuVoice *v, void *data,
         } else v->cursor=(v->cursor+16u)&0x7ffffu;
         v->loaded=0;
     }
-    if(!v->loaded && (!read_block(data,v->cursor,bytes) || !voice_decode(v,bytes))) {
-        voice_off(v);
-        return 1;
+    if(!v->loaded) {
+        if(!read_block(data,v->cursor,bytes)) return 0;
+        if(!voice_decode(v,bytes)) { voice_off(v); return 1; }
     }
     if(v->samples==UINT64_MAX) return 0;
     voice_shift_sample(v,v->decoded[v->position++]); ++v->samples;
