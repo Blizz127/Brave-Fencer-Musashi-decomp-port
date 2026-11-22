@@ -3378,6 +3378,16 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2"
+    },
+    {
+      "name": "func_8014C4AC",
+      "region": "sc02_0005",
+      "vram": 2148844716,
+      "size": 188,
+      "source": "src/overlays/sc02_0005/8014c4ac.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
     }
   ]
 }
