@@ -13,7 +13,11 @@ typedef struct {
     u16 state;
     u8 pad004[6];
     s16 position_y;
-    u8 pad00c[16];
+    u8 pad00c[2];
+    s16 field_0e;
+    s32 motion_x;
+    s32 motion_y;
+    s32 motion_z;
     s32 timer;
     u32 model_address;
     u8 pad024[52];
@@ -38,9 +42,12 @@ typedef struct {
     u8 contact_frame;
     u8 pad0CA[2];
     u32 linked_address;
-    u8 pad0d0[12];
+    u32 secondary_address;
+    u32 core_address;
+    u8 pad0d8[4];
     s32 field_dc;
-    u8 pad0e0[8];
+    s16 field_e0;
+    u8 pad0e2[6];
     u32 phase_flags;
     u8 pad0ec[16];
     u16 field_fc;
