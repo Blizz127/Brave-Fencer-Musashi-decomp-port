@@ -1081,6 +1081,9 @@ FOREST_FLOOR_EXTENTS = {
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    0x8018968C: {"sc02_0005": (616, 0x39BE58F0D86E1FB1)},
+    0x80189AF4: {"sc02_0005": (60, 0x60B2BAB4787BE779)},
+    0x8018B300: {"sc02_0005": (68, 0x5FA309D7618F30DC)},
     0x80186600: {"sc02_0005": (348, 0x4474F8D30C5571E7)},
     0x80186DE8: {"sc02_0005": (300, 0x4AE9ED75E2C5DDF0)},
     0x801877FC: {"sc02_0005": (196, 0xEF8D422E9712068A)},
@@ -1210,6 +1213,13 @@ SCENE_PHASE_EXTENTS = {
 }
 
 
+# Source copies predating the typed Tower model call retain their timing hold.
+TOWER_EARLIER_MODEL_CALLERS = {
+    0x80184EC0: "ae9b370a04dc19aa21be83b44411900ec71005d2af1be8616c13b659998b1fba",
+    0x8018968C: "d5900e57b02f7d861c5c700cc8c6a0ec3142a87c5bb4b2133b810873f834dc3f",
+}
+
+
 def overlay_extent_source_only(entry, src, info, extents):
     pc = entry["vram"]
     variants = extents.get(pc)
@@ -1219,6 +1229,9 @@ def overlay_extent_source_only(entry, src, info, extents):
         return True
     # A member with a shared original body is identified only by its room or source.
     if info and any(variants.values()) and (entry["size"], member_digest(info, pc, entry["size"])) in variants.values():
+        return True
+    previous = TOWER_EARLIER_MODEL_CALLERS.get(pc)
+    if previous is not None and hashlib.sha256(src.read_bytes()).hexdigest() == previous:
         return True
     # The first published forest grid query used unsigned formal coordinates.
     if pc == 0x80134A74 and hashlib.sha256(src.read_bytes()).hexdigest() == (
