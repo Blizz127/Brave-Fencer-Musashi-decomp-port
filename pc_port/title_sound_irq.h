@@ -746,25 +746,46 @@ static int irq_channel_cond_release_ready(const FormatterCpu *cpu, uint32_t slot
         row[12] == 1u && !row[13] && row[14u+cpu->r[4]] == 1u;
 }
 
+/* A mode-3 key-off clears the channel before invoking its registered
+ * callback. The timeout path calls the same callback from a different site. */
+static int irq_channel_keyoff_release(const FormatterCpu *cpu, uint32_t channel) {
+    MusashiBootMemory *ram = cpu->irq_image->memory;
+    uint16_t voice;
+    const uint8_t *state = musashi_boot_ram_span(ram, channel+0x4eu, 3);
+    if (!state || state[0] || state[2] ||
+        !musashi_boot_read16(ram, channel+10u, &voice) || voice >= 24u) return 0;
+    const uint8_t *mode = musashi_boot_ram_span(ram, 0x800a4efeu+voice, 1);
+    return mode && *mode == 3u;
+}
+
+static int irq_channel_cond_release_link(const FormatterCpu *cpu, uint32_t channel) {
+    return cpu->r[31] == 0x80031440u ||
+        (cpu->r[31] == 0x800310d8u && irq_channel_keyoff_release(cpu, channel));
+}
+
 static int irq_channel_cond_release_call(const FormatterCpu *cpu, uint32_t word,
                                          uint32_t target, uint32_t channel) {
     uint32_t slot = irq_channel_cond_release_row(cpu, channel);
-    return slot && cpu->pc == 0x80031438u && target == 0x80033324u &&
-        cpu->r[2] == target && cpu->r[31] == 0x80031420u && word >> 26 == 0u &&
+    if (!slot) return 0;
+    int timed_out = cpu->pc == 0x80031438u && cpu->r[31] == 0x80031420u;
+    int keyed_off = cpu->pc == 0x800310d0u && cpu->r[31] == 0x800310b8u &&
+        irq_channel_keyoff_release(cpu, channel);
+    return (timed_out || keyed_off) && target == 0x80033324u &&
+        cpu->r[2] == target && word >> 26 == 0u &&
         (word & 63u) == 9u && ((word >> 21) & 31u) == 2u && ((word >> 11) & 31u) == 31u &&
         irq_channel_cond_release_ready(cpu, slot);
 }
 
 static int irq_channel_cond_release_entry(const FormatterCpu *cpu, uint32_t channel) {
     uint32_t slot = irq_channel_cond_release_row(cpu, channel);
-    return slot && cpu->pc == 0x80033324u && cpu->r[31] == 0x80031440u &&
+    return slot && cpu->pc == 0x80033324u && irq_channel_cond_release_link(cpu, channel) &&
         cpu->r[5] == (slot-0x800a46e8u)/0x54u && irq_channel_cond_release_ready(cpu, slot);
 }
 
 static int irq_channel_cond_release_data(const FormatterCpu *cpu, uint32_t word,
                                         uint32_t address, uint32_t channel) {
     uint32_t slot = irq_channel_cond_release_row(cpu, channel);
-    if (!slot || cpu->r[31] != 0x80031440u || cpu->r[5] != slot) return 0;
+    if (!slot || !irq_channel_cond_release_link(cpu, channel) || cpu->r[5] != slot) return 0;
     const uint8_t *row = musashi_boot_ram_span(cpu->irq_image->memory, slot, 0x54u);
     if (!row || (row[0] & 63u) != 1u) return 0;
     uint32_t field = cpu->r[4], op = word >> 26;
@@ -797,7 +818,8 @@ static int irq_channel_cond_release_data(const FormatterCpu *cpu, uint32_t word,
 static int irq_channel_cond_release_return(const FormatterCpu *cpu, uint32_t target,
                                           uint32_t channel) {
     uint32_t slot = irq_channel_cond_release_row(cpu, channel);
-    if (!slot || cpu->pc != 0x80033390u || target != 0x80031440u || cpu->r[31] != target ||
+    if (!slot || cpu->pc != 0x80033390u || !irq_channel_cond_release_link(cpu, channel) ||
+        cpu->r[31] != target ||
         cpu->r[2] != 5u || cpu->r[5] != slot) return 0;
     const uint8_t *row = musashi_boot_ram_span(cpu->irq_image->memory, slot, 0x54u);
     return row && !row[0] && !row[1] && !row[10] && !row[12] && !row[13] && !row[14u+cpu->r[4]];
