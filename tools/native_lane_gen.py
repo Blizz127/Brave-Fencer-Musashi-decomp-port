@@ -1098,6 +1098,7 @@ SCENE_PHASE_EXTENTS = {
     0x80146360: {"sc01_0077": (64, 0xD6FF4D78017740C9)},
     0x80159968: {"sc01_0077": (60, 0xB59A7B7CF404FBEB)},
     0x80159A20: {"sc01_0077": (232, 0xF35D76072A56E095)},
+    0x80159C84: {"sc01_0077": (1348, 0x2C65A9449EB1F018)},
     # These object services call into guest code from the middle of the frame.
     0x8014A2E4: dict.fromkeys(("main_0012", "sc02_0039"), (156, 0x4DBDD625CB4098C8)),
     0x8014C278: dict.fromkeys(("main_0012", "sc02_0039"), (56, 0x93E8D33159724249)),
