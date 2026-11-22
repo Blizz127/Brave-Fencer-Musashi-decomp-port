@@ -17,7 +17,9 @@ typedef struct {
     u16 hit_kind;
     s16 damage;
     u16 contact_parameter;
-    u8 pad064[18];
+    u8 pad064[12];
+    s16 variant;
+    u8 pad072[4];
     s16 hp;
     u8 pad078[4];
     SteamKnightHitPosition hit_position;

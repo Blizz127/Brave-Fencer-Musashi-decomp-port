@@ -1081,6 +1081,7 @@ FOREST_FLOOR_EXTENTS = {
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    0x80186A04: {"sc02_0005": (216, 0xC280AB6C8FDD078F)},
     0x8014C4AC: {"sc02_0005": (188, 0x03C2B0C590144408)},
     # The camera changes matrix state twice and passes a guest stack word to the transform.
     0x8012F14C: {"sc01_0077": (88, 0x128D65FE65F8BF49)},
