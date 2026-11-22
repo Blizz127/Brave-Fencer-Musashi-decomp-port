@@ -110,6 +110,7 @@ int main(int argc,char **argv) {
     m->mode=argv[2];
     int draw=!strncmp(m->mode,"draw-",5);
     int swap_gpu=!strcmp(m->mode,"draw-foreign-gpu");
+    int swap_channel=!strcmp(m->mode,"draw-upload-foreign");
     int swap_timer=!strcmp(m->mode,"draw-foreign-timer");
     int stale=!strcmp(m->mode,"draw-stale"), unbound=!strcmp(m->mode,"draw-unbound");
     int replacement=!strcmp(m->mode,"draw-replacement");
@@ -131,14 +132,15 @@ int main(int argc,char **argv) {
                 assert(replacement_host.generation==old_generation);
             }
         }
-        if (swap_gpu || swap_timer) {
+        if (swap_gpu || swap_timer || swap_channel) {
             other=calloc(1,sizeof(*other)); assert(other);
             assert(musashi_boot_map_irq_exe(&other->image,&other->memory,exe,0x65000u));
             assert(!musashi_boot_bind_irq_draw(&other->image,&m->draw.host,&m->draw,draw_owns));
             assert(musashi_boot_bind_irq_draw(&other->image,&other->draw.host,&other->draw,draw_owns));
             musashi_dma_controller_init(&other->dma,&other->irq);
             other->clock=(MusashiExecutionClock){other,advance};
-            draw_begin(&other->draw,&other->memory,&other->dma,&other->clock,thread,"draw-complete");
+            draw_begin(&other->draw,&other->memory,&other->dma,&other->clock,thread,
+                       swap_channel ? "draw-upload" : "draw-complete");
         }
     }
     free(exe);
@@ -221,6 +223,7 @@ int main(int argc,char **argv) {
     }
     if (draw) {
         draw_begin(&m->draw,&m->memory,&m->dma,&m->clock,thread,m->mode);
+        if (swap_channel) m->draw.service.channel=other->draw.channel;
         if (swap_gpu) m->draw.service.gpu=&other->draw.gpu_io;
         if (swap_timer) m->draw.service.timer=&other->draw;
         if (stale) m->draw.service.generation=old_generation;
@@ -236,7 +239,7 @@ int main(int argc,char **argv) {
     int success=equal || wrap || !strcmp(m->mode,"fade-limit") || !strcmp(m->mode,"title-fade") || !strcmp(m->mode,"vblank") || dma || !strcmp(m->mode,"card") || !strcmp(m->mode,"active");
     if (draw) success=m->draw.queued ? m->draw.queued->complete :
                     !strcmp(m->mode,"draw-complete") || !strcmp(m->mode,"draw-timer") ||
-                    !strcmp(m->mode,"draw-frame-zero");
+                    !strcmp(m->mode,"draw-frame-zero") || !strcmp(m->mode,"draw-upload");
     if (!strcmp(m->mode,"wrongslot")) {
         m->irq.status=2u;
         assert(musashi_irq_controller_write16(&m->irq,0x1f801074u,2u));

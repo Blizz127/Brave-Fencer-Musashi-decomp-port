@@ -42,7 +42,8 @@ typedef struct DrawFixture {
     uint16_t sampled_count, frame_slot;
     unsigned chcr_reads, status_reads, timer_reads;
     const DrawQueueCase *queued;
-    unsigned gpu_writes, dma_writes, fills;
+    unsigned gpu_writes, dma_writes, fills, pixels;
+    int upload, upload_active;
 } DrawFixture;
 
 static int draw_ready(void *p) { return p!=NULL; }
@@ -82,6 +83,20 @@ static int draw_test_fill(void *p, const MusashiGpuFill *fill) {
     return 1;
 }
 
+enum { UPLOAD_X=73, UPLOAD_Y=29, UPLOAD_WIDTH=32, UPLOAD_HEIGHT=24,
+       UPLOAD_PIXELS=UPLOAD_WIDTH*UPLOAD_HEIGHT, UPLOAD_WORDS=UPLOAD_PIXELS/2 };
+
+static uint16_t upload_pixel(unsigned index) { return (uint16_t)(0x411du + 3u*index); }
+
+static int draw_store_pixel(void *p,uint16_t x,uint16_t y,uint16_t pixel) {
+    DrawFixture *d=p;
+    unsigned i=d->pixels;
+    assert(i<UPLOAD_PIXELS && x==UPLOAD_X+i%UPLOAD_WIDTH && y==UPLOAD_Y+i/UPLOAD_WIDTH);
+    assert(pixel==upload_pixel(i));
+    ++d->pixels;
+    return 1;
+}
+
 static int draw_timer_read(void *p,uint32_t address,uint16_t *out) {
     DrawFixture *d=p;
     if (address!=0x1f801110u || !musashi_scanline_timer_read16(&d->timer,address,out)) return 0;
@@ -104,11 +119,34 @@ static int draw_advance(DrawFixture *d,uint32_t delta) {
            musashi_scanline_timer_advance(&d->timer,d->cycle);
 }
 
+static void draw_begin_upload(DrawFixture *d,MusashiBootMemory *ram) {
+    const uint32_t source=0x801e6000u;
+    assert(musashi_gpu_controller_write32(&d->gpu,MUSASHI_GPU_GP0,0xa0000000u));
+    assert(musashi_gpu_controller_write32(&d->gpu,MUSASHI_GPU_GP0,UPLOAD_X | (UPLOAD_Y<<16)));
+    assert(musashi_gpu_controller_write32(&d->gpu,MUSASHI_GPU_GP0,UPLOAD_WIDTH | (UPLOAD_HEIGHT<<16)));
+    for (unsigned i=0;i<UPLOAD_WORDS;++i) {
+        uint32_t word=upload_pixel(2u*i) | ((uint32_t)upload_pixel(2u*i+1u)<<16);
+        assert(musashi_boot_write32(ram,source+4u*i,word));
+    }
+    assert(musashi_gpu_dma2_write32(d->channel,0x1f8010a0u,source));
+    assert(musashi_gpu_dma2_write32(d->channel,0x1f8010a4u,(UPLOAD_HEIGHT<<16) | (UPLOAD_WIDTH/2u)));
+    assert(musashi_gpu_dma2_write32(d->channel,0x1f8010a8u,0x01000201u));
+    assert(d->pixels==UPLOAD_PIXELS && d->gpu.stored_pixels==UPLOAD_PIXELS);
+    MusashiGpuDma2State s;
+    assert(musashi_gpu_dma2_get_state(d->channel,&s) && s.chcr==0x01000201u && s.starts==s.transfers+1);
+    if (!d->upload_active) {
+        assert(draw_advance(d,UPLOAD_WORDS) && !d->dma->irq->status);
+        assert(draw_advance(d,1) && d->dma->irq->status==8 && d->dma->interrupt==0x84840000u);
+    }
+}
+
 static void draw_begin(DrawFixture *d,MusashiBootMemory *ram,MusashiDmaController *dma,
                        MusashiExecutionClock *clock,uint64_t (*thread)(void *),const char *mode) {
     /* Fill GPU and timer state from the synthetic fixture. */
     const DrawQueueCase *q = draw_queue_case(mode);
     d->queued = q;
+    d->upload=!strncmp(mode,"draw-upload",11);
+    d->upload_active=!strcmp(mode,"draw-upload-active");
     uint32_t head = 5, tail = !strcmp(mode,"draw-queue") ? 6u : 5u;
     if (q) {
         head = q->head;
@@ -146,7 +184,8 @@ static void draw_begin(DrawFixture *d,MusashiBootMemory *ram,MusashiDmaControlle
     if (!strcmp(mode,"draw-image")) ram->bytes[0x5bc14u]^=1u;
 
     MusashiGpuBackend backend={.userdata=d,.reset=draw_ready,.draw_mode=draw_mode,
-        .display_enable=draw_enable,.clear_fifo=draw_ready,.ready=draw_ready,.fill_vram=draw_test_fill};
+        .display_enable=draw_enable,.clear_fifo=draw_ready,.ready=draw_ready,.fill_vram=draw_test_fill,
+        .store_vram=draw_store_pixel};
     assert(musashi_gpu_controller_init(&d->gpu,&backend));
     assert(musashi_gpu_controller_write32(&d->gpu,MUSASHI_GPU_GP1,0x04000002u));
     assert(musashi_scanline_timer_init_paced(&d->timer,0));
@@ -169,16 +208,32 @@ static void draw_begin(DrawFixture *d,MusashiBootMemory *ram,MusashiDmaControlle
     if (!strcmp(mode,"draw-owner")) d->service.memory=NULL;
     if (!strcmp(mode,"draw-clock")) d->service.clock=NULL;
 
-    /* One terminating zero-payload header. Only the transfer owner raises IRQ3. */
+    /* Only the native transfer owner raises the DMA IRQ. */
     uint32_t dpcr;
     assert(musashi_dma_controller_read32(dma,0x1f8010f0u,&dpcr));
     assert(musashi_dma_controller_write32(dma,0x1f8010f0u,dpcr|0x800u));
     assert(musashi_dma_controller_write32(dma,0x1f8010f4u,0x00840000u));
+    if (d->upload && !d->upload_active) {
+        draw_begin_upload(d,ram);
+        if (!strcmp(mode,"draw-upload-other-irq")) {
+            /* Leave DMA2's completed CHCR idle, acknowledge its IRQ, then
+             * register the same callback in an unrelated DMA slot. */
+            assert(musashi_dma_controller_write32(dma,0x1f8010f4u,0x04880000u));
+            assert(musashi_irq_controller_write16(dma->irq,0x1f801070u,0));
+            assert(musashi_boot_write32(ram,0x8006cbd0u,0x8005ba90u));
+            assert(musashi_dma_controller_complete(dma,3));
+            assert(dma->irq->status==8 && dma->interrupt==0x88880000u);
+        }
+        return;
+    }
+    /* In the active-upload negative, the preceding linked list supplies a
+     * genuine, still-pending IRQ while the next request is busy. */
     assert(musashi_boot_write32(ram,0x801fff00u,0x00ffffffu));
     assert(musashi_gpu_dma2_write32(d->channel,0x1f8010a0u,0x801fff00u));
     assert(musashi_gpu_dma2_write32(d->channel,0x1f8010a8u,0x01000401u));
     assert(draw_advance(d,1u) && !dma->irq->status);
     assert(draw_advance(d,1u) && dma->irq->status==8u && dma->interrupt==0x84840000u);
+    if (d->upload_active) draw_begin_upload(d,ram);
 }
 
 static void draw_check(DrawFixture *d,MusashiBootMemory *ram,uint32_t stop,
@@ -210,7 +265,13 @@ static void draw_check(DrawFixture *d,MusashiBootMemory *ram,uint32_t stop,
         assert(musashi_boot_read32(ram, 0x80072890u, &tail));
         assert(tail == (success ? head : d->queued->tail));
     }
-    if (d->queued && success) {
+    if (d->upload) {
+        assert(!dma_state.fault && dma_state.starts==(d->upload_active ? 2u : 1u) && dma_state.transfers==1);
+        assert(dma_state.chcr==(d->upload_active ? 0x01000201u : 0x201u));
+        assert(dma_state.header_words==0 && dma_state.payload_words==UPLOAD_WORDS);
+        assert(dma_state.accepted_in_transfer==UPLOAD_WORDS && d->gpu.accepted_gp0_words==3u+UPLOAD_WORDS);
+        assert(d->pixels==UPLOAD_PIXELS && !d->fills && !d->gpu_writes && !d->dma_writes);
+    } else if (d->queued && success) {
         assert(dma_state.starts==2 && dma_state.transfers==2 && dma_state.start_madr==(TEST_DRAW_LIST & 0xffffffu));
         assert(dma_state.accepted_words==3 && d->gpu.accepted_gp0_words==3);
         assert(d->fills==1 && d->gpu_writes==1 && d->dma_writes==3);
@@ -218,6 +279,6 @@ static void draw_check(DrawFixture *d,MusashiBootMemory *ram,uint32_t stop,
         assert(dma_state.starts==1 && dma_state.transfers==1 && dma_state.header_words==1 && !dma_state.accepted_words);
         assert(!d->gpu.accepted_gp0_words && !d->fills && !d->gpu_writes && !d->dma_writes);
     }
-    assert(d->dma->interrupt==0x00840000u);
+    assert(d->dma->interrupt==(!strcmp(mode,"draw-upload-other-irq") ? 0x00880000u : 0x00840000u));
     assert(musashi_gpu_dma2_close(d->channel));
 }

@@ -14967,12 +14967,25 @@ int musashi_boot_bind_irq_draw(MusashiGuestIrqImage *image, MusashiGuestIrqDrawH
     return 1;
 }
 
+/* The DMA dispatcher selects channel two for both a linked-list draw and
+ * a RAM-to-GP0 block transfer. The device retains the completed transfer's
+ * mode in CHCR after it clears busy. Require the owned block to have
+ * delivered its entire payload before admitting its completion handler. */
+static int irq_draw_dma_complete(const MusashiGuestIrqDraw *draw) {
+    MusashiGpuDma2State state;
+    if (draw->dma->gpu_channel_control==0x401u) return 1;
+    return draw->dma->gpu_channel_control==0x201u &&
+        musashi_gpu_dma2_get_state(draw->channel,&state) && state.chcr==0x201u &&
+        state.fault==MUSASHI_GPU_DMA2_OK && state.starts && state.transfers==state.starts &&
+        state.payload_words && !state.header_words && state.accepted_in_transfer==state.payload_words;
+}
+
 static int irq_draw_owner(const MusashiGuestIrqDraw *draw, const MusashiGuestIrqImage *image,
     MusashiBootMemory *memory, const MusashiDmaController *dma, const MusashiExecutionClock *clock,
     const PendingDrawList *retired) {
     return irq_draw_bound(image,draw) && draw->memory==memory &&
         dma && draw->dma==dma && draw->channel &&
-        dma->gpu_owner==draw->channel && dma->gpu_channel_control==0x401u && draw->clock==clock &&
+        dma->gpu_owner==draw->channel && draw->clock==clock && irq_draw_dma_complete(draw) &&
         draw->gpu && draw->gpu->read32 && draw->timer && draw->timer_read16 &&
         cd_irq_ram_word(memory,0x8006cbccu,0x8005ba90u) &&
         irq_draw_queue(draw,memory,retired) && irq_draw_image(image,memory);
