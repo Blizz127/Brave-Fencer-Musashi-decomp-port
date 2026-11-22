@@ -296,3 +296,23 @@ def test_forest_placement_aliases_stay_interpreted(tmp_path, pc, size, source_me
     for region, info in (("sc01_0077", None), (source_member, dict(member="sc01_0077"))):
         result = lane.build_one(dict(row, region=region), tmp_path, {}, {}, "clang", info)
         assert result.get("rule") == "timing"
+
+
+@pytest.mark.skipif(not shutil.which("clang"), reason="clang required for native selection")
+def test_forest_image_moves_preserve_existing_member_selection(tmp_path):
+    pc = 0x80146014
+    forest = ROOT / "src/overlays/sc01_0077/80146014.c"
+    published = ROOT / "src/overlays/sc02_0035/80146014.c"
+    assert forest.read_bytes() == published.read_bytes()
+    (tmp_path / "ir").mkdir()
+
+    def decision(source, region, member):
+        row = dict(name="func_80146014", region=region, vram=pc, size=96, source=str(source))
+        info = dict(member=member, vram=pc, start=0, code=[(pc, pc + 96)], data=bytes(96))
+        return lane.build_one(row, tmp_path, {}, {}, "clang", info)
+
+    assert decision(published, "sc01_0077", "sc02_0035").get("rule") == "timing"
+    assert decision(published, "sc02_0035", "sc01_0077").get("rule") == "timing"
+    assert decision(forest, "other", "other").get("rule") == "timing"
+    for member in ("sc02_0035", "main_0012"):
+        assert decision(published, member, member)["admitted"]

@@ -1526,6 +1526,11 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
         if wrapped_angle and (size != 12 or hashlib.sha256(src.read_bytes()).hexdigest() !=
                 "7e1d58c1eca9742e5c025641f349f594066b5cadd3b4eb1c4a64f8706bb7ace2"):
             raise Reject("source", "wrapped-angle step requires the verified clean source")
+        # Use the forest's guest call sequence for each MoveImage record.
+        # The SC02 and MAIN versions already share its bytes and address.
+        if vram == 0x80146014 and (entry.get("region") == "sc01_0077" or
+                member == "sc01_0077" or src.resolve() == ROOT / "src/overlays/sc01_0077/80146014.c"):
+            raise Reject("timing", "forest image transfers require guest MoveImage timing")
         if (vram in (0x8012C724, 0x8013E298, 0x8013E370, 0x8013E410, 0x8013E448) and
                 (entry.get("region") == "sc01_0077" or member == "sc01_0077")):
             raise Reject("timing", "forest placement requires ordered actor allocation and callback timing")
