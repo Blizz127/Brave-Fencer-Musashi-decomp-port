@@ -2836,6 +2836,17 @@
       "extent": "function",
       "optimization": "-O2",
       "rodata_base": 2149419676
+    },
+    {
+      "name": "func_8012ACE0",
+      "region": "sc02_0039",
+      "vram": 2148707552,
+      "size": 100,
+      "source": "src/overlays/sc02_0039/8012ace0.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "rodata_base": 2149181636
     }
   ]
 }

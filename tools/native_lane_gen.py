@@ -1076,6 +1076,8 @@ FOREST_FLOOR_EXTENTS = {
 # These scene phase callbacks call back into guest code. Several of their
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    # Animation scans require a bounded frame reader for the owning actor.
+    0x8012ACE0: {"sc02_0039": (100, 0x77902C59DFA7EBCF)},
     # Target indicators reuse a primitive and matrix across ten ordered submit callbacks.
     0x80167AE0: {"sc02_0039": (732, 0xEB04EFADECE21D52)},
     # The dialog updater reads and writes scene colors, with loads interleaved with stores.
