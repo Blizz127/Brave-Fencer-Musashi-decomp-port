@@ -29,7 +29,7 @@ static void record(Actor252 *actor, unsigned handler)
          * on a later invocation. The current dispatch has made its selection. */
         unsigned old_phase = actor->phase;
         actor->phase = (old_phase + 2u) % 6u;
-        slots[slot].actor.remaining[0xfa] ^= (unsigned char)(0xd0u + handler);
+        ((unsigned char *)actor)[0xfe] ^= (unsigned char)(0xd0u + handler);
         D_80195174[old_phase] = D_80195174[(old_phase + 3u) % 6u];
     } else if (operation == 2) {
         /* The nested actor's selection observes the caller's table write. */
@@ -84,7 +84,7 @@ int main(void)
 
             operation = 1;
             expected[0].actor.phase = (phase + 2) % 6;
-            expected[0].actor.remaining[0xfa] ^= (unsigned char)(0xd0u + handler);
+            ((unsigned char *)&expected[0].actor)[0xfe] ^= (unsigned char)(0xd0u + handler);
             expected_table[phase] = expected_table[(phase + 3) % 6];
             func_80182378(&slots[0].actor);
             assert(count == 2 && received[1] == 0 && visited[1] == handler);
