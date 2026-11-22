@@ -1639,6 +1639,8 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
             raise Reject("timing", "mine player award phases require original actor movement, model, sound and event-object timing")
         if vram == 0x8015444C and mine_member_source_only(entry, src, info):
             raise Reject("timing", "mine model animation commands require scoped sequence, model and graphics service state")
+        if vram in (0x80134310, 0x8013435C) and mine_member_source_only(entry, src, info):
+            raise Reject("timing", "mine terrain plane arithmetic requires original member and guest call timing")
         if forest_ground_attachment_source_only(entry, src, info):
             raise Reject("timing", "ground attachment requires checked guest callbacks, return values and timing")
         if vram in (0x8017DDB0, 0x8017DE00, 0x8017E25C, 0x8017E2F4, 0x8017E428, 0x8017E500) and mine_member_source_only(entry, src, info):

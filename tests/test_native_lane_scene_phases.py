@@ -161,6 +161,7 @@ def test_mine_slot_dispatch_preserves_the_main_member(tmp_path, pc, size):
     (0x80173A28, 56), (0x80173A60, 236), (0x80173B4C, 60),
     (0x80173B88, 56), (0x80173BC0, 164), (0x80173C64, 80), (0x80173CB4, 360), (0x80173E1C, 220), (0x801741EC, 136), (0x80174274, 8),
     (0x8015444C, 1452),
+    (0x80134310, 76), (0x8013435C, 104),
     (0x8016E918, 68), (0x8016EAC0, 124), (0x8016EB3C, 108), (0x8016EBA8, 100),
     (0x8017E2F4, 308), (0x8017E428, 216), (0x8017E500, 320),
 ])
@@ -300,6 +301,14 @@ def test_mine_model_sequence_preserves_main_table():
     assert source.is_file()
     assert not lane.mine_member_source_only(dict(vram=pc, region=region), source, dict(member=region))
 
+
+
+def test_mine_terrain_plane_preserves_main_helpers():
+    for pc in (0x80134310, 0x8013435C):
+        region = "main_0012"
+        source = ROOT / f"src/overlays/{region}/{pc:08x}.c"
+        assert source.is_file()
+        assert not lane.mine_member_source_only(dict(vram=pc, region=region), source, dict(member=region))
 
 
 def test_mine_descriptor_guard_preserves_main_lookup():
