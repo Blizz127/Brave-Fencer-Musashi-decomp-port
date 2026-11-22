@@ -2547,6 +2547,17 @@
       "extent": "function",
       "optimization": "-O2",
       "origin": "Independent owner reconstruction from the game executable and observed startup behavior."
+    },
+    {
+      "name": "func_8002C8F4",
+      "region": "main",
+      "vram": 2147666164,
+      "size": 856,
+      "source": "src/main/8002c8f4.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the verified USA game sound startup extent and original startup observations. External services are opaque in the host test."
     }
   ]
 }
