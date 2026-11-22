@@ -1626,6 +1626,8 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
             raise Reject("timing", "mine player award services require their original flag, sound and environment call ordering")
         if vram in (0x80173A28, 0x80173A60, 0x80173B4C) and mine_member_source_only(entry, src, info):
             raise Reject("timing", "mine award controller setup requires the original actor lookup, model data and phase callback")
+        if vram in (0x80173B88, 0x80173BC0, 0x80173C64, 0x80173CB4, 0x80173E1C, 0x801741EC, 0x80174274) and mine_member_source_only(entry, src, info):
+            raise Reject("timing", "mine player award phases require original actor movement, model, sound and event-object timing")
         if forest_ground_attachment_source_only(entry, src, info):
             raise Reject("timing", "ground attachment requires checked guest callbacks, return values and timing")
         if vram in (0x8017DDB0, 0x8017DE00, 0x8017E25C, 0x8017E2F4, 0x8017E428, 0x8017E500) and mine_member_source_only(entry, src, info):
