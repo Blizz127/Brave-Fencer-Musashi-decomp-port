@@ -1081,6 +1081,8 @@ FOREST_FLOOR_EXTENTS = {
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    0x8015BFF4: {"sc01_0077": (60, 0x4170BBA2D2061F12)},
+    0x8015C128: {"sc01_0077": (516, 0x4A6E7C4C56E74170)},
     0x80186424: {"sc02_0005": (312, 0x1B47BE12370CCAFF)},
     0x80184EC0: {"sc02_0005": (416, 0xB67CEFACD4A0472F)},
     0x8018550C: {"sc02_0005": (472, 0xC421FCC0B6AAA08E)},
