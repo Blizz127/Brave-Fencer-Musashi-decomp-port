@@ -15058,6 +15058,14 @@ static int irq_data_access(const FormatterCpu *cpu, uint32_t w) {
     if (op < 32) return 1;
     uint32_t address = cpu->r[(w >> 21) & 31u] + (uint32_t)(int32_t)(int16_t)w;
     IrqRegion region = irq_region(cpu->pc);
+    /* The channel tick consumes one count from its nonzero 16-bit timer.
+     * Its mapped store must still agree with the live count at issue. */
+    if (region==IRQ_CHANNEL_TICK && cpu->pc==0x8002d008u) {
+        uint16_t prior;
+        return op==41u && address==0x800a4efcu &&
+            musashi_boot_read16(cpu->irq_image->memory,address,&prior) && prior &&
+            (uint16_t)cpu->r[(w>>16)&31u]==(uint16_t)(prior-1u);
+    }
     if (region == IRQ_CARD_READ) {
         /* The saved registers and queue fields have distinct owners. Even
          * another admitted field cannot be substituted at a live access. */

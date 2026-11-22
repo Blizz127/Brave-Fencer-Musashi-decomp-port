@@ -59,6 +59,7 @@ class GuestIrqTests(unittest.TestCase):
             runtime_env.pop('MUSASHI_CODE_IMAGE_MUTANT', None)
             for mode in ('vblank', 'dma', 'both', 'code', 'record', 'wrongslot', 'callback', 'copy', 'owner',
                          'card', 'active', 'soundless', 'card-code', 'sound-code', 'slotswap', 'voice-range', 'title-fade', 'title-fade-code',
+                         'countdown-positive', 'countdown-final', 'countdown-zero', 'countdown-wrap', 'countdown-code',
                          'fade-limit', 'fade-equal', 'fade-wrap', 'fade-limit-level-code', 'fade-limit-mode-code',
                          'draw-complete', 'draw-timer', 'draw-lease', 'draw-owner', 'draw-clock',
                          'draw-image', 'draw-queue', 'draw-binding', 'draw-frame-slot',

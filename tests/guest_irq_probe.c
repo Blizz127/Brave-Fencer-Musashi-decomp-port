@@ -166,7 +166,18 @@ int main(int argc,char **argv) {
     int limit = equal || !strcmp(m->mode, "fade-limit") || !strcmp(m->mode, "fade-limit-level-code") ||
         !strcmp(m->mode, "fade-limit-mode-code");
     int fade = limit || wrap || !strcmp(m->mode, "title-fade") || !strcmp(m->mode, "title-fade-code");
-    int active=fade || !strcmp(m->mode,"active") || !strcmp(m->mode,"soundless") ||
+    int countdown=!strncmp(m->mode,"countdown-",10);
+    int bad_countdown=!strcmp(m->mode,"countdown-code");
+    uint16_t count=13;
+    if (countdown) {
+        if (!strcmp(m->mode,"countdown-zero")) count=0;
+        if (!strcmp(m->mode,"countdown-final")) count=1;
+        if (!strcmp(m->mode,"countdown-wrap")) count=0x8000;
+        assert(musashi_boot_write16(&m->memory,0x800a4efau,0x4517));
+        assert(musashi_boot_write16(&m->memory,0x800a4efcu,count));
+        if (bad_countdown) m->memory.bytes[0x2d008u]^=1u;
+    }
+    int active=countdown || fade || !strcmp(m->mode,"active") || !strcmp(m->mode,"soundless") ||
         !strcmp(m->mode,"voice-range") || !strcmp(m->mode,"sound-code");
     if (fade) {
         uint16_t start = limit ? 0x23aau : 0x3180u;
@@ -236,7 +247,7 @@ int main(int argc,char **argv) {
        assert(musashi_dma_controller_complete(&m->dma,2));
        assert(m->dma.interrupt==0x84840000u);
     }
-    int success=equal || wrap || !strcmp(m->mode,"fade-limit") || !strcmp(m->mode,"title-fade") || !strcmp(m->mode,"vblank") || dma || !strcmp(m->mode,"card") || !strcmp(m->mode,"active");
+    int success=(countdown && !bad_countdown) || equal || wrap || !strcmp(m->mode,"fade-limit") || !strcmp(m->mode,"title-fade") || !strcmp(m->mode,"vblank") || dma || !strcmp(m->mode,"card") || !strcmp(m->mode,"active");
     if (draw) success=m->draw.queued ? m->draw.queued->complete :
                     !strcmp(m->mode,"draw-complete") || !strcmp(m->mode,"draw-timer") ||
                     !strcmp(m->mode,"draw-frame-zero") || !strcmp(m->mode,"draw-upload");
@@ -261,6 +272,13 @@ int main(int argc,char **argv) {
     m->post=word(&m->memory,0x8006cbb8u);
     assert(m->calls==1 && memcmp(initial,m->outer,sizeof(initial))==0);
     MusashiCpuStatusSnapshot state;assert(musashi_cpu_status_snapshot(s->cpu_status,&state));
+    if (countdown) {
+        uint16_t actual,neighbor;
+        assert(musashi_boot_read16(&m->memory,0x800a4efcu,&actual));
+        assert(musashi_boot_read16(&m->memory,0x800a4efau,&neighbor));
+        assert(actual==(count && !bad_countdown ? (uint16_t)(count-1u) : count));
+        assert(neighbor==0x4517);
+    }
     if (fade) {
         uint16_t level;
         assert(musashi_boot_read16(&m->memory, 0x800a4ee0u, &level));
@@ -286,7 +304,8 @@ int main(int argc,char **argv) {
         assert(state.active && state.faulted && s->faulted && !s->return_consumed);
         unsigned steps=m->stop.instructions;
         assert(!musashi_psycross_irq_scheduler_dispatch_pending(s,m->outer) && steps==m->stop.instructions && m->calls==1);
-        if(draw) assert(m->post==m->before);
+        if (bad_countdown) assert(m->post==m->before+1 && m->stop.pc==0x8002d008u);
+        else if(draw) assert(m->post==m->before);
         else if(!strcmp(m->mode,"code")||!strcmp(m->mode,"callback"))assert(m->post==m->before+1);
         else if(!strcmp(m->mode,"voice-range")) assert(m->post==m->before+1 && m->stop.pc==0x80031454u);
         else if(!strcmp(m->mode,"slotswap")) assert(m->post==m->before+1 && m->stop.pc==0x80042d30u);
