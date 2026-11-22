@@ -1,0 +1,93 @@
+{
+  "schema": 1,
+  "targets": {
+    "main": {
+      "kind": "executable",
+      "identity": "provenance/exe_identity.json"
+    }
+  },
+  "matches": [
+    {
+      "name": "func_8002D678",
+      "vram": 2147669624,
+      "size": 96,
+      "region": "main",
+      "source": "src/main/8002d678.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_8002DF80",
+      "vram": 2147671936,
+      "size": 440,
+      "region": "main",
+      "source": "src/main/8002df80.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_8002F12C",
+      "vram": 2147676460,
+      "size": 36,
+      "region": "main",
+      "source": "src/main/8002f12c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_8002F248",
+      "vram": 2147676744,
+      "size": 668,
+      "region": "main",
+      "source": "src/main/8002f248.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "rodata_base": 2147954804
+    },
+    {
+      "name": "func_800331D4",
+      "vram": 2147693012,
+      "size": 120,
+      "region": "main",
+      "source": "src/main/800331d4.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_8002D59C",
+      "vram": 2147669404,
+      "size": 220,
+      "region": "main",
+      "source": "src/main/8002d59c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_8002DC68",
+      "vram": 2147671144,
+      "size": 792,
+      "region": "main",
+      "source": "src/main/8002dc68.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "rodata_base": 2147954492
+    },
+    {
+      "name": "func_8002F80C",
+      "vram": 2147678220,
+      "size": 560,
+      "region": "main",
+      "source": "src/main/8002f80c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    }
+  ]
+}

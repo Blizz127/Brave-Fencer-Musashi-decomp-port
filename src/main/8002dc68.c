@@ -1,22 +1,15 @@
 /* Owner re-derivation from retail assembly (clean input set). */
 /* Plays a sound by id (resolving redirect entries) with slot updates paused: dispatches on the entry kind to its handler and returns the handler's result. */
-#include "psx_types.h"
+#include "sound_events.h"
 
-typedef struct {
-    u8 kind;
-    u8 pad1[2];
-    u8 bus;
-} SoundEntry;
-
-extern s32 func_80032048(s32, SoundEntry *, u16);
-extern s32 func_800322A8(s32, SoundEntry *, u16);
-extern s32 func_800324A4(s32, SoundEntry *, u16, s32);
-extern s32 func_80032774(s32, SoundEntry *, u16);
+extern s32 func_80032048(s32, BfmSoundEntry *, u16);
+extern s32 func_800322A8(s32, BfmSoundEntry *, u16);
+extern s32 func_800324A4(s32, BfmSoundEntry *, u16, s32);
+extern s32 func_80032774(s32, BfmSoundEntry *, u16);
 extern s32 func_80034314(u32, void *, u32);
-extern void func_8002F248(SoundEntry *, s32);
-extern u16 func_8002F4E4(SoundEntry *);
+extern u16 func_8002F4E4(BfmSoundEntry *);
 extern void func_8002F714(u16, s32);
-extern SoundEntry D_8006451C[];
+extern BfmSoundEntry D_8006451C[];
 extern s16 D_800A4EFC;
 extern u8 D_800A4F17;
 extern u8 D_800A4F1B;
@@ -26,7 +19,7 @@ extern u8 D_8006A984;
 extern u8 D_8006A988[];
 
 s32 func_8002DC68(s32 id, u16 arg) {
-    SoundEntry *entry;
+    BfmSoundEntry *entry;
     u16 redirect;
     u8 *pause;
     u8 was_paused;
@@ -101,7 +94,7 @@ s32 func_8002DC68(s32 id, u16 arg) {
         ret = func_80032048((0x896 << 16) | (u16)id, entry, 0xFFFF);
         break;
     case 17:
-        func_8002F714(entry->bus, arg);
+        func_8002F714(entry->selector, arg);
         break;
     case 16:
         ret = func_80032048((0xB7D << 16) | (u16)id, entry, 0xFFFF);

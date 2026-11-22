@@ -1169,6 +1169,9 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
                 hashlib.sha256(src.read_bytes()).hexdigest() ==
                 "fe54e82ba5ccfd0720da3f72d022febe8510a568c65fede72a8650ed6cb39c2f"):
             raise Reject("deny", "MAIN member 0012 first card-menu item is source-only")
+        # A single whole-function charge can miss a channel update during the scan.
+        if member is None and vram in (0x800331D4, 0x8002F248, 0x8002DC68):
+            raise Reject("timing", "sound channel lookup and its callers require event timing")
         # The distance caller uses a real guest stack frame and two distinct return PCs.
         if member is None and vram == 0x80013328:
             raise Reject("timing", "distance requires the nested guest call frames and event timing")

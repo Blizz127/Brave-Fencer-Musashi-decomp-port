@@ -1,6 +1,6 @@
 /* Owner re-derivation from retail assembly (clean input set). */
 /* Per-frame poll of four request bits: forwards the largest level, or runs the release path when the hold count expires. */
-#include "psx_types.h"
+#include "sound_events.h"
 
 extern u8 D_8006A96E;
 extern s16 D_8006A96C;
@@ -13,7 +13,6 @@ extern u8 D_800A4F18;
 extern s16 D_800A4EFC;
 extern s32 D_800A4F24;
 
-void func_8002DC68(s32, s32);
 void func_8002E138(s32, s32, s32);
 void func_80030F80(void);
 void func_8002D320(void);

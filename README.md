@@ -325,6 +325,14 @@ Guest records use four-byte callback addresses. The Linux x64 host needs a
 separate representation for its eight-byte callback pointers, and the player
 retains guest execution for this routine. Audio output has not been compared.
 
+Eight sound routines in `provenance/sound-events.json` share the four-byte event
+and 84-byte channel layouts. A comparison against the USA executable exercised
+640 generated inputs and all 256 event selectors. Channel state, return values
+and the 188 calls to the test voice backend matched. The slot search can see a
+channel change partway through its eight records. The player keeps the search,
+event handler and dispatcher on the guest CPU to preserve that timing. Run
+`python3 -m pytest tests/test_sound_events.py` for the disc-free host checks.
+
 Matched C is a reimplementation of the game's own code, written so that the
 original compiler reproduces the original machine code. It is published for
 study, interoperability and preservation, like other matching

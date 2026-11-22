@@ -1,5 +1,5 @@
 /* Exact retail word export for [8002DF80,8002E138); EXE and assembly verified. */
-#include "psx_types.h"
+#include "sound_events.h"
 
 /* Verified: 110/110 words at vram 0x8002DF80.
  * Decompiled by m2c from main.s, then verified byte-exact
@@ -10,7 +10,6 @@
 extern s16 D_8006A982;
 extern u8 D_8006A984;
 void func_8002D320();                                  /* static */
-void func_8002DC68(s32, s32);                            /* static */
 void func_8002E138(s32, s32, s32);                           /* static */
 void func_80030F80();                                  /* static */
 void func_80031BE0();                                  /* static */

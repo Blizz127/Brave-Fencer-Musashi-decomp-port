@@ -1,41 +1,19 @@
 /* Owner re-derivation from retail assembly (clean input set). */
 /* Plays the sound effect for an event type: random picks from small sets, a caller-supplied id, or a +-0x100 pitch bend on the voices of the found sound. */
-#include "psx_types.h"
+#include "sound_events.h"
 
-typedef struct {
-    u8 pad0[0xE];
-    u8 voice_used[8];
-    u8 pad16[0x20 - 0x16];
-    s32 pitch;
-    u8 pad24[0x28 - 0x24];
-    s32 pitch_target;
-    s32 pitch_step;
-    s16 pitch_timer;
-    u8 pad32[0x37 - 0x32];
-    u8 flags;
-    u8 pitch_done;
-    u8 pad39[0x54 - 0x39];
-} SoundChannel;
-
-typedef struct {
-    u8 pad0[3];
-    u8 type;
-} SoundEvent;
-
-extern void func_8002DC68(s32, s32);
-extern s32 func_800331D4(s32);
 extern u16 D_8006A9F8[];
-extern SoundChannel D_800A46E8[16];
+extern BfmSoundChannel D_800A46E8[16];
 extern u32 D_800A4EEC;
 
-void func_8002F248(SoundEvent *event, s32 id) {
-    SoundChannel *ch;
+void func_8002F248(BfmSoundEntry *event, s32 id) {
+    BfmSoundChannel *ch;
     s32 found;
     s32 i;
     s32 sound;
-    SoundChannel *rec;
+    BfmSoundChannel *rec;
 
-    switch (event->type) {
+    switch (event->selector) {
     case 0:
         D_800A4EEC = D_800A4EEC * 0x41C64E6D + 12345;
         switch ((D_800A4EEC >> 16) & 7) {

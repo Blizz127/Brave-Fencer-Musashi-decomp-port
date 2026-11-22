@@ -2,14 +2,13 @@
  * SHA256(span)=aab91bd03fe0194dbfb6a170052a0496e3c1d5796ae81257e7513f1492951df2.
  * Word export for the native seam; the body below is kept
  * byte-identical (wrap only, no rewrite). */
-#include "psx_types.h"
+#include "sound_events.h"
 
 /* Decompiled by m2c from main.s, then verified byte-exact
  * against retail by tools/match_function.py. Types and signatures are
  * whatever reproduces the bytes; they are not evidence of the
  * original declaration. */
 
-s32 func_8002DC68(u32, s32);                        /* static */
 extern s8 D_800A4F17;
 
 s32 func_8002D678(s32 arg0, s32 arg1) {

@@ -1,10 +1,9 @@
 /* Owner re-derivation from retail assembly (clean input set). */
 /* Dispatches a sound command by id range (system sound, music, or sound effect with argument) with slot updates paused, then runs the deferred slot update if one was requested. */
-#include "psx_types.h"
+#include "sound_events.h"
 
 extern void func_8002D320(void);
 extern void func_8002D904(u16);
-extern void func_8002DC68(s32, u16);
 extern void func_8002E138(u16, u16, u16);
 extern void func_80030F80(void);
 extern void func_80031BE0(void);
