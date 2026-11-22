@@ -42,8 +42,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 22 source update covers 254 functions across seven scene overlays,
-totaling 23,728 bytes of matching executable code. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 22 source update covers 258 functions across seven scene overlays,
+totaling 26,772 bytes of matching executable code. Four mine routines scan floor probes and pass their position to the map lookup.
 The mine collision code intersects the probe with a face and tests its side planes.
 The mine model classifier selects translated, rotated or scaled contact coordinates.
 In the opening scene, one
@@ -107,6 +107,11 @@ into the caller’s point. The source test follows both floor probes through
 nine game routines with synthetic geometry. It supplies the
 classifier, box and plane tests, coordinate transform and address mapping.
 Run it with `python3 -m unittest discover -s tests -p test_mine_model_surface.py`.
+
+The mine box routines intersect the moving segment with its three pairs of faces.
+Host tests cover face selection, signed coordinates, overlapping contact outputs
+and the partial write on an X-face division by zero. Run them with
+`python3 -m unittest discover -s tests -p test_mine_box_faces.py`.
 
 The model contact transform also matches the mine member. It adds the
 model’s three coordinates to the selected point and its auxiliary point.
