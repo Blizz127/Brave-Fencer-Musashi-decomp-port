@@ -1066,18 +1066,23 @@ def verify_existing(
         ]
 
     built = False
+    nonportable_c = False
     for optimization in OPTIMIZATION_CANDIDATES:
         candidate.unlink(missing_ok=True)
         code = _quiet(
             build_candidate.main,
             [
                 str(produced),
+                "--check-c-recovery",
                 "--symbol", function.name,
                 "--link-base", f"0x{function.vram:X}",
                 f"--optimization={optimization}",
                 "--output", str(candidate),
             ],
         )
+        if code == build_candidate.NONPORTABLE_C:
+            nonportable_c = True
+            continue
         if code != 0 or not candidate.is_file():
             continue
         built = True
@@ -1093,6 +1098,8 @@ def verify_existing(
         raise RetailError(
             f"refusing to continue: existing source changed during verify: {source}"
         )
+    if nonportable_c and not built:
+        return Outcome(function.name, "unconfirmed-c-recovery")
     return Outcome(function.name, "mismatch" if built else "build-failed")
 
 
@@ -1161,18 +1168,23 @@ def attempt(
         ]
 
     built = False
+    nonportable_c = False
     optimizations = ("-O2",) if gte_overlay else OPTIMIZATION_CANDIDATES
     for optimization in optimizations:
         code = _quiet(
             build_candidate.main,
             [
                 str(produced),
+                "--check-c-recovery",
                 "--symbol", function.name,
                 "--link-base", f"0x{function.vram:X}",
                 f"--optimization={optimization}",
                 "--output", str(candidate),
             ],
         )
+        if code == build_candidate.NONPORTABLE_C:
+            nonportable_c = True
+            continue
         if code != 0 or not candidate.is_file():
             continue
         built = True
@@ -1183,6 +1195,8 @@ def attempt(
         promote(produced, target)
         return Outcome(function.name, "match", None if gte_overlay else optimization)
 
+    if nonportable_c and not built:
+        return Outcome(function.name, "unconfirmed-c-recovery")
     return Outcome(function.name, "mismatch" if built else "build-failed")
 
 

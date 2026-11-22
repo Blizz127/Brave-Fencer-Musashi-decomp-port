@@ -284,9 +284,42 @@ def _asm_template(payload: str) -> str:
     return payload
 
 
+def compiler_inline_asm(assembly: str, symbol: str) -> bool | None:
+    """Inspect cc1's APP blocks within one emitted MIPS procedure.
+
+    Return None if the compiler did not provide the procedure's boundaries.
+    Empty register constraints and other procedures do not contribute code.
+    """
+    inside = False
+    app = False
+    for line in assembly.splitlines():
+        stripped = line.strip()
+        if stripped in ("#APP", "#NO_APP"):
+            app = stripped == "#APP"
+            continue
+        statement = stripped.partition("#")[0].strip()
+        fields = statement.replace(",", " ").split()
+        if fields[:1] == [".ent"]:
+            inside = fields[1:2] == [symbol]
+        elif inside and fields[:2] == [".end", symbol]:
+            return False
+        elif inside and app:
+            # GAS accepts several statements on a line. A .set directive
+            # before an instruction does not make the whole line empty.
+            for piece in statement.split(";"):
+                words = piece.split()
+                if not words or piece.rstrip().endswith(":"):
+                    continue
+                if words[0] not in (".set", ".loc", ".file"):
+                    return True
+    return None
+
+
 def classify_recovery(source: str) -> str:
     """Classify the PS1 implementation in source text.
 
+    This textual estimate cannot see expansions from included files. Batch
+    admission also checks compiler-emitted assembly for tentative C bodies.
     Native word-export macros are ignored: they are not the compiled
     implementation. Empty register constraints emit no instructions and stay
     C. Instruction `__asm__` overlays without a C body are assembly; a C body

@@ -24,9 +24,11 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+import progress
 from retail_common import RetailError
 
 WORD_SIZE = 4
+NONPORTABLE_C = 3
 DEFAULT_TOOLCHAIN_ROOT_ENV = "PSYQ_TOOLCHAIN_ROOT"
 
 # maspsx selects its input source with sys.stdin.isatty() and calls
@@ -499,6 +501,8 @@ def build_parser() -> argparse.ArgumentParser:
         dest="symbol_files",
         help="symbol definition file, repeatable; defaults to splat's auto files",
     )
+    parser.add_argument("--check-c-recovery", action="store_true",
+                        help="check a tentative C-only recovery against the target procedure's inline assembly")
     parser.add_argument("--keep-intermediates", action="store_true")
     parser.add_argument("--rodata-base", type=lambda value: int(value, 0),
                         help="explicit read-only data address for switch-table recovery; "
@@ -550,6 +554,19 @@ def main(argv: list[str] | None = None) -> int:
                             no_schedule_insns2=args.no_schedule_insns2),
                 "cc1",
             )
+            if args.check_c_recovery:
+                try:
+                    recovery = progress.classify_recovery(source.read_text(encoding="utf-8"))
+                except UnicodeError as exc:
+                    raise RetailError(f"cannot classify non-UTF-8 source: {source}") from exc
+                if recovery == "c":
+                    emitted = progress.compiler_inline_asm(assembly.read_text(encoding="utf-8"), args.symbol)
+                    if emitted is not False:
+                        reason = ("contains inline assembly" if emitted else
+                                  "has no compiler-marked procedure boundaries")
+                        print(f"build_candidate: {args.symbol} {reason}", file=sys.stderr)
+                        return NONPORTABLE_C
+
             if args.assembler == "gnu":
                 assembly.write_text(gnu_as_source(assembly.read_text(encoding="utf-8")),
                                     encoding="utf-8")
