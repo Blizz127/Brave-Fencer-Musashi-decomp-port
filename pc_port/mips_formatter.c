@@ -15620,6 +15620,8 @@ static int movie_output_execute(FormatterCpu *cpu, MusashiBootMemory *m,
     return !depth;
 }
 
+#include "movie_strip_native.h"
+
 int musashi_boot_execute_guest_irq(const MusashiGuestIrqImage *image, MusashiBootMemory *memory,
     uint32_t context, const uint32_t installed[12], const MusashiIrqDispatchDevice *io,
     const MusashiExecutionClock *clock, MusashiDmaController *dma, MusashiGuestIrqStop *stop) {
@@ -15880,7 +15882,7 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
                 !movie_output_execute(&cpu,memory,services->draw,&slice,stop))) return 0;
             if (movie_call) {
                 if (cpu.r[31]!=origin+8u || !movie_output_owner(image,memory,services->draw,dma,clock,&slice) ||
-                    !movie_output_execute(&cpu,memory,services->draw,&slice,stop)) return 0;
+                    !movie_strip_native(&cpu,memory,services->draw,&slice,stop)) return 0;
                 MusashiGpuDma2State gpu;
                 if (!musashi_gpu_dma2_get_state(services->draw->channel,&gpu)) return 0;
                 if ((dma->interrupt&0x04000000u) && gpu.transfers>slice.gpu_transfers)

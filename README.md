@@ -36,15 +36,24 @@ stop when it reaches an address with no remaining execution path.
 The public source now reads the dispatch table from your disc. Its developer
 menu has an empty warp list. A Linux player built at commit `7fd45d2` was
 checked for both tables and both strings. The source also delegates interrupt
-and device-library routines to the program on your disc. In a cold-start test from commit `c532cb8`, the Linux player read the disc
-and stopped at `8002D08C` before it displayed the menu. A replacement
-download still needs to reach ordinary gameplay, save at an inn, and
-successfully Continue after restarting.
+and device-library routines to the program on your disc.
 
-The Linux instructions cover disc verification, the build and the first
-launch. Windows x64 users can cross-build the player on Linux with Zig and the
-two pinned development SDKs. The Windows checks used Wine. Both builds run a
-hybrid engine and require your own USA disc.
+On a normal launch from a USA disc, the Linux player built from `df65a330`
+displayed the opening movie and the **PUSH START BUTTON** title prompt. The
+player registered a Start press, then stopped in the sound callback before the
+Start/Continue menu appeared. A replacement player download still needs to
+reach ordinary gameplay, save at an inn, and Continue after restarting.
+
+Compiled host code now handles the opening movie’s output callback. In an
+ordinary Linux run, it processed 1,760 strips across 88 complete movie frames
+and reached the title prompt. The decoder and GPU service calls still execute
+on the guest CPU. The first two frames matched the original strip for strip.
+
+Download the source from GitHub’s **Code** menu and follow the Linux build,
+disc verification and launch instructions below. Windows x64 users can
+cross-build the player on Linux with Zig and the two pinned development SDKs.
+The Windows checks used Wine. Both builds run native code alongside a guest CPU
+interpreter and require your own USA disc (SLUS-00726).
 [Build on Linux](#build-from-source) · [Cross-build for Windows x64](docs/SETUP.md#cross-build-the-current-windows-x64-player-on-linux) · [Controls and save paths](docs/SETUP.md)
 
 ## About this project

@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "note": "Opening movie callback reconstructed from the USA disc. The same routine also runs from MAIN member 4 during the opening.",
+  "targets": {
+    "main_0003": {
+      "kind": "blob",
+      "file": "extracted/overlays/main/0003.bin",
+      "base": 2147995128,
+      "sha256": "2e11b08eec1a7af748b1fc6b4656aaea092ee9eb47aaa6ca78b8e1516905dc06"
+    }
+  },
+  "matches": [
+    {
+      "name": "func_800D24D0",
+      "region": "main_0003",
+      "vram": 2148345040,
+      "size": 564,
+      "source": "src/overlays/main_0003/800d24d0.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    }
+  ]
+}
