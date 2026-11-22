@@ -42,8 +42,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 21 source update covers 231 functions across seven scene overlays,
-totaling 16,748 bytes of matching executable code. In the opening scene, one
+The November 21 source update covers 238 functions across seven scene overlays,
+totaling 18,064 bytes of matching executable code. In the opening scene, one
 routine calls the handler selected by the player state byte. Another sets the
 facing direction and counts frames. A separate scene event uses that timer
 to advance its state on the 31st call from a fresh counter. The first opening handler
@@ -86,6 +86,16 @@ scene services in order, updates a frame counter and conditionally processes
 the room's object block. A host test supplies the 19 service functions and
 checks their order, the optional calls and counter wraparound. The player
 continues to execute this scene update as guest code.
+
+Three of the frame update’s object services select a floor probe, check
+nearby contacts and find an action target. Seven routines have the same
+compiled body in the mine and MAIN member 0012. Together they cover both
+floor probes, the 96-entry object pool and the signed distance comparison.
+The two resident distance routines build the coordinate differences, call the
+math services and return the result. The hybrid player still uses guest code
+for the nested calls. Run the host pointer and distance checks with
+`python3 -m unittest discover -s tests -p 'test_scene_object_distance.py'`
+and `python3 -m unittest discover -s tests -p 'test_scene_target_pointer.py'`.
 
 The same scene descriptors also contain a two-phase callback. Its setup starts
 a second fade, resets its level and advances the actor phase. The next phase

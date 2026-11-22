@@ -1069,6 +1069,12 @@ SCENE_PHASE_EXTENTS = {
         "sc02_0039": (248, 0xBEA43DF222B8BA28),
         "sc03_0001": (248, 0xFF9FB166A2180DC7),
     },
+    # These object services call into guest code from the middle of the frame.
+    0x8014A2E4: dict.fromkeys(("main_0012", "sc02_0039"), (156, 0x4DBDD625CB4098C8)),
+    0x8014C278: dict.fromkeys(("main_0012", "sc02_0039"), (56, 0x93E8D33159724249)),
+    0x8014FDF4: dict.fromkeys(("main_0012", "sc02_0039"), (108, 0xBE00661D1711B59B)),
+    0x801505FC: dict.fromkeys(("main_0012", "sc02_0039"), (168, 0x840FD970AD98C205)),
+    0x801508B4: dict.fromkeys(("main_0012", "sc02_0039"), (68, 0x3C6364F78110B674)),
     0x8016EE40: dict.fromkeys(
         ("sc02_0039", "sc01_0077", "sc02_0035", "sc03_0001", "main_0012"),
         (84, 0x0A847F9F21DC5E21)),
@@ -1135,6 +1141,9 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
                 hashlib.sha256(src.read_bytes()).hexdigest() ==
                 "fe54e82ba5ccfd0720da3f72d022febe8510a568c65fede72a8650ed6cb39c2f"):
             raise Reject("deny", "MAIN member 0012 first card-menu item is source-only")
+        # The distance caller uses a real guest stack frame and two distinct return PCs.
+        if member is None and vram == 0x80013328:
+            raise Reject("timing", "distance requires the nested guest call frames and event timing")
         wrapped_angle = member is None and vram == 0x80012AB0
         if wrapped_angle and (size != 12 or hashlib.sha256(src.read_bytes()).hexdigest() !=
                 "7e1d58c1eca9742e5c025641f349f594066b5cadd3b4eb1c4a64f8706bb7ace2"):

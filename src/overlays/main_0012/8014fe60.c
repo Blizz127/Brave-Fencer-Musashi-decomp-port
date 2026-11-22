@@ -1,15 +1,8 @@
 /* Owner re-derivation from retail assembly (clean input set). */
 /* Probes two points below the object; stores the higher hit (or 0x7FFF floor) at 0x78 and clears/sets flag bit 0 of 0x7E. */
-#include "psx_types.h"
+#include "scene_object_probes.h"
 
-typedef struct {
-    s16 vx;
-    s16 vy;
-    s16 vz;
-    s16 pad;
-} SVec;
-
-typedef struct {
+struct Obj8014FE60 {
     u8 pad0[6];
     s16 x;
     u8 pad8[2];
@@ -21,48 +14,46 @@ typedef struct {
     s16 hy;
     s16 hz;
     u16 flags;
-    SVec norm;
-} Obj8014FE60;
+    SceneProbeVector norm;
+};
 
-extern SVec D_801152A8;
-
-extern s32 func_8014FFDC(Obj8014FE60 *obj, SVec *pos, SVec *norm);
-extern s32 func_80150150(Obj8014FE60 *obj, SVec *pos);
+extern s32 func_8014FFDC(Obj8014FE60 *obj, SceneProbeVector *pos, SceneProbeVector *norm);
+extern s32 func_80150150(Obj8014FE60 *obj, SceneProbeVector *pos);
 
 s32 func_8014FE60(Obj8014FE60 *obj)
 {
-    SVec a;
-    SVec b;
-    SVec n;
+    SceneProbeVector a;
+    SceneProbeVector b;
+    SceneProbeVector n;
     s32 hitA;
     s32 hitB;
 
-    a.vx = b.vx = obj->x;
-    a.vy = b.vy = obj->y - 16;
-    a.vz = b.vz = obj->z;
+    a.x = b.x = obj->x;
+    a.y = b.y = obj->y - 16;
+    a.z = b.z = obj->z;
     hitA = func_8014FFDC(obj, &a, &n);
     hitB = func_80150150(obj, &b);
     if (hitB == 0) {
-        b.vy = 0x7FFF;
+        b.y = 0x7FFF;
     }
     if ((hitA | hitB) != 0) {
-        if (a.vy < b.vy) {
-            obj->hx = a.vx;
-            obj->hy = a.vy;
-            obj->hz = a.vz;
+        if (a.y < b.y) {
+            obj->hx = a.x;
+            obj->hy = a.y;
+            obj->hz = a.z;
             obj->norm = n;
         } else {
-            obj->hx = b.vx;
-            obj->hy = b.vy;
-            obj->hz = b.vz;
+            obj->hx = b.x;
+            obj->hy = b.y;
+            obj->hz = b.z;
             obj->norm = D_801152A8;
         }
         obj->flags &= ~1;
         return 1;
     }
-    obj->hx = a.vx;
+    obj->hx = a.x;
     obj->hy = 0x7FFF;
-    obj->hz = a.vz;
+    obj->hz = a.z;
     obj->flags |= 1;
     return 0;
 }

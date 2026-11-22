@@ -17,6 +17,7 @@ GEN = ROOT / "tools/native_lane_gen.py"
 
 # Each decision is pinned to the rule that must make it.
 EXPECT = {
+    0x80013328: (False, "timing"),   # requires both nested guest call frames
     0x80019064: (True, None),        # guest globals, absolute addresses
     0x8001C044: (True, None),        # calls a bespoke-binding callee (thunk)
     0x800141F0: (False, "hooks"),    # STARTUP_ENTRY: host-sequenced (enum-named PC)
@@ -48,7 +49,7 @@ class NativeLaneGeneratorTest(unittest.TestCase):
         cls.expected = dict(EXPECT)
         registry_args = []
         if not full_registry.is_file():
-            public_cases = (0x80019064, 0x8001C044, 0x80014CF8, 0x80015310, 0x8001CFDC)
+            public_cases = (0x80013328, 0x80019064, 0x8001C044, 0x80014CF8, 0x80015310, 0x8001CFDC)
             cls.expected = {pc: EXPECT[pc] for pc in public_cases}
             # Exercise SDK-range exclusion even when the public manifest contains
             # exclusively game functions. These fixture entries have no code.
