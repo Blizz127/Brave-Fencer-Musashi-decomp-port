@@ -119,6 +119,22 @@ def test_mine_slot_dispatch_preserves_the_main_member(tmp_path, pc, size):
 
 
 
+@pytest.mark.parametrize("pc,size", [(0x8017E25C, 152), (0x8017E2F4, 308), (0x8017E500, 320)])
+def test_mine_model_update_stays_with_its_member(tmp_path, pc, size):
+    source = ROOT / f"src/overlays/sc02_0039/{pc:08x}.c"
+    (tmp_path / "ir").mkdir()
+    row = dict(name=f"func_{pc:08X}", region="sc02_0039", vram=pc, size=size, source=str(source))
+    assert lane.build_one(row, tmp_path, {}, {}, "clang").get("rule") == "timing"
+    copy = tmp_path / "update.c"
+    copy.write_bytes(source.read_bytes())
+    assert lane.build_one(dict(row, region="other", source=str(copy)),
+                          tmp_path, {}, {}, "clang").get("rule") == "timing"
+    copy.write_text(f"int func_{pc:08X}(int value) {{ return value; }}\n")
+    assert lane.build_one(dict(row, region="other", source=str(copy)), tmp_path, {}, {}, "clang",
+                          dict(member="sc02_0039")).get("rule") == "timing"
+    assert not lane.mine_member_source_only(dict(row, region="other"), copy, dict(member="other"))
+
+
 def test_mine_constructor_preserves_forest_dispatch(tmp_path):
     pc = 0x8017DE84
     source = ROOT / "src/overlays/sc02_0039/8017de84.c"
