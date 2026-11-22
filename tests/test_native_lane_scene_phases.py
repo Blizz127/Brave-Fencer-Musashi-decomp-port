@@ -13,6 +13,7 @@ import native_lane_gen as lane
 
 
 PHASES = (
+    ("sc02_0039", 0x8017E794, 380),
     ("sc02_0039", 0x8017EA20, 532),
     ("sc02_0039", 0x8017EF5C, 244),
     ("sc02_0039", 0x8017EED8, 132),
@@ -196,8 +197,14 @@ def test_mine_child_model_complete_body(tmp_path, monkeypatch, pc, size):
 
 
 def test_mine_child_setup_uses_complete_body(tmp_path, monkeypatch):
-    pc = 0x8017EA20
-    size = 532
+    check_mine_emitter_complete_body(tmp_path, monkeypatch, 0x8017EA20, 532)
+
+
+def test_mine_emitter_scan_uses_complete_body(tmp_path, monkeypatch):
+    check_mine_emitter_complete_body(tmp_path, monkeypatch, 0x8017E794, 380)
+
+
+def check_mine_emitter_complete_body(tmp_path, monkeypatch, pc, size):
     source = tmp_path / "independent.c"
     source.write_text("int independent(void) { return 7; }\n")
     span = bytes(i % 256 for i in range(size))
