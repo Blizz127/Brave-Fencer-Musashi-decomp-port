@@ -339,3 +339,12 @@ def test_forest_tutorial_soldier_stay_interpreted(tmp_path, pc, size):
     for region, info in (("sc01_0077", None), ("other", dict(member="sc01_0077"))):
         result = lane.build_one(dict(row, region=region), tmp_path, {}, {}, "clang", info)
         assert result.get("rule") == "timing"
+
+
+def test_forest_ability_callback_stays_guest_timed(tmp_path):
+    source = ROOT / "src/overlays/sc01_0077/80165ac8.c"
+    row = dict(name="func_80165AC8", vram=0x80165AC8, size=64, source=str(source))
+    (tmp_path / "ir").mkdir()
+    for region, info in (("sc01_0077", None), ("sc02_0031", {"member": "sc01_0077"})):
+        result = lane.build_one(dict(row, region=region), tmp_path, {}, {}, "clang", info)
+        assert result.get("rule") == "timing"
