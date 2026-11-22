@@ -92,7 +92,7 @@ static void setup_devices(void) {
         write_decoder(0x1f801820u,0xfe000400u+(k%6u)*9u+(k/6u*7u)%100u);
     assert(decoder.output_size==blocks*512u);
     output_request(buffers[0]);
-    cycles=1793u;
+    cycles=1792u*8u;
     assert(musashi_mdec_advance(&decoder,cycles));
     assert(decoder.transfers==1 && decoder.output_cursor==7168 && decoder.chcr[1]==0x200u);
     assert(irq.status==8);
@@ -185,7 +185,9 @@ int main(int argc,char **argv) {
         }
         assert(result==MUSASHI_IRQ_CONTEXT_RETURN_DELEGATED && stop.pc==0xb0u);
         if (pixels==70400u && state.transfers==20u && !(irq.status&irq.mask)) {
-            assert(state.starts==20u && returns==20u && decoder.transfers==20u);
+            /* Each of the twenty decoder outputs and GPU uploads completes
+             * in its own interrupt, as on the first movie frame. */
+            assert(state.starts==20u && returns==40u && decoder.transfers==20u);
             assert(decoder.chcr[1]==0x200u && decoder.output_cursor==143360u);
             assert(decoder.output_cursor==decoder.output_size && read_word(0x800ec9d8u)==1);
             assert(!read_word(0x800ec9b8u) && read_word(0x800ec9d0u)==0x00fa0000u);

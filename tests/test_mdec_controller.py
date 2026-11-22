@@ -72,26 +72,119 @@ int main(void) {
  memset(d.quant,1,sizeof(d.quant));
  memset(d.scale,0,sizeof(d.scale));
  for(i=0;i<8;i++)d.scale[i]=0x5a82;
- assert(musashi_mdec_write32(&d,0x1f801820,0x3a000006));
- /* DMA1 may start before decoded pixels exist, but cannot complete. */
+ /* A pre-armed DMA1 reserves its address range before data arrives. */
  assert(musashi_mdec_write32(&d,0x1f801090,0x4000));
  assert(musashi_mdec_write32(&d,0x1f801094,0x00040020));
  assert(musashi_mdec_write32(&d,0x1f801098,0x01000200));
  assert(musashi_mdec_advance(&d,129));
  assert(!d.transfers && (d.chcr[1]&0x01000000));
+ assert(d.bcr[1]==0x20 && d.madr[1]==0x4200 && !ram.bytes[0x4000]);
+ assert(musashi_mdec_write32(&d,0x1f801820,0x3a000006));
  for(i=0;i<6;i++) {
    unsigned dc=i<2?0:(i-2)*64;
    assert(musashi_mdec_write32(&d,0x1f801820,0xfe000000u|0x400u|dc));
  }
- assert(d.output_size==512 && d.output_cursor==0);
- assert(musashi_mdec_advance(&d,130));
- assert(d.transfers==1 && d.output_cursor==512 && !(d.chcr[1]&0x01000000));
+ assert(d.output_size==512 && d.output_cursor==512);
+ assert(d.madr[1]==0x4200 && d.bcr[1]==0x20 && (d.chcr[1]&0x01000000));
+ assert(!d.transfers && !(dma.interrupt&0x02000000u));
  for(i=0;i<256;i++) {
    unsigned quadrant=(i%16)/8+(i/128)*2;
    unsigned channel=16+quadrant;
    unsigned expected=0x8000|channel|(channel<<5)|(channel<<10);
    assert((ram.bytes[0x4000+i*2]|(unsigned)ram.bytes[0x4001+i*2]<<8)==expected);
  }
+ assert(musashi_mdec_advance(&d,129+128*8-1));
+ assert(!d.transfers && (d.chcr[1]&0x01000000) && !(dma.interrupt&0x02000000u));
+ assert(musashi_mdec_advance(&d,129+128*8));
+ assert(d.transfers==1 && !(d.chcr[1]&0x01000000) && (dma.interrupt&0x02000000u));
+ /* The full compressed DMA feeds two macroblocks immediately. The input
+  * channel stays busy through the first output and retires with the last. */
+ assert(musashi_mdec_write32(&d,0x1f801820,0x3a00000c));
+ for(i=0;i<12;i++) {
+   unsigned char *p=ram.bytes+0x1000+4*i;
+   p[0]=0; p[1]=4; p[2]=0; p[3]=0xfe;
+ }
+ assert(musashi_mdec_write32(&d,0x1f801080,0x1000));
+ assert(musashi_mdec_write32(&d,0x1f801084,0x0001000c));
+ assert(musashi_mdec_write32(&d,0x1f801088,0x01000201));
+ assert(d.chcr[0]==0x01000201 && d.madr[0]==0x1030 && d.bcr[0]==12);
+ assert(d.output_size==1024 && d.output_cursor==0);
+ for(i=0;i<2;i++) {
+   uint64_t start=d.cycle;
+   unsigned address=0x5000u+512u*i;
+   assert(musashi_mdec_write32(&d,0x1f801090,address));
+   assert(musashi_mdec_write32(&d,0x1f801094,0x00040020));
+   assert(musashi_mdec_write32(&d,0x1f801098,0x01000200));
+   assert(d.madr[1]==address+512 && d.bcr[1]==32);
+   assert(d.chcr[0]==0x01000201 && d.chcr[1]==0x01000200);
+   assert(!memcmp(ram.bytes+address,d.output+512*i,512));
+   assert(musashi_mdec_advance(&d,start+1023));
+   assert(d.chcr[0]==0x01000201 && d.chcr[1]==0x01000200);
+   if(i) { /* Clearing visible CHCR no longer cancels the scheduled IRQ. */
+     assert(musashi_dma_controller_write32(&dma,0x1f8010f4,0x03830000));
+     assert(musashi_mdec_write32(&d,0x1f801098,0));
+     assert(!d.chcr[1] && d.chcr[0]==0x01000201);
+     /* An extra request after the last pixel, before IRQ retirement,
+      * must leave its destination and the previous scheduled IRQ intact. */
+     assert(musashi_mdec_write32(&d,0x1f801090,0x7000));
+     assert(musashi_mdec_write32(&d,0x1f801094,0x00010020));
+     assert(!musashi_mdec_write32(&d,0x1f801098,0x01000200));
+     assert(!d.chcr[1] && d.madr[1]==0x7000 && d.bcr[1]==0x10020);
+     assert(!ram.bytes[0x7000] && !ram.bytes[0x707f]);
+   }
+   assert(musashi_mdec_advance(&d,start+1024));
+   assert(d.chcr[1]==(i ? 0u : 0x200u));
+   assert(d.chcr[0]==(i ? 0x201u : 0x01000201u));
+   if(i) assert((dma.interrupt&0x83000000u)==0x83000000u);
+ }
+ assert(d.transfers==4 && d.output_cursor==1024);
+ /* Reset drops unread pixels. A partial strip already copied to RAM retires
+  * normally, but clearing the decoder cursor must not release DMA0. */
+ assert(musashi_dma_controller_write32(&dma,0x1f8010f4,0x03830000));
+ assert(musashi_mdec_write32(&d,0x1f801820,0x3a00000c));
+ assert(musashi_mdec_write32(&d,0x1f801080,0x1000));
+ assert(musashi_mdec_write32(&d,0x1f801084,0x0001000c));
+ assert(musashi_mdec_write32(&d,0x1f801088,0x01000201));
+ assert(musashi_mdec_write32(&d,0x1f801090,0x6000));
+ assert(musashi_mdec_write32(&d,0x1f801094,0x00040020));
+ assert(musashi_mdec_write32(&d,0x1f801098,0x01000200));
+ assert(!memcmp(ram.bytes+0x6000,ram.bytes+0x5000,512));
+ assert(musashi_mdec_write32(&d,0x1f801824,0x80000000));
+ assert(musashi_mdec_advance(&d,d.cycle+8192));
+ assert(d.chcr[0]==0x01000201 && d.chcr[1]==0x200 && d.transfers==5);
+ assert((dma.interrupt&0x03000000u)==0x02000000u);
+ assert(!memcmp(ram.bytes+0x6000,ram.bytes+0x5000,512));
+ assert(musashi_mdec_write32(&d,0x1f801088,0));
+ assert(musashi_mdec_write32(&d,0x1f801824,0x60000000));
+ /* A malformed compressed block is an accepted DMA request, followed by
+  * a failed decode. Reporting a failed CHCR write would allow a retry on
+  * a partially consumed command. Explicit cancellation/reset recovers. */
+ assert(musashi_mdec_write32(&d,0x1f801820,0x3a000001));
+ memset(ram.bytes+0x1000,0,4);
+ assert(musashi_mdec_write32(&d,0x1f801080,0x1000));
+ assert(musashi_mdec_write32(&d,0x1f801084,0x00010001));
+ assert(musashi_mdec_write32(&d,0x1f801088,0x01000201));
+ assert(!musashi_mdec_write32(&d,0x1f801088,0x01000201));
+ assert(!musashi_mdec_advance(&d,d.cycle+32));
+ assert(d.transfers==5 && (d.chcr[0]&0x01000000));
+ assert(musashi_mdec_write32(&d,0x1f801088,0));
+ assert(musashi_mdec_write32(&d,0x1f801824,0x80000000));
+ assert(musashi_mdec_advance(&d,d.cycle+32));
+ /* Reserving then canceling an empty output clears its visible control,
+  * but data arriving later still fills the original address and raises IRQ. */
+ assert(musashi_mdec_write32(&d,0x1f801824,0x60000000));
+ assert(musashi_dma_controller_write32(&dma,0x1f8010f4,0x03830000));
+ assert(musashi_mdec_write32(&d,0x1f801090,0x7200));
+ assert(musashi_mdec_write32(&d,0x1f801094,0x00040020));
+ assert(musashi_mdec_write32(&d,0x1f801098,0x01000200));
+ assert(musashi_mdec_write32(&d,0x1f801098,0));
+ assert(musashi_mdec_write32(&d,0x1f801090,0x7600));
+ assert(musashi_mdec_write32(&d,0x1f801820,0x3a000006));
+ for(i=0;i<6;i++) assert(musashi_mdec_write32(&d,0x1f801820,0xfe000400u));
+ assert(!memcmp(ram.bytes+0x7200,ram.bytes+0x5000,512));
+ assert(!d.chcr[1] && !ram.bytes[0x7600] && !ram.bytes[0x77ff]);
+ assert(musashi_mdec_advance(&d,d.cycle+1024));
+ assert(d.transfers==6 && (dma.interrupt&0x03000000u)==0x02000000u);
  return 0;
 }
 '''

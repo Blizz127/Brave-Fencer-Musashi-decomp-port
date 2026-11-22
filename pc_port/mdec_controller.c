@@ -31,6 +31,24 @@ int musashi_mdec_read32(MusashiMdecController *d,uint32_t a,uint32_t *v) {
     if(!channel_register(a,&ch,&reg))return 0;
     *v=reg==0?d->madr[ch]:reg==1?d->bcr[ch]:d->chcr[ch]; return 1;
 }
+/* DMA1 advances its visible address/count even when armed before decode. The
+ * pixel copy waits for data; its later completion survives a CHCR clear. */
+static int submit_output(MusashiMdecController *d) {
+    uint32_t bytes = d->output_request_bytes;
+    if (!bytes) return 1;
+    if (bytes > d->output_size - d->output_cursor)
+        return d->remaining != 0 || d->output_cursor == d->output_size;
+    uint64_t ticks = (uint64_t)bytes * 2u; /* Eight cycles per 32-bit word. */
+    if (d->cycle > UINT64_MAX - ticks) return 0;
+    memcpy(d->ram->bytes + d->output_request_address, d->output + d->output_cursor, bytes);
+    d->output_cursor += bytes;
+    d->output_request_bytes = 0;
+    d->output_due = d->cycle + ticks;
+    d->output_event_pending = 1;
+    d->output_finishes_frame = d->output_cursor == d->output_size;
+    return 1;
+}
+
 static int parameter(MusashiMdecController *d,uint32_t v) {
     unsigned i;
     if(!d->remaining) {
@@ -53,9 +71,22 @@ static int parameter(MusashiMdecController *d,uint32_t v) {
         d->input[d->received*2u+1u]=(uint16_t)(v>>16);
     } else return 0;
     ++d->received; --d->remaining; d->count=(d->remaining-1u)&0xffffu;
-    if(!d->remaining && (d->command>>29)==1)return mdec_decode_frame(d);
+    if(!d->remaining && (d->command>>29)==1)return mdec_decode_frame(d) && submit_output(d);
     return 1;
 }
+static int submit_input(MusashiMdecController *d, uint32_t words) {
+    const uint8_t *p = d->ram->bytes + d->madr[0];
+    if (words > d->remaining) return 0;
+    for (uint32_t i = 0; i < words; ++i, p += 4) {
+        uint32_t value = p[0] | (uint32_t)p[1] << 8 |
+                         (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+        if (!parameter(d, value)) return 0;
+    }
+    d->madr[0] += words * 4u;
+    d->bcr[0] &= 0xffffu;
+    return 1;
+}
+
 int musashi_mdec_write32(MusashiMdecController *d,uint32_t a,uint32_t v) {
     unsigned ch,reg; uint32_t words,addr,segment;
     if(!d || !d->ram || !d->dma)return 0;
@@ -74,7 +105,17 @@ int musashi_mdec_write32(MusashiMdecController *d,uint32_t a,uint32_t v) {
     if((d->chcr[ch]&0x01000000u) && !(reg==2 && v==0))return 0;
     if(reg==0){d->madr[ch]=v&0x00ffffffu;return 1;}
     if(reg==1){d->bcr[ch]=v;return 1;}
-    if(!(v&0x01000000u)){d->chcr[ch]=v;return 1;}
+    if (!(v & 0x01000000u)) {
+        d->chcr[ch] = v;
+        if (ch == 0) {
+            d->input_waits_for_output = 0;
+            d->input_dma_error = 0;
+            d->output_finishes_frame = 0;
+        }
+        /* Clearing DMA1's visible CHCR leaves its reserved transfer and
+         * any scheduled completion in the decoder. */
+        return 1;
+    }
     /* Request-mode input/output share the real DMA enable and IRQ owner. */
     if(v!=(ch?0x01000200u:0x01000201u) || !(d->dma->control&(8u<<(ch*4u))) ||
        !(d->control&(ch?0x20000000u:0x40000000u)) || !d->dma->irq)return 0;
@@ -84,36 +125,53 @@ int musashi_mdec_write32(MusashiMdecController *d,uint32_t a,uint32_t v) {
        (!ch && (d->command>>29)!=1 && words>32u) || (addr&3u) ||
        segment || addr>=MUSASHI_RAM_SIZE || words>(MUSASHI_RAM_SIZE-addr)/4u ||
        d->cycle>UINT64_MAX-1u-words)return 0;
-    d->chcr[ch]=v;
-    if(ch)d->output_due=d->cycle+1u+words;else d->due=d->cycle+1u+words;
+    if (ch) {
+        uint32_t bytes = words * 4u;
+        uint32_t available = d->output_size - d->output_cursor;
+        /* Pre-arming a future frame is supported. Reading past the active
+         * compressed frame has no known data source in this decoder. */
+        if (d->cycle > UINT64_MAX - (uint64_t)words * 8u ||
+            (bytes > available && (available || (d->output_size && d->input_waits_for_output))))
+            return 0;
+        d->chcr[1] = v;
+        d->output_request_address = addr;
+        d->madr[1] += bytes;
+        d->bcr[1] &= 0xffffu;
+        d->output_request_bytes = bytes;
+        if (!submit_output(d)) return 0;
+    } else {
+        d->chcr[0] = v;
+        d->due = d->cycle + 1u + words;
+        if ((d->command >> 29) == 1u) {
+            /* Decode DMA can serve output before DMA0 retires. A malformed
+             * payload fails on advancement of the accepted request. */
+            d->input_dma_error = !submit_input(d, words);
+            d->input_waits_for_output = !d->input_dma_error && d->remaining == 0 && d->output_size != 0;
+        }
+    }
     return 1;
 }
 int musashi_mdec_advance(MusashiMdecController *d,uint64_t cycle) {
-    uint32_t words,i,a;
+    uint32_t words;
     if(!d || cycle<d->cycle)return 0;
     d->cycle=cycle;
-    if((d->chcr[0]&0x01000000u) && cycle>=d->due) {
-        words=(d->bcr[0]&0xffffu)*(d->bcr[0]>>16); a=d->madr[0];
-        if(words>d->remaining)return 0; /* Reset during DMA cannot fake success. */
-        for(i=0;i<words;i++) {
-            const uint8_t *p=d->ram->bytes+a+i*4u;
-            uint32_t v=p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;
-            if(!parameter(d,v))return 0;
-        }
-        d->madr[0]+=words*4u; d->bcr[0]&=0xffffu;
+    if ((d->chcr[0] & 0x01000000u) && !d->input_waits_for_output && cycle >= d->due) {
+        words=(d->bcr[0]&0xffffu)*(d->bcr[0]>>16);
+        if (d->input_dma_error || (words && !submit_input(d, words))) return 0;
         d->chcr[0]&=~0x01000000u; ++d->transfers;
         if(!musashi_dma_controller_complete(d->dma,0))return 0;
     }
-    if((d->chcr[1]&0x01000000u) && cycle>=d->output_due) {
-        words=(d->bcr[1]&0xffffu)*(d->bcr[1]>>16);
-        if(words>(d->output_size-d->output_cursor)/4u) {
-            if(d->remaining)return 1; /* Output request waits for real input. */
-            return 0;
-        }
-        memcpy(d->ram->bytes+d->madr[1],d->output+d->output_cursor,words*4u);
-        d->output_cursor+=words*4u; d->madr[1]+=words*4u;
-        d->bcr[1]&=0xffffu; d->chcr[1]&=~0x01000000u; ++d->transfers;
+    if (d->output_event_pending && cycle >= d->output_due) {
+        d->output_event_pending = 0;
+        d->chcr[1] &= ~0x01000000u;
+        ++d->transfers;
         if(!musashi_dma_controller_complete(d->dma,1))return 0;
+        if (d->input_waits_for_output && d->output_finishes_frame) {
+            d->input_waits_for_output = 0;
+            d->chcr[0] &= ~0x01000000u;
+            ++d->transfers;
+            if (!musashi_dma_controller_complete(d->dma, 0)) return 0;
+        }
     }
     return 1;
 }
