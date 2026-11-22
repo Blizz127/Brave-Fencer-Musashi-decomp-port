@@ -42,7 +42,9 @@ typedef struct {
     u8 field_1a8;
     u8 pad1a9[0x1f8 - 0x1a9];
     u32 scene_callback;
-    u8 pad1fc[0x214 - 0x1fc];
+    u8 pad1fc[0x204 - 0x1fc];
+    u32 scene_countdown;
+    u8 pad208[0x214 - 0x208];
     u8 scene_stage;
     u8 pad215[0x234 - 0x215];
     u32 step, counter, field_23c;

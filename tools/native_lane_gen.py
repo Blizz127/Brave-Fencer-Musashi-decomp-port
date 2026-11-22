@@ -1546,7 +1546,8 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
         if (vram == 0x80165AC8 and
                 (entry.get("region") == "sc01_0077" or member == "sc01_0077")):
             raise Reject("timing", "the forest ability callback requires the active code image and guest return timing")
-        if (vram in (0x8017E868, 0x8017E9C0) and
+        if (vram in (0x8017E868, 0x8017E8A4, 0x8017E924, 0x8017E974,
+                     0x8017E9C0, 0x8017EA2C) and
                 (entry.get("region") == "sc01_0077" or member == "sc01_0077")):
             raise Reject("timing", "the forest player scene callback requires the active stage table and guest return timing")
         if (vram in (0x8012C724, 0x8013E298, 0x8013E370, 0x8013E410, 0x8013E448) and

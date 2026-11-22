@@ -61,8 +61,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 22 source update covers 367 regional function matches across eight scene overlays,
-totaling 53,024 bytes. The Steam Knight damage routine subtracts the incoming hit from the actor’s HP and selects its reaction. The contact routine records the hit type, damage, and position on eligible actors. A surviving attachment can queue its reaction ID in a four-entry list. When the outer armor breaks, it enables the paired inner armor and removes its reaction ID if present. The break also requests six particles and sets the initial position and velocity of each particle it can allocate. Hit feedback can allocate the first free effect slot from a pool of 30. The feedback caller uses the impact coordinates for nonnegative damage and the player position after cleanup for negative damage. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 22 source update covers 371 regional function matches across eight scene overlays,
+totaling 53,356 bytes. The Steam Knight damage routine subtracts the incoming hit from the actor’s HP and selects its reaction. The contact routine records the hit type, damage, and position on eligible actors. A surviving attachment can queue its reaction ID in a four-entry list. When the outer armor breaks, it enables the paired inner armor and removes its reaction ID if present. The break also requests six particles and sets the initial position and velocity of each particle it can allocate. Hit feedback can allocate the first free effect slot from a pool of 30. The feedback caller uses the impact coordinates for nonnegative damage and the player position after cleanup for negative damage. Four mine routines scan floor probes and pass their position to the map lookup.
 The mine collision code intersects the probe with a face and tests its side planes.
 A mine actor dispatches its setup or update callback according to its current state. Its setup creates the parent model or links a child to its collision box. Its update controls model visibility, damps the angle, and checks up to five segments across the box. The parent rotor changes its model angle and sound volume as the player approaches.
 A mine rotor runs its state action and synchronizes its model. Its initializer allocates the primary model and optional accessory, then issues four child spawn requests.
@@ -226,6 +226,10 @@ The forest player selects its ability cleanup handler from the loaded scene. Thi
 The forest bridge script turns Musashi toward its target heading. Once he faces
 the target, the next update advances the script. The standard player still runs
 these two routines on the guest CPU.
+
+Four more bridge tutorial routines match the forest scene. They check the
+script clock, set Musashi's direction and input, and clear his scene callback
+when the sequence finishes. The standard build runs them on the guest CPU.
 
 Five existing game routines also match forest placement activation in SC01/0077.
 They scan the placement list, find a free actor slot, and use the scene predicate

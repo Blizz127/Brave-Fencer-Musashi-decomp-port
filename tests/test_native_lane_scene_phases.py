@@ -379,7 +379,10 @@ def test_forest_ability_callback_stays_guest_timed(tmp_path):
         assert result.get("rule") == "timing"
 
 
-@pytest.mark.parametrize("vram,size", [(0x8017E868, 60), (0x8017E9C0, 108)])
+@pytest.mark.parametrize("vram,size", [
+    (0x8017E868, 60), (0x8017E8A4, 128), (0x8017E924, 80),
+    (0x8017E974, 76), (0x8017E9C0, 108), (0x8017EA2C, 48),
+])
 def test_forest_bridge_player_callback_timing(tmp_path, vram, size):
     source = ROOT / f"src/overlays/sc01_0077/{vram:08x}.c"
     row = dict(name=f"func_{vram:08X}", vram=vram, size=size, source=str(source))
