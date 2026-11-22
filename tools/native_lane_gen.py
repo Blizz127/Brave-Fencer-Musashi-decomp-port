@@ -1076,6 +1076,8 @@ FOREST_FLOOR_EXTENTS = {
 # These scene phase callbacks call back into guest code. Several of their
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    # Actor animation ticks can scan and apply frames during the same scheduler pass.
+    0x8012A988: {"sc02_0039": (292, 0x28BE479E7A084CAA)},
     # Animation scans require a bounded frame reader for the owning actor.
     0x8012ACE0: {"sc02_0039": (100, 0x77902C59DFA7EBCF)},
     # Target indicators reuse a primitive and matrix across ten ordered submit callbacks.
