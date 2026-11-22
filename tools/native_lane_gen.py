@@ -1085,6 +1085,8 @@ TOWER_POOL_PRIOR_SOURCE = "37f8c8016ea1b697c77467c8ee51f6fe1f89930cfacf04a68d81b
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    0x8017D3C0: {"sc03_0109": (204, 0x4005979C36E4AA48)},
+    0x8017F15C: {"sc03_0113": (160, 0xD98DDB81180D7632)},
     # The six control-reset helpers share their instructions with other room members.
     0x80180328: {"sc02_0005": (88, 0x6D2EC5AD6D71172C)},
     0x80175414: {"sc02_0005": None},
@@ -1339,7 +1341,7 @@ def overlay_extent_source_only(entry, src, info, extents):
         return True
     # Compare a mine entrance callback at its complete original extent even when the
     # supplied registry reports only a prefix or includes the following function.
-    if pc in (0x8017D2E0, 0x8017D384, 0x8017F07C, 0x8017F120) and info and all(key in info for key in ("vram", "start", "data")):
+    if pc in (0x8017D2E0, 0x8017D384, 0x8017F07C, 0x8017F120, 0x8017D3C0, 0x8017F15C) and info and all(key in info for key in ("vram", "start", "data")):
         if any(member_digest(info, pc, size) == digest for size, digest in variants.values()):
             return True
     # A member with a shared original body is identified only by its room or source.
