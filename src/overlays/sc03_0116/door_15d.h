@@ -14,6 +14,7 @@ typedef struct {
     u8 tail[0xae];
 } Door15DActor;
 
+s32 func_80131F64(Door15DActor *actor);
 s32 func_80132144(Door15DActor *actor);
 
 #endif

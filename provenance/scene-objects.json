@@ -4830,6 +4830,16 @@
       "optimization": "-O2",
       "recovery": "c",
       "extent": "function"
+    },
+    {
+      "name": "func_80131F64",
+      "region": "sc03_0116",
+      "vram": 2148736868,
+      "size": 60,
+      "source": "src/overlays/sc03_0116/80131f64.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
     }
   ]
 }

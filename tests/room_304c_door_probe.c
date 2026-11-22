@@ -49,13 +49,22 @@ s32 func_8012CAE4(u8 *record)
     return -721;
 }
 
-static void check_case(int has_model, u16 phase)
+static s32 idle(Door15DActor *door)
+{
+    assert(door == &actor && door->phase == 1);
+    ++calls;
+    return -718;
+}
+
+s32 (*D_80182E28[])(Door15DActor *) = {func_80132144, idle};
+
+static void check_case(int has_model, u16 phase, int dispatch)
 {
     Door15DActor expected;
     s32 result;
     memset(&actor, 0x59, sizeof(actor));
     actor.type = 0x15d;
-    actor.phase = 3;
+    actor.phase = dispatch ? 0 : 3;
     available = has_model;
     service_phase = phase;
     calls = 0;
@@ -69,15 +78,22 @@ static void check_case(int has_model, u16 phase)
         expected.model_address = 0;
         expected.tail[5] = 17;
     }
-    result = func_80132144(&actor);
+    result = dispatch ? func_80131F64(&actor) : func_80132144(&actor);
     assert(calls == 2 && result == (has_model ? phase + 1 : -721));
     assert(memcmp(&actor, &expected, sizeof(actor)) == 0);
 }
 
 int main(void)
 {
-    check_case(0, 0);
-    check_case(1, 0);
-    check_case(1, 0xffff);
+    check_case(0, 0, 0);
+    check_case(1, 0, 0);
+    check_case(1, 0xffff, 0);
+    check_case(0, 0, 1);
+    check_case(1, 0, 1);
+    {
+        Door15DActor before = actor;
+        assert(func_80131F64(&actor) == -718);
+        assert(calls == 3 && memcmp(&actor, &before, sizeof(actor)) == 0);
+    }
     return 0;
 }
