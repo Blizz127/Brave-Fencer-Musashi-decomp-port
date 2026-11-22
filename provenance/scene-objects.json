@@ -2979,6 +2979,16 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2"
+    },
+    {
+      "name": "func_8015094C",
+      "region": "sc02_0039",
+      "vram": 2148862284,
+      "size": 292,
+      "source": "src/overlays/sc02_0039/8015094c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
     }
   ]
 }

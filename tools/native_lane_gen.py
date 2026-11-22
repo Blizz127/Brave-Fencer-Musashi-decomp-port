@@ -1078,6 +1078,8 @@ FOREST_FLOOR_EXTENTS = {
 # These scene phase callbacks call back into guest code. Several of their
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    # Actor steps depend on the view query and may run repeatedly in the same caller.
+    0x8015094C: {"sc02_0039": (292, 0xEB82E1745D606C6D)},
     # The external drawing services are represented by caller-specific observation adapters.
     0x8013A530: {"sc02_0039": (816, 0x643C6A867D5BB30E)},
     # Frame commands reference shared guest records and nested animation state.
