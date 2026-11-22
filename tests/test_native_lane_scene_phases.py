@@ -145,6 +145,7 @@ def test_mine_slot_dispatch_preserves_the_main_member(tmp_path, pc, size):
     (0x8012956C, 904),
     (0x8016E8F0, 40), (0x8016E9EC, 212), (0x8016EC0C, 352),
     (0x80173EF8, 608), (0x80174158, 48), (0x80174188, 32), (0x801741A8, 68),
+    (0x80173A28, 56), (0x80173A60, 236), (0x80173B4C, 60),
     (0x8016E918, 68), (0x8016EAC0, 124), (0x8016EB3C, 108), (0x8016EBA8, 100),
     (0x8017E2F4, 308), (0x8017E428, 216), (0x8017E500, 320),
 ])
@@ -232,6 +233,15 @@ def test_mine_hud_motion_guard_preserves_other_regions():
 
 def test_mine_award_source_preserves_main_actor():
     pc = 0x80173EF8
+    region = "main_0012"
+    source = ROOT / f"src/overlays/{region}/{pc:08x}.c"
+    assert source.is_file()
+    assert not lane.mine_member_source_only(dict(vram=pc, region=region), source, dict(member=region))
+
+
+
+def test_mine_award_setup_preserves_main_controller():
+    pc = 0x80173A60
     region = "main_0012"
     source = ROOT / f"src/overlays/{region}/{pc:08x}.c"
     assert source.is_file()
