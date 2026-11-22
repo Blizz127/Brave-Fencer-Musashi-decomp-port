@@ -119,3 +119,15 @@ def test_forest_scene_callback(tmp_path):
         copy.write_bytes(source.read_bytes())
         assert lane.build_one(dict(row, region="other", source=str(copy)),
                               tmp_path, {}, {}, "clang").get("rule") == "memory"
+
+
+def test_normal_forest_action_stays_source_only(tmp_path):
+    entries = json.loads((ROOT / "provenance/scene-objects.json").read_text())["matches"]
+    row = next(entry for entry in entries if entry["region"] == "sc01_0077" and entry["vram"] == 0x8015A3C8)
+    assert row["size"] == 1972
+    source = ROOT / row["source"]
+    (tmp_path / "ir").mkdir()
+    assert lane.build_one(dict(row, source=str(source)), tmp_path, {}, {}, "clang")["rule"] == "memory"
+    copied = tmp_path / "action.c"
+    copied.write_bytes(source.read_bytes())
+    assert lane.build_one(dict(row, region="other", source=str(copied)), tmp_path, {}, {}, "clang")["rule"] == "memory"
