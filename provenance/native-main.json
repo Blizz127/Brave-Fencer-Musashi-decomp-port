@@ -2536,6 +2536,17 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2"
+    },
+    {
+      "name": "func_800141F0",
+      "vram": 2147566064,
+      "size": 72,
+      "region": "main",
+      "source": "src/main/800141f0.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independent owner reconstruction from the game executable and observed startup behavior."
     }
   ]
 }
