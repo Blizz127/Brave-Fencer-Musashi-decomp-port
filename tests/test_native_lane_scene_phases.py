@@ -129,6 +129,7 @@ PHASES = (
     ("sc02_0005", 0x8014C4AC, 188),
     ("sc01_0077", 0x8012F14C, 88),
     ("sc02_0005", 0x801853EC, 160),
+    ("sc01_0077", 0x801853EC, 60),
     ("sc02_0039", 0x80165CA0, 396),
     ("sc02_0039", 0x8013BC7C, 96),
     ("sc02_0039", 0x8013BCDC, 88),
@@ -1026,3 +1027,47 @@ def test_forest_child_allocator_agrees_with_its_caller():
          "-I", str(ROOT / "src/overlays/sc01_0077"), "-x", "c", "-"],
         input=source, text=True, check=True,
     )
+
+
+@pytest.mark.parametrize("state", [0, 1])
+def test_forest_effect_state_callback(tmp_path, state):
+    source = ROOT / "src/overlays/sc01_0077/801853ec.c"
+    unit = f"""
+#include <assert.h>
+#include "{source}"
+static struct {{ u16 kind, state; u8 body[0x108]; }} object;
+static u8 *const actor = (u8 *)&object;
+static void initialize(u8 *p) {{ assert(p == actor); p[0x34] = 7; }}
+static void update(u8 *p) {{ assert(p == actor); p[0x34] = 9; }}
+ForestEffectStep D_801991C4[] = {{initialize, update}};
+int main(void) {{
+    object.state = {state};
+    func_801853EC(actor);
+    assert(actor[0x34] == {9 if state else 7});
+    return 0;
+}}
+"""
+    output = tmp_path / "forest-effect"
+    subprocess.run(["cc", "-std=c11", "-Wall", "-Werror", "-I", str(ROOT / "include"),
+                    "-x", "c", "-", "-o", str(output)], input=unit, text=True, check=True)
+    subprocess.run([output], check=True)
+
+
+@pytest.mark.parametrize("member", ["sc01_0077", "sc02_0005"])
+def test_forest_effect_and_steam_knight_extents(tmp_path, monkeypatch, member):
+    pc = 0x801853EC
+    variants = lane.SCENE_PHASE_EXTENTS[pc]
+    assert set(variants) == {"sc01_0077", "sc02_0005"}
+    assert variants["sc01_0077"][0] == 60
+    assert variants["sc02_0005"][0] == 160
+    source = tmp_path / "unidentified.c"
+    source.write_text("int unrelated(void) { return 1; }\n")
+    info = dict(member="unknown", data=bytes(164), vram=pc, start=0)
+    size, digest = variants[member]
+    monkeypatch.setattr(lane, "member_digest", lambda image, address, length:
+                        digest if length == size else None)
+    entry = dict(region="unknown", vram=pc, size=size)
+    assert lane.overlay_extent_source_only(entry, source, info, lane.SCENE_PHASE_EXTENTS)
+    entry["size"] = size - 4
+    assert lane.overlay_extent_source_only(entry, source, info, lane.SCENE_PHASE_EXTENTS) == (
+        member == "sc01_0077")

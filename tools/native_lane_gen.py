@@ -1086,6 +1086,7 @@ TOWER_POOL_PRIOR_SOURCE = "37f8c8016ea1b697c77467c8ee51f6fe1f89930cfacf04a68d81b
 # complete extents also appear at the same PC in another room.
 FOREST_ATTACHMENT_EXTENTS = {
     0x80178438: (100, 0x1DD5EA346417021E),
+    0x801853EC: (60, 0x46C2D13AD1E0AF2B),
     0x80184554: (64, 0xA9B66A3131FED9BC),
     0x80184594: (88, 0x705927075E43A722),
     0x801845EC: (176, 0x8D184634D85DA494),
@@ -1231,7 +1232,10 @@ SCENE_PHASE_EXTENTS = {
     0x8014C4AC: {"sc02_0005": (188, 0x03C2B0C590144408)},
     # The camera changes matrix state twice and passes a guest stack word to the transform.
     0x8012F14C: {"sc01_0077": (88, 0x128D65FE65F8BF49)},
-    0x801853EC: {"sc02_0005": (160, 0x6FD1708294A2B1E9)},
+    0x801853EC: {
+        "sc02_0005": (160, 0x6FD1708294A2B1E9),
+        "sc01_0077": FOREST_ATTACHMENT_EXTENTS[0x801853EC],
+    },
     # Both passes share mutable guest records, callback tables and linked positions.
     0x80165CA0: {"sc02_0039": (396, 0xD0040599098500D1)},
     # Mine dispatchers read mutable callback targets and require an identified owner.
