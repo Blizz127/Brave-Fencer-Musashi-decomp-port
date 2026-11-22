@@ -22,7 +22,12 @@ typedef struct FacingActor {
     SpatialPoint offset, target_offset;
     u8 reserved34[8];
     WideVector camera, focus;
-    u8 reserved54[0x4c];
+    s32 frame_component;
+    s32 view_parameter;
+    s32 view[7];
+    s32 published_parameter;
+    s32 view_offset[7];
+    u8 reserved98[8];
     s16 facing;
 } FacingActor;
 

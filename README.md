@@ -61,9 +61,11 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 22 source update covers 318 regional function matches across seven scene overlays,
-totaling 44,124 bytes. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 22 source update covers 319 regional function matches across seven scene overlays,
+totaling 44,888 bytes. Four mine routines scan floor probes and pass their position to the map lookup.
 The mine collision code intersects the probe with a face and tests its side planes.
+The mine camera update selects a camera, updates seven view components and publishes its guest address.
+A host test supplies the rendering callbacks and checks the matrix copy.
 A mine actor scheduler updates eligible actors and copies their positions to attached objects.
 Two earlier passes select actors for updates. A separate routine counts down a signed timer and adjusts the actor’s scale.
 A separate mine routine saves the positions of 20 slots and updates each active slot’s target after its handler returns.

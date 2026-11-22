@@ -1360,9 +1360,13 @@ def forest_ground_attachment_source_only(entry, src, info):
 
 
 def mine_slot_update_source_only(entry, src, info):
-    pc = entry["vram"]
-    if pc not in (0x8012A908, 0x80162B1C, 0x8017849C, 0x8017869C, 0x801787D4):
+    if entry["vram"] not in (0x8012A908, 0x80162B1C, 0x8017849C, 0x8017869C, 0x801787D4):
         return False
+    return mine_member_source_only(entry, src, info)
+
+
+def mine_member_source_only(entry, src, info):
+    pc = entry["vram"]
     # MAIN/0012 has a separately selected implementation at the same address and digest.
     if entry.get("region") == "sc02_0039" or (info and info["member"] == "sc02_0039"):
         return True
@@ -1484,6 +1488,8 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
             raise Reject("timing", "actor event submission requires guest memory and event timing")
         if forest_ground_attachment_source_only(entry, src, info):
             raise Reject("timing", "ground attachment requires checked guest callbacks, return values and timing")
+        if vram == 0x80129CF8 and mine_member_source_only(entry, src, info):
+            raise Reject("timing", "mine camera requires guest callback and view publication timing")
         if mine_slot_update_source_only(entry, src, info):
             raise Reject("timing", "mine slot updates require guest callback and memory timing")
         if scene_player_motion_source_only(entry, src, info):

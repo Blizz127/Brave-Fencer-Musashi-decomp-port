@@ -118,6 +118,25 @@ def test_mine_slot_dispatch_preserves_the_main_member(tmp_path, pc, size):
     assert not lane.mine_slot_update_source_only(dict(row, region="sc99_0001"), main, None)
 
 
+
+def test_mine_camera_preserves_the_independent_main_provider(tmp_path):
+    pc = 0x80129CF8
+    (tmp_path / "ir").mkdir()
+    src = tmp_path / "camera.c"
+    row = dict(name="func_80129CF8", vram=pc, size=764, region="sc02_0039", source=str(src))
+    mine = ROOT / "src/overlays/sc02_0039/80129cf8.c"
+    main = ROOT / "src/overlays/main_0012/80129cf8.c"
+    src.write_bytes(mine.read_bytes())
+    assert lane.build_one(dict(row, region="main_0012"), tmp_path, {}, {}, "clang").get("rule") == "timing"
+    assert not lane.mine_member_source_only(dict(row, region="main_0012"), main, dict(member="main_0012"))
+    src.write_text("int func_80129CF8(int x) { return x + 1; }\n")
+    assert lane.build_one(row, tmp_path, {}, {}, "clang").get("rule") == "timing"
+    assert lane.build_one(dict(row, region="sc99_0001"), tmp_path, {}, {}, "clang",
+                          dict(member="sc02_0039")).get("rule") == "timing"
+    if shutil.which("clang") and shutil.which("nm"):
+        assert lane.build_one(dict(row, region="main_0012"), tmp_path, {}, {}, "clang")["admitted"]
+
+
 @pytest.mark.parametrize("pc", (0x8015AD78, 0x8015ADB0, 0x80161104,
                                 0x80161208, 0x801612B8, 0x8016130C))
 def test_forest_action_uses_its_member_and_source(pc, tmp_path, monkeypatch):
