@@ -1,4 +1,9 @@
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200809L
+#endif
 #include "card_save_directory.h"
+#include "card_image.h"
+#include "../platform/bfm_plat_storage.h"
 #include "../platform/bfm_plat_config.h"
 
 #include <stdlib.h>
@@ -130,7 +135,7 @@ static int create_parents(CardPathChar *path, size_t length, size_t root)
     return created && make_directory(path);
 }
 
-static int ensure_directory(const char *path)
+static int prepare_directory(const char *path, int create_missing)
 {
     size_t root, length;
 #ifdef _WIN32
@@ -175,10 +180,19 @@ static int ensure_directory(const char *path)
 #endif
     if (directory_exists(full))
         return 1;
-    return create_parents(full, length, root);
+    if (create_missing)
+        return create_parents(full, length, root);
+    /* A missing previous directory needs no migration. An inaccessible
+     * directory, or a link to an offline one, can still own the player's save. */
+#ifdef _WIN32
+    return GetFileAttributesW(full) == INVALID_FILE_ATTRIBUTES && parent_missing();
+#else
+    struct stat entry;
+    return lstat(full, &entry) != 0 && errno == ENOENT;
+#endif
 }
 
-int musashi_card_save_directory(char *path, size_t capacity)
+static int launcher_path(char *path, size_t capacity)
 {
     const char *base = getenv("BFM_SAVE_DIR");
     const char *suffix = "";
@@ -213,5 +227,67 @@ int musashi_card_save_directory(char *path, size_t capacity)
     if (separator)
         path[base_length++] = CARD_SEPARATOR;
     memcpy(path + base_length, suffix, suffix_length + 1);
-    return ensure_directory(path);
+    return 1;
+}
+
+/* Examine the last committed image without creating a card or taking the
+ * game's write lock. The player subsequently attaches the selected slot. */
+static int inspect_card(const char *directory, uint8_t *image, const uint8_t *fresh)
+{
+    int result = bfm_plat_memcard_set_dir(directory);
+    if (result != BFM_PLAT_OK)
+        return CARD_DIRECTORY_UNAVAILABLE;
+    result = bfm_plat_memcard_load(0, image, CARD_IMAGE_SIZE);
+    if (result == BFM_PLAT_NOT_FOUND)
+        return CARD_DIRECTORY_READY;
+    if (result != BFM_PLAT_OK)
+        return CARD_DIRECTORY_UNAVAILABLE;
+    return memcmp(image, fresh, CARD_IMAGE_SIZE) == 0 ? CARD_DIRECTORY_READY : CARD_DIRECTORY_EXISTING;
+}
+
+int musashi_card_save_directory(char *path, size_t capacity)
+{
+    BfmPlatConfig config;
+    char ini[BFM_PLAT_PATH_MAX], previous[BFM_PLAT_PATH_MAX];
+    const char *override = getenv("BFM_SAVE_DIR");
+    uint8_t *images;
+    int selection;
+
+    if (!path || !capacity)
+        return CARD_DIRECTORY_UNAVAILABLE;
+    path[0] = '\0';
+    if (override && *override)
+        return launcher_path(path, capacity) && prepare_directory(path, 1);
+
+    bfm_plat_config_defaults(&config);
+    if (bfm_plat_config_default_path(ini, sizeof ini) != BFM_PLAT_OK ||
+        bfm_plat_config_load_file(&config, ini) != BFM_PLAT_OK ||
+        !config.save_dir[0] || strcmp(config.save_dir, "saves") == 0)
+        return launcher_path(path, capacity) && prepare_directory(path, 1);
+    if (strlen(config.save_dir) >= capacity)
+        return CARD_DIRECTORY_UNAVAILABLE;
+    strcpy(path, config.save_dir);
+    if (!prepare_directory(path, 1))
+        return CARD_DIRECTORY_UNAVAILABLE;
+
+    images = malloc(2 * CARD_IMAGE_SIZE);
+    if (!images)
+        return CARD_DIRECTORY_UNAVAILABLE;
+    card_format((CardImage){images, CARD_IMAGE_SIZE});
+    selection = inspect_card(path, images + CARD_IMAGE_SIZE, images);
+    /* A player may have saved to the old default while the INI was ignored.
+     * Prefer that card only over a missing or exactly factory-fresh one. */
+    if (selection == CARD_DIRECTORY_READY && launcher_path(previous, sizeof previous) &&
+        strcmp(path, previous) != 0) {
+        selection = prepare_directory(previous, 0)
+            ? inspect_card(previous, images + CARD_IMAGE_SIZE, images) : CARD_DIRECTORY_UNAVAILABLE;
+        if (selection == CARD_DIRECTORY_EXISTING) {
+            if (strlen(previous) < capacity)
+                strcpy(path, previous);
+            else
+                selection = CARD_DIRECTORY_UNAVAILABLE;
+        }
+    }
+    free(images);
+    return selection;
 }

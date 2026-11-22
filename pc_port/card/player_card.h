@@ -24,6 +24,8 @@ typedef struct MusashiPlayerCard {
  * disconnected. Only an exclusively attached, missing image can be created. */
 int musashi_player_card_open(MusashiPlayerCard *, MusashiBootMemory *,
                              MusashiBiosEvents *, const char *directory);
+int musashi_player_card_open_selected(MusashiPlayerCard *, MusashiBootMemory *,
+                                      MusashiBiosEvents *, const char *directory, int require_existing);
 /* On graceful exit, complete accepted requests while RAM and storage are
  * present. An interruption may close directly, preserving only durable writes. */
 /* Descriptor identity for the observed busy-5 metadata seek, read and completion.

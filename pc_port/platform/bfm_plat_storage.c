@@ -20,6 +20,7 @@
 #include <sys/stat.h>
 #else
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -622,16 +623,36 @@ static int card_replace(const CardLock *lock, const CardPathChar *tmp, const Car
 
 static FILE *card_open_read(unsigned slot, const CardPathChar *path) {
 #ifdef _WIN32
+    FILE *f;
     (void)slot;
-    return _wfopen(path, L"rb");
+    f = _wfopen(path, L"rb");
+    if (!f && errno == ENOENT) {
+        /* An offline link is still a directory entry. Keep it intact. */
+        DWORD attrs = GetFileAttributesW(path);
+        DWORD error = GetLastError();
+        errno = attrs == INVALID_FILE_ATTRIBUTES &&
+                (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) ? ENOENT : EIO;
+    }
+    return f;
 #else
     int held = card_held(slot);
     int dir = held ? card_locks[slot].dir_fd : open_card_directory();
     int fd, error;
     FILE *f;
     if (dir < 0) return NULL;
-    fd = openat(dir, path, O_RDONLY | O_CLOEXEC);
+    fd = openat(dir, path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
     error = errno;
+    if (fd < 0 && error == ENOENT) {
+        struct stat entry;
+        error = fstatat(dir, path, &entry, AT_SYMLINK_NOFOLLOW) == 0 ? EIO : errno;
+    } else if (fd >= 0) {
+        struct stat entry;
+        if (fstat(fd, &entry) != 0 || !S_ISREG(entry.st_mode)) {
+            close(fd);
+            fd = -1;
+            error = EIO;
+        }
+    }
     if (!held) close(dir);
     if (fd < 0) {
         errno = error;

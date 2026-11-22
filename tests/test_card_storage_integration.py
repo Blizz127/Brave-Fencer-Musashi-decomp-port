@@ -63,6 +63,10 @@ def compile_player_probe(tmp_path, source):
 @pytest.mark.skipif(os.name != "posix", reason="uses ELF section garbage collection")
 def test_graceful_and_cancelled_card_writes(tmp_path):
     program = compile_player_probe(tmp_path, ROOT / "tests/player_card_shutdown_probe.c")
+    disappeared = tmp_path / "previously-selected"
+    disappeared.mkdir()
+    subprocess.run([program, "existing-card-removed", disappeared], check=True)
+    assert not (disappeared / "bfm_card0.mcd").exists()
     for exit_mode, expected in [("finish", "updated"), ("cancel", "original")]:
         directory = tmp_path / exit_mode
         directory.mkdir()

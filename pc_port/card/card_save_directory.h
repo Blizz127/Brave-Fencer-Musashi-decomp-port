@@ -7,9 +7,11 @@
 extern "C" {
 #endif
 
-/* Select the launcher's save directory and create missing directories.
- * Return 1 when the destination exists as a directory. On failure, path
- * contains the selected destination if it fit, or an empty string. */
+enum { CARD_DIRECTORY_UNAVAILABLE, CARD_DIRECTORY_READY, CARD_DIRECTORY_EXISTING };
+
+/* Resolve the startup directory before attaching a writable slot. EXISTING
+ * means a previously observed image must survive until the session acquires
+ * its lock. Unavailable leaves the candidate path if it fit. */
 int musashi_card_save_directory(char *path, size_t capacity);
 
 #ifdef __cplusplus

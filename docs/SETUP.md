@@ -126,7 +126,14 @@ BFM_SAVE_DIR="$HOME/Games/bfm-test-saves" ./launch.sh
 
 This directory contains a different card; an empty directory starts a fresh
 one. Do not point simultaneous game processes at the same card. The override
-has priority over `XDG_STATE_HOME` and the normal default.
+has priority over configuration and the normal default.
+
+Current source builds also accept `[storage] save_dir` in `config.ini`.
+An existing card in that directory takes precedence. If the configured card
+is missing or still exactly as first formatted, the player keeps using an
+existing non-pristine card in the old default directory. Card discovery
+does not move files. Use `BFM_SAVE_DIR` to explicitly select a directory,
+including an empty one.
 
 **Configuration limitation:** source APIs refer to
 `~/.config/bfm-port/config.ini` (or `BFM_PORT_CONFIG`), but r38 does not

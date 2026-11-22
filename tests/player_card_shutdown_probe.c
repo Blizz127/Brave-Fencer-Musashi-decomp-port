@@ -22,6 +22,12 @@ int main(int argc, char **argv)
     int32_t fd;
     assert(argc == 3);
     musashi_bios_events_init(&events);
+    if (strcmp(argv[1], "existing-card-removed") == 0) {
+        assert(musashi_player_card_open_selected(&card, &memory, &events, argv[2], 1));
+        assert(!card.slot0_mounted);
+        musashi_player_card_close(&card);
+        return 0;
+    }
     assert(musashi_player_card_open(&card, &memory, &events, argv[2]));
     cs_init_card(card.service);
     cs_start_card(card.service);

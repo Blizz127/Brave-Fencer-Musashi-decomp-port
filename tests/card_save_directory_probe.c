@@ -1,6 +1,7 @@
 #ifndef _WIN32
 #define _POSIX_C_SOURCE 200809L
 #endif
+#include "../pc_port/card/card_image.h"
 #include "../pc_port/card/card_save_directory.h"
 
 #include <stdio.h>
@@ -16,6 +17,22 @@ static int set(const char *key, const char *value)
 #endif
 }
 
+static int make_card(const char *path, const char *entry)
+{
+    static uint8_t bytes[CARD_IMAGE_SIZE];
+    CardImage image = {bytes, sizeof(bytes)};
+    FILE *file;
+    size_t written;
+    if (card_format(image) != CARD_OK ||
+        (entry && card_create(image, entry, 1) != CARD_OK))
+        return 1;
+    file = fopen(path, "wb");
+    if (!file)
+        return 1;
+    written = fwrite(bytes, 1, sizeof(bytes), file);
+    return fclose(file) != 0 || written != sizeof(bytes);
+}
+
 /* Supplying the environment explicitly also tests absent APPDATA on Windows. */
 int main(int argc, char **argv)
 {
@@ -23,7 +40,11 @@ int main(int argc, char **argv)
     char path[600];
     size_t capacity;
     int i, result;
-    if (argc != 6)
+    if ((argc == 3 || argc == 4) && strcmp(argv[1], "--make-card") == 0)
+        return make_card(argv[2], argc == 4 ? argv[3] : NULL);
+    if (argc != 6 && argc != 7)
+        return 2;
+    if (set("BFM_PORT_CONFIG", argc == 7 ? argv[6] : "") || set("XDG_CONFIG_HOME", ""))
         return 2;
     for (i = 0; i < 4; ++i)
         if (set(keys[i], argv[i + 2]) != 0)

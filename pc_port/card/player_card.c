@@ -29,6 +29,14 @@ static CsMedia snapshot(void *context, unsigned slot, uint8_t *destination)
     return cs_storage_snapshot(card->storage, slot, destination);
 }
 
+/* Discovery saw an existing card. A disappearance before the lock, or later
+ * during the session, must never turn that selection into a new blank. */
+static CsMedia snapshot_existing(void *context, unsigned slot, uint8_t *destination)
+{
+    CsMedia media = snapshot(context, slot, destination);
+    return media == CS_MEDIA_MISSING ? CS_MEDIA_ERROR : media;
+}
+
 static int commit_image(void *context, unsigned slot, const uint8_t *expected,
                         const uint8_t *replacement)
 {
@@ -89,7 +97,15 @@ static void remember_metadata(void *context, unsigned slot, int32_t fd, uint64_t
 int musashi_player_card_open(MusashiPlayerCard *card, MusashiBootMemory *memory,
                              MusashiBiosEvents *events, const char *directory)
 {
-    CsHost host = {card, map_guest, snapshot, commit_image, deliver};
+    return musashi_player_card_open_selected(card, memory, events, directory, 0);
+}
+
+int musashi_player_card_open_selected(MusashiPlayerCard *card, MusashiBootMemory *memory,
+                                      MusashiBiosEvents *events, const char *directory,
+                                      int require_existing)
+{
+    CsHost host = {card, map_guest, require_existing ? snapshot_existing : snapshot,
+                   commit_image, deliver};
     if (!card || !memory || !events || card->service || card->storage) return 0;
     card->memory = memory;
     card->events = events;

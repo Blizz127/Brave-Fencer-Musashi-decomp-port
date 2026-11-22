@@ -4523,12 +4523,13 @@ int main(int argc, char **argv) {
     {
         char path[512];
         const char *setting = getenv("MUSASHI_MEMCARD");
-        const char *directory = NULL;
+        int selection = CARD_DIRECTORY_UNAVAILABLE;
         if (!setting || strcmp(setting, "0") != 0) {
-            if (musashi_card_save_directory(path, sizeof path)) directory = path;
-            else fputs("Memory card slot 1 unavailable: save directory could not be opened.\n", stderr);
+            selection = musashi_card_save_directory(path, sizeof path);
+            if (!selection) fputs("Memory card slot 1 unavailable: save directory could not be opened.\n", stderr);
         }
-        if (musashi_player_card_open(&boot.file_card, &boot.memory, &boot.bios.events, directory)) {
+        if (musashi_player_card_open_selected(&boot.file_card, &boot.memory, &boot.bios.events,
+                selection ? path : NULL, selection == CARD_DIRECTORY_EXISTING)) {
             boot.cd.file_vector = player_file_vector;
             boot.cd.metadata_events = &boot.bios.events;
             boot.cd.metadata_descriptor = player_metadata_descriptor;
