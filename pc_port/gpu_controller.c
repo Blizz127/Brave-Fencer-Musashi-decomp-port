@@ -1053,9 +1053,9 @@ static int vertex_after(TextureVertex a, TextureVertex b) {
     return a.y > b.y || (a.y == b.y && a.x > b.x);
 }
 
-/* A texture component that varies only along screen X advances from its
+/* A component that varies only along screen X advances from its
  * leftmost vertex with 12 fractional bits. */
-static int horizontal_texture_ramp(int x0, int x1, int x2, int q0, int q1, int q2,
+static int horizontal_attribute_ramp(int x0, int x1, int x2, int q0, int q1, int q2,
                                    int64_t *step, int64_t *origin) {
     int dx1 = x1 - x0, dx2 = x2 - x0;
     int dq1 = q1 - q0, dq2 = q2 - q0;
@@ -1087,9 +1087,9 @@ static TextureTriangle texture_triangle(TextureVertex a, TextureVertex b, Textur
     if (width) {
         t.du_dx = ((int64_t)(b.u - a.u) * TEXTURE_ONE - (c.u - a.u) * middle) * TEXTURE_ONE / width;
         t.dv_dx = ((int64_t)(b.v - a.v) * TEXTURE_ONE - (c.v - a.v) * middle) * TEXTURE_ONE / width;
-        t.u_horizontal = horizontal_texture_ramp(a.x, b.x, c.x, a.u, b.u, c.u,
+        t.u_horizontal = horizontal_attribute_ramp(a.x, b.x, c.x, a.u, b.u, c.u,
                                                 &t.du_dx, &t.u_origin);
-        t.v_horizontal = horizontal_texture_ramp(a.x, b.x, c.x, a.v, b.v, c.v,
+        t.v_horizontal = horizontal_attribute_ramp(a.x, b.x, c.x, a.v, b.v, c.v,
                                                 &t.dv_dx, &t.v_origin);
         t.drawable = 1;
     }
@@ -1181,9 +1181,11 @@ static int fill_gouraud_triangle(MusashiGpuController *controller,
                                  int x2, int y2, uint32_t rgb2) {
     int minx = x0, miny = y0, maxx = x0, maxy = y0, x, y;
     long long area;
-    long long r0 = rgb0 & 0xffu, g0 = (rgb0 >> 8) & 0xffu, b0 = (rgb0 >> 16) & 0xffu;
-    long long r1 = rgb1 & 0xffu, g1 = (rgb1 >> 8) & 0xffu, b1 = (rgb1 >> 16) & 0xffu;
-    long long r2 = rgb2 & 0xffu, g2 = (rgb2 >> 8) & 0xffu, b2 = (rgb2 >> 16) & 0xffu;
+    struct {
+        int a, b, c;
+        int horizontal;
+        int64_t step, origin;
+    } channel[3];
 
     if (x1 < minx) minx = x1;
     if (x2 < minx) minx = x2;
@@ -1198,6 +1200,16 @@ static int fill_gouraud_triangle(MusashiGpuController *controller,
     if (!area) return 1;
     TriangleCoverage coverage = triangle_coverage(x0, y0, x1, y1, x2, y2, area);
 
+    for (int i = 0; i < 3; ++i) {
+        unsigned shift = 8u * (unsigned)i;
+        channel[i].a = (int)((rgb0 >> shift) & 255u);
+        channel[i].b = (int)((rgb1 >> shift) & 255u);
+        channel[i].c = (int)((rgb2 >> shift) & 255u);
+        channel[i].horizontal = !(controller->draw_mode & (1u << 9)) &&
+            horizontal_attribute_ramp(x0, x1, x2, channel[i].a, channel[i].b, channel[i].c,
+                                      &channel[i].step, &channel[i].origin);
+    }
+
     for (y = miny; y <= maxy; ++y) {
         for (x = minx; x <= maxx; ++x) {
             long long w0 = (long long)(x1 - x) * (y2 - y) -
@@ -1206,25 +1218,20 @@ static int fill_gouraud_triangle(MusashiGpuController *controller,
                            (long long)(y2 - y) * (x0 - x);
             long long w2 = (long long)(x0 - x) * (y1 - y) -
                            (long long)(y0 - y) * (x1 - x);
-            long long r_num, g_num, b_num;
-            int r, g, b;
-            uint16_t color;
-
             if (!covers_sample(&coverage, w0, w1, w2)) continue;
 
-            r_num = w0 * r0 + w1 * r1 + w2 * r2;
-            g_num = w0 * g0 + w1 * g1 + w2 * g2;
-            b_num = w0 * b0 + w1 * b1 + w2 * b2;
-            r = (int)(r_num / area);
-            g = (int)(g_num / area);
-            b = (int)(b_num / area);
-            uint32_t ur = (uint32_t)(r < 0 ? 0 : r > 255 ? 255 : r);
-            uint32_t ug = (uint32_t)(g < 0 ? 0 : g > 255 ? 255 : g);
-            uint32_t ub = (uint32_t)(b < 0 ? 0 : b > 255 ? 255 : b);
-
-            color = (uint16_t)(((ur >> 3) & 0x1fu) |
-                               (((ug >> 3) & 0x1fu) << 5) |
-                               (((ub >> 3) & 0x1fu) << 10));
+            uint16_t color = 0;
+            for (int i = 0; i < 3; ++i) {
+                int value;
+                if (channel[i].horizontal) {
+                    value = (int)texture_floor(channel[i].origin + x * channel[i].step + TEXTURE_HALF);
+                } else {
+                    long long weighted = w0 * channel[i].a + w1 * channel[i].b + w2 * channel[i].c;
+                    value = (int)(weighted / area);
+                }
+                unsigned clamped = (unsigned)(value < 0 ? 0 : value > 255 ? 255 : value);
+                color |= (uint16_t)((clamped >> 3) << (5 * i));
+            }
             if (!plot_drawn(controller, x, y, color)) return 0;
         }
     }

@@ -1293,6 +1293,26 @@ class GpuControllerTests(unittest.TestCase):
             self.assertEqual((mid >> 10) & 0x1F, 0)
 
             self.assertEqual(bool(back_reads), bool(opcode & 2))
+    def test_undithered_horizontal_color_rounds_each_component(self):
+        left, right, width = (214, 13, 76), (9, 244, 76), 37
+        stored = {}
+        self.store_cb = STORE(lambda _, x, y, p: stored.__setitem__((x, y), p) or 1)
+        self.controller.backend.store_vram = self.store_cb
+        self.assertEqual(self.write(0xE3000000), 1)
+        self.assertEqual(self.write(0xE403C13F), 1)
+        for i, (x, y, rgb) in enumerate(((11, 3, left), (11 + width, 3, right),
+                                         (11, 7, left), (11 + width, 7, right))):
+            packed = sum(c << (8 * k) for k, c in enumerate(rgb))
+            self.assertEqual(self.write(packed | (0x38000000 if i == 0 else 0)), 1)
+            self.assertEqual(self.write(x | (y << 16)), 1)
+
+        steps = [(1 if b >= a else -1) * (abs(b - a) * 4096 // width)
+                 for a, b in zip(left, right)]
+        for dx in range(width):
+            rgb = [(a * 4096 + dx * step + 2048) // 4096 for a, step in zip(left, steps)]
+            expected = sum((c >> 3) << (5 * k) for k, c in enumerate(rgb))
+            self.assertEqual(stored[11 + dx, 5], expected)
+
     def test_gp0_poly_g4_gouraud_quad(self):
         for opcode in (0x38, 0x39, 0x3A, 0x3B):
             self.setUp()
