@@ -53,8 +53,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 22 source update covers 310 regional function matches across seven scene overlays,
-totaling 42,744 bytes. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 22 source update covers 311 regional function matches across seven scene overlays,
+totaling 42,948 bytes. Four mine routines scan floor probes and pass their position to the map lookup.
 The mine collision code intersects the probe with a face and tests its side planes.
 A mine actor scheduler updates eligible actors and copies their positions to attached objects.
 Two earlier passes select actors for updates. A separate routine counts down a signed timer and adjusts the actor’s scale.
@@ -168,6 +168,9 @@ Host tests follow the regional screen effect from the fade dispatcher. Both sche
 
 The opening fade increases both scale factors until the horizontal factor reaches 4096. The closing fade reduces both factors, then clears the slot and its effect address when the signed horizontal factor falls to 1024 or below.
 Host tests run both transitions through the regional fade dispatcher and screen effect.
+
+The mine also visits 128 attachment slots. After each active slot runs its type handler, the game copies three position coordinates to the currently attached object. Each write can change the address used by the next coordinate.
+The host tests use generated attachment tables and callback responses. The production scene still runs this loop on the guest CPU.
 
 The same scene descriptors also contain a two-phase callback. Its setup starts
 a second fade, resets its level and advances the actor phase. The next phase
