@@ -2592,6 +2592,18 @@
       "optimization": "-O2",
       "rodata_base": 2147953228,
       "origin": "Independently reconstructed from the USA game executable with prior knowledge of the project disc-stream dispatch adapters and test. The game advances an active disc request. Playback and platform services remain external calls."
+    },
+    {
+      "name": "func_8001A338",
+      "region": "main",
+      "vram": 2147590968,
+      "size": 1696,
+      "source": "src/main/8001a338.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "rodata_base": 2147953300,
+      "origin": "Independently reconstructed from the USA game executable with prior knowledge of the project CD callback adapter, registration patch and tests. Device transfers, drawing and playback remain external calls."
     }
   ]
 }

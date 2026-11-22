@@ -30,7 +30,7 @@ extern int func_80043B1C(const void *position);
 extern int func_8002FD14(int id, int argument);
 extern void func_8001A0FC(void);
 extern int func_8001A114(void);
-extern void func_8001A338(void);
+extern void func_8001A338(Byte event);
 
 void func_80019AF8(int seek_only)
 {
