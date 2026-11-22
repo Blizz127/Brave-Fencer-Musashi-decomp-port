@@ -340,6 +340,12 @@ if(MUSASHI_BUILD_PC_PORT)
     target_link_libraries(musashi_boot_data_probe PRIVATE musashi_pc_port)
     add_test(NAME boot_data_boundary COMMAND musashi_boot_data_probe)
 
+    add_executable(musashi_main12_callback_owner_probe tests/main12_callback_owner_probe.c)
+    target_link_libraries(musashi_main12_callback_owner_probe PRIVATE musashi_pc_port)
+    target_compile_features(musashi_main12_callback_owner_probe PRIVATE c_std_11)
+    add_test(NAME main12_callback_owner COMMAND musashi_main12_callback_owner_probe)
+    set_tests_properties(main12_callback_owner PROPERTIES SKIP_RETURN_CODE 77)
+
     add_executable(musashi_gpu_device_probe tests/gpu_device_probe.c tests/owned_reset_route.c)
     target_compile_features(musashi_gpu_device_probe PRIVATE c_std_99)
     target_link_libraries(musashi_gpu_device_probe PRIVATE musashi_pc_port)

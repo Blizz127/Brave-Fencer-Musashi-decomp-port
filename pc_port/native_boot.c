@@ -28,6 +28,7 @@
 #include "musashi_device_epoch.h"
 #include "musashi_gpu_psycross.h"
 #include "musashi_disc_media.h"
+#include "musashi_main12.h"
 #include "musashi_cd_controller.h"
 #include "musashi_audio_sdl.h"
 #include "musashi_native_lane.h"
@@ -334,6 +335,8 @@ static int native_devices_shutdown(NativeBoot *boot) {
         fprintf(stderr,"native_boot: CPU_RUNTIME_REMOVED accepted=%d\n",accepted);
         if (!accepted) return 0;
     }
+    musashi_main12_close(boot->callback.main12_owner);
+    boot->callback.main12_owner = NULL;
     musashi_disc_media_close(boot->media);
     boot->media = NULL;
     return 1;
@@ -4140,6 +4143,14 @@ int main(int argc, char **argv) {
             user_error("Brave Fencer Musashi: the disc image is not an unmodified dump of the "
                        "USA release (SLUS-00726).");
             fputs("native_boot: pinned media rejected before startup\n", stderr);
+            return 2;
+        }
+    }
+    if (boot.media) {
+        boot.callback.main12_owner = musashi_main12_open(&boot.irq_image, &boot.memory, boot.media);
+        if (!boot.callback.main12_owner) {
+            fputs("native_boot: could not bind the mounted MAIN12 callback owner\n", stderr);
+            native_devices_shutdown(&boot);
             return 2;
         }
     }

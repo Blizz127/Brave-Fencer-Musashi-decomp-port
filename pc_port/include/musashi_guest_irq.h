@@ -30,6 +30,8 @@ typedef struct MusashiGuestIrqImage {
     MusashiGuestCdCodeSpan cd_spans[64];
     uint8_t cd_code[32768];
     unsigned cd_span_count;
+    /* Cleared when a fresh mapping begins, including a rejected mapping. */
+    struct MusashiMain12Owner *main12_owner;
 } MusashiGuestIrqImage;
 
 typedef struct MusashiGuestIrqStop {

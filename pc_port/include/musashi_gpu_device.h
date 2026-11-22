@@ -67,6 +67,7 @@ typedef struct MusashiCallbackDevice {
      * The runner retains pc/npc (including a pending branch delay transfer)
      * unchanged while this call executes; refusal stops the current run. */
     int (*checkpoint)(void *userdata, const void *continuation);
+    struct MusashiMain12Owner *main12_owner;
 } MusashiCallbackDevice;
 
 #endif

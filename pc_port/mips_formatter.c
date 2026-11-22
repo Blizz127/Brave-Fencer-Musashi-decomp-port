@@ -4,6 +4,7 @@
 #include "musashi_sha256_digest.h"
 #include "musashi_native_lane.h"
 #include "musashi_guest_irq.h"
+#include "main12_internal.h"
 #ifdef MUSASHI_LINKED_BIOS_EXCEPTION
 #include "musashi_bios_exception.h"
 #endif
@@ -8162,6 +8163,13 @@ typedef struct FormatterCpu {
     /* The standalone checked registration API has no caller stack. Its guest
      * call frame uses private bytes outside the mapped guest address space. */
     uint8_t *registration_stack;
+    /* The mounted load-menu callback owns this CPU only between actual
+     * entry and return. Unrelated overlays can reuse the same addresses. */
+    MusashiMain12Owner *main12_callback_frame;
+    uint32_t main12_return_pc;
+    uint8_t main12_card_service;
+    uint32_t main12_copy_dest;
+    uint8_t main12_copy_pending;
 } FormatterCpu;
 
 typedef struct FormatterConsoleContext {
@@ -8314,10 +8322,201 @@ static int cpu_read8(MusashiBootMemory *memory, const FormatterCpu *cpu,
     return 1;
 }
 
+/* The same guest RAM addresses hold other overlays between callbacks. */
+enum { MAIN12_BASE = 0x80128158u, MAIN12_BYTES = 0x5db28u,
+       MAIN12_CALLBACK = 0x8017c080u, MAIN12_HANDLER = 0x8017c0dcu,
+       MAIN12_MENU_WORD = 0x80182638u, MAIN12_MAILBOX = 0x80185adcu, MAIN12_SERVICE = 0x8002b0b4u,
+       MAIN12_SERVICE_END = 0x8002c304u, MAIN12_SERVICE_RETURN = 0x8017c2c4u,
+       MAIN12_COPY = 0x80061770u, MAIN12_COPY_END = 0x800617ccu,
+       MAIN12_COPY_RETURN = 0x80060e10u };
+
+static uint32_t main12_physical_pc(uint32_t pc) {
+    uint32_t segment = pc & 0xe0000000u;
+    uint32_t physical = pc & 0x1fffffffu;
+    if ((segment == 0 || segment == 0x80000000u || segment == 0xa0000000u) &&
+        physical < 0x800000u)
+        return 0x80000000u | (physical & (MUSASHI_RAM_SIZE - 1u));
+    return 0;
+}
+
+static int main12_callback_pc(const FormatterCpu *cpu) {
+    uint32_t pc = main12_physical_pc(cpu->pc);
+    if (pc >= MAIN12_CALLBACK && pc < MAIN12_HANDLER) return 1;
+    if (!cpu->main12_callback_frame) return 0;
+    /* Disjoint paths actually retired by the installed callback on the USA disc.
+     * Every fetch also checks the full live transfer against its mounted source. */
+    static const struct { uint32_t first, end; } paths[] = {
+        {0x8014168cu, 0x801416d4u},
+        {0x80141c04u, 0x80141c0cu},
+        {0x8017c0dcu, 0x8017c1a0u},
+        {0x8017c1acu, 0x8017c2ecu},
+        {0x8017c2f4u, 0x8017c310u},
+        {0x8017c334u, 0x8017c348u},
+        {0x8017c3bcu, 0x8017c3fcu},
+        {0x8017c5d0u, 0x8017c5d8u},
+        {0x8017c75cu, 0x8017c764u},
+        {0x8017c7acu, 0x8017c7d0u},
+        {0x8017c8dcu, 0x8017c8f0u},
+        {0x8017ca00u, 0x8017ca54u},
+        {0x8017ca60u, 0x8017ca98u},
+        {0x8017cac0u, 0x8017cc14u},
+        {0x8017cc30u, 0x8017cc5cu},
+        {0x8017cc68u, 0x8017cd24u},
+        {0x8017cd28u, 0x8017cdb0u},
+        {0x8017ce50u, 0x8017cf00u},
+        {0x8017cf34u, 0x8017cf68u},
+        {0x8017d050u, 0x8017d100u},
+        {0x8017d10cu, 0x8017d124u},
+        {0x8017d270u, 0x8017d2a4u},
+    };
+    for (size_t i = 0; i < sizeof paths / sizeof paths[0]; ++i) {
+        if (pc < paths[i].first) return 0;
+        if (pc < paths[i].end) return 1;
+    }
+    return 0;
+}
+
+/* Reject unobserved overlay paths while this exact callback is active,
+ * including addresses covered by another scene's decoder or native lane. */
+static int main12_owns_fetch(const FormatterCpu *cpu) {
+    uint32_t pc = main12_physical_pc(cpu->pc);
+    return (pc >= MAIN12_CALLBACK && pc < MAIN12_HANDLER) ||
+        (cpu->main12_callback_frame && pc >= MAIN12_BASE && pc < MAIN12_BASE + MAIN12_BYTES);
+}
+
+static MusashiMain12Owner *main12_owner_for(const FormatterCpu *cpu, MusashiBootMemory *ram) {
+    if (!cpu || !cpu->callback_device || cpu->registration_stack || cpu->dma_registration ||
+        cpu->irq_image || cpu->cd_parent_image || cpu->bios_frame || cpu->cd_irq_frame) return NULL;
+    if (cpu->bios_image && (!cpu->bios_image->intersects ||
+        cpu->bios_image->intersects(MAIN12_BASE, MAIN12_BYTES) ||
+        cpu->bios_image->intersects(0x8011db24u, 4))) return NULL;
+    MusashiMain12Owner *owner = cpu->callback_device->main12_owner;
+    if (!owner || !ram || owner->memory != ram || owner->image->identity != owner->image ||
+        owner->image->memory != ram || owner->image->main12_owner != owner) return NULL;
+    return owner;
+}
+
+static int main12_service_pc(const FormatterCpu *cpu) {
+    return cpu->main12_callback_frame &&
+        (cpu->pc == MAIN12_SERVICE || (cpu->main12_card_service &&
+         cpu->pc >= MAIN12_SERVICE && cpu->pc < MAIN12_SERVICE_END));
+}
+
+static int main12_identity(MusashiMain12Owner *owner, MusashiBootMemory *ram, int installed) {
+    uint32_t callback;
+    const uint8_t *live = musashi_boot_ram_span(ram, MAIN12_BASE, MAIN12_BYTES);
+    return live && owner && owner->memory == ram && owner->matches &&
+        musashi_boot_read32(ram, 0x8011db24u, &callback) && callback == MAIN12_CALLBACK &&
+        owner->matches(owner, live, installed, installed ? owner->mailbox : NULL);
+}
+
+static int main12_current(MusashiMain12Owner *owner, MusashiBootMemory *ram) {
+    if (!owner || !owner->installed) return 0;
+    if (main12_identity(owner, ram, 1)) return 1;
+    owner->installed = 0;
+    return 0;
+}
+
+static int main12_service_matches(MusashiBootMemory *ram, const FormatterCpu *cpu) {
+    MusashiMain12Owner *owner = main12_owner_for(cpu, ram);
+    if (!owner || cpu->main12_callback_frame != owner || !owner->installed ||
+        !owner->resident_matches) return 0;
+    if (cpu->pc == MAIN12_SERVICE && (cpu->r[31] != MAIN12_SERVICE_RETURN ||
+        cpu->r[6] != MAIN12_MAILBOX || !main12_current(owner, ram))) return 0;
+    return owner->resident_matches(owner, MAIN12_SERVICE, MAIN12_SERVICE_END - MAIN12_SERVICE);
+}
+
+static int main12_copy_pc(const FormatterCpu *cpu) {
+    return cpu->main12_callback_frame && cpu->main12_card_service &&
+        cpu->pc >= MAIN12_COPY && cpu->pc < MAIN12_COPY_END;
+}
+
+static int main12_copy_matches(MusashiBootMemory *ram, const FormatterCpu *cpu) {
+    MusashiMain12Owner *owner = main12_owner_for(cpu, ram);
+    if (!owner || owner != cpu->main12_callback_frame || !owner->installed ||
+        !owner->resident_matches || cpu->r[29] != 0x1f8002c8u ||
+        cpu->pc == 0x800617a8u || cpu->r[31] != MAIN12_COPY_RETURN) return 0;
+    if (cpu->pc == MAIN12_COPY) {
+        if (cpu->r[4] || cpu->r[5] != cpu->r[29] + 16u || !main12_current(owner, ram))
+            return 0;
+    } else if (cpu->main12_copy_dest != cpu->r[29] + 16u) {
+        return 0;
+    }
+    return owner->resident_matches(owner, MAIN12_COPY, MAIN12_COPY_END - MAIN12_COPY) &&
+        owner->resident_matches(owner, MAIN12_COPY_RETURN - 8u, 8u);
+}
+
+/* The slot-zero request builds six bytes on its own scratch stack from
+ * six resident bytes. Left/right word transfers access the aligned word;
+ * the table records the effective address before that bus alignment. */
+static int main12_copy_access(MusashiBootMemory *ram, const FormatterCpu *cpu,
+                              unsigned op, uint32_t address) {
+    const uint32_t source = 0x8007472cu;
+    uint32_t destination = cpu->main12_copy_dest;
+    static const struct { uint32_t pc; unsigned offset, op; int source; } sites[] = {
+        {0x80061780u, 3, 34, 1}, {0x80061784u, 0, 38, 1},
+        {0x80061788u, 4, 36, 1}, {0x8006178cu, 5, 36, 1},
+        {0x80061790u, 3, 42, 0}, {0x80061794u, 0, 46, 0},
+        {0x80061798u, 4, 40, 0}, {0x8006179cu, 5, 40, 0},
+        {0x800617c0u, 2, 40, 0}, {0x800617c8u, 3, 40, 0},
+    };
+    MusashiMain12Owner *owner = main12_owner_for(cpu, ram);
+    if (!owner || owner != cpu->main12_callback_frame || !destination) return 0;
+    for (size_t i = 0; i < sizeof sites / sizeof sites[0]; ++i) {
+        if (cpu->pc != sites[i].pc) continue;
+        unsigned expected = sites[i].op;
+        if (op != expected && !(expected == 36u && op == 32u)) return 0;
+        if (sites[i].source)
+            return address == source + sites[i].offset &&
+                owner->resident_matches(owner, source, 8u);
+        return address == destination + sites[i].offset;
+    }
+    return 0;
+}
+
+static int main12_callback_word(MusashiBootMemory *ram, const FormatterCpu *cpu, uint32_t *word) {
+    MusashiMain12Owner *owner = main12_owner_for(cpu, ram);
+    if (!word || !owner || !owner->installed || (cpu->pc & 3u) ||
+        cpu->pc != main12_physical_pc(cpu->pc) || !main12_callback_pc(cpu) ||
+        (cpu->main12_callback_frame && cpu->main12_callback_frame != owner)) return 0;
+    return main12_current(owner, ram) && musashi_boot_read32(ram, cpu->pc, word);
+}
+
+/* Only changes made by the authenticated running menu are recorded.
+ * Every other byte, including noncurrent instructions, must still match
+ * the read-only mounted transfer before a callback word may be fetched. */
+static int main12_write_mailbox(MusashiBootMemory *ram, const FormatterCpu *cpu,
+                                uint32_t address, uint8_t value) {
+    MusashiMain12Owner *owner = main12_owner_for(cpu, ram);
+    if (!owner || cpu->main12_callback_frame != owner || !owner->installed ||
+        !main12_current(owner, ram) || address < MAIN12_MAILBOX ||
+        address >= MAIN12_MAILBOX + 16u) return 0;
+    unsigned index = address - MAIN12_MAILBOX;
+    if (index < 8u) {
+        if (index != 1u || owner->mailbox[index] != 0u || value != 1u ||
+            cpu->pc != 0x8002c2b8u || !cpu->main12_card_service ||
+            !main12_service_matches(ram, cpu)) return 0;
+    } else if (cpu->pc == 0x8017c140u && value == 0xffu) {
+        for (unsigned i = 8; i < 16; ++i)
+            if (owner->mailbox[i] != (i < index ? 0xffu : 0u)) return 0;
+    } else if (cpu->pc != 0x8017d0bcu || value != owner->mailbox[index - 8u]) {
+        return 0;
+    }
+    owner->mailbox[index] = value;
+    return 1;
+}
+
 static int cpu_write8(MusashiBootMemory *memory, const FormatterCpu *cpu,
                        uint32_t address, uint32_t value) {
     uint8_t *p = cpu_ram_span(memory, cpu, address, 1);
-    if (p) { *p = value; return 1; }
+    if (p) {
+        if (cpu->main12_callback_frame && address >= MAIN12_MAILBOX &&
+            address < MAIN12_MAILBOX + 16u && (uint8_t)value != *p &&
+            !main12_write_mailbox(memory, cpu, address, (uint8_t)value))
+            return 0;
+        *p = (uint8_t)value;
+        return 1;
+    }
     /* On-die DMA registers ignore byte enables: SB drives the full source
      * word shifted by the byte offset. Preserve source high bits here.
      * https://psx-spx.consoledev.net/partialwordwrites/ */
@@ -8357,7 +8556,22 @@ static int cpu_write16(MusashiBootMemory *memory, const FormatterCpu *cpu,
         return (cpu->registration_stack || address == 0x1f801074u) && reg && reg->write16 &&
             reg->write16(reg->userdata, address, value);
     }
-    if (p) { p[0] = (uint8_t)value; p[1] = (uint8_t)(value >> 8); return 1; }
+    if (p) {
+        if (cpu->pc == 0x8017bf64u && address == 0x801853f0u) {
+            MusashiMain12Owner *owner = main12_owner_for(cpu, memory);
+            if (owner) {
+                owner->installed = value == 1u && main12_identity(owner, memory, 0);
+                if (owner->installed) {
+                    owner->menu_word_changed = 0;
+                    const uint8_t *mailbox = musashi_boot_ram_span(memory, MAIN12_MAILBOX, sizeof owner->mailbox);
+                    memcpy(owner->mailbox, mailbox, sizeof owner->mailbox);
+                }
+            }
+        }
+        p[0] = (uint8_t)value;
+        p[1] = (uint8_t)(value >> 8);
+        return 1;
+    }
     return callback_write16(cpu, address, value);
 }
 
@@ -8454,6 +8668,16 @@ static int cpu_write32(MusashiBootMemory *memory, const FormatterCpu *cpu,
         return cpu->bios_image->write32 && cpu->bios_image->write32(
             cpu->bios_image->userdata, address, value);
     if (p) {
+        if (cpu->main12_callback_frame && address == MAIN12_MENU_WORD) {
+            MusashiMain12Owner *owner = main12_owner_for(cpu, memory);
+            uint32_t previous;
+            if (!musashi_boot_read32(memory, address, &previous) || !owner ||
+                owner != cpu->main12_callback_frame || !main12_current(owner, memory)) return 0;
+            if (previous != value) {
+                if (cpu->pc != 0x8017d27cu || value != 10u) return 0;
+                owner->menu_word_changed = 1;
+            }
+        }
         p[0] = (uint8_t)value; p[1] = (uint8_t)(value >> 8);
         p[2] = (uint8_t)(value >> 16); p[3] = (uint8_t)(value >> 24);
         return 1;
@@ -10350,6 +10574,9 @@ static int formatter_fetch(MusashiBootMemory *memory, const FormatterCpu *cpu, u
         return dma_registration_word(memory, cpu->dma_registration, cpu->pc, out);
     }
     if (cpu->irq_image) return irq_live_word(cpu->irq_image,memory,cpu->pc,out);
+    if (main12_owns_fetch(cpu)) return main12_callback_word(memory, cpu, out);
+    if (main12_service_pc(cpu) && !main12_service_matches(memory, cpu)) return 0;
+    if (main12_copy_pc(cpu) && !main12_copy_matches(memory, cpu)) return 0;
     if (reset_calls_guest_fill(cpu)) return reset_fill_word(memory, cpu->pc, out);
     if (registration_code_pc(cpu->pc))
         return registration_code_word(memory, cpu->pc, out);
@@ -13350,12 +13577,16 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     uint8_t scheduled_merge_reg = 0;
     if ((cpu->pc & 3u) || !spu_source_guard(memory, cpu))
         return formatter_refuse0(__LINE__, cpu->pc);
+    if ((main12_owns_fetch(cpu) || main12_service_pc(cpu) || main12_copy_pc(cpu)) && publish_flow && g_entry_hook &&
+        cpu->pc == g_entry_pending && !formatter_fetch(memory, cpu, &instruction))
+        return formatter_refuse0(__LINE__, cpu->pc);
     if (publish_flow && g_entry_hook && cpu->pc == g_entry_pending) {
         g_entry_pending = 1u;
         g_entry_hook(g_entry_hook_user, cpu->pc, cpu->r);
     }
     if (!cpu->dma_registration && !cpu->irq_image && !cpu->cd_parent_image && !registration_code_pc(cpu->pc) &&
-        !reset_calls_guest_fill(cpu) && (g_lane_count || g_lane_ovl_count)) {
+        !main12_owns_fetch(cpu) && !main12_service_pc(cpu) && !main12_copy_pc(cpu) && !reset_calls_guest_fill(cpu) &&
+        (g_lane_count || g_lane_ovl_count)) {
         int lane = lane_try(memory, cpu);
         if (lane > 0) return 1;
         if (lane < 0) return formatter_refuse0(__LINE__, cpu->pc);
@@ -13817,10 +14048,30 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
                            : cpu->cpu_transfer->read_data)) return formatter_refuse0(__LINE__, cpu->pc);
     }
     merge_kind = merge_kind_for(cpu->pc, instruction);
+    int copy_merge = 0;
+    if (cpu->main12_copy_dest && main12_copy_pc(cpu) && opcode >= 32u) {
+        uint32_t address = cpu->r[rs] + (uint32_t)(int32_t)signed_immediate;
+        if (!main12_copy_access(memory, cpu, opcode, address))
+            return formatter_refuse0(__LINE__, cpu->pc);
+        switch (opcode) {
+        case 34u: merge_kind = MERGE_LWL; break;
+        case 38u: merge_kind = MERGE_LWR; break;
+        case 42u: merge_kind = MERGE_SWL; break;
+        case 46u: merge_kind = MERGE_SWR; break;
+        default: break;
+        }
+        copy_merge = merge_kind != MERGE_NONE;
+    }
     if ((opcode == 34u || opcode == 38u || opcode == 42u || opcode == 46u) &&
         merge_kind == MERGE_NONE)
         return formatter_refuse0(__LINE__, cpu->pc);
-    if (!merge_pending_matches(cpu, instruction))
+    int copy_retire = cpu->main12_copy_pending && cpu->merge_pending &&
+        cpu->merge_next_pc == cpu->pc && main12_copy_pc(cpu) &&
+        ((cpu->pc == 0x80061784u && copy_merge && cpu->merge_kind == MERGE_LWL &&
+          cpu->merge_reg == rt) ||
+         (cpu->pc == 0x80061788u && cpu->merge_kind == MERGE_LWR &&
+          cpu->merge_reg == 2u && cpu->merge_reg != rs && cpu->merge_reg != rt));
+    if (!copy_retire && !merge_pending_matches(cpu, instruction))
         return formatter_refuse0(__LINE__, cpu->pc);
     if (merge_kind == MERGE_LWL || merge_kind == MERGE_LWR ||
         merge_kind == MERGE_SWL || merge_kind == MERGE_SWR) {
@@ -14182,6 +14433,24 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     cpu->delay_slot = (uint8_t)((opcode >= 1u && opcode <= 7u) ||
         (opcode == 0u && ((instruction & 63u) == 8u || (instruction & 63u) == 9u)));
     cpu->branch_pc = cpu->delay_slot ? cpu->pc : 0u;
+    cpu->main12_copy_pending = (uint8_t)(copy_merge && schedule_merge);
+    if (cpu->pc == MAIN12_CALLBACK) {
+        cpu->main12_copy_dest = 0;
+        cpu->main12_callback_frame = main12_owner_for(cpu, memory);
+        cpu->main12_return_pc = cpu->r[31];
+        cpu->main12_card_service = 0;
+    } else if (cpu->main12_callback_frame) {
+        if (cpu->pc == MAIN12_SERVICE) cpu->main12_card_service = 1;
+        if (cpu->pc == MAIN12_COPY && cpu->main12_card_service) cpu->main12_copy_dest = cpu->r[29] + 16u;
+        if (old_npc == MAIN12_COPY_RETURN) cpu->main12_copy_dest = 0;
+        if (old_npc == MAIN12_SERVICE_RETURN) cpu->main12_card_service = 0;
+        if (old_npc == cpu->main12_return_pc) {
+            cpu->main12_callback_frame = NULL;
+            cpu->main12_return_pc = 0;
+            cpu->main12_copy_dest = 0;
+            cpu->main12_card_service = 0;
+        }
+    }
     cpu->pc = old_npc;
     cpu->npc = target_npc;
     return 1;
@@ -16174,6 +16443,23 @@ static int irq_data_access(const FormatterCpu *cpu, uint32_t w) {
     if (op < 32) return 1;
     uint32_t address = cpu->r[(w >> 21) & 31u] + (uint32_t)(int32_t)(int16_t)w;
     IrqRegion region = irq_region(cpu->pc);
+    /* The installed periodic sound callback reads and advances a group
+     * of guest halfwords. The guest computes the value written to the level. */
+    if (region == IRQ_SOUND_TICK && cpu->pc >= 0x8002ce38u && cpu->pc <= 0x8002ce70u) {
+        static const struct { uint32_t pc, address; unsigned op; } accesses[] = {
+            {0x8002ce38u, 0x800a4ee4u, 37u},
+            {0x8002ce40u, 0x800a4ee0u, 37u},
+            {0x8002ce48u, 0x800a4f16u, 40u},
+            {0x8002ce60u, 0x800a4ee2u, 37u},
+            {0x8002ce70u, 0x800a4ee0u, 41u},
+        };
+        for (size_t i = 0; i < sizeof accesses / sizeof accesses[0]; ++i) {
+            if (cpu->pc == accesses[i].pc)
+                return cpu->r[31] == 0x80010984u && cpu->r[29] == 0x8006ca94u &&
+                    op == accesses[i].op && address == accesses[i].address &&
+                    (op != 40u || (uint8_t)cpu->r[(w >> 16) & 31u] == 1u);
+        }
+    }
     if (region >= IRQ_GAME_VBLANK && region < IRQ_OUTSIDE)
         return irq_vblank_data(region,op,address);
     int write = op == 41u || op == 43u;

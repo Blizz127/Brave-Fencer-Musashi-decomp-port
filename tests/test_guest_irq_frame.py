@@ -57,7 +57,7 @@ class GuestIrqTests(unittest.TestCase):
             runtime_env.pop('MUSASHI_CODE_IMAGE', None)
             runtime_env.pop('MUSASHI_CODE_IMAGE_MUTANT', None)
             for mode in ('vblank', 'dma', 'both', 'code', 'record', 'wrongslot', 'callback', 'copy', 'owner',
-                         'card', 'active', 'soundless', 'card-code', 'sound-code', 'slotswap', 'voice-range'):
+                         'card', 'active', 'soundless', 'card-code', 'sound-code', 'slotswap', 'voice-range', 'title-fade', 'title-fade-code'):
                 with self.subTest(mode=mode):
                     subprocess.run([exe, path, mode], env=runtime_env, check=True, timeout=10)
             for mode in ('complete', 'owner', 'handle', 'handler', 'event', 'file'):

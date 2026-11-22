@@ -1,4 +1,5 @@
 #include "musashi_disc_media.h"
+#include "main12_internal.h"
 
 #include "musashi_sha256_digest.h"
 
@@ -293,41 +294,187 @@ static uint32_t le32(const unsigned char *p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
-int musashi_disc_media_read_root_file(const MusashiDiscMedia *media, const char *name,
-                                      uint8_t *out, size_t max, size_t *size) {
-    const unsigned char *pvd, *root;
-    uint32_t dir_lba, dir_size, pos;
-    size_t name_len;
-    if (!media || !media->image || !name || !out || !size) return 0;
-    name_len = strlen(name);
-    pvd = iso_sector(media, 16);
-    if (!pvd || pvd[0] != 1 || memcmp(pvd + 1, "CD001", 5) != 0) return 0;
-    root = pvd + 156;
-    dir_lba = le32(root + 2);
-    dir_size = le32(root + 10);
-    for (pos = 0; pos < dir_size;) {
-        const unsigned char *sector = iso_sector(media, dir_lba + pos / 2048u);
-        const unsigned char *rec;
-        if (!sector) return 0;
-        rec = sector + pos % 2048u;
-        if (rec[0] == 0) { pos = (pos / 2048u + 1u) * 2048u; continue; }
+enum { ISO_BLOCK = 2048 };
+typedef struct IsoExtent {
+    uint32_t lba, size;
+} IsoExtent;
+
+static int iso_extent_fits(const MusashiDiscMedia *media, const IsoExtent *extent) {
+    uint32_t end = media->info.tracks[0].end_frame;
+    uint32_t blocks = extent->size / ISO_BLOCK + (extent->size % ISO_BLOCK != 0);
+    return end <= PINNED_TOTAL_FRAMES && extent->lba <= end && blocks <= end - extent->lba;
+}
+
+static int root_file_extent(const MusashiDiscMedia *media, const char *name, IsoExtent *out) {
+    if (!media || !media->image || !name || !name[0] || !out) return 0;
+    const size_t name_len = strlen(name);
+    const uint8_t *pvd = iso_sector(media, 16);
+    if (!pvd || pvd[0] != 1 || memcmp(pvd + 1, "CD001", 5)) return 0;
+    const uint8_t *root = pvd + 156;
+    if (root[0] < 34 || root[1] || !(root[25] & 2) || (root[25] & 0x80) ||
+        root[26] || root[27]) return 0;
+    IsoExtent dir = {le32(root + 2), le32(root + 10)};
+    if (!iso_extent_fits(media, &dir)) return 0;
+    for (uint32_t pos = 0; pos < dir.size;) {
+        uint32_t within = pos % ISO_BLOCK;
+        uint32_t available = ISO_BLOCK - within;
+        if (available > dir.size - pos) available = dir.size - pos;
+        const uint8_t *rec = iso_sector(media, dir.lba + pos / ISO_BLOCK) + within;
+        if (rec[0] == 0) { pos += available; continue; }
+        if (rec[0] < 34 || rec[0] > available || rec[32] > rec[0] - 33u) return 0;
         if (rec[32] >= name_len && !memcmp(rec + 33, name, name_len) &&
             (rec[32] == name_len || rec[33 + name_len] == ';')) {
-            uint32_t lba = le32(rec + 2), length = le32(rec + 10), done = 0;
-            if (length > max) return 0;
-            while (done < length) {
-                const unsigned char *data = iso_sector(media, lba + done / 2048u);
-                uint32_t chunk = length - done < 2048u ? length - done : 2048u;
-                if (!data) return 0;
-                memcpy(out + done, data, chunk);
-                done += chunk;
-            }
-            *size = length;
+            if (rec[1] || (rec[25] & 0x82) || rec[26] || rec[27]) return 0;
+            IsoExtent found = {le32(rec + 2), le32(rec + 10)};
+            if (!iso_extent_fits(media, &found)) return 0;
+            *out = found;
             return 1;
         }
         pos += rec[0];
     }
     return 0;
+}
+
+int musashi_disc_media_read_root_file(const MusashiDiscMedia *media, const char *name,
+                                      uint8_t *out, size_t max, size_t *size) {
+    IsoExtent file;
+    if (!out || !size || !root_file_extent(media, name, &file) || file.size > max) return 0;
+    for (uint32_t done = 0; done < file.size;) {
+        uint32_t chunk = file.size - done < ISO_BLOCK ? file.size - done : ISO_BLOCK;
+        memcpy(out + done, iso_sector(media, file.lba + done / ISO_BLOCK), chunk);
+        done += chunk;
+    }
+    *size = file.size;
+    return 1;
+}
+
+enum {
+    RESIDENT_TEXT_SIZE = 0x64800,
+    MAIN12_BYTES = 0x5db28,
+    MAIN12_MENU_WORD = 0x80182638u - 0x80128158u,
+    MAIN12_STATE = 0x801853f0u - 0x80128158u,
+    MAIN12_MAILBOX = 0x80185adcu - 0x80128158u
+};
+
+/* The same cached guest span and file layout accepted by musashi_boot_map_exe. */
+static const uint32_t resident_text_start = 0x80010000u;
+
+static const uint8_t *mounted_resident_text(const MusashiDiscMedia *media) {
+    IsoExtent exe;
+    if (!root_file_extent(media, "SLUS_007.26", &exe) ||
+        exe.size != ISO_BLOCK + RESIDENT_TEXT_SIZE) return NULL;
+    const uint8_t *header = iso_sector(media, exe.lba);
+    if (memcmp(header, "PS-X EXE", 8) || le32(header + 0x18) != resident_text_start ||
+        le32(header + 0x1c) != RESIDENT_TEXT_SIZE) return NULL;
+    return iso_sector(media, exe.lba + 1u);
+}
+
+/* A logical range is bounded during opening. The 2048-byte data payloads
+ * lie 2352 bytes apart in the raw disc image. */
+static const uint8_t *transfer_byte(const uint8_t *transfer, size_t offset) {
+    return transfer + offset / ISO_BLOCK * MUSASHI_DISC_RAW_SECTOR_SIZE + offset % ISO_BLOCK;
+}
+
+static const uint8_t *mounted_main12_transfer(const MusashiDiscMedia *media) {
+    IsoExtent archive;
+    if (!root_file_extent(media, "MAIN.CD", &archive) || archive.size < ISO_BLOCK) return NULL;
+    const uint8_t *directory = iso_sector(media, archive.lba);
+    const uint32_t member = 12u;
+    uint32_t count = le32(directory);
+    if (count <= member || count > (ISO_BLOCK - 8u) / 8u) return NULL;
+    const uint8_t *row = directory + 8u + 8u * member;
+    uint32_t sector = le32(row), size = le32(row + 4);
+    if (!sector || sector > archive.size / ISO_BLOCK || size != 0x86000u ||
+        size > archive.size - sector * ISO_BLOCK) return NULL;
+
+    uint32_t lba = archive.lba + sector;
+    const uint8_t *first = iso_sector(media, lba);
+    if (!first || memcmp(first, "PAC", 4) || first[4] || first[5] ||
+        le32(first + 12) != 0x27800u) return NULL;
+    uint32_t next = le32(first + 12);
+    const uint8_t *program = iso_sector(media, lba + next / ISO_BLOCK);
+    if (!program || memcmp(program, "PAC", 4) || program[4] != 1 || program[5] != 1) return NULL;
+    uint32_t length = le32(program + 12);
+    if (length != 0x5e327u || length > size - next) return NULL;
+    uint32_t start = next + ISO_BLOCK;
+    if (((length - ISO_BLOCK + 3u) & ~3u) != MAIN12_BYTES || MAIN12_BYTES > size - start)
+        return NULL;
+    IsoExtent body = {lba + start / ISO_BLOCK, MAIN12_BYTES};
+    if (!iso_extent_fits(media, &body)) return NULL;
+    const uint8_t *data = iso_sector(media, body.lba);
+    const uint8_t *state = transfer_byte(data, MAIN12_STATE);
+    if (state[0] || state[1]) return NULL;
+    return data;
+}
+
+static int transfer_range_matches(const uint8_t *source, const uint8_t *live,
+                                  size_t first, size_t end) {
+    while (first < end) {
+        size_t chunk = ISO_BLOCK - first % ISO_BLOCK;
+        if (chunk > end - first) chunk = end - first;
+        if (memcmp(live + first, transfer_byte(source, first), chunk)) return 0;
+        first += chunk;
+    }
+    return 1;
+}
+
+static int mounted_owner_live(const MusashiMain12Owner *owner) {
+    return owner && owner->image && owner->memory && owner->image->identity == owner->image &&
+        owner->image->memory == owner->memory && owner->image->main12_owner == owner;
+}
+
+static int mounted_resident_matches(const MusashiMain12Owner *owner, uint32_t start,
+                                    uint32_t size) {
+    if (!mounted_owner_live(owner) || !owner->exe_text || !size || ((start | size) & 3u) ||
+        start < resident_text_start) return 0;
+    uint32_t offset = start - resident_text_start;
+    if (offset >= RESIDENT_TEXT_SIZE || size > RESIDENT_TEXT_SIZE - offset) return 0;
+    const uint8_t *live = owner->memory->bytes + (resident_text_start - 0x80000000u);
+    return transfer_range_matches(owner->exe_text, live, offset, offset + size);
+}
+
+static int musashi_main12_transfer_matches(const MusashiMain12Owner *owner, const uint8_t *live,
+                                           int installed, const uint8_t mailbox[16]) {
+    if (!mounted_owner_live(owner) || !owner->transfer || !live ||
+        (installed != 0 && installed != 1)) return 0;
+    if (live[MAIN12_STATE] != (uint8_t)installed ||
+        (mailbox && memcmp(live + MAIN12_MAILBOX, mailbox, 16))) return 0;
+    const uint8_t *source = owner->transfer;
+    if (installed && owner->menu_word_changed) {
+        if (le32(live + MAIN12_MENU_WORD) != 10u ||
+            !transfer_range_matches(source, live, 0, MAIN12_MENU_WORD) ||
+            !transfer_range_matches(source, live, MAIN12_MENU_WORD + 4u, MAIN12_STATE))
+            return 0;
+    } else if (!transfer_range_matches(source, live, 0, MAIN12_STATE)) return 0;
+    if (!mailbox) return transfer_range_matches(source, live, MAIN12_STATE + 1u, MAIN12_BYTES);
+    return transfer_range_matches(source, live, MAIN12_STATE + 1u, MAIN12_MAILBOX) &&
+        transfer_range_matches(source, live, MAIN12_MAILBOX + 16u, MAIN12_BYTES);
+}
+
+MusashiMain12Owner *musashi_main12_open(MusashiGuestIrqImage *image,
+    MusashiBootMemory *memory, const MusashiDiscMedia *media) {
+    if (!media || !media->image || !image || !memory || image->identity != image ||
+        image->memory != memory || image->main12_owner) return NULL;
+    const uint8_t *transfer = mounted_main12_transfer(media);
+    const uint8_t *exe_text = mounted_resident_text(media);
+    if (!transfer || !exe_text) return NULL;
+    MusashiMain12Owner *owner = calloc(1, sizeof *owner);
+    if (owner) {
+        owner->image = image;
+        owner->memory = memory;
+        owner->transfer = transfer;
+        owner->matches = musashi_main12_transfer_matches;
+        owner->exe_text = exe_text;
+        owner->resident_matches = mounted_resident_matches;
+        image->main12_owner = owner;
+    }
+    return owner;
+}
+
+void musashi_main12_close(MusashiMain12Owner *owner) {
+    if (!owner) return;
+    if (owner->image->main12_owner == owner) owner->image->main12_owner = NULL;
+    free(owner);
 }
 
 int musashi_disc_media_get_info(const MusashiDiscMedia *media,
