@@ -335,15 +335,36 @@ static int root_file_extent(const MusashiDiscMedia *media, const char *name, Iso
     return 0;
 }
 
+static void copy_root_range(const MusashiDiscMedia *media, IsoExtent file,
+                            size_t offset, uint8_t *out, size_t count) {
+    while (count) {
+        size_t within = offset % ISO_BLOCK;
+        size_t chunk = ISO_BLOCK - within;
+        if (chunk > count) chunk = count;
+        const uint8_t *sector = iso_sector(media, file.lba + (uint32_t)(offset / ISO_BLOCK));
+        memcpy(out, sector + within, chunk);
+        out += chunk;
+        offset += chunk;
+        count -= chunk;
+    }
+}
+
+int musashi_disc_media_read_root_range(const MusashiDiscMedia *media, const char *name,
+                                       size_t offset, uint8_t *out, size_t count,
+                                       size_t *file_size) {
+    IsoExtent file;
+    if (!file_size || (!out && count) || !root_file_extent(media, name, &file) ||
+        offset > file.size || count > file.size - offset) return 0;
+    copy_root_range(media, file, offset, out, count);
+    *file_size = file.size;
+    return 1;
+}
+
 int musashi_disc_media_read_root_file(const MusashiDiscMedia *media, const char *name,
                                       uint8_t *out, size_t max, size_t *size) {
     IsoExtent file;
     if (!out || !size || !root_file_extent(media, name, &file) || file.size > max) return 0;
-    for (uint32_t done = 0; done < file.size;) {
-        uint32_t chunk = file.size - done < ISO_BLOCK ? file.size - done : ISO_BLOCK;
-        memcpy(out + done, iso_sector(media, file.lba + done / ISO_BLOCK), chunk);
-        done += chunk;
-    }
+    copy_root_range(media, file, 0, out, file.size);
     *size = file.size;
     return 1;
 }

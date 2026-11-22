@@ -55,6 +55,13 @@ MusashiDiscMedia *musashi_disc_media_open_image(const char *path, char *why,
 int musashi_disc_media_read_root_file(const MusashiDiscMedia *media, const char *name,
                                       uint8_t *out, size_t max, size_t *size);
 
+/* Copy count bytes beginning at offset in a supported root file. On success
+ * file_size receives its full length. A zero-byte read permits a NULL out
+ * pointer, including at end of file. A failed read preserves both outputs. */
+int musashi_disc_media_read_root_range(const MusashiDiscMedia *media, const char *name,
+                                       size_t offset, uint8_t *out, size_t count,
+                                       size_t *file_size);
+
 /* Copies immutable metadata into caller storage. Returns zero on refusal. */
 int musashi_disc_media_get_info(const MusashiDiscMedia *media,
                                 MusashiDiscMediaInfo *info);

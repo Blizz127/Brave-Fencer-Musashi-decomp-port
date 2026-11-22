@@ -34,6 +34,37 @@ static void check_sector_against_file(const char *bin_path,
     assert(memcmp(expected, sector, sizeof(expected)) == 0);
 }
 
+static void test_root_ranges(const MusashiDiscMedia *media) {
+    const char *name = "SLUS_007.26";
+    size_t length, reported;
+    assert(musashi_disc_media_read_root_range(media, name, 0, NULL, 0, &length));
+    assert(length > 8192);
+    uint8_t *whole = malloc(length);
+    assert(whole && musashi_disc_media_read_root_file(media, name, whole, length, &reported));
+    assert(reported == length);
+
+    uint8_t slice[4099];
+    size_t offsets[] = {0, 2047, 2048, length - sizeof slice};
+    for (size_t i = 0; i < sizeof offsets / sizeof offsets[0]; ++i) {
+        size_t offset = offsets[i];
+        assert(musashi_disc_media_read_root_range(media, name, offset, slice, sizeof slice, &reported));
+        assert(reported == length && memcmp(slice, whole + offset, sizeof slice) == 0);
+    }
+    free(whole);
+    assert(musashi_disc_media_read_root_range(media, name, length, NULL, 0, &reported));
+    assert(reported == length);
+
+    uint8_t byte = 17;
+    reported = 31;
+    assert(!musashi_disc_media_read_root_range(media, name, length, &byte, 1, &reported));
+    assert(!musashi_disc_media_read_root_range(media, name, SIZE_MAX, NULL, 0, &reported));
+    assert(!musashi_disc_media_read_root_range(media, name, 1, &byte, SIZE_MAX, &reported));
+    assert(!musashi_disc_media_read_root_range(media, name, 0, NULL, 1, &reported));
+    assert(!musashi_disc_media_read_root_range(media, "MISSING.FILE", 0, &byte, 1, &reported));
+    assert(!musashi_disc_media_read_root_range(media, name, 0, &byte, 1, NULL));
+    assert(byte == 17 && reported == 31);
+}
+
 static void test_rejections(const char *cue_path, const char *bin_path) {
     char wrong_cue[] = "/tmp/musashi-disc-wrong-cue-XXXXXX";
     char short_bin[] = "/tmp/musashi-disc-short-bin-XXXXXX";
@@ -83,6 +114,7 @@ int main(int argc, char **argv) {
     bin_path = argv[2];
     media = musashi_disc_media_open_pinned(cue_path, bin_path);
     assert(media != NULL);
+    test_root_ranges(media);
 
     memset(&info, 0, sizeof(info));
     assert(musashi_disc_media_get_info(media, &info));
