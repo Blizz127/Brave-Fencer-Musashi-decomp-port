@@ -4653,11 +4653,11 @@ int main(int argc, char **argv) {
             (unsigned long long)boot.source_clock.cycles, boot.source_clock.faulted,
             boot.cd_drive ? "STARTUP_INPUT_CD_IRQ_SOURCE_ONLY" : "STARTUP_AND_INPUT_SOURCE_ONLY");
     fprintf(stderr, "native_boot: DEVICE_EPOCH cycles=%llu source_edges=%llu cuts=%llu "
-            "waits=%llu frequency=%llu faulted=%d profile=PACED_HOST_TIME cd_advanced=%d\n",
+            "waits=%llu frequency=%llu faulted=%d profile=%s cd_advanced=%d\n",
             (unsigned long long)boot.epoch.cycle, (unsigned long long)boot.epoch.last_sequence,
             (unsigned long long)boot.epoch.cuts, (unsigned long long)boot.epoch.waits,
             (unsigned long long)boot.epoch.frequency, boot.epoch.faulted,
-            boot.cd_drive != NULL);
+            boot.guest_clock ? "GUEST_CYCLES" : "PACED_HOST_TIME", boot.cd_drive != NULL);
     if (boot.cd_drive) {
         MusashiCdOwnedState cd_state;
         if (!musashi_cd_owned_get_state(boot.cd_drive, &cd_state)) cleanup_ok = 0;

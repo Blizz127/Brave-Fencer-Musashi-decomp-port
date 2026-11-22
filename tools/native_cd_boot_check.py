@@ -315,6 +315,7 @@ def run_live(binary: Path, exe: Path, cue: Path, image: Path) -> int:
         cwd = Path(temp)
         env = os.environ.copy()
         env["SDL_VIDEODRIVER"] = "x11"
+        env["MUSASHI_GUEST_CLOCK"] = "0"  # This checker verifies the host-paced profile.
         runtime = Path(f"/run/user/{os.getuid()}")
         if (runtime / "pipewire-0").exists():
             env["XDG_RUNTIME_DIR"] = str(runtime)

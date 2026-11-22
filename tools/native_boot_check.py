@@ -190,7 +190,7 @@ def main():
                           r"scope=STARTUP_AND_INPUT_SOURCE_ONLY devices_advanced=DEVICE_EPOCH", output)
         clock_ok = clock is not None and int(clock.group(1)) > 0
         epoch = re.search(r"DEVICE_EPOCH cycles=(\d+) source_edges=(\d+) cuts=(\d+) "
-                          r"waits=(\d+) frequency=(\d+) faulted=0 profile=PACED_HOST_TIME cd_advanced=0", output)
+                          r"waits=(\d+) frequency=(\d+) faulted=0 profile=GUEST_CYCLES cd_advanced=0", output)
         timer = re.search(r"TIMER2 count=([0-9a-f]+) mode=([0-9a-f]+) target=0000 "
                           r"epoch=0 profile=PACED_EVENT_SERVICED irq_enabled=0", output)
         video = re.search(r"VIDEO_TIMING timer1_cycle=(\d+) count=([0-9a-f]+) "
@@ -214,7 +214,7 @@ def main():
                         and int(video.group(4)) == ((int(epoch.group(2)) - int(video.group(5))) & 1)
                         and int(fields.get("GPUSTAT", "-1"), 16) == (0x14802000 | (int(video.group(4)) << 31))
                         and int(epoch.group(2)) >= delivered
-                        and int(epoch.group(3)) > 0 and 0 < int(epoch.group(5)) <= 0xffffffff
+                        and int(epoch.group(3)) > 0 and int(epoch.group(5)) == 33_868_800
                         and int(bu_clock.group(2)) > int(bu_clock.group(1))
                         and bu_clock.group(3) == bu_clock.group(4))
         if (run.returncode != 2 or any(fields.get(k) != v for k, v in expected.items())
