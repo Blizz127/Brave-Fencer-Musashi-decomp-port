@@ -90,7 +90,14 @@ int main(int argc,char **argv) {
         memset(ram,0,sizeof *ram);
         assert(musashi_boot_map_exe(ram,image,0x65000u));
         if (mode == REGISTERED_DELAY) {
-            static const MusashiNativeLaneEntry row = {MAIN+28u,0u,occupied_delay,"test",0u,1u,1u};
+            static const MusashiNativeLaneEntry row = {
+                .guest_pc = MAIN + 28u,
+                .cost_cycles = 0u,
+                .fn = occupied_delay,
+                .name = "test",
+                .argc = 0u,
+                .returns = 1u
+            };
             assert(musashi_native_lane_install(&row,1u) == 1);
         }
         assert(musashi_boot_run_entry_with_devices(ram,0,&devices,quiet,NULL,NULL,NULL,&stop)
