@@ -3849,6 +3849,26 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2"
+    },
+    {
+      "name": "func_80163408",
+      "region": "sc01_0077",
+      "vram": 2148938760,
+      "size": 84,
+      "source": "src/overlays/sc01_0077/80163408.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_8016345C",
+      "region": "sc01_0077",
+      "vram": 2148938844,
+      "size": 124,
+      "source": "src/overlays/sc01_0077/8016345c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
     }
   ]
 }

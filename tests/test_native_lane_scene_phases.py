@@ -402,3 +402,21 @@ def test_forest_bridge_player_callback_timing(tmp_path, vram, size):
     for region, info in (("sc01_0077", None), ("sc02_0031", {"member": "sc01_0077"})):
         result = lane.build_one(dict(row, region=region), tmp_path, {}, {}, "clang", info)
         assert result.get("rule") == "timing"
+
+
+@pytest.mark.skipif(not shutil.which("clang"), reason="clang required for native selection")
+@pytest.mark.parametrize("pc,size,region,member,rule", [
+    (0x80163408, 84, "sc01_0077", "sc01_0077", "escape"),
+    (0x8016345C, 124, "sc01_0077", "main_0012", "timing"),
+    (0x8016345C, 124, "main_0012", "sc01_0077", "timing"),
+    (0x8016345C, 124, "main_0012", "main_0012", None),
+])
+def test_forest_projectile_contact_selection(tmp_path, pc, size, region, member, rule):
+    # Keep the source constant across the power lookup cases to test member selection.
+    source = ROOT / f"src/overlays/sc01_0077/{pc:08x}.c"
+    row = dict(name=f"func_{pc:08X}", vram=pc, size=size, region=region, source=str(source))
+    info = dict(member=member, vram=pc, start=0, code=[(pc, pc + size)], data=bytes(size))
+    (tmp_path / "ir").mkdir()
+    result = lane.build_one(row, tmp_path, {}, {}, "clang", info)
+    assert result.get("rule") == rule
+    assert result["admitted"] == (rule is None)
