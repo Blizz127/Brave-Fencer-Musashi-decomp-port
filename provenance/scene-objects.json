@@ -2733,6 +2733,17 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2"
+    },
+    {
+      "name": "func_801299C8",
+      "region": "sc02_0039",
+      "vram": 2148702664,
+      "size": 632,
+      "source": "src/overlays/sc02_0039/801299c8.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "rodata_base": 2149181416
     }
   ]
 }
