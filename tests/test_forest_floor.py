@@ -76,3 +76,13 @@ def test_moving_segment_cell_retry(tmp_path):
         ROOT / "tests/forest_moving_segment_probe.c", source, "-o", binary,
     ], check=True)
     subprocess.run([binary], check=True)
+
+
+def test_actor_slope_coordinates(tmp_path):
+    binary = tmp_path / "actor-slope"
+    subprocess.run([
+        "cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-I", ROOT / "include",
+        ROOT / "tests/forest_actor_slope_probe.c", ROOT / "src/overlays/main_0012/801638a0.c",
+        ROOT / "src/main/80015978.c", ROOT / "src/main/80015954.c", "-o", binary,
+    ], check=True)
+    subprocess.run([binary], check=True)

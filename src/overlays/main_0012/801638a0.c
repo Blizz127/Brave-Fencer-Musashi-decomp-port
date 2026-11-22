@@ -1,31 +1,36 @@
 /* func_801638A0 [801638A0,80163950) - clean-room owner re-derivation (nmG). */
-#include "psx_types.h"
+/* Check the movement from the saved position and classify the contacted slope. */
+#include "forest_floor.h"
+#ifndef __mips__
+#include <string.h>
+#endif
 
-typedef struct {
-    u8 b[8];
-} Raw8_801638A0;
+extern void func_80015978(u16 *source, u16 *destination);
+extern void func_80015954(u16 *source, u16 *destination);
 
-extern s16 D_801152AA;
-extern void func_80015978(void *src, void *dst);
-extern void func_80015954(void *src, void *dst);
-extern s32 func_80135004(s32 a, void *p, void *q);
+typedef struct { u8 bytes[8]; } SavedPointBytes;
 
-s32 func_801638A0(u8 *o, void *b)
+s32 func_801638A0(u8 *actor, FloorPoint *endpoint)
 {
-    Raw8_801638A0 rec;
-    u8 *pos;
+    union {
+        SavedPointBytes raw;
+        FloorPoint point;
+    } previous;
+    u16 *position = (u16 *)(actor + 4);
 
-    rec = *(Raw8_801638A0 *)(o + 0x44);
-    pos = o + 4;
-    func_80015978(pos, b);
-    if (func_80135004(1, &rec, b) != 0) {
-        func_80015954(b, pos);
-        if (D_801152AA >= -0x578) {
+#ifdef __mips__
+    /* The original copies the eight bytes without assuming word alignment. */
+    previous.raw = *(const SavedPointBytes *)(actor + 0x44);
+#else
+    memcpy(&previous.point, actor + 0x44, sizeof previous.point);
+#endif
+    func_80015978(position, (u16 *)endpoint);
+    if (func_80135004(1, &previous.point, endpoint)) {
+        func_80015954((u16 *)endpoint, position);
+        if ((s16)D_801152A8.y >= -1400)
             return 0x8000;
-        }
-        if (D_801152AA >= -0xBCB) {
+        if ((s16)D_801152A8.y >= -3019)
             return 0x4000;
-        }
         return 0x2000;
     }
     return 0;

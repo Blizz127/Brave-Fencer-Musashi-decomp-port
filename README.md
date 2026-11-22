@@ -42,8 +42,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 22 source update covers 251 functions across seven scene overlays,
-totaling 21,796 bytes of matching executable code. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 22 source update covers 252 functions across seven scene overlays,
+totaling 21,972 bytes of matching executable code. Four mine routines scan floor probes and pass their position to the map lookup.
 The mine collision code intersects the probe with a face and tests its side planes.
 In the opening scene, one
 routine calls the handler selected by the player state byte. Another sets the
@@ -141,6 +141,13 @@ It writes the projected contact and material to the endpoint on a hit. During
 ordinary original play in room 3008, the starting-cell call was observed twice.
 The forest floor test covers first hits, retries and overlapping output. The
 player continues to execute this routine on the guest CPU.
+
+A matching actor routine gathers the current coordinates, tests the segment
+from the previous position and writes the corrected coordinates on a hit.
+It classifies the slope using the contact normal. Its source is shared with
+MAIN/0012. A no-disc test checks both signed slope thresholds and confirms
+that the actor keeps its original coordinates on a miss. The standard player
+uses the guest routine.
 
 Three additional forest routines test a moving segment against the faces in
 its grid cell. An accepted contact calls the original VectorNormalSS service
