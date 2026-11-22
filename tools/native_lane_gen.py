@@ -1084,7 +1084,22 @@ TOWER_POOL_PRIOR_SOURCE = "37f8c8016ea1b697c77467c8ee51f6fe1f89930cfacf04a68d81b
 
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
+FOREST_ATTACHMENT_EXTENTS = {
+    0x80184554: (64, 0xA9B66A3131FED9BC),
+    0x80184594: (88, 0x705927075E43A722),
+    0x80184890: (60, 0xEE6CFB631EED458E),
+    0x801848CC: (60, 0x01269D53BE3A5566),
+    0x80184A68: (132, 0x43509592C0856F97),
+    0x80184AEC: (56, 0x1C46ECE17310E51F),
+    0x80184B24: (144, 0xA5E1342C5F92A656),
+    0x80184BB4: (88, 0xF0810B0DADC53C81),
+    0x80184C0C: (192, 0x4EA25935271AEE70),
+    0x80184CCC: (132, 0xC635AB3F2A9C82CF),
+    0x80184D50: (392, 0xA4F5F95F9041CFDA),
+}
+
 SCENE_PHASE_EXTENTS = {
+    **{pc: {"sc01_0077": extent} for pc, extent in FOREST_ATTACHMENT_EXTENTS.items()},
     0x8017D3C0: {"sc03_0109": (204, 0x4005979C36E4AA48)},
     0x8017F15C: {"sc03_0113": (160, 0xD98DDB81180D7632)},
     # The six control-reset helpers share their instructions with other room members.
@@ -1339,6 +1354,10 @@ def overlay_extent_source_only(entry, src, info, extents):
         return False
     if entry.get("region") in variants or (info and info["member"] in variants):
         return True
+    if pc in FOREST_ATTACHMENT_EXTENTS and info and all(key in info for key in ("vram", "start", "data")):
+        size, digest = FOREST_ATTACHMENT_EXTENTS[pc]
+        if member_digest(info, pc, size) == digest:
+            return True
     # Compare a mine entrance callback at its complete original extent even when the
     # supplied registry reports only a prefix or includes the following function.
     if pc in (0x8017D2E0, 0x8017D384, 0x8017F07C, 0x8017F120, 0x8017D3C0, 0x8017F15C) and info and all(key in info for key in ("vram", "start", "data")):

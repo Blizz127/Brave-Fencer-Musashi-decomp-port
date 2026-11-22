@@ -876,3 +876,16 @@ def test_forest_actor_scheduler_regional_alias(tmp_path, pc, size):
         info = dict(member=member, vram=pc, start=0, data=bytes(size), code=[(pc, pc + size)]) if member else None
         result = lane.build_one(row, tmp_path, {}, {}, "clang", info)
         assert result.get("rule") == "timing"
+
+@pytest.mark.parametrize("pc,extent", lane.FOREST_ATTACHMENT_EXTENTS.items())
+def test_forest_actor_attachment_selection(tmp_path, pc, extent):
+    size, digest = extent
+    source = ROOT / f"src/overlays/sc01_0077/{pc:08x}.c"
+    alternate = tmp_path / "same_source.c"
+    alternate.write_bytes(source.read_bytes())
+    (tmp_path / "ir").mkdir()
+    row = dict(name=f"func_{pc:08X}", vram=pc, size=size, source=str(alternate))
+    info = dict(member="sc01_0077", vram=pc, start=0, data=bytes(size))
+    for region, member in (("sc01_0077", None), ("unknown", info), ("unknown", None)):
+        result = lane.build_one(dict(row, region=region), tmp_path, {}, {}, "clang", member)
+        assert result.get("rule") == "timing"

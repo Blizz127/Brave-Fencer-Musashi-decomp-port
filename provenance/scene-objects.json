@@ -5332,6 +5332,116 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2"
+    },
+    {
+      "name": "func_80184554",
+      "vram": 2149074260,
+      "size": 64,
+      "region": "sc01_0077",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "source": "src/overlays/sc01_0077/80184554.c"
+    },
+    {
+      "name": "func_80184594",
+      "vram": 2149074324,
+      "size": 88,
+      "region": "sc01_0077",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "source": "src/overlays/sc01_0077/80184594.c"
+    },
+    {
+      "name": "func_80184890",
+      "vram": 2149075088,
+      "size": 60,
+      "region": "sc01_0077",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "source": "src/overlays/sc01_0077/80184890.c"
+    },
+    {
+      "name": "func_801848CC",
+      "vram": 2149075148,
+      "size": 60,
+      "region": "sc01_0077",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "source": "src/overlays/sc01_0077/801848cc.c"
+    },
+    {
+      "name": "func_80184A68",
+      "vram": 2149075560,
+      "size": 132,
+      "region": "sc01_0077",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "source": "src/overlays/sc01_0077/80184a68.c"
+    },
+    {
+      "name": "func_80184AEC",
+      "vram": 2149075692,
+      "size": 56,
+      "region": "sc01_0077",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "source": "src/overlays/sc01_0077/80184aec.c"
+    },
+    {
+      "name": "func_80184B24",
+      "vram": 2149075748,
+      "size": 144,
+      "region": "sc01_0077",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "source": "src/overlays/sc01_0077/80184b24.c"
+    },
+    {
+      "name": "func_80184BB4",
+      "vram": 2149075892,
+      "size": 88,
+      "region": "sc01_0077",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "source": "src/overlays/sc01_0077/80184bb4.c"
+    },
+    {
+      "name": "func_80184C0C",
+      "vram": 2149075980,
+      "size": 192,
+      "region": "sc01_0077",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "source": "src/overlays/sc01_0077/80184c0c.c"
+    },
+    {
+      "name": "func_80184CCC",
+      "vram": 2149076172,
+      "size": 132,
+      "region": "sc01_0077",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "source": "src/overlays/sc01_0077/80184ccc.c"
+    },
+    {
+      "name": "func_80184D50",
+      "vram": 2149076304,
+      "size": 392,
+      "region": "sc01_0077",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "source": "src/overlays/sc01_0077/80184d50.c"
     }
   ]
 }
