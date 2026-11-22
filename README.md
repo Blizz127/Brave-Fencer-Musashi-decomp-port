@@ -61,14 +61,15 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 22 source update covers 361 regional function matches across eight scene overlays,
-totaling 51,308 bytes. The Steam Knight damage routine subtracts the incoming hit from the actor’s HP and selects its reaction. The contact routine records the hit type, damage, and position on eligible actors. A surviving attachment can queue its reaction ID in a four-entry list. When the outer armor breaks, it enables the paired inner armor and removes its reaction ID if present. Hit feedback can allocate the first free effect slot from a pool of 30. The feedback caller uses the impact coordinates for nonnegative damage and the player position after cleanup for negative damage. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 22 source update covers 364 regional function matches across eight scene overlays,
+totaling 51,676 bytes. The Steam Knight damage routine subtracts the incoming hit from the actor’s HP and selects its reaction. The contact routine records the hit type, damage, and position on eligible actors. A surviving attachment can queue its reaction ID in a four-entry list. When the outer armor breaks, it enables the paired inner armor and removes its reaction ID if present. Hit feedback can allocate the first free effect slot from a pool of 30. The feedback caller uses the impact coordinates for nonnegative damage and the player position after cleanup for negative damage. Four mine routines scan floor probes and pass their position to the map lookup.
 The mine collision code intersects the probe with a face and tests its side planes.
 A mine actor dispatches its setup or update callback according to its current state. Its setup creates the parent model or links a child to its collision box. Its update controls model visibility, damps the angle, and checks up to five segments across the box. The parent rotor changes its model angle and sound volume as the player approaches.
 A mine rotor runs its state action and synchronizes its model. Its initializer allocates the primary model and optional accessory, then issues four child spawn requests.
 The forest camera sets the rotation and translation matrices before transforming a short vector. A separate forest routine submits rectangular VRAM copies from a terminated list.
 The mine actor pool initializes a slot from its placement, assigns its owner and runs its setup handler. A rejected setup releases the slot and its model.
 The mine room selector looks up a descriptor in the room table supplied by the loaded member.
+The mine dispatches its optional state, active four-record queue and timer-dependent current mode each frame.
 The mine room setup installs its floor grid and resolves the six section offsets on first use.
 The mine camera update selects a camera, updates seven view components and publishes its guest address.
 A host test supplies the rendering callbacks and checks the matrix copy.
