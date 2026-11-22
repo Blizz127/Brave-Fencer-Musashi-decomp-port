@@ -2507,7 +2507,7 @@ static void console_bytes(void *userdata, const uint8_t *bytes, int32_t length) 
 static int source_irq_owns_draw(void *machine, const MusashiGuestIrqDraw *draw) {
     NativeBoot *boot=machine;
     return draw->memory==&boot->memory && draw->dma==&boot->dma &&
-        draw->channel==boot->gpu_dma && draw->clock==&boot->execution_clock &&
+        draw->channel==boot->gpu_dma && draw->mdec==&boot->mdec && draw->clock==&boot->execution_clock &&
         draw->gpu==&boot->gpu_io && draw->gpu->userdata==boot && draw->gpu->read32==gpu_io_read32 &&
         draw->gpu->write32==gpu_io_write32 &&
         draw->timer==&boot->timer1 && draw->timer_read16==musashi_scanline_timer_read16;
@@ -2528,7 +2528,7 @@ static int source_irq_dispatch(void *userdata, MusashiBootMemory *memory, uint32
         .memory=memory, .dma=&boot->dma, .channel=boot->gpu_dma,
         .clock=&boot->execution_clock, .gpu=&boot->gpu_io,
         .timer=&boot->timer1, .timer_read16=musashi_scanline_timer_read16,
-        .generation=boot->irq_draw_host.generation, .host=&boot->irq_draw_host
+        .generation=boot->irq_draw_host.generation, .host=&boot->irq_draw_host, .mdec=&boot->mdec
     };
     MusashiGuestIrqServices services = {.cd_dma3=boot->cd_dma, .draw=&draw, .card=&card, .spu=boot->spu ? &boot->cd_spu : NULL,
         .cd=boot->irq.cd_clock == &boot->execution_clock ? &cd : NULL};

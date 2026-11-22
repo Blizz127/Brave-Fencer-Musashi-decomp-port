@@ -4,6 +4,7 @@
 #include "musashi_sha256_digest.h"
 #include "musashi_native_lane.h"
 #include "musashi_guest_irq.h"
+#include "musashi_mdec_controller.h"
 #include "musashi_gpu_dma2.h"
 #include "musashi_cd_dma3.h"
 #include "main12_internal.h"
@@ -6132,6 +6133,7 @@ typedef struct FormatterCpu {
     const MusashiGuestIrqDraw *irq_draw;
     PendingDrawList pending_draw;
     uint32_t movie_record;
+    int movie_output;
     const MusashiExecutionClock *clock;
     const MusashiCdRegisterDevice *cd_register_device;
     const DmaRegistrationFrame *dma_registration;
@@ -8820,6 +8822,7 @@ static int reset_fill_word(MusashiBootMemory *memory, uint32_t pc, uint32_t *out
         musashi_boot_read32(memory, pc, out);
 }
 
+static int movie_callback_word(const MusashiGuestIrqImage *, MusashiBootMemory *,uint32_t,uint32_t *);
 static int formatter_fetch(MusashiBootMemory *memory, const FormatterCpu *cpu, uint32_t *out) {
     const FormatterRange *resident = NULL;
     uint32_t shape;
@@ -8829,6 +8832,7 @@ static int formatter_fetch(MusashiBootMemory *memory, const FormatterCpu *cpu, u
         if (cpu->irq_image || cpu->registration_stack) return 0;
         return dma_registration_word(memory, cpu->dma_registration, cpu->pc, out);
     }
+    if (cpu->movie_output) return movie_callback_word(cpu->irq_image,memory,cpu->pc,out);
     if (cpu->irq_image) return irq_live_word(cpu->irq_image,memory,cpu->pc,out);
     if (main12_owns_fetch(cpu)) return main12_callback_word(memory, cpu, out);
     if (main12_service_pc(cpu) && !main12_service_matches(memory, cpu)) return 0;
@@ -14974,9 +14978,14 @@ int musashi_boot_bind_irq_draw(MusashiGuestIrqImage *image, MusashiGuestIrqDrawH
  * a RAM-to-GP0 block transfer. The device retains the completed transfer's
  * mode in CHCR after it clears busy. Require the owned block to have
  * delivered its entire payload before admitting its completion handler. */
-static int irq_draw_dma_complete(const MusashiGuestIrqDraw *draw) {
+static int irq_draw_dma_complete(const MusashiGuestIrqDraw *draw, uint64_t retired) {
     MusashiGpuDma2State state;
     if (draw->dma->gpu_channel_control==0x401u) return 1;
+    /* A previous upload may finish inside the movie callback that starts the
+     * next one. The old DMA2 interrupt stays latched until its guest ACK. */
+    if (retired && draw->dma->gpu_channel_control==0x01000201u)
+        return musashi_gpu_dma2_get_state(draw->channel,&state) && !state.fault &&
+            state.transfers==retired && state.starts==retired+1u;
     return draw->dma->gpu_channel_control==0x201u &&
         musashi_gpu_dma2_get_state(draw->channel,&state) && state.chcr==0x201u &&
         state.fault==MUSASHI_GPU_DMA2_OK && state.starts && state.transfers==state.starts &&
@@ -14985,10 +14994,10 @@ static int irq_draw_dma_complete(const MusashiGuestIrqDraw *draw) {
 
 static int irq_draw_owner(const MusashiGuestIrqDraw *draw, const MusashiGuestIrqImage *image,
     MusashiBootMemory *memory, const MusashiDmaController *dma, const MusashiExecutionClock *clock,
-    const PendingDrawList *retired) {
+    const PendingDrawList *retired, uint64_t retired_upload) {
     return irq_draw_bound(image,draw) && draw->memory==memory &&
         dma && draw->dma==dma && draw->channel &&
-        dma->gpu_owner==draw->channel && draw->clock==clock && irq_draw_dma_complete(draw) &&
+        dma->gpu_owner==draw->channel && draw->clock==clock && irq_draw_dma_complete(draw,retired_upload) &&
         draw->gpu && draw->gpu->read32 && draw->timer && draw->timer_read16 &&
         cd_irq_ram_word(memory,0x8006cbccu,0x8005ba90u) &&
         irq_draw_queue(draw,memory,retired) && irq_draw_image(image,memory);
@@ -15399,6 +15408,218 @@ static int irq_card_bios(FormatterCpu *cpu, const MusashiGuestIrqCard *card, Irq
 }
 
 
+/* Only this loaded member of the user's disc owns the selected channel-one
+ * callback. Residents are read from this machine's authenticated EXE map. */
+static const struct { uint32_t start, end; uint64_t digest; } movie_callbacks[] = {
+    {0x800d24d0u,0x800d2704u,0xb2d0d9b20f3aceefull},
+    {0x800d2c88u,0x800d2ca8u,0xf2d60bce4f2fc35dull},
+    {0x800d2ef8u,0x800d2f88u,0x17076e67904bb97cull},
+    {0x800d3020u,0x800d30b8u,0x44fecbf9fe4acc6dull},
+    {0x800599b8u,0x80059a1cu,0}, {0x80059760u,0x80059888u,0},
+    {0x8005b7b0u,0x8005ba90u,0}, {0x8005ba90u,0x8005bd7cu,0},
+    {0x8005b1c4u,0x8005b400u,0}, {0x8005c020u,0x8005c054u,0},
+    {0x8004239cu,0x800424e4u,0}, {0x800426fcu,0x80042718u,0},
+    {0x800425e0u,0x80042610u,0}, {0x80042f8cu,0x80043034u,0}
+};
+static int movie_callback_word(const MusashiGuestIrqImage *image, MusashiBootMemory *m,
+                               uint32_t pc, uint32_t *word) {
+    if (!g_overlay_0004_words || !image || image->identity!=image || image->memory!=m ||
+        (pc&3u)) return 0;
+    for (unsigned i=0; i<sizeof movie_callbacks/sizeof movie_callbacks[0]; ++i) {
+        if (pc<movie_callbacks[i].start || pc>=movie_callbacks[i].end) continue;
+        if (!movie_callbacks[i].digest)
+            return cd_parent_word(image,m,pc,word) || irq_live_word(image,m,pc,word);
+        uint64_t hash;
+        return span_digest(m,movie_callbacks[i].start,
+                           (movie_callbacks[i].end-movie_callbacks[i].start)/4u,&hash) &&
+            hash==movie_callbacks[i].digest && musashi_boot_read32(m,pc,word);
+    }
+    return 0;
+}
+
+typedef struct MovieOutput {
+    uint32_t current, next, xy, wh, bytes, record, mask;
+    uint64_t gpu_transfers;
+} MovieOutput;
+
+static int movie_devices(const MusashiGuestIrqImage *image, MusashiBootMemory *m,
+    const MusashiGuestIrqDraw *draw, MusashiDmaController *dma,
+    const MusashiExecutionClock *clock, MusashiGpuDma2State *gpu) {
+    return g_overlay_0004_words && irq_draw_bound(image,draw) && draw->memory==m &&
+        dma && dma->irq && draw->dma==dma && draw->channel && dma->gpu_owner==draw->channel &&
+        draw->clock==clock && draw->gpu && draw->gpu->read32 && draw->gpu->write32 &&
+        draw->timer && draw->timer_read16 && draw->mdec && draw->mdec->ram==m && draw->mdec->dma==dma &&
+        musashi_gpu_dma2_get_state(draw->channel,gpu) && !gpu->fault &&
+        cd_irq_ram_word(m,0x8006cbc8u,movie_callbacks[0].start) &&
+        cd_irq_ram_word(m,0x8006cbccu,0x8005ba90u);
+}
+
+static int movie_output_owner(const MusashiGuestIrqImage *image, MusashiBootMemory *m,
+    const MusashiGuestIrqDraw *draw, MusashiDmaController *dma,
+    const MusashiExecutionClock *clock, MovieOutput *s) {
+    uint32_t slot, head, tail, word;
+    MusashiGpuDma2State gpu;
+    if (!movie_devices(image,m,draw,dma,clock,&gpu) ||
+        !musashi_boot_read32(m,0x800ec9b8u,&slot) || slot>1 ||
+        !musashi_boot_read32(m,0x800ec9b0u+4u*slot,&s->current) ||
+        !musashi_boot_read32(m,0x800ec9b0u+4u*(slot^1u),&s->next) ||
+        !musashi_boot_read32(m,0x800ec9d0u,&s->xy) ||
+        !musashi_boot_read32(m,0x800ec9d4u,&s->wh) ||
+        !musashi_boot_read32(m,DRAW_HEAD,&head) || head>=64u ||
+        !musashi_boot_read32(m,DRAW_TAIL,&tail) || tail!=head ||
+        !(cd_irq_ram_word(m,0x80072790u,0u) ||
+          (cd_irq_ram_word(m,0x80072790u,1u) && gpu.starts &&
+           (gpu.chcr==0x01000201u || gpu.chcr==0x201u) &&
+           cd_irq_ram_word(m,DRAW_HISTORY,0x8005b1c4u) &&
+           cd_irq_ram_word(m,DRAW_HISTORY+8u,s->next)))) return 0;
+    const MusashiMdecController *md=draw->mdec;
+    unsigned width=s->wh&0xffffu,height=s->wh>>16;
+    if (width!=16u || !height || height>512u || (s->xy&0xffffu)>1024u-width ||
+        (s->xy>>16)>512u-height || (md->command>>29)!=1u || ((md->command>>27)&3u)!=3u ||
+        !md->transfers || md->chcr[1]!=0x200u || md->bcr[1]>>16 ||
+        !md->output_due || md->cycle<md->output_due) return 0;
+    s->bytes=32u*((height+15u)&~15u);
+    if (md->output_cursor<s->bytes || md->output_cursor>md->output_size ||
+        (s->current|s->next)&3u || s->current<0x80100000u || s->next<0x80100000u ||
+        s->current>0x80200000u-s->bytes || s->next>0x80200000u-s->bytes ||
+        (s->current<s->next ? s->next-s->current : s->current-s->next)<s->bytes ||
+        md->madr[1]!=(s->current&0x00ffffffu)+s->bytes) return 0;
+    s->record=0x800c5510u+96u*head;
+    s->mask=dma->irq->mask;
+    s->gpu_transfers=gpu.transfers;
+    /* Check the whole reachable source before any game or device side effect. */
+    for (unsigned i=0;i<sizeof movie_callbacks/sizeof movie_callbacks[0];++i) {
+        uint32_t a=movie_callbacks[i].start;
+        if (movie_callbacks[i].digest) {
+            if (!movie_callback_word(image,m,a,&word)) return 0;
+        } else for (;a<movie_callbacks[i].end;a+=4u)
+            if (!movie_callback_word(image,m,a,&word)) return 0;
+    }
+    return 1;
+}
+
+/* A movie strip can be enqueued while the preceding GPU upload is busy.
+ * Identify that record by its own rectangle and alternating decoder buffers;
+ * only a completed upload to the preceding buffer may release the queue. */
+static int movie_pending_upload(const MusashiGuestIrqImage *image, MusashiBootMemory *m,
+    const MusashiGuestIrqDraw *draw, MusashiDmaController *dma,
+    const MusashiExecutionClock *clock, MovieOutput *s) {
+    uint32_t head, tail, buf[2], arg, history, wh;
+    MusashiGpuDma2State gpu;
+    if (!movie_devices(image,m,draw,dma,clock,&gpu) || gpu.chcr!=0x201u ||
+        !gpu.starts || gpu.starts!=gpu.transfers || !gpu.payload_words || gpu.header_words ||
+        gpu.accepted_in_transfer!=gpu.payload_words ||
+        !cd_irq_ram_word(m,0x80072790u,1) ||
+        !musashi_boot_read32(m,DRAW_HEAD,&head) || !musashi_boot_read32(m,DRAW_TAIL,&tail) ||
+        tail>=64u || head!=((tail+1u)&63u) ||
+        !musashi_boot_read32(m,0x800ec9b0u,&buf[0]) || !musashi_boot_read32(m,0x800ec9b4u,&buf[1]) ||
+        !musashi_boot_read32(m,0x800ec9d4u,&wh) || !cd_irq_ram_word(m,DRAW_HISTORY,0x8005b1c4u) ||
+        !musashi_boot_read32(m,DRAW_HISTORY+8u,&history)) return 0;
+    s->record=0x800c5510u+96u*tail;
+    if (!cd_irq_ram_word(m,s->record,0x8005b1c4u) ||
+        !cd_irq_ram_word(m,s->record+4u,s->record+12u) ||
+        !musashi_boot_read32(m,s->record+8u,&arg) ||
+        !musashi_boot_read32(m,s->record+12u,&s->xy) || !cd_irq_ram_word(m,s->record+16u,wh) ||
+        !((arg==buf[0] && history==buf[1]) || (arg==buf[1] && history==buf[0])) ||
+        arg==history || history!=(gpu.start_madr|0x80000000u) ||
+        (wh&0xffffu)!=16u || !(wh>>16) || (wh>>16)>512u ||
+        (s->xy&0xffffu)>1008u || (s->xy>>16)>512u-(wh>>16) ||
+        gpu.payload_words!=(wh>>16)*8u) return 0;
+    s->current=arg; s->next=history; s->wh=wh; s->bytes=32u*(((wh>>16)+15u)&~15u);
+    s->gpu_transfers=gpu.transfers; s->mask=dma->irq->mask;
+    return !(arg&3u) && arg>=0x80100000u && arg<=0x80200000u-s->bytes;
+}
+
+/* Writable storage is limited to the interrupted dispatcher stack, the selected
+ * image queue record, the overlay slice state and the resident producer's state.
+ * DMA uses only the completed and alternate buffers verified at admission. */
+static int movie_output_access(const FormatterCpu *cpu, const MovieOutput *s, uint32_t w) {
+    unsigned op=w>>26;
+    if (op<32u) return 1;
+    uint32_t a=cpu->r[(w>>21)&31u]+(uint32_t)(int32_t)(int16_t)w, v=cpu->r[(w>>16)&31u];
+    unsigned n=(op==32u || op==36u || op==40u) ? 1u : (op==33u || op==37u || op==41u) ? 2u : 4u;
+    if (op==34u || op==38u || op==42u || op==46u) a&=~3u;
+    if (a>=0x8006c9acu && a<=0x8006cabcu-n) return 1;
+    if (a>=s->record && a<=s->record+20u-n) return 1;
+    if (op<40u) {
+        if ((a>=0x800ec9b0u && a<=0x800ec9f4u-n) ||
+            (a>=0x8006ba94u && a<=0x8006ba9cu) || a==0x8006cb68u ||
+            a==0x8006cb84u || a==0x8006cb8cu || a==0x8006cbb8u || a==0x8006cbccu ||
+            (a>=0x80072740u && a<=0x80072798u-n) || (a>=0x80072858u && a<=0x800728a8u-n) ||
+            a==0x800db648u || a==0x800db64cu || a==0x800db650u || a==0x800db674u) return 1;
+        return a==0x1f801098u || a==0x1f8010f0u || a==0x1f801814u ||
+            a==0x1f801110u || a==0x1f801074u || a==0x1f8010a8u;
+    }
+    if (a==0x1f801074u) return op==41u && (!v || v==s->mask);
+    if (a==0x1f8010f0u) return op==43u && v==(cpu->irq_draw->dma->control|0x80u);
+    if (a==0x1f801090u) return op==43u && v==s->next;
+    if (a==0x1f801094u) return op==43u && (v&0xffffu)*(v>>16)==s->bytes/4u;
+    if (a==0x1f801098u) return op==43u && (!v || v==0x01000200u);
+    if (a==0x1f8010a0u) return op==43u && v==s->current;
+    if (a==0x1f8010a4u) return op==43u && (v&0xffffu)*(v>>16)==(s->wh>>16)*8u;
+    if (a==0x1f8010a8u) return op==43u && v==0x01000201u;
+    if (a==0x1f801814u) return op==43u && (v==0x04000000u || v==0x04000002u);
+    if (a==0x1f801810u) return op==43u &&
+        ((cpu->pc==0x8005b314u && v==0x01000000u) || (cpu->pc==0x8005b32cu && v==0xa0000000u) ||
+         (cpu->pc==0x8005b340u && v==s->xy) || (cpu->pc==0x8005b354u && v==s->wh));
+    if (a==0x800ec9d0u || (a==0x800ec9d2u && cpu->pc==0x800d26d4u)) return op==41u;
+    if (a==0x800ec9ccu) return op==43u && cpu->pc==0x800d2698u && v<=1u;
+    if (a==0x800ec9d8u) return op==43u && cpu->pc==0x800d26a4u && v==1u;
+    if (a==0x800ec9f0u) return op==43u && cpu->pc==0x800d26ccu && v<=1u;
+    return op==43u && (a==0x800ec9b8u || a==0x80072790u ||
+        (a>=0x8007287cu && a<=0x80072884u) || (a>=DRAW_HEAD && a<=0x80072898u) ||
+        a==0x800728a0u || a==0x800728a4u);
+}
+
+static int movie_output_execute(FormatterCpu *cpu, MusashiBootMemory *m,
+    const MusashiGuestIrqDraw *draw, const MovieOutput *s, MusashiGuestIrqStop *stop) {
+    struct { uint32_t ret, sp; } frames[12]={{cpu->r[31],cpu->r[29]}};
+    unsigned depth=1;
+    MusashiCdRegisterDevice registers={.userdata=draw->mdec->dma,
+        .read32=musashi_dma_controller_read32,.write32=musashi_dma_controller_write32};
+    cpu->movie_output=1;
+    cpu->irq_draw=draw; cpu->gpu_io_device=draw->gpu; cpu->cd_register_device=&registers;
+    while (depth && stop->instructions<8192u) {
+        uint32_t w, pc=cpu->pc;
+        stop->pc=pc;
+        if (!irq_draw_bound(cpu->irq_image,draw) || !movie_callback_word(cpu->irq_image,m,pc,&w) ||
+            !movie_output_access(cpu,s,w)) break;
+        unsigned op=w>>26, fn=w&63u;
+        int ret=!op && fn==8u && ((w>>21)&31u)==31u;
+        int call=op==3u || (!op && fn==9u);
+        if (ret || call) {
+            uint32_t target=op==3u ? ((pc+4u)&0xf0000000u)|((w&0x03ffffffu)<<2) : cpu->r[(w>>21)&31u];
+            if (ret) {
+                if (target!=frames[depth-1].ret || cpu->r[29]!=frames[depth-1].sp) break;
+            } else {
+                unsigned i=0;
+                for (;i<sizeof movie_callbacks/sizeof movie_callbacks[0];++i)
+                    if (target==movie_callbacks[i].start) break;
+                if (i==sizeof movie_callbacks/sizeof movie_callbacks[0] || depth>=sizeof frames/sizeof frames[0] ||
+                    (!op && !((pc==0x800599fcu && target==0x8005b7b0u) ||
+                             (pc==0x800425f8u && target==0x80042f8cu) ||
+                             (pc==0x8005bbe4u && target==0x8005b1c4u)))) break;
+                frames[depth].ret=pc+8u; frames[depth++].sp=cpu->r[29];
+            }
+            if (stop->instructions+2u>8192u || !formatter_step(m,cpu)) break;
+            ++stop->instructions;
+            stop->pc=cpu->pc;
+            if (!cpu->delay_slot || cpu->pc!=pc+4u || cpu->npc!=target ||
+                !movie_callback_word(cpu->irq_image,m,cpu->pc,&w) ||
+                !movie_output_access(cpu,s,w) || !formatter_step(m,cpu)) break;
+            ++stop->instructions;
+            if (cpu->pc!=target || cpu->npc!=target+4u || cpu->delay_slot) break;
+            if (ret) --depth;
+        } else {
+            if ((!op && fn==8u) || !formatter_step(m,cpu)) break;
+            ++stop->instructions;
+        }
+    }
+    cpu->movie_output=0;
+    cpu->irq_draw=NULL; cpu->gpu_io_device=NULL; cpu->cd_register_device=NULL;
+    return !depth;
+}
+
 int musashi_boot_execute_guest_irq(const MusashiGuestIrqImage *image, MusashiBootMemory *memory,
     uint32_t context, const uint32_t installed[12], const MusashiIrqDispatchDevice *io,
     const MusashiExecutionClock *clock, MusashiDmaController *dma, MusashiGuestIrqStop *stop) {
@@ -15424,7 +15645,9 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
     IrqGuestReturn stack[8];
     unsigned depth = 0;
     uint32_t selected_slot = 0, selected_vblank_slot = 0;
-    unsigned draw_selection = 0, cd_dma_selection = 0;
+    unsigned draw_selection = 0, cd_dma_selection = 0, movie_selection = 0;
+    MovieOutput slice={0};
+    uint64_t retired_upload=0;
     PendingDrawList retired_draw = {0};
     uint32_t reg_address;
     if (!stop) return 0;
@@ -15468,7 +15691,7 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
              * the live registration and machine ownership before the callee. */
             if (origin==0x8005ba90u) {
                 PendingDrawList current={0};
-                if (!irq_draw_owner(cpu.irq_draw,image,memory,dma,clock,&retired_draw)) return 0;
+                if (!irq_draw_owner(cpu.irq_draw,image,memory,dma,clock,&retired_draw,retired_upload)) return 0;
                 pending_draw_list(cpu.irq_draw,memory,&current);
                 if (!same_draw_item(&current,&cpu.pending_draw)) return 0;
             }
@@ -15492,7 +15715,7 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
         unsigned draw_reg = (w>>16)&31u;
         int draw_return = 0;
         int jump = op == 2u || op == 3u || (!op && (fn == 8u || fn == 9u));
-        int cd_call = 0, card_bios = 0, read_entry = 0, read_return = 0;
+        int movie_call = 0, strip_upload=0, cd_call = 0, card_bios = 0, read_entry = 0, read_return = 0;
         if (origin == 0x8006005cu && (op != 35u || !irq_card_case(image, &cpu, w, &selected_card_case)))
             return 0;
         if (jump) {
@@ -15526,6 +15749,12 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
             } else if (op == 2u && region == dest && region >= IRQ_GAME_VBLANK &&
                        region < IRQ_OUTSIDE) {
                 /* A fixed in-function jump does not create an ABI return frame. */
+            } else if (origin==0x80042ea8u && !op && fn==9u && target==movie_callbacks[0].start) {
+                if (movie_selection!=3 || region!=IRQ_DMA || depth!=2 ||
+                    stack[0].callee!=IRQ_DISPATCH || stack[1].callee!=IRQ_DMA ||
+                    selected_slot!=0x8006bb0cu || cpu.r[29]!=installed[1]-0x58u || !services ||
+                    !movie_output_owner(image,memory,services->draw,dma,clock,&slice)) return 0;
+                movie_selection=0; movie_call=1;
             } else if (origin==0x80042ea8u && !op && fn==9u &&
                        target==irq_code[IRQ_CD_DMA].start) {
                 if (cd_dma_selection!=3 || region!=IRQ_DMA || depth!=2 ||
@@ -15535,12 +15764,19 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
                     !(cpu.movie_record=irq_movie_record(image,memory))) return 0;
                 cd_dma_selection=0;
                 stack[depth++]=(IrqGuestReturn){origin+8u,cpu.r[29],IRQ_CD_DMA};
+            } else if (origin==0x80042ea8u && !op && fn==9u && draw_selection==3 &&
+                       target==0x8005ba90u && services &&
+                       movie_pending_upload(image,memory,services->draw,dma,clock,&slice)) {
+                if (region!=IRQ_DMA || depth!=2 || stack[0].callee!=IRQ_DISPATCH ||
+                    stack[1].callee!=IRQ_DMA || selected_slot!=0x8006bb0cu ||
+                    cpu.r[29]!=installed[1]-0x58u) return 0;
+                draw_selection=0; strip_upload=1;
             } else if (origin==0x80042ea8u && !op && fn==9u) {
                 const MusashiGuestIrqDraw *draw=services ? services->draw : NULL;
                 if (draw_selection!=3 || target!=0x8005ba90u || dest!=IRQ_DRAW_COMPLETE ||
                     region!=IRQ_DMA || depth!=2 || stack[0].callee!=IRQ_DISPATCH ||
                     stack[1].callee!=IRQ_DMA || selected_slot!=0x8006bb0cu ||
-                    cpu.r[29]!=installed[1]-0x58u || !irq_draw_owner(draw,image,memory,dma,clock,&retired_draw)) return 0;
+                    cpu.r[29]!=installed[1]-0x58u || !irq_draw_owner(draw,image,memory,dma,clock,&retired_draw,retired_upload)) return 0;
                 if (pending_draw_list(draw,memory,&cpu.pending_draw)) {
                     MusashiGpuDma2State channel;
                     uint32_t word;
@@ -15614,6 +15850,7 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
         }
         if (!formatter_step(memory,&cpu)) return 0;
         if (draw_observe) {
+            movie_selection=irq_dma_selection(movie_selection,1,movie_callbacks[0].start,origin,op,draw_address,cpu.r[draw_reg]);
             draw_selection=irq_dma_selection(draw_selection,2,0x8005ba90u,origin,op,draw_address,cpu.r[draw_reg]);
             cd_dma_selection=irq_dma_selection(cd_dma_selection,3,irq_code[IRQ_CD_DMA].start,
                 origin,op,draw_address,cpu.r[draw_reg]);
@@ -15632,10 +15869,22 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
                 /* The device may already have raised completion for this
                  * just-submitted list. A second dispatch in this same IRQ
                  * can observe idle, after the guest published its history. */
+                retired_upload=0;
                 retired_draw=cpu.pending_draw;
                 cpu.pending_draw=(PendingDrawList){0};
                 cpu.irq_draw=NULL;
                 cpu.gpu_io_device=NULL;
+            }
+            if (strip_upload && (cpu.r[31]!=origin+8u ||
+                !movie_pending_upload(image,memory,services->draw,dma,clock,&slice) ||
+                !movie_output_execute(&cpu,memory,services->draw,&slice,stop))) return 0;
+            if (movie_call) {
+                if (cpu.r[31]!=origin+8u || !movie_output_owner(image,memory,services->draw,dma,clock,&slice) ||
+                    !movie_output_execute(&cpu,memory,services->draw,&slice,stop)) return 0;
+                MusashiGpuDma2State gpu;
+                if (!musashi_gpu_dma2_get_state(services->draw->channel,&gpu)) return 0;
+                if ((dma->interrupt&0x04000000u) && gpu.transfers>slice.gpu_transfers)
+                    retired_upload=gpu.transfers;
             }
             if (cd_call) {
                 if (cpu.r[31]!=origin+8u || !cd_irq_ram_word(memory,selected_slot,target))

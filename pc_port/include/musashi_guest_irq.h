@@ -83,6 +83,7 @@ typedef struct MusashiGuestIrqDraw {
     int (*timer_read16)(void *, uint32_t, uint16_t *);
     uint64_t generation;
     const MusashiGuestIrqDrawHost *host;
+    const struct MusashiMdecController *mdec;
 } MusashiGuestIrqDraw;
 int musashi_boot_bind_irq_draw(MusashiGuestIrqImage *, MusashiGuestIrqDrawHost *,
     void *machine, int (*owns)(void *, const MusashiGuestIrqDraw *));
