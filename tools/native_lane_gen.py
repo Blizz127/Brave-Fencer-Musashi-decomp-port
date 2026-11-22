@@ -1405,6 +1405,8 @@ def mine_member_source_only(entry, src, info):
 
 # This forest member rotates the local vector through guest matrix services.
 SC01_FOREST_MOTION_EXTENTS = {
+    # Player frame initialization orders controller, animation and scene callbacks.
+    0x80146128: (568, 0x293FA1C5C6D94373),
     # Normal player action still uses the guest scene, animation and contact services.
     0x8015A3C8: (1972, 0x9ACBD2045A1A10EF),
     0x80147DC0: (132, 0x03C49C0F21FBAF45),
@@ -1423,6 +1425,13 @@ def scene_player_motion_source_only(entry, src, info):
         if extent is None:
             return False
         regions = ("sc01_0000", "sc01_0077") if pc == 0x801473EC else ("sc01_0000",)
+    if pc == 0x80146128 and info:
+        member = info["member"]
+        if member == entry.get("region") and member not in regions:
+            # An independently retained implementation in another member keeps its existing policy.
+            other = ROOT / "src/overlays" / member / f"{pc:08x}.c"
+            if other.is_file() and src.read_bytes() == other.read_bytes():
+                return False
     if entry.get("region") in regions or (info and info["member"] in regions):
         return True
     if info and entry["size"] == extent[0] and member_digest(info, pc, extent[0]) == extent[1]:

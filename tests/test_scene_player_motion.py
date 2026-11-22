@@ -131,3 +131,24 @@ def test_normal_forest_action_stays_source_only(tmp_path):
     copied = tmp_path / "action.c"
     copied.write_bytes(source.read_bytes())
     assert lane.build_one(dict(row, region="other", source=str(copied)), tmp_path, {}, {}, "clang")["rule"] == "memory"
+
+
+
+def test_forest_frame_initializer_keeps_guest_timing(tmp_path, monkeypatch):
+    pc, size = 0x80146128, 568
+    rel = "src/overlays/sc01_0077/80146128.c"
+    row = dict(name="func_80146128", vram=pc, size=size, source=rel, region="sc01_0077")
+    (tmp_path / "ir").mkdir()
+    assert lane.build_one(row, tmp_path, {}, {}, "clang")["rule"] == "memory"
+    copied = tmp_path / "copy.c"
+    copied.write_bytes((ROOT / rel).read_bytes())
+    other = dict(row, region="other", source=str(copied))
+    assert lane.build_one(other, tmp_path, {}, {}, "clang")["rule"] == "memory"
+    data = bytes(size)
+    info = dict(member="other", vram=pc, start=0, code=[(pc, pc + size)], data=data)
+    monkeypatch.setitem(lane.SC01_FOREST_MOTION_EXTENTS, pc, (size, lane.fnv1a64(data)))
+    copied.write_text("int func_80146128(void) { return 1; }\n")
+    assert lane.build_one(other, tmp_path, {}, {}, "clang", info)["rule"] == "memory"
+    canonical = ROOT / "src/overlays/main_0012/80146128.c"
+    main = dict(row, region="main_0012", source=str(canonical))
+    assert not lane.scene_player_motion_source_only(main, canonical, dict(info, member="main_0012"))
