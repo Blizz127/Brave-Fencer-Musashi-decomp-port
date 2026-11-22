@@ -36,6 +36,12 @@ typedef struct MusashiGuestIrqImage {
     /* Unvisited gaps in the busy-5 worker stay unpopulated. */
     uint8_t card_read_worker[0x150], card_seek_bios[0xc], card_read_bios[0xc];
     uint32_t card_case_targets[4];
+    /* Resident game sound sequencer, captured from the mounted executable. */
+    uint8_t level_slot_tick[0xa5c], level_voice_choice[0xdc], level_voice_command[0x290];
+    uint8_t level_motion_mask[0x6c], level_voice_mask[0x6c];
+    uint8_t title_note[0x34], file_note[0x68];
+    uint8_t channel_pitch[0x21c], channel_release[0x2c];
+    uint8_t channel_expiry[0x110], channel_cond_release[0x74];
     /* Packed source ranges admitted by the CD frame. Populated from this
      * machine's verified image; neither instructions nor data ship here. */
     MusashiGuestCdCodeSpan cd_spans[64];
@@ -94,6 +100,8 @@ typedef struct MusashiGuestIrqServices {
     const MusashiGuestIrqCard *card;
     const MusashiGuestIrqDraw *draw;
     const struct MusashiCdDma3 *cd_dma3;
+    /* Observe the bound SPU's current EON without performing a guest bus access. */
+    int (*spu_reverb_mask)(const MusashiCdSpuDevice *, uint32_t *);
 } MusashiGuestIrqServices;
 
 int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *,

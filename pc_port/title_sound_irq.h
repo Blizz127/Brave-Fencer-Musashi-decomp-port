@@ -1,0 +1,919 @@
+/* Mounted title and File 1 sequences. The callback uses the existing guest
+ * CPU and clock. The intervals cover the observed kind-5 note, loop, wait
+ * and last-channel release paths. */
+static int irq_level_slot_pc(uint32_t pc) {
+    static const struct { uint16_t start, end; } spans[] = {
+        {0x000u, 0x044u}, {0x068u, 0x078u}, {0x07cu, 0x0a0u},
+        {0x138u, 0x15cu}, {0x190u, 0x19cu}, {0x1a8u, 0x1bcu},
+        {0x1d8u, 0x380u}, {0x3c8u, 0x434u}, {0x484u, 0x49cu},
+        {0x4b0u, 0x4bcu}, {0x4c0u, 0x518u}, {0x51cu, 0x5b4u},
+        {0x61cu, 0x698u}, {0x6c8u, 0x75cu}, {0x764u, 0x7c4u},
+        {0x7c8u, 0x7dcu}, {0x7e8u, 0x81cu}, {0x830u, 0x868u},
+        {0x8f0u, 0x960u}, {0x988u, 0x998u}, {0xa14u, 0xa20u},
+        {0xa28u, 0xa5cu},
+    };
+    uint32_t offset = pc - 0x8003388cu;
+    for (size_t i = 0; i < sizeof spans / sizeof spans[0]; ++i) {
+        if (offset < spans[i].start) return 0;
+        if (offset < spans[i].end) return 1;
+    }
+    return 0;
+}
+
+/* Four resident sound helpers called by the sequence slot's first note.
+ * Each region is populated from the installed executable by irq_code. */
+static int irq_level_leaf_pc(uint32_t pc) {
+    return (pc >= 0x80030ca4u && pc <= 0x80030d34u) ||
+           (pc >= 0x80030d6cu && pc <= 0x80030d7cu) ||
+           (pc >= 0x800316f8u && pc <= 0x80031718u) ||
+           (pc >= 0x80031980u && pc <= 0x80031984u) ||
+           (pc >= 0x8002f064u && pc <= 0x8002f0ccu) ||
+           (pc >= 0x8002eff8u && pc <= 0x8002f030u) ||
+           (pc >= 0x8002f05cu && pc <= 0x8002f060u);
+}
+
+static uint32_t irq_level_leaf_target(uint32_t call) {
+    switch (call) {
+    case 0x80033d64u: return 0x80030ca4u;
+    case 0x80033f9cu: return 0x800316f8u;
+    case 0x800341c8u: return 0x8002f064u;
+    case 0x800341d4u: return 0x8002eff8u;
+    default: return 0;
+    }
+}
+
+/* The parent selects the motion mask from the local note field and the
+ * signed threshold. Both branches reach the same call and return address. */
+static int irq_level_motion_mode(const FormatterCpu *cpu) {
+    if (cpu->r[29] != 0x8006c9ccu || cpu->r[20] != cpu->r[29] + 16u) return -1;
+    MusashiBootMemory *ram = cpu->irq_image->memory;
+    const uint8_t *field = musashi_boot_ram_span(ram, cpu->r[20] + 12u, 1);
+    uint16_t threshold;
+    if (!field || !musashi_boot_read16(ram, 0x800a4ef6u, &threshold)) return -1;
+    return threshold < 0x8000u && *field < threshold;
+}
+
+static int irq_level_leaf_call(const FormatterCpu *cpu, uint32_t word, uint32_t target) {
+    if (cpu->pc == 0x800341c8u) {
+        int mode = irq_level_motion_mode(cpu);
+        if (mode < 0 || cpu->r[2] != (unsigned)mode || cpu->r[4] != (unsigned)mode) return 0;
+    }
+    return (word >> 26) == 3u && target && target == irq_level_leaf_target(cpu->pc) &&
+           cpu->level_slot && cpu->r[16] == cpu->level_slot && cpu->r[29] == 0x8006c9ccu;
+}
+
+/* The parent holds the chosen channel in S1 and the corresponding mixer
+ * record in S2. Each eight-entry array has its own stride. */
+static int irq_level_leaf_channel(const FormatterCpu *cpu, unsigned *index) {
+    uint32_t channel = cpu->r[17];
+    if (channel < 0x800a4988u) return 0;
+    uint32_t offset = channel - 0x800a4988u;
+    if (offset >= 8u * 0x54u || offset % 0x54u) return 0;
+    *index = offset / 0x54u;
+    return cpu->r[18] == 0x800a4c28u + *index * 0x48u;
+}
+
+static int irq_level_leaf_entry(const FormatterCpu *cpu, MusashiBootMemory *ram) {
+    uint32_t call = cpu->r[31] - 8u, value, mask;
+    unsigned index;
+    if (!cpu->level_slot || cpu->r[16] != cpu->level_slot || cpu->r[29] != 0x8006c9ccu ||
+        !irq_level_leaf_target(call) || cpu->pc != irq_level_leaf_target(call)) return 0;
+    if (cpu->pc == 0x80030ca4u) {
+        uint16_t priority;
+        const uint8_t *channels = musashi_boot_ram_span(ram, 0x800a4988u, 8u * 0x54u);
+        if (!channels || !musashi_boot_read16(ram, cpu->r[29] + 0x14u, &priority) ||
+            cpu->r[4] != priority) return 0;
+        /* A full pool enters a separate priority/voice-release path. */
+        for (unsigned i = 0; i < 8u; ++i)
+            if (!channels[i * 0x54u + 0x4eu]) return 1;
+        return 0;
+    }
+    if (!irq_level_leaf_channel(cpu, &index) || cpu->r[21] != index) return 0;
+    if (cpu->pc == 0x800316f8u)
+        return cpu->r[4] == cpu->r[17] && musashi_boot_read32(ram, cpu->r[4] + 0x14u, &value) && !value;
+    int mode = cpu->pc == 0x8002eff8u ? 1 : irq_level_motion_mode(cpu);
+    return mode >= 0 && cpu->r[4] == (unsigned)mode &&
+           musashi_boot_read32(ram, cpu->r[18], &value) &&
+           musashi_boot_read32(ram, 0x80073180u + 4u * index, &mask) &&
+           mask == (1u << (16u + index)) && cpu->r[5] == value && value == mask;
+}
+
+static int irq_level_leaf_return(const FormatterCpu *cpu, uint32_t target) {
+    if (!cpu->level_slot || cpu->r[16] != cpu->level_slot || cpu->r[29] != 0x8006c9ccu ||
+        cpu->r[31] != target) return 0;
+    switch (cpu->pc) {
+    case 0x80030d78u: {
+        unsigned index = cpu->r[6];
+        if (target != 0x80033d6cu || index >= 8u || cpu->r[2] != index + 1u ||
+            cpu->r[5] != 0x800a4990u + index * 0x54u) return 0;
+        const uint8_t *channels = musashi_boot_ram_span(cpu->irq_image->memory,
+                                                       0x800a4988u, 8u * 0x54u);
+        if (!channels || channels[index * 0x54u + 0x4eu]) return 0;
+        for (unsigned i = 0; i < index; ++i)
+            if (!channels[i * 0x54u + 0x4eu]) return 0;
+        return 1;
+    }
+    case 0x80031980u: return target == 0x80033fa4u;
+    case 0x8002f0c8u: {
+        unsigned index;
+        uint32_t enabled, disabled;
+        int mode = irq_level_motion_mode(cpu);
+        if (target != 0x800341d0u || mode < 0 || !irq_level_leaf_channel(cpu, &index) ||
+            cpu->r[21] != index) return 0;
+        uint32_t mask = 1u << (16u + index);
+        return cpu->r[5] == mask && cpu->r[2] == ~mask &&
+               musashi_boot_read32(cpu->irq_image->memory, 0x800c7d2cu, &enabled) &&
+               musashi_boot_read32(cpu->irq_image->memory, 0x800a2ba0u, &disabled) &&
+               (enabled & mask) == (mode ? mask : 0u) &&
+               (disabled & mask) == (mode ? 0u : mask);
+    }
+    case 0x8002f05cu: return target == 0x800341dcu;
+    default: return 0;
+    }
+}
+
+static int irq_level_leaf_data(const FormatterCpu *cpu, uint32_t word, uint32_t address) {
+    unsigned op = word >> 26;
+    uint32_t pc = cpu->pc;
+    if (!cpu->level_slot) return 0;
+    if (pc >= 0x80030ca4u && pc < 0x80030d80u) {
+        uint32_t frame = cpu->r[29];
+        if (frame != 0x8006c9a4u || cpu->r[31] != 0x80033d6cu) return 0;
+        if (pc == 0x80030ca8u)
+            return op == 43u && address == frame + 32u && cpu->r[16] == cpu->level_slot;
+        unsigned index = cpu->r[6];
+        if (index >= 8u) return 0;
+        uint32_t row = 0x800a4988u + index * 0x54u;
+        if (cpu->r[16] != row || cpu->r[5] != row + 8u) return 0;
+        switch (pc) {
+        case 0x80030cc0u: return op == 43u && address == frame + 36u;
+        case 0x80030cc4u:
+        case 0x80030cecu: return op == 40u && address == frame + 26u;
+        case 0x80030cc8u: return op == 36u && address == row + 0x4eu;
+        case 0x80030cd8u: return op == 36u && address == frame + 26u;
+        case 0x80030ce8u:
+        case 0x80030d00u: {
+            const uint8_t *active = musashi_boot_ram_span(cpu->irq_image->memory, row + 0x4eu, 1);
+            return op == 37u && address == row + 8u && active && *active;
+        }
+        case 0x80030cf0u:
+        case 0x80030d1cu: return op == 43u && address == frame + 16u;
+        case 0x80030cf4u:
+        case 0x80030d20u: return op == 43u && address == frame + 20u;
+        case 0x80030cfcu:
+        case 0x80030d18u: return op == 41u && address == frame + 24u;
+        case 0x80030d04u: return op == 37u && address == frame + 24u;
+        case 0x80030d6cu: return op == 35u && address == frame + 36u;
+        case 0x80030d70u: return op == 35u && address == frame + 32u;
+        default: return 0;
+        }
+    }
+    unsigned channel_index;
+    if (cpu->r[29] != 0x8006c9ccu || cpu->r[16] != cpu->level_slot ||
+        !irq_level_leaf_channel(cpu, &channel_index) || cpu->r[21] != channel_index) return 0;
+    if (pc >= 0x800316f8u && pc < 0x80031988u) {
+        uint32_t channel = cpu->r[17], command;
+        if (cpu->r[5] != channel) return 0;
+        switch (pc) {
+        case 0x80031700u: return op == 35u && address == channel + 0x14u &&
+            musashi_boot_read32(cpu->irq_image->memory, address, &command) && !command;
+        case 0x80031704u: return op == 35u && address == channel + 0x24u;
+        case 0x8003170cu: return op == 40u && address == channel + 0x37u;
+        case 0x80031710u: return op == 43u && address == channel + 0x18u;
+        case 0x80031718u: return op == 43u && address == channel + 0x20u;
+        default: return 0;
+        }
+    }
+    if (pc >= 0x8002f070u && pc < 0x8002f0c8u &&
+        (cpu->r[31] != 0x800341d0u || irq_level_motion_mode(cpu) != (pc < 0x8002f0a0u)))
+        return 0;
+    switch (pc) {
+    case 0x8002f074u: return op == 35u && address == 0x800a2ba0u;
+    case 0x8002f07cu: return op == 35u && address == 0x800c7d2cu;
+    case 0x8002f08cu: return op == 43u && address == 0x800a2ba0u;
+    case 0x8002f094u: return op == 43u && address == 0x800c7d2cu;
+    case 0x8002f0a4u: return op == 35u && address == 0x800c7d2cu;
+    case 0x8002f0acu: return op == 35u && address == 0x800a2ba0u;
+    case 0x8002f0bcu: return op == 43u && address == 0x800c7d2cu;
+    case 0x8002f0c4u: return op == 43u && address == 0x800a2ba0u;
+    case 0x8002f008u: return op == 35u && address == 0x800a2b98u;
+    case 0x8002f010u: return op == 35u && address == 0x800c7d20u;
+    case 0x8002f020u: return op == 43u && address == 0x800a2b98u;
+    case 0x8002f028u: return op == 43u && address == 0x800c7d20u;
+    default: return 0;
+    }
+}
+
+/* The levels callback visits eight resident sound slots. Its JAL sets A0
+ * from the current slot and its delay instruction sets A1 from the index. */
+static uint32_t irq_level_slot(const FormatterCpu *cpu, MusashiBootMemory *ram) {
+    uint32_t index = cpu->r[17];
+    uint16_t kind;
+    if (index >= 8u) return 0;
+    uint32_t slot = 0x800a46e8u + index * 0x54u;
+    const uint8_t *paused = musashi_boot_ram_span(ram, 0x800a4f17u, 1);
+    if (!paused || *paused || slot != cpu->r[4] || slot != cpu->r[18] ||
+        !musashi_boot_read16(ram, slot, &kind) || (kind & 0x3fu) != 5u)
+        return 0;
+    return slot;
+}
+
+/* The title and File 1 use two resident, bank-zero request streams.
+ * Each live stream must still match the copy taken when the EXE was mapped.
+ * The next entry's data address bounds File 1. The entry table bounds the
+ * last stream. The slot keeps the original start at +16 and advances +12. */
+static int irq_level_note_read(const FormatterCpu *cpu, uint32_t word, uint32_t address) {
+    uint32_t song, cursor, entry, limit, size;
+    uint16_t bank;
+    const uint8_t *mapped;
+    MusashiBootMemory *ram = cpu->irq_image->memory;
+    if (!cpu->level_slot || cpu->r[16] != cpu->level_slot ||
+        !musashi_boot_read16(ram, cpu->level_slot + 0x34u, &bank) || bank ||
+        !musashi_boot_read32(ram, cpu->level_slot + 16u, &song) ||
+        !musashi_boot_read32(ram, cpu->level_slot + 12u, &cursor)) return 0;
+    if (song == 0x80068a20u) {
+        entry = 0x80068a54u + 21u * 12u;
+        size = sizeof cpu->irq_image->title_note;
+        mapped = cpu->irq_image->title_note;
+    } else if (song == 0x80068960u) {
+        entry = 0x80068a54u + 18u * 12u;
+        size = sizeof cpu->irq_image->file_note;
+        mapped = cpu->irq_image->file_note;
+        if (!cd_irq_ram_word(ram, entry + 12u, song + size)) return 0;
+    } else return 0;
+    limit = song + size;
+    if (!cd_irq_ram_word(ram, entry, song) || cursor < song || cursor >= limit ||
+        (cursor & 3u) || address != cpu->r[5] || address < song || address > limit - 4u ||
+        (address & 3u)) return 0;
+    const uint8_t *live = musashi_boot_ram_span(ram, song, size);
+    if (!live || memcmp(live, mapped, size)) return 0;
+    unsigned op = word >> 26;
+    switch (cpu->pc) {
+    case 0x80033ad0u: case 0x80033b18u: case 0x80033b2cu:
+    case 0x80033b7cu: case 0x80033ba0u:
+        return op == 35u;
+    case 0x80033b6cu:
+        return op == 37u;
+    default:
+        return 0;
+    }
+}
+
+/* The dispatch moves the command number to V1, reads its address from
+ * the installed table, and jumps through the loaded target. */
+static uint32_t irq_level_case_target(uint32_t selector) {
+    switch (selector) {
+    case 0: return 0x80033b08u;
+    case 1: return 0x80033b90u;
+    case 2: return 0x80033bfcu;
+    case 5: return 0x80033c54u;
+    case 7: return 0x80033d10u;
+    default: return 0;
+    }
+}
+
+/* A note has selected an instrument before these reads. Validate the
+ * installed bank pointer and the descriptor's instrument number together.
+ * Each instrument record is twelve bytes. */
+static int irq_level_instrument(const FormatterCpu *cpu, uint32_t *row) {
+    MusashiBootMemory *ram = cpu->irq_image->memory;
+    const uint8_t *instrument = musashi_boot_ram_span(ram, cpu->r[29] + 27u, 1);
+    uint32_t bank = cpu->r[22], base;
+    if (!instrument || cpu->r[20] != cpu->r[29] + 16u) return 0;
+    if (bank == 0 && *instrument == 26u) base = 0x800a5f68u;
+    else if (bank == 3u && (*instrument == 0u || *instrument == 3u)) base = 0x800a6180u;
+    else return 0;
+    if (!cd_irq_ram_word(ram, 0x8006a970u + bank * 4u, base)) return 0;
+    *row = base + 12u * *instrument;
+    return 1;
+}
+
+
+/* A single sequence command refers to the selected slot, the chosen
+ * channel/mixer pair, its local note descriptor, and a bank instrument row.
+ * The issue word has already been compared to the mounted executable. */
+static int irq_level_slot_data(const FormatterCpu *cpu, uint32_t word, uint32_t address) {
+    uint32_t slot = cpu->level_slot, pc = cpu->pc;
+    unsigned op = word >> 26, base = (word >> 21) & 31u;
+    unsigned width = op == 32u || op == 36u || op == 40u ? 1u :
+                     op == 33u || op == 37u || op == 41u ? 2u :
+                     op == 35u || op == 43u ? 4u : 0u;
+    if (!slot || !width || (address & (width - 1u)) || cpu->r[29] != 0x8006c9ccu) return 0;
+
+    uint32_t frame = cpu->r[29], width_end = address + width;
+    if (width_end <= address) return 0;
+    if (base == 29u && ((address >= frame + 88u && width_end <= frame + 128u) ||
+                        (address >= frame + 16u && width_end <= frame + 36u))) return 1;
+    if (base == 20u && cpu->r[20] == frame + 16u && op < 40u &&
+        address >= frame + 16u && width_end <= frame + 36u) return 1;
+    if (base == 16u && cpu->r[16] == slot && address >= slot && width_end <= slot + 0x54u)
+        return 1;
+    if (pc == 0x8003391cu || pc == 0x800340c4u) {
+        if (cpu->r[4] >= 3u) return 0;
+        uint32_t ramp = slot + 28u + cpu->r[4] * 8u;
+        return pc == 0x8003391cu ? op == 36u && address == ramp + 6u :
+                                    op == 37u && address == ramp;
+    }
+    unsigned channel;
+    if (pc >= 0x80033df0u && irq_level_leaf_channel(cpu, &channel) && cpu->r[21] == channel) {
+        if (base == 17u && address >= cpu->r[17] && width_end <= cpu->r[17] + 0x54u) return 1;
+        if (base == 18u && address >= cpu->r[18] && width_end <= cpu->r[18] + 0x48u) return 1;
+        if (pc == 0x80033fa0u) return op == 40u && address == slot + 58u + channel;
+        if (pc == 0x80033fc4u) return op == 35u && address == 0x80073180u + 4u * channel;
+    }
+    if (base == 5u) return irq_level_note_read(cpu, word, address);
+    if (pc == 0x80033a78u || pc == 0x80033d18u)
+        return op == 36u && cpu->r[16] == slot && cpu->r[4] < 8u &&
+               address == slot + 58u + cpu->r[4];
+    if (op >= 40u) return 0;
+    uint32_t row;
+    switch (pc) {
+    case 0x80033af8u:
+        return op == 35u && irq_level_case_target(cpu->r[3]) &&
+               address == 0x80073120u + 4u * cpu->r[3];
+    case 0x80033d98u:
+        return op == 33u && (cpu->r[19] == 0u || cpu->r[19] == 0x57u) &&
+               address == 0x800c5328u + 4u * cpu->r[19];
+    case 0x80033e04u:
+        return op == 35u && irq_level_instrument(cpu, &row) &&
+               address == 0x8006a970u + 4u * cpu->r[22];
+    case 0x80033e10u: case 0x80033e1cu: case 0x80033e28u: case 0x80033e34u: {
+        if (!irq_level_instrument(cpu, &row) || cpu->r[3] != row) return 0;
+        uint32_t offset = pc == 0x80033e1cu ? 4u : pc == 0x80033e28u ? 6u :
+                          pc == 0x80033e34u ? 8u : 0u;
+        return op == (offset ? 37u : 35u) && address == row + offset;
+    }
+    /* The interpolator tested its unsigned input against 0x5300 before
+     * calculating A0 = 2 * (input >> 8). It reads adjacent halfwords. */
+    case 0x80034004u: case 0x8003401cu:
+        return op == 37u && !(cpu->r[4] & 1u) && cpu->r[4] <= 2u * 0x52u &&
+               address == (pc == 0x80034004u ? 0x8006ab30u : 0x8006ab32u) + cpu->r[4];
+    case 0x80034058u: return op == 36u && address == 0x800a4f1eu;
+    case 0x80034084u: {
+        if (!irq_level_leaf_channel(cpu, &channel) || cpu->r[21] != channel) return 0;
+        const uint8_t *index = musashi_boot_ram_span(cpu->irq_image->memory, cpu->r[17] + 0x34u, 1);
+        return op == 37u && index && *index < 128u && cpu->r[2] == 2u * *index &&
+               address == 0x8006aa30u + cpu->r[2];
+    }
+    case 0x8003408cu: return op == 33u && address == 0x800a4efau;
+    case 0x8003419cu: return op == 33u && address == 0x800a4ef6u;
+    default: return 0;
+    }
+}
+
+/* Eight software channel records share one resident iterator. Its indexed
+ * mixer record uses a different stride; the hardware voice is a field. */
+static uint32_t irq_channel_record(const FormatterCpu *cpu) {
+    unsigned i = cpu->r[21];
+    if (i >= 8u) return 0;
+    uint32_t channel = 0x800a4988u + i * 0x54u;
+    if (cpu->r[18] != channel || cpu->r[16] != channel + 10u ||
+        cpu->r[19] != i * 0x48u || cpu->r[20] != 0x80073140u ||
+        cpu->r[22] != 0x800a4efeu || cpu->r[23] != 0x800a4efau)
+        return 0;
+    return channel;
+}
+
+static int irq_channel_update_frame(const FormatterCpu *cpu, uint32_t channel) {
+    uint32_t saved_return;
+    return channel && cpu->irq_image && cpu->irq_image->memory &&
+        cpu->r[29] == 0x8006ca3cu &&
+        musashi_boot_read32(cpu->irq_image->memory, cpu->r[29]+52u, &saved_return) &&
+        saved_return == 0x8002d014u;
+}
+
+/* The ordinary inactive-channel loop (31448 onward) retains its earlier
+ * validation. Data instructions in the active portion always use this
+ * function, including its refusal for an unowned access. */
+static int irq_channel_active_data(const FormatterCpu *cpu, uint32_t word, uint32_t address) {
+    uint32_t channel = irq_channel_record(cpu);
+    if (!irq_channel_update_frame(cpu, channel)) return 0;
+    uint32_t pc = cpu->pc, value = cpu->r[(word >> 16) & 31u];
+    unsigned op = word >> 26;
+    MusashiBootMemory *ram = cpu->irq_image->memory;
+    uint16_t voice, remaining;
+    uint32_t count;
+    const uint8_t *mode;
+
+    switch (pc) {
+    case 0x80030fecu:
+        return op == 35u && address == channel+4u;
+    case 0x80030ff8u:
+        return op == 43u && address == channel+4u &&
+            musashi_boot_read32(ram, address, &count) && value == count+1u;
+    case 0x80030ffcu:
+        return op == 35u && address == channel;
+    case 0x80031010u:
+        return op == 43u && address == channel &&
+            musashi_boot_read32(ram,address,&count) && count && value == count-1u;
+    case 0x80031040u:
+        return op == 36u && address == channel+0x4eu;
+    case 0x80031058u:
+        mode = musashi_boot_ram_span(ram, channel+0x4eu, 1);
+        return op == 40u && address == channel+0x4eu && mode && *mode >= 2u &&
+            value == (uint32_t)*mode-1u;
+    case 0x80031014u:
+    case 0x8003105cu:
+    case 0x8003109cu:
+    case 0x80031400u:
+        return op == 37u && address == channel+0x0au;
+    case 0x80031068u:
+        return op == 36u && musashi_boot_read16(ram, channel+10u, &voice) &&
+            voice < 24u && address == 0x800a4efeu+voice;
+    case 0x80031024u:
+    case 0x800310acu:
+    case 0x80031410u:
+        return op == 35u && musashi_boot_read16(ram, channel+10u, &voice) &&
+            voice < 24u && address == 0x80073140u+4u*voice;
+    case 0x800310b4u:
+    case 0x8003141cu:
+        return op == 40u && address == channel+0x50u && value == 0u;
+    case 0x800310b8u:
+    case 0x80031420u:
+        return op == 35u && address == channel+0x40u;
+    case 0x800310c4u:
+        return op == 40u && address == channel+0x4eu && value == 0;
+    case 0x800310c8u:
+    case 0x80031430u:
+        return op == 36u && address == channel+0x51u;
+    case 0x800310ccu:
+    case 0x80031434u:
+        return op == 35u && address == channel+0x44u;
+    case 0x800310dcu:
+    case 0x80031444u:
+        return op == 43u && address == channel+0x40u && value == 0;
+    case 0x800310e0u:
+        return op == 36u && address == channel+0x50u;
+    case 0x800310fcu:
+        return op == 36u && address == channel+0x4cu;
+    case 0x8003115cu:
+        return op == 36u && address == channel+0x4fu;
+    case 0x80031174u:
+        return op == 36u && address == channel+0x37u;
+    case 0x800311e8u:
+        return op == 36u && address == 0x800a4f19u;
+    case 0x800311f8u:
+        return op == 36u && address == channel+0x53u;
+    case 0x800313d8u:
+        return op == 37u && address == channel+0x12u;
+    case 0x800313e8u:
+        return op == 41u && address == channel+0x12u &&
+            musashi_boot_read16(ram,address,&remaining) && remaining && value == (uint32_t)remaining-1u;
+    default:
+        return 0;
+    }
+}
+
+/* The game flushes its eight mixer records from the sound VBlank frame.
+ * S2 is the record index. The first pass points S0 at the pending key-off
+ * flag, the second points S1 at the record and S0 at its change flags. */
+static int irq_title_mix_access(const FormatterCpu *cpu, unsigned op, uint32_t address) {
+    if (cpu->r[29] != 0x8006ca54u) return 0;
+    uint32_t pc = cpu->pc;
+    if (pc == 0x8002d3bcu || pc == 0x8002d3c4u)
+        return address == 0x800a2b98u && op == (pc == 0x8002d3bcu ? 37u : 43u);
+    if (pc == 0x8002d3ecu || pc == 0x8002d3f4u)
+        return address == 0x800a2ba0u && op == (pc == 0x8002d3ecu ? 37u : 43u);
+    if (pc == 0x8002d460u || pc == 0x8002d468u)
+        return address == 0x800c7d20u && op == (pc == 0x8002d460u ? 37u : 43u);
+    if (pc == 0x8002d490u || pc == 0x8002d498u)
+        return address == 0x800c7d2cu && op == (pc == 0x8002d490u ? 37u : 43u);
+
+    uint32_t index = cpu->r[18];
+    if (index >= 8u) return 0;
+    uint32_t voice = 0x800a4c28u + index * 0x48u;
+    if (pc == 0x8002d364u || pc == 0x8002d378u || pc == 0x8002d384u) {
+        if (cpu->r[16] != voice + 0x45u) return 0;
+        if (pc == 0x8002d364u) return op == 35u && address == voice + 4u;
+        if (pc == 0x8002d378u) return op == 35u && address == voice + 0x40u;
+        return op == 40u && address == voice + 0x45u;
+    }
+    if (cpu->r[17] != voice || cpu->r[16] != voice + 4u) return 0;
+    if (pc == 0x8002d418u) return op == 35u && address == voice + 0x40u;
+    if (pc == 0x8002d420u) return op == 40u && address == voice + 0x44u;
+    return pc == 0x8002d424u && op == 43u && address == voice + 4u;
+}
+
+/* The channel caller owns S0, S2 and the channel index across both helpers.
+ * Each leaf still retires its checked instructions on the active guest clock. */
+static int irq_channel_leaf_pc(uint32_t pc) {
+    if (pc & 3u) return 0;
+    return (pc >= 0x800314dcu && pc <= 0x800314f0u) ||
+           (pc >= 0x800316ecu && pc <= 0x800316f4u) ||
+           (pc >= 0x800342e8u && pc <= 0x80034310u);
+}
+
+static int irq_channel_callback_site(uint32_t pc) {
+    return pc == 0x800310d0u || pc == 0x80031438u;
+}
+
+static int irq_channel_steady(const FormatterCpu *cpu, uint32_t channel) {
+    const uint8_t *flags = musashi_boot_ram_span(cpu->irq_image->memory, channel + 0x37u, 1);
+    return flags && !(*flags & 1u);
+}
+
+/* The sequencer installs the callback, owning slot index and voice index in
+ * the selected channel. A later note can replace these between clock ticks. */
+static int irq_channel_callback_args(const FormatterCpu *cpu, uint32_t channel, int entry) {
+    MusashiBootMemory *memory = cpu->irq_image->memory;
+    uint32_t callback, slot;
+    const uint8_t *voice = musashi_boot_ram_span(memory, channel + 0x51u, 1);
+    return voice && *voice < 8u && cpu->r[4] == *voice &&
+           musashi_boot_read32(memory, channel + 0x40u, &callback) && callback == 0x800342e8u &&
+           musashi_boot_read32(memory, channel + 0x44u, &slot) && slot < 8u &&
+           (!entry || cpu->r[5] == slot);
+}
+
+static int irq_channel_leaf_call(const FormatterCpu *cpu, uint32_t word,
+                                 uint32_t target, uint32_t channel) {
+    if (!channel || channel != irq_channel_record(cpu) || cpu->r[29] != 0x8006ca3cu) return 0;
+    if (cpu->pc == 0x800313d0u)
+        return word >> 26 == 3u && target == 0x800314dcu && irq_channel_steady(cpu, channel);
+    return irq_channel_callback_site(cpu->pc) && word >> 26 == 0u &&
+           (word & 63u) == 9u && ((word >> 21) & 31u) == 2u && ((word >> 11) & 31u) == 31u &&
+           target == 0x800342e8u && cpu->r[2] == target && irq_channel_callback_args(cpu, channel, 0);
+}
+
+/* Checked after the branch and actual delay slot. The direct caller prepares
+ * A0 in that delay. The indirect caller loads A1 immediately before JALR,
+ * so the new slot value is required at entry, after the load delay. */
+static int irq_channel_leaf_entry(const FormatterCpu *cpu, uint32_t channel) {
+    if (!channel || channel != irq_channel_record(cpu) || cpu->r[29] != 0x8006ca3cu) return 0;
+    if (cpu->pc == 0x800314dcu)
+        return cpu->r[31] == 0x800313d8u && cpu->r[4] == channel && irq_channel_steady(cpu, channel);
+    return cpu->pc == 0x800342e8u && irq_channel_callback_site(cpu->r[31] - 8u) &&
+           irq_channel_callback_args(cpu, channel, 1);
+}
+
+static uint32_t irq_channel_release_byte(const FormatterCpu *cpu) {
+    return 0x800a46e8u + 0x54u * cpu->r[5] + 0x3au + cpu->r[4];
+}
+
+static int irq_channel_leaf_return(const FormatterCpu *cpu, uint32_t target,
+                                   uint32_t channel) {
+    if (!channel || channel != irq_channel_record(cpu) || cpu->r[29] != 0x8006ca3cu ||
+        cpu->r[31] != target) return 0;
+    if (cpu->pc == 0x800316f0u)
+        return target == 0x800313d8u && cpu->r[6] == channel && cpu->r[2] == 0;
+    return cpu->pc == 0x8003430cu && irq_channel_callback_site(target - 8u) &&
+           irq_channel_callback_args(cpu, channel, 1) && cpu->r[2] + 0x3au == irq_channel_release_byte(cpu);
+}
+
+static int irq_channel_leaf_data(const FormatterCpu *cpu, uint32_t word,
+                                 uint32_t address, uint32_t channel) {
+    if (!channel || channel != irq_channel_record(cpu) || cpu->r[29] != 0x8006ca3cu) return 0;
+    if (cpu->pc == 0x800314e0u)
+        return cpu->r[31] == 0x800313d8u && cpu->r[6] == channel && word >> 26 == 36u &&
+               address == channel + 0x37u && irq_channel_steady(cpu, channel);
+    return cpu->pc == 0x80034310u && cpu->delay_slot && cpu->branch_pc == 0x8003430cu &&
+           irq_channel_callback_site(cpu->r[31] - 8u) && word >> 26 == 40u &&
+           ((word >> 16) & 31u) == 0u && irq_channel_callback_args(cpu, channel, 1) &&
+           address == irq_channel_release_byte(cpu);
+}
+
+/* The channel update calls the mask helper from three sites. The installed
+ * note slot has a distinct call frame for its own invocation. */
+static int irq_channel_mask_pc(uint32_t pc) {
+    return !(pc & 3u) &&
+           ((pc >= 0x8002eff8u && pc <= 0x8002f030u) ||
+            (pc >= 0x8002f034u && pc <= 0x8002f060u));
+}
+
+static int irq_channel_mask_site(uint32_t pc) {
+    return pc == 0x80031028u || pc == 0x800310b0u || pc == 0x80031418u;
+}
+
+static uint32_t irq_channel_voice_mask(const FormatterCpu *cpu, uint32_t channel) {
+    uint16_t voice;
+    uint32_t mask;
+    if (!channel || irq_channel_record(cpu) != channel || cpu->r[29] != 0x8006ca3cu ||
+        cpu->r[20] != 0x80073140u ||
+        !musashi_boot_read16(cpu->irq_image->memory, channel + 0x0au, &voice) ||
+        voice != 16u + cpu->r[21] || voice >= 24u ||
+        !musashi_boot_read32(cpu->irq_image->memory, 0x80073140u + 4u * voice, &mask) ||
+        mask != (1u << voice)) return 0;
+    return mask;
+}
+
+static int irq_channel_mask_call(const FormatterCpu *cpu, uint32_t word,
+                                 uint32_t target, uint32_t channel) {
+    uint32_t mask = irq_channel_voice_mask(cpu, channel);
+    if (!mask || !irq_channel_mask_site(cpu->pc) || (word >> 26) != 3u ||
+        target != 0x8002eff8u ||
+        cpu->r[2] != 0x80073180u + 4u * cpu->r[21]) return 0;
+    /* The countdown caller prepares A0 in its delay slot. Both it and the
+     * release caller at 310b0 have a pending A1 load at JAL issue. */
+    if (cpu->pc == 0x80031028u) {
+        uint32_t countdown;
+        return musashi_boot_read32(cpu->irq_image->memory, channel, &countdown) && !countdown;
+    }
+    return cpu->r[4] == 0 && (cpu->pc == 0x800310b0u || cpu->r[5] == mask);
+}
+
+static int irq_channel_mask_entry(const FormatterCpu *cpu, uint32_t channel) {
+    uint32_t mask = irq_channel_voice_mask(cpu, channel);
+    if (!mask || cpu->pc != 0x8002eff8u || !irq_channel_mask_site(cpu->r[31] - 8u) ||
+        cpu->r[5] != mask || cpu->r[2] != 0x80073180u + 4u * cpu->r[21]) return 0;
+    if (cpu->r[31] == 0x80031030u) {
+        uint32_t countdown;
+        return cpu->r[4] == 1u &&
+               musashi_boot_read32(cpu->irq_image->memory, channel, &countdown) && !countdown;
+    }
+    const uint8_t *flag = musashi_boot_ram_span(cpu->irq_image->memory, channel + 0x50u, 1);
+    return !cpu->r[4] && flag && !*flag;
+}
+
+static int irq_channel_mask_data(const FormatterCpu *cpu, uint32_t word,
+                                 uint32_t address, uint32_t channel) {
+    uint32_t before, mask = irq_channel_voice_mask(cpu, channel);
+    if (!mask || !irq_channel_mask_site(cpu->r[31] - 8u) ||
+        cpu->r[5] != mask || cpu->r[2] != ~mask) return 0;
+    int enable = cpu->r[31] == 0x80031030u;
+    uint32_t clear_addr = enable ? 0x800a2b98u : 0x800c7d20u;
+    uint32_t set_addr = enable ? 0x800c7d20u : 0x800a2b98u;
+    switch (cpu->pc) {
+    case 0x8002f008u: case 0x8002f038u:
+        return (cpu->pc == 0x8002f008u) == enable &&
+               (word >> 26) == 35u && address == clear_addr;
+    case 0x8002f010u: case 0x8002f040u:
+        return (cpu->pc == 0x8002f010u) == enable &&
+               (word >> 26) == 35u && address == set_addr;
+    case 0x8002f020u: case 0x8002f050u:
+        return (cpu->pc == 0x8002f020u) == enable &&
+               (word >> 26) == 43u && address == clear_addr &&
+               musashi_boot_read32(cpu->irq_image->memory, address, &before) &&
+               cpu->r[3] == (before & ~mask);
+    case 0x8002f028u: case 0x8002f058u:
+        return (cpu->pc == 0x8002f028u) == enable &&
+               (word >> 26) == 43u && address == set_addr &&
+               musashi_boot_read32(cpu->irq_image->memory, address, &before) &&
+               cpu->r[4] == (before | mask);
+    default: return 0;
+    }
+}
+
+static int irq_channel_mask_return(const FormatterCpu *cpu, uint32_t target,
+                                   uint32_t channel) {
+    uint32_t cleared, set, mask = irq_channel_voice_mask(cpu, channel);
+    int enable = target == 0x80031030u;
+    uint32_t clear_addr = enable ? 0x800a2b98u : 0x800c7d20u;
+    uint32_t set_addr = enable ? 0x800c7d20u : 0x800a2b98u;
+    return mask && cpu->pc == 0x8002f05cu && cpu->r[31] == target &&
+           irq_channel_mask_site(target - 8u) && cpu->r[2] == ~mask &&
+           cpu->r[5] == mask && !(cpu->r[3] & mask) && (cpu->r[4] & mask) &&
+           musashi_boot_read32(cpu->irq_image->memory, clear_addr, &cleared) && cleared == cpu->r[3] &&
+           musashi_boot_read32(cpu->irq_image->memory, set_addr, &set) && set == cpu->r[4];
+}
+
+/* The channel countdown dispatches the same game helper used while a note
+ * is installed. This caller owns the record in S2 and supplies A0 in its
+ * JAL delay. The earlier note caller has its own frame and permissions. */
+static int irq_channel_command_ready(const FormatterCpu *cpu, uint32_t channel) {
+    uint32_t command;
+    return irq_channel_update_frame(cpu, channel) &&
+        musashi_boot_read32(cpu->irq_image->memory, channel+0x14u, &command) && !command;
+}
+
+static int irq_channel_command_call(const FormatterCpu *cpu, uint32_t w, uint32_t target) {
+    uint32_t channel = irq_channel_record(cpu), mask, remaining;
+    uint16_t voice;
+    if (cpu->pc != 0x80031030u || w >> 26 != 3u || target != 0x800316f8u ||
+        cpu->r[31] != 0x80031030u || !irq_channel_command_ready(cpu, channel)) return 0;
+    MusashiBootMemory *ram = cpu->irq_image->memory;
+    return musashi_boot_read32(ram, channel, &remaining) && !remaining &&
+        musashi_boot_read16(ram, channel+10u, &voice) && voice < 24u &&
+        musashi_boot_read32(ram, 0x80073140u+4u*voice, &mask) &&
+        mask == (1u << voice) && cpu->r[4] == mask && cpu->r[5] == mask;
+}
+
+static int irq_channel_command_entry(const FormatterCpu *cpu) {
+    uint32_t channel = irq_channel_record(cpu);
+    return cpu->pc == 0x800316f8u && cpu->r[31] == 0x80031038u &&
+        cpu->r[4] == channel && irq_channel_command_ready(cpu,channel);
+}
+
+static int irq_channel_command_data(const FormatterCpu *cpu, uint32_t w, uint32_t address) {
+    uint32_t channel = irq_channel_record(cpu), note;
+    unsigned op = w >> 26, rt = (w >> 16) & 31u;
+    if (cpu->r[31] != 0x80031038u || cpu->r[5] != channel ||
+        !irq_channel_command_ready(cpu,channel)) return 0;
+    switch (cpu->pc) {
+    case 0x80031700u: return op == 35u && address == channel+0x14u;
+    case 0x80031704u: return op == 35u && address == channel+0x24u;
+    case 0x8003170cu: return op == 40u && !rt && address == channel+0x37u;
+    case 0x80031710u: return op == 43u && !rt && address == channel+0x18u;
+    case 0x80031718u: return op == 43u && rt == 2u && address == channel+0x20u &&
+        musashi_boot_read32(cpu->irq_image->memory,channel+0x24u,&note) && cpu->r[2] == note;
+    default: return 0;
+    }
+}
+
+static int irq_channel_command_return(const FormatterCpu *cpu, uint32_t target) {
+    uint32_t channel = irq_channel_record(cpu), note, current, step;
+    if (cpu->pc != 0x80031980u || target != 0x80031038u || cpu->r[31] != target ||
+        cpu->r[4] != channel || cpu->r[5] != channel || cpu->r[6] || cpu->r[7] ||
+        cpu->r[8] || !irq_channel_command_ready(cpu,channel)) return 0;
+    MusashiBootMemory *ram = cpu->irq_image->memory;
+    const uint8_t *flags = musashi_boot_ram_span(ram,channel+0x37u,1);
+    return flags && !*flags && musashi_boot_read32(ram,channel+0x18u,&step) && !step &&
+        musashi_boot_read32(ram,channel+0x24u,&note) && cpu->r[2] == note &&
+        musashi_boot_read32(ram,channel+0x20u,&current) && current == note;
+}
+
+/* A channel can register this second callback to finish a type-1 sound
+ * record. Its field number comes from the channel and its row from the
+ * adjacent registered argument; the function rewrites A1 with the row base. */
+static int irq_channel_cond_release_pc(uint32_t pc) {
+    return !(pc & 3u) && pc >= 0x80033324u && pc < 0x80033398u;
+}
+
+static uint32_t irq_channel_cond_release_row(const FormatterCpu *cpu, uint32_t channel) {
+    uint32_t callback, row;
+    if (channel != irq_channel_record(cpu) || !irq_channel_update_frame(cpu, channel)) return 0;
+    MusashiBootMemory *ram = cpu->irq_image->memory;
+    const uint8_t *field = musashi_boot_ram_span(ram, channel+0x51u, 1);
+    if (!field || *field != cpu->r[21] || cpu->r[4] != *field ||
+        !musashi_boot_read32(ram, channel+0x40u, &callback) || callback != 0x80033324u ||
+        !musashi_boot_read32(ram, channel+0x44u, &row) || row >= 8u) return 0;
+    return 0x800a46e8u + row*0x54u;
+}
+
+/* The original selected one remaining field and cleared its row. Other
+ * counts and the marker that retains the row take different guest paths. */
+static int irq_channel_cond_release_ready(const FormatterCpu *cpu, uint32_t slot) {
+    const uint8_t *row = musashi_boot_ram_span(cpu->irq_image->memory, slot, 0x54u);
+    return row && (row[0] & 63u) == 1u && row[10] != 5u &&
+        row[12] == 1u && !row[13] && row[14u+cpu->r[4]] == 1u;
+}
+
+static int irq_channel_cond_release_call(const FormatterCpu *cpu, uint32_t word,
+                                         uint32_t target, uint32_t channel) {
+    uint32_t slot = irq_channel_cond_release_row(cpu, channel);
+    return slot && cpu->pc == 0x80031438u && target == 0x80033324u &&
+        cpu->r[2] == target && cpu->r[31] == 0x80031420u && word >> 26 == 0u &&
+        (word & 63u) == 9u && ((word >> 21) & 31u) == 2u && ((word >> 11) & 31u) == 31u &&
+        irq_channel_cond_release_ready(cpu, slot);
+}
+
+static int irq_channel_cond_release_entry(const FormatterCpu *cpu, uint32_t channel) {
+    uint32_t slot = irq_channel_cond_release_row(cpu, channel);
+    return slot && cpu->pc == 0x80033324u && cpu->r[31] == 0x80031440u &&
+        cpu->r[5] == (slot-0x800a46e8u)/0x54u && irq_channel_cond_release_ready(cpu, slot);
+}
+
+static int irq_channel_cond_release_data(const FormatterCpu *cpu, uint32_t word,
+                                        uint32_t address, uint32_t channel) {
+    uint32_t slot = irq_channel_cond_release_row(cpu, channel);
+    if (!slot || cpu->r[31] != 0x80031440u || cpu->r[5] != slot) return 0;
+    const uint8_t *row = musashi_boot_ram_span(cpu->irq_image->memory, slot, 0x54u);
+    if (!row || (row[0] & 63u) != 1u) return 0;
+    uint32_t field = cpu->r[4], op = word >> 26;
+    uint32_t value = cpu->r[(word >> 16) & 31u];
+    switch (cpu->pc) {
+    case 0x80033344u:
+        return op == 37u && address == slot && irq_channel_cond_release_ready(cpu, slot);
+    case 0x80033358u:
+        return op == 40u && !value && address == slot+14u+field &&
+            cpu->r[2] == slot+field && irq_channel_cond_release_ready(cpu, slot);
+    case 0x8003335cu:
+        return op == 37u && address == slot+12u && !row[14u+field] &&
+            row[12] == 1u && !row[13];
+    case 0x80033368u:
+        return op == 41u && !value && address == slot+12u && !row[14u+field] &&
+            row[12] == 1u && !row[13];
+    case 0x80033378u:
+        return op == 36u && address == slot+10u && !row[12] && !row[13] && row[10] != 5u;
+    case 0x80033388u:
+        return op == 40u && !value && address == slot+10u && !row[12] && !row[13] &&
+            cpu->r[3] == row[10] && row[10] != 5u;
+    case 0x8003338cu:
+        return op == 41u && !value && address == slot && !row[10] && !row[12] &&
+            !row[13] && !row[14u+field];
+    default:
+        return 0;
+    }
+}
+
+static int irq_channel_cond_release_return(const FormatterCpu *cpu, uint32_t target,
+                                          uint32_t channel) {
+    uint32_t slot = irq_channel_cond_release_row(cpu, channel);
+    if (!slot || cpu->pc != 0x80033390u || target != 0x80031440u || cpu->r[31] != target ||
+        cpu->r[2] != 5u || cpu->r[5] != slot) return 0;
+    const uint8_t *row = musashi_boot_ram_span(cpu->irq_image->memory, slot, 0x54u);
+    return row && !row[0] && !row[1] && !row[10] && !row[12] && !row[13] && !row[14u+cpu->r[4]];
+}
+
+/* The channel timer reaches zero before this call. The observed voice
+ * releases either have no command or a resident kind-2 command whose switch
+ * arm immediately returns. Neither path writes RAM or touches a device. */
+static int irq_channel_expiry_pc(uint32_t pc) {
+    return !(pc & 3u) && ((pc >= 0x80031988u && pc <= 0x800319c0u) ||
+                           pc == 0x80031a90u || pc == 0x80031a94u);
+}
+
+static int irq_channel_expiry_command(const FormatterCpu *cpu, uint32_t channel,
+                                      uint32_t *command) {
+    uint16_t remaining, kind;
+    uint32_t destination;
+    if (!channel || channel != irq_channel_record(cpu) ||
+        !irq_channel_update_frame(cpu, channel)) return 0;
+    MusashiBootMemory *memory = cpu->irq_image->memory;
+    if (!musashi_boot_read16(memory, channel + 0x12u, &remaining) || remaining ||
+        !musashi_boot_read32(memory, channel + 0x14u, command)) return 0;
+    return !*command ||
+           (*command == 0x800682d8u && musashi_boot_read16(memory, *command, &kind) &&
+            kind == 2u && musashi_boot_read32(memory, 0x800730fcu, &destination) &&
+            destination == 0x80031a90u);
+}
+
+static int irq_channel_expiry_call(const FormatterCpu *cpu, uint32_t word,
+                                   uint32_t target, uint32_t channel) {
+    uint32_t command;
+    return cpu->pc == 0x800313f8u && word >> 26 == 3u && target == 0x80031988u &&
+           irq_channel_expiry_command(cpu, channel, &command);
+}
+
+static int irq_channel_expiry_entry(const FormatterCpu *cpu, uint32_t channel) {
+    uint32_t command;
+    return cpu->pc == 0x80031988u && cpu->r[31] == 0x80031400u &&
+           cpu->r[4] == channel && irq_channel_expiry_command(cpu, channel, &command);
+}
+
+static int irq_channel_expiry_data(const FormatterCpu *cpu, uint32_t word,
+                                   uint32_t address, uint32_t channel) {
+    uint32_t command;
+    if (cpu->r[31] != 0x80031400u || cpu->r[4] != channel ||
+        !irq_channel_expiry_command(cpu, channel, &command)) return 0;
+    uint32_t op = word >> 26;
+    switch (cpu->pc) {
+    case 0x80031988u: return op == 35u && address == channel + 0x14u;
+    case 0x80031998u: return op == 37u && command && cpu->r[5] == command && address == command;
+    case 0x800319b4u: return op == 35u && command && cpu->r[5] == command &&
+                              cpu->r[3] == 2u && address == 0x800730fcu;
+    default: return 0;
+    }
+}
+
+static int irq_channel_expiry_switch(const FormatterCpu *cpu, uint32_t word,
+                                     uint32_t target, uint32_t channel) {
+    uint32_t command;
+    return cpu->pc == 0x800319bcu && word >> 26 == 0u && (word & 63u) == 8u &&
+           ((word >> 21) & 31u) == 2u && target == 0x80031a90u && cpu->r[2] == target &&
+           cpu->r[31] == 0x80031400u && cpu->r[4] == channel && cpu->r[3] == 2u &&
+           irq_channel_expiry_command(cpu, channel, &command) && command && cpu->r[5] == command;
+}
+
+static int irq_channel_expiry_return(const FormatterCpu *cpu, uint32_t target,
+                                     uint32_t channel) {
+    uint32_t command;
+    return cpu->pc == 0x80031a90u && target == 0x80031400u && cpu->r[31] == target &&
+           cpu->r[4] == channel && irq_channel_expiry_command(cpu, channel, &command) &&
+           cpu->r[5] == command && (!command || (cpu->r[2] == 0x80031a90u && cpu->r[3] == 2u));
+}
+
+/* Validate the title mixer's arguments at the mounted API boundary. The
+ * key/reverb calls consume bits from the software voice mask. The attribute
+ * call consumes the active record whose release flag the JAL delay clears. */
+static int irq_title_mix_entry(const FormatterCpu *cpu, MusashiBootMemory *memory,
+                               uint32_t call, uint32_t target, int after_delay) {
+    if (cpu->r[29] != 0x8006ca54u) return 0;
+    if (after_delay && (cpu->pc != target || cpu->r[31] != call + 8u)) return 0;
+    if (call == 0x8002d41cu) {
+        uint32_t index = cpu->r[18], voice;
+        if (index >= 8u || target != 0x8003b250u) return 0;
+        uint32_t record = 0x800a4c28u + 0x48u * index;
+        const uint8_t *release = musashi_boot_ram_span(memory, record + 0x44u, 1u);
+        return cpu->r[17] == record && cpu->r[16] == record + 4u &&
+               cpu->r[5] == record && release && (after_delay ? !*release : *release != 0) &&
+               musashi_boot_read32(memory, record + 0x40u, &voice) &&
+               voice == 16u + index && (!after_delay || cpu->r[4] == voice);
+    }
+    static const struct { uint32_t call, function, mask, on; } calls[] = {
+        {0x8002d3b0u, 0x8003c23cu, 0x800a2b98u, 0u},
+        {0x8002d3e0u, 0x8003be74u, 0x800a2ba0u, 0u},
+        {0x8002d454u, 0x8003c23cu, 0x800c7d20u, 1u},
+        {0x8002d484u, 0x8003be74u, 0x800c7d2cu, 1u}
+    };
+    for (size_t i = 0; i < sizeof calls / sizeof calls[0]; ++i) {
+        if (calls[i].call != call) continue;
+        uint32_t bits;
+        return target == calls[i].function && cpu->r[5] &&
+               musashi_boot_read32(memory, calls[i].mask, &bits) &&
+               cpu->r[5] == (bits & 0x00ff0000u) &&
+               (!after_delay || cpu->r[4] == calls[i].on);
+    }
+    return 0;
+}
+
+/* The title mixer invokes the same sound services as the foreground guest.
+ * Dispatch only the physical direct callers exercised by its VBlank updates. */
+static int irq_title_mix_destination(uint32_t caller, uint32_t callee) {
+    switch (caller) {
+    case 0x8002d3b0u: return callee == 0x8003c23cu;
+    case 0x8002d3e0u: return callee == 0x8003be74u;
+    case 0x8002d41cu: return callee == 0x8003b250u;
+    case 0x8002d454u: return callee == 0x8003c23cu;
+    case 0x8002d484u: return callee == 0x8003be74u;
+    default: return 0;
+    }
+}

@@ -973,6 +973,15 @@ static int spu_read16(void *userdata, uint32_t address, uint16_t *value) {
     return 1;
 }
 
+static int spu_reverb_mask(const MusashiCdSpuDevice *device, uint32_t *mask) {
+    NativeBoot *boot=device ? device->userdata : NULL;
+    MusashiSpuReverbSnapshot state;
+    if (!boot || device!=&boot->cd_spu || !boot->spu || !mask ||
+        !musashi_spu_cd_audio_reverb_snapshot(boot->spu,&state)) return 0;
+    *mask=state.eon;
+    return 1;
+}
+
 /* Key-on (KON 1F801D88/8A) writes with any voice bit set: whether the
  * retail sound driver has started a voice (STOP report). */
 static uint64_t g_spu_keyon_writes;
@@ -2530,7 +2539,7 @@ static int source_irq_dispatch(void *userdata, MusashiBootMemory *memory, uint32
         .timer=&boot->timer1, .timer_read16=musashi_scanline_timer_read16,
         .generation=boot->irq_draw_host.generation, .host=&boot->irq_draw_host, .mdec=&boot->mdec
     };
-    MusashiGuestIrqServices services = {.cd_dma3=boot->cd_dma, .draw=&draw, .card=&card, .spu=boot->spu ? &boot->cd_spu : NULL,
+    MusashiGuestIrqServices services = {.cd_dma3=boot->cd_dma, .draw=&draw, .card=&card, .spu=boot->spu ? &boot->cd_spu : NULL, .spu_reverb_mask=spu_reverb_mask,
         .cd=boot->irq.cd_clock == &boot->execution_clock ? &cd : NULL};
     int result = musashi_boot_execute_guest_irq_with_services(&boot->irq_image, memory, context,
         installed, io, &boot->execution_clock, &boot->dma, &services, &boot->irq_guest_stop);
