@@ -1,15 +1,7 @@
 #include "steam_knight_hit.h"
-
-typedef struct {
-    s16 x, y, z, id;
-} SteamKnightReaction;
+#include "steam_knight_reaction.h"
 
 extern s32 D_801E43A0;
-/* The variant is signed. The room's lookup starts 32768 halfwords from
- * the beginning of the range it can address. */
-extern u16 D_80185B4C[];
-extern SteamKnightReaction D_801961B8[];
-extern SteamKnightReaction D_801961E0[];
 
 void func_80186A04(SteamKnightPart *part)
 {
