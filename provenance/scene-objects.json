@@ -4840,6 +4840,26 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2"
+    },
+    {
+      "vram": 2149082972,
+      "name": "func_8018675C",
+      "source": "src/overlays/sc02_0005/8018675c.c",
+      "size": 288,
+      "region": "sc02_0005",
+      "optimization": "-O2",
+      "recovery": "c",
+      "extent": "function"
+    },
+    {
+      "vram": 2149083260,
+      "name": "func_8018687C",
+      "source": "src/overlays/sc02_0005/8018687c.c",
+      "size": 176,
+      "region": "sc02_0005",
+      "optimization": "-O2",
+      "recovery": "c",
+      "extent": "function"
     }
   ]
 }
