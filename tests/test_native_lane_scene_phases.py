@@ -13,6 +13,7 @@ import native_lane_gen as lane
 
 
 PHASES = (
+    ("sc02_0039", 0x8017E910, 272),
     ("sc02_0039", 0x8017E794, 380),
     ("sc02_0039", 0x8017EA20, 532),
     ("sc02_0039", 0x8017EF5C, 244),
@@ -202,6 +203,10 @@ def test_mine_child_setup_uses_complete_body(tmp_path, monkeypatch):
 
 def test_mine_emitter_scan_uses_complete_body(tmp_path, monkeypatch):
     check_mine_emitter_complete_body(tmp_path, monkeypatch, 0x8017E794, 380)
+
+
+def test_mine_emitter_projection_uses_complete_body(tmp_path, monkeypatch):
+    check_mine_emitter_complete_body(tmp_path, monkeypatch, 0x8017E910, 272)
 
 
 def check_mine_emitter_complete_body(tmp_path, monkeypatch, pc, size):
