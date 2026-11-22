@@ -1073,6 +1073,9 @@ SCENE_PHASE_EXTENTS = {
     0x8014A2E4: dict.fromkeys(("main_0012", "sc02_0039"), (156, 0x4DBDD625CB4098C8)),
     0x8014C278: dict.fromkeys(("main_0012", "sc02_0039"), (56, 0x93E8D33159724249)),
     0x8014FDF4: dict.fromkeys(("main_0012", "sc02_0039"), (108, 0xBE00661D1711B59B)),
+    # The second floor probe calls the cell map while a guest return address is on the stack.
+    0x80150150: dict.fromkeys(("main_0012", "sc02_0039"), (32, 0x7E508B16726EDF52)),
+    0x80150460: dict.fromkeys(("main_0012", "sc02_0039"), (32, 0x7E508B16726EDF52)),
     0x801505FC: dict.fromkeys(("main_0012", "sc02_0039"), (168, 0x840FD970AD98C205)),
     0x801508B4: dict.fromkeys(("main_0012", "sc02_0039"), (68, 0x3C6364F78110B674)),
     0x8016EE40: dict.fromkeys(

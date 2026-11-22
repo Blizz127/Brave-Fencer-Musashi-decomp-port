@@ -14,7 +14,10 @@ typedef struct Obj8014FE60 Obj8014FE60;
 
 typedef struct Obj8014A2E4 {
     u16 active;
-    u8 pad002[0x5A];
+    u8 pad002[0x1E];
+    u32 probe_object_address;
+    u8 pad024[0x34];
+    u32 probe_geometry_reference;
     u16 flags;
     u8 pad05E[0x4C];
     s16 hp;

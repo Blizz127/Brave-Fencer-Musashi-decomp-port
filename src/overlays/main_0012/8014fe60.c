@@ -1,6 +1,6 @@
 /* Owner re-derivation from retail assembly (clean input set). */
 /* Probes two points below the object; stores the higher hit (or 0x7FFF floor) at 0x78 and clears/sets flag bit 0 of 0x7E. */
-#include "scene_object_probes.h"
+#include "floor_providers.h"
 
 struct Obj8014FE60 {
     u8 pad0[6];
@@ -17,8 +17,6 @@ struct Obj8014FE60 {
     SceneProbeVector norm;
 };
 
-extern s32 func_8014FFDC(Obj8014FE60 *obj, SceneProbeVector *pos, SceneProbeVector *norm);
-extern s32 func_80150150(Obj8014FE60 *obj, SceneProbeVector *pos);
 
 s32 func_8014FE60(Obj8014FE60 *obj)
 {

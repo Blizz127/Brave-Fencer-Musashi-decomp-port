@@ -1,9 +1,7 @@
 /* func_80150170 [80150170,801502EC) - owner re-derivation from retail assembly (clean input set). */
 /* Builds two probe points from the actor's position (second one 0x10 higher), queries both, and stores the nearer hit (or the default marker) into the +0x78 record, updating the +0x7E flag. */
-#include "scene_object_probes.h"
+#include "floor_providers.h"
 
-extern s32 func_801502EC(void *obj, SceneProbeVector *best, SceneProbeVector *out);
-extern s32 func_80150460(void *obj, SceneProbeVector *probe);
 
 s32 func_80150170(u8 *obj) {
     SceneProbeVector a;

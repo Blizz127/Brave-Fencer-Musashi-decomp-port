@@ -42,8 +42,9 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 21 source update covers 238 functions across seven scene overlays,
-totaling 18,064 bytes of matching executable code. In the opening scene, one
+The November 21 source update covers 242 functions across seven scene overlays,
+totaling 18,872 bytes of matching executable code. Four mine routines scan floor probes and pass their position to the map lookup.
+In the opening scene, one
 routine calls the handler selected by the player state byte. Another sets the
 facing direction and counts frames. A separate scene event uses that timer
 to advance its state on the 31st call from a fresh counter. The first opening handler

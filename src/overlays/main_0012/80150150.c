@@ -1,10 +1,7 @@
-/* Owner re-derivation from retail assembly (clean input set). */
-/* Returns whether func_80134510(a1) is nonzero. */
-#include "psx_types.h"
+#include "floor_providers.h"
 
-extern s32 func_80134510(s32 a0);
-
-s32 func_80150150(s32 a0, s32 a1)
+s32 func_80150150(Obj8014FE60 *actor, SceneProbeVector *probe)
 {
-    return func_80134510(a1) != 0;
+    (void)actor;
+    return func_80134510(probe) != 0;
 }
