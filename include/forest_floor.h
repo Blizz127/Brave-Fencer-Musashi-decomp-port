@@ -87,7 +87,8 @@ s32 func_801365B8(FloorBox *box, s32 flags, s16 x);
 s32 func_80136824(FloorBox *box, s32 flags, s16 y);
 s32 func_80135888(FloorContactRecord *record, s32 packed, FloorPoint *start, FloorPoint *end);
 s32 func_80135A4C(FloorContactRecord *record, s32 packed, FloorPoint *start, FloorPoint *end);
-s32 func_80133AB0(s32 flags, s16 x, s16 z, FloorGrid *grid);
+s32 func_80133AB0(s16 flags, s16 x, s16 z, FloorGrid *grid);
+s16 func_80133CD4(s16 flags, FloorFace *face, FloorPoint *vertices, s32 *distances);
 extern s16 D_801D94FC;
 extern FloorPoint D_801152B0;
 #ifndef __mips__

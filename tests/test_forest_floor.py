@@ -96,3 +96,13 @@ def test_model_contact_link_and_grid_retries(tmp_path):
         "-o", binary,
     ], check=True)
     subprocess.run([binary], check=True)
+
+
+def test_model_grid_face_order_and_material(tmp_path):
+    binary = tmp_path / "model-grid"
+    subprocess.run([
+        "cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-I", ROOT / "include",
+        ROOT / "tests/forest_model_grid_probe.c", ROOT / "src/overlays/sc01_0077/80133ab0.c",
+        "-o", binary,
+    ], check=True)
+    subprocess.run([binary], check=True)

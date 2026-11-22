@@ -48,7 +48,7 @@ s32 func_80135EB0(FloorBox *box, s32 flags)
     return 1;
 }
 
-s32 func_80133AB0(s32 flags, s16 x, s16 z, FloorGrid *model)
+s32 func_80133AB0(s16 flags, s16 x, s16 z, FloorGrid *model)
 {
     assert(model == &grid && flags == 0);
     assert(x == -9 && z == 17);
