@@ -3,7 +3,7 @@
 
 #include "psx_types.h"
 
-typedef struct {
+typedef struct ForestGroundOrientation {
     u8 step, kind, pad02[2];
     u32 source, target;
     u8 pad0c[0x20 - 0x0c];
@@ -13,13 +13,11 @@ typedef struct {
 void func_801627E8(void);
 s32 func_80162834(ForestGroundAttachment *attachment);
 void func_801628F4(ForestGroundAttachment *attachment);
+void func_80162968(ForestGroundAttachment *attachment);
 
 #if defined(__mips__) && !defined(__LP64__)
 extern ForestGroundAttachment D_8011F750[2];
 extern u32 D_801896C0[], D_801896C4[];
-/* The guest-only orientation routine is compiled independently of this record view. */
-struct ForestGroundOrientation;
-void func_80162968(struct ForestGroundOrientation *attachment);
 #define BFM_GROUND_ATTACHMENT_ROOT() (&D_8011F750[0])
 #define BFM_GROUND_ATTACHMENT_EFFECT(table, index, attachment) \
     (((void (*)(ForestGroundAttachment *))D_##table[index])(attachment))
@@ -31,7 +29,7 @@ void func_80162968(struct ForestGroundOrientation *attachment);
 #define BFM_GROUND_ATTACHMENT_READ(bytes, offset) (*(u32 *)((bytes) + (offset)))
 #define BFM_GROUND_ATTACHMENT_WRITE(bytes, offset, value) (*(u32 *)((bytes) + (offset)) = (value))
 #define BFM_GROUND_ATTACHMENT_ORIENT(attachment) \
-    func_80162968((struct ForestGroundOrientation *)(attachment))
+    func_80162968(attachment)
 #else
 #include <string.h>
 /* Resolve the first controller in the active forest and check the callback's

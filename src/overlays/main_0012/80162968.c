@@ -1,74 +1,34 @@
-/* Owner re-derivation from retail assembly (clean input set). */
-/* Builds an orientation matrix from a direction vector and sets a distance-based scale. */
-#include "psx_types.h"
+/* Orient the attached model using the owner's ground normal and height. */
+#include "../../../include/forest_ground_orientation.h"
 
-typedef struct {
-    u8 pad00[0x12];
-    /* 0x12 */ s16 angle12;
-} Sub80162968;
-
-typedef struct {
-    u8 pad00[0x0A];
-    /* 0x0A */ u16 base0A;
-    u8 pad0C[0x20 - 0x0C];
-    /* 0x20 */ u32 sub20;
-    u8 pad24[0x44 - 0x24];
-    /* 0x44 */ u32 flags44;
-    u8 pad48[0x80 - 0x48];
-    /* 0x80 */ s16 dir80;
-    /* 0x82 */ s16 dir82;
-    /* 0x84 */ s16 dir84;
-} Src80162968;
-
-typedef struct {
-    u8 pad00[0x10];
-    /* 0x10 */ s16 rotY;
-    u8 pad12[0x14 - 0x12];
-    /* 0x14 */ s16 rotX;
-    u8 pad16[0x18 - 0x16];
-    /* 0x18 */ s16 scaleX;
-    /* 0x1A */ s16 scaleY;
-    /* 0x1C */ s16 scaleZ;
-} Dst80162968;
-
-typedef struct ForestGroundOrientation {
-    u8 pad00[0x04];
-    /* 0x04 */ u32 src;
-    /* 0x08 */ u32 dst;
-    /* 0x0C */ u8 matrix[0x24 - 0x0C];
-    /* 0x24 */ s32 value24;
-} Obj80162968;
-
-extern s32 func_8004CFEC(s32 y, s32 x);
-extern s32 func_80047D3C(s32 v);
-extern void func_80013F3C(void *m);
-extern void func_800126C4(void *m, s32 angle);
-extern void func_800123F0(void *m, s32 angle);
-extern void func_80012558(void *m, s32 angle);
-
-void func_80162968(Obj80162968 *obj)
+void func_80162968(ForestGroundAttachment *attachment)
 {
-    Src80162968 *src;
-    Dst80162968 *dst;
-    void *m;
+    u8 *source = FOREST_ORIENTATION_BYTES(attachment->source, 0x86, FOREST_ORIENTATION_SOURCE);
+    u8 *target = FOREST_ORIENTATION_BYTES(attachment->target, 0x1e, FOREST_ORIENTATION_TARGET);
+    u8 *matrix = (u8 *)attachment + 0x0c;
+    u8 *subobject;
+    s32 z, y, magnitude;
     s16 scale;
+    s16 height;
 
-    src = (Src80162968 *)obj->src;
-    dst = (Dst80162968 *)obj->dst;
-    m = obj->matrix;
-    dst->rotY = func_8004CFEC(src->dir84, src->dir82);
-    dst->rotX = func_8004CFEC(src->dir80,
-        -(s16)func_80047D3C(src->dir84 * src->dir84 + src->dir82 * src->dir82));
-    func_80013F3C(m);
-    func_800126C4(m, dst->rotY);
-    func_800123F0(m, dst->rotX);
-    func_80012558(m, ((Sub80162968 *)src->sub20)->angle12);
-    func_800126C4(m, 0x400);
-    scale = ((0x300 - (s16)(obj->value24 - src->base0A)) << 13) / 0x300;
-    if (src->flags44 & 0x400) {
-        scale = scale / 3;
-    }
-    dst->scaleZ = scale;
-    dst->scaleY = scale;
-    dst->scaleX = scale;
+    FOREST_ORIENTATION_STORE(target, 0x10, FOREST_ORIENTATION_ANGLE(
+        BFM_GROUND_ATTACHMENT_HALF(source, 0x84), BFM_GROUND_ATTACHMENT_HALF(source, 0x82)));
+    z = BFM_GROUND_ATTACHMENT_HALF(source, 0x84);
+    y = BFM_GROUND_ATTACHMENT_HALF(source, 0x82);
+    magnitude = FOREST_ORIENTATION_MAGNITUDE((s32)((u32)(z * z) + (u32)(y * y)));
+    FOREST_ORIENTATION_STORE(target, 0x14, FOREST_ORIENTATION_ANGLE(
+        BFM_GROUND_ATTACHMENT_HALF(source, 0x80), -(s16)magnitude));
+    FOREST_ORIENTATION_IDENTITY(matrix);
+    FOREST_ORIENTATION_ROTATE(800126C4, matrix, BFM_GROUND_ATTACHMENT_HALF(target, 0x10));
+    FOREST_ORIENTATION_ROTATE(800123F0, matrix, BFM_GROUND_ATTACHMENT_HALF(target, 0x14));
+    subobject = FOREST_ORIENTATION_BYTES(BFM_GROUND_ATTACHMENT_READ(source, 0x20), 0x14, FOREST_ORIENTATION_SUBOBJECT);
+    FOREST_ORIENTATION_ROTATE(80012558, matrix, BFM_GROUND_ATTACHMENT_HALF(subobject, 0x12));
+    FOREST_ORIENTATION_ROTATE(800126C4, matrix, 0x400);
+    height = (s16)((u32)attachment->y - (u16)BFM_GROUND_ATTACHMENT_HALF(source, 0x0a));
+    scale = ((0x300 - height) * 0x2000) / 0x300;
+    if (BFM_GROUND_ATTACHMENT_READ(source, 0x44) & 0x400)
+        scale /= 3;
+    FOREST_ORIENTATION_STORE(target, 0x1c, scale);
+    FOREST_ORIENTATION_STORE(target, 0x1a, scale);
+    FOREST_ORIENTATION_STORE(target, 0x18, scale);
 }
