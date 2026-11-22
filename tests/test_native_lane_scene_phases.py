@@ -12,6 +12,7 @@ import native_lane_gen as lane
 
 
 PHASES = (
+    ("sc02_0005", 0x8016AA50, 224),
     ("sc02_0005", 0x80146A6C, 72),
     ("sc02_0005", 0x80146AFC, 160),
     ("sc02_0005", 0x80186A04, 216),
