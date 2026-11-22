@@ -1149,12 +1149,13 @@ def forest_floor_source_only(entry, src, info):
 
 
 def mine_slot_update_source_only(entry, src, info):
-    if entry["vram"] != 0x80162B1C:
+    pc = entry["vram"]
+    if pc not in (0x80162B1C, 0x8017849C):
         return False
     # MAIN/0012 has a separately selected implementation at the same address and digest.
     if entry.get("region") == "sc02_0039" or (info and info["member"] == "sc02_0039"):
         return True
-    mine = ROOT / "src/overlays/sc02_0039/80162b1c.c"
+    mine = ROOT / f"src/overlays/sc02_0039/{pc:08x}.c"
     return src.resolve() == mine or (mine.is_file() and src.read_bytes() == mine.read_bytes())
 
 
