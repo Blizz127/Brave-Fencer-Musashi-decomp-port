@@ -49,6 +49,12 @@
       "file": "extracted/overlays/sc02/0005.pac0.bin",
       "base": 2148696408,
       "sha256": "afccc2611527a085deaca099c1db74a40a948bb98d9d491be041df938800c587"
+    },
+    "sc03_0116": {
+      "kind": "blob",
+      "file": "extracted/overlays/sc03/0116.pac0.bin",
+      "base": 2148696408,
+      "sha256": "2521f863c8def009e8b23d96699674b8788b9971bf9fb40a3b102893a5c11b31"
     }
   },
   "matches": [
@@ -4753,6 +4759,16 @@
       "recovery": "c",
       "extent": "function",
       "rodata_base": 2149461536
+    },
+    {
+      "name": "func_80132144",
+      "vram": 2148737348,
+      "size": 108,
+      "region": "sc03_0116",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "source": "src/overlays/sc03_0116/80132144.c"
     }
   ]
 }
