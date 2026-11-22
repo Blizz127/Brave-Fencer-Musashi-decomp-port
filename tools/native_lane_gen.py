@@ -1534,6 +1534,9 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
         if (vram in (0x8012C724, 0x8013E298, 0x8013E370, 0x8013E410, 0x8013E448) and
                 (entry.get("region") == "sc01_0077" or member == "sc01_0077")):
             raise Reject("timing", "forest placement requires ordered actor allocation and callback timing")
+        if (vram in (0x8017EA98, 0x8017EAC0, 0x8017EC40) and
+                (entry.get("region") == "sc01_0077" or member == "sc01_0077")):
+            raise Reject("timing", "forest settling effects require ordered state, random and particle calls")
         if forest_animation_source_only(entry, src, info):
             raise Reject("timing", "animation commands require checked scripts, recursive calls and timed services")
         if forest_floor_source_only(entry, src, info):

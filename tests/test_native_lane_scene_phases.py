@@ -316,3 +316,13 @@ def test_forest_image_moves_preserve_existing_member_selection(tmp_path):
     assert decision(forest, "other", "other").get("rule") == "timing"
     for member in ("sc02_0035", "main_0012"):
         assert decision(published, member, member)["admitted"]
+
+
+@pytest.mark.parametrize("pc,size", [(0x8017EA98, 40), (0x8017EAC0, 108), (0x8017EC40, 60)])
+def test_forest_settle_effects_stay_interpreted(tmp_path, pc, size):
+    source = ROOT / "src" / "overlays" / "sc01_0077" / f"{pc:08x}.c"
+    row = dict(name=f"func_{pc:08X}", vram=pc, size=size, source=str(source))
+    (tmp_path / "ir").mkdir()
+    for region, info in (("sc01_0077", None), ("other", dict(member="sc01_0077"))):
+        result = lane.build_one(dict(row, region=region), tmp_path, {}, {}, "clang", info)
+        assert result.get("rule") == "timing"

@@ -61,8 +61,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 22 source update covers 342 regional function matches across eight scene overlays,
-totaling 49,140 bytes. The Steam Knight damage routine subtracts the incoming hit from the actor’s HP and selects its reaction. The contact routine records the hit type, damage, and position on eligible actors. A surviving attachment can queue its reaction ID in a four-entry list. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 22 source update covers 345 regional function matches across eight scene overlays,
+totaling 49,348 bytes. The Steam Knight damage routine subtracts the incoming hit from the actor’s HP and selects its reaction. The contact routine records the hit type, damage, and position on eligible actors. A surviving attachment can queue its reaction ID in a four-entry list. Four mine routines scan floor probes and pass their position to the map lookup.
 The mine collision code intersects the probe with a face and tests its side planes.
 A mine actor dispatches its setup or update callback according to its current state. Its setup creates the parent model or links a child to its collision box. Its update controls model visibility, damps the angle, and checks up to five segments across the box. The parent rotor changes its model angle and sound volume as the player approaches.
 A mine rotor runs its state action and synchronizes its model. Its initializer allocates the primary model and optional accessory, then issues four child spawn requests.
@@ -215,6 +215,12 @@ Five existing game routines also match forest placement activation in SC01/0077.
 They scan the placement list, find a free actor slot, and use the scene predicate
 or distance bounds to decide which placements to activate. The player executes
 these routines on the guest CPU in this scene.
+
+When a forest bridge log settles, it spawns effect 37. The effect starts a
+16-tick countdown. On each update it issues four requests and checks whether
+to release its actor. The standard player executes these three routines on the
+guest CPU. Run the host component test with
+`python3 -m pytest -q tests/test_forest_settle_effect.py`.
 
 Four linked SC01/0077 floor-collision routines lower a point to the first
 intersecting face in a grid cell and return its slope class. The component test
