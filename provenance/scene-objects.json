@@ -4860,6 +4860,16 @@
       "optimization": "-O2",
       "recovery": "c",
       "extent": "function"
+    },
+    {
+      "name": "func_80186F9C",
+      "region": "sc02_0005",
+      "vram": 2149085084,
+      "size": 212,
+      "source": "src/overlays/sc02_0005/80186f9c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
     }
   ]
 }

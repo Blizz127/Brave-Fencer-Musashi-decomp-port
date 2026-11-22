@@ -58,6 +58,7 @@ typedef struct {
     u8 pad106[6];
 } SteamKnightPart;
 
+SteamKnightPart *func_8012C658(int kind, u32 selector, int parent_address);
 SteamKnightPart *func_8014C4AC(SteamKnightPart *part, int kind, int amount,
                                const void *position, u16 parameter);
 void func_801853EC(SteamKnightPart *part);

@@ -1078,9 +1078,14 @@ FOREST_FLOOR_EXTENTS = {
 }
 
 
+# The earlier Tower allocator used different C signatures for the same game routine.
+TOWER_POOL_PRIOR_SOURCE = "37f8c8016ea1b697c77467c8ee51f6fe1f89930cfacf04a68d81bb7cd2b822e7"
+
+
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    0x80186F9C: {"sc02_0005": (212, 0xBAB48872018582AD)},
     0x8018675C: {"sc02_0005": (288, 0x5A8CADA4006224D0)},
     0x8018687C: {"sc02_0005": (176, 0x489F6184399FBA88)},
     0x80131F64: {"sc03_0116": (60, 0x7CEFDCDDB39E55A0)},
@@ -1658,7 +1663,10 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
             tower_initializer = (vram == 0x8012C890 and size == 596 and info and
                                  all(k in info for k in ("data", "start", "vram")) and
                                  member_digest(info, vram, size) == 0xF467CE302666990C)
-            if (tower_initializer or member == "sc02_0005" or entry.get("region") == "sc02_0005" or
+            earlier_pool = (vram == 0x8012C658 and
+                            hashlib.sha256(src.read_bytes()).hexdigest() == TOWER_POOL_PRIOR_SOURCE)
+            if (tower_initializer or earlier_pool or member == "sc02_0005" or
+                    entry.get("region") == "sc02_0005" or
                     (tower.is_file() and (src.resolve() == tower or src.read_bytes() == tower.read_bytes()))):
                 raise Reject("timing", "tower actor allocation requires its room state and guest call timing")
         if overlay_extent_source_only(entry, src, info, SCENE_PHASE_EXTENTS):

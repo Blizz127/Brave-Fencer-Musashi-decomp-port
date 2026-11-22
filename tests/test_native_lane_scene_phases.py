@@ -12,6 +12,7 @@ import native_lane_gen as lane
 
 
 PHASES = (
+    ("sc02_0005", 0x80186F9C, 212),
     ("sc02_0005", 0x8018675C, 288),
     ("sc02_0005", 0x8018687C, 176),
     ("sc03_0116", 0x80131F64, 60),
@@ -293,6 +294,20 @@ def test_tower_actor_state_setter_keeps_other_rooms_selectable(tmp_path, monkeyp
         # A different room owns its separately supplied source at the same address.
         assert lane.build_one(dict(other, region=member), tmp_path, {}, {},
                               "clang", dict(info, member=member))["admitted"]
+
+
+def test_previous_tower_allocator_source_stays_with_its_room(tmp_path, monkeypatch):
+    (tmp_path / "ir").mkdir()
+    source = tmp_path / "renamed.c"
+    source.write_text("int func_8012C658(int value) { return value; }\n")
+    row = dict(name="func_8012C658", vram=0x8012C658, size=204, region="sc02_0035", source=str(source))
+    info = dict(member="sc02_0035", vram=row["vram"], start=0, code=[(row["vram"], row["vram"] + 204)], data=bytes(204))
+    monkeypatch.setattr(lane, "TOWER_POOL_PRIOR_SOURCE", hashlib.sha256(source.read_bytes()).hexdigest())
+    assert lane.build_one(row, tmp_path, {}, {}, "clang", info)["rule"] == "timing"
+    source.write_text("int func_8012C658(int value) { return value + 1; }\n")
+    if not all(shutil.which(tool) for tool in ("clang", "nm")):
+        pytest.skip("clang and nm required for the independent-source control")
+    assert lane.build_one(row, tmp_path, {}, {}, "clang", info)["admitted"]
 
 
 def test_mine_slot_guard_preserves_other_regional_initializers():
