@@ -1571,6 +1571,9 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
         if (vram == 0x8016345C and
                 (entry.get("region") == "sc01_0077" or member == "sc01_0077")):
             raise Reject("timing", "forest projectile power lookup and contact query require guest call timing")
+        if (vram in (0x80168AE4, 0x80168B70) and
+                (entry.get("region") == "sc01_0077" or member == "sc01_0077")):
+            raise Reject("timing", "forest impact emission and release require guest call timing")
         if forest_animation_source_only(entry, src, info):
             raise Reject("timing", "animation commands require checked scripts, recursive calls and timed services")
         if forest_floor_source_only(entry, src, info):

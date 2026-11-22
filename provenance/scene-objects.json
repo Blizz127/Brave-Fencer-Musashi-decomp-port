@@ -3990,6 +3990,36 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2"
+    },
+    {
+      "name": "func_80168AA8",
+      "region": "sc01_0077",
+      "vram": 2148960936,
+      "size": 60,
+      "source": "src/overlays/sc01_0077/80168aa8.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_80168AE4",
+      "region": "sc01_0077",
+      "vram": 2148960996,
+      "size": 140,
+      "source": "src/overlays/sc01_0077/80168ae4.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_80168B70",
+      "region": "sc01_0077",
+      "vram": 2148961136,
+      "size": 108,
+      "source": "src/overlays/sc01_0077/80168b70.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
     }
   ]
 }

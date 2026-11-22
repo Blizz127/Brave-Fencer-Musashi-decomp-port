@@ -435,3 +435,23 @@ def test_forest_projectile_contact_selection(tmp_path, pc, size, region, member,
     result = lane.build_one(row, tmp_path, {}, {}, "clang", info)
     assert result.get("rule") == rule
     assert result["admitted"] == (rule is None)
+
+
+@pytest.mark.skipif(not shutil.which("clang"), reason="clang required for native selection")
+@pytest.mark.parametrize("pc,size,region,member,rule", [
+    (0x80168AA8, 60, "sc01_0077", "sc01_0077", "layout"),
+    (0x80168AE4, 140, "sc01_0077", "main_0012", "timing"),
+    (0x80168AE4, 140, "sc02_0035", "sc01_0077", "timing"),
+    (0x80168B70, 108, "sc01_0077", "sc02_0035", "timing"),
+    (0x80168B70, 108, "main_0012", "sc01_0077", "timing"),
+    (0x80168AE4, 140, "main_0012", "main_0012", None),
+    (0x80168B70, 108, "sc02_0035", "sc02_0035", None),
+])
+def test_forest_impact_effect_selection(tmp_path, pc, size, region, member, rule):
+    source = ROOT / f"src/overlays/sc01_0077/{pc:08x}.c"
+    row = dict(name=f"func_{pc:08X}", vram=pc, size=size, region=region, source=str(source))
+    info = dict(member=member, vram=pc, start=0, code=[(pc, pc + size)], data=bytes(size))
+    (tmp_path / "ir").mkdir()
+    result = lane.build_one(row, tmp_path, {}, {}, "clang", info)
+    assert result.get("rule") == rule
+    assert result["admitted"] == (rule is None)
