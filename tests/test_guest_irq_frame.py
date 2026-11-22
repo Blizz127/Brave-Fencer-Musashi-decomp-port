@@ -41,7 +41,7 @@ class GuestIrqTests(unittest.TestCase):
             sources = ('mips_formatter', 'boot_memory', 'irq_controller', 'dma_controller', 'cpu_status',
                        'irq_scheduler', 'spu_cd_audio', 'startup_bindings', 'event_bindings',
                        'bios_events', 'bios_exception', 'bios_kernel', 'callback_bindings',
-                       'gpu_controller', 'gpu_dma2', 'scanline_timer')
+                       'gpu_controller', 'gpu_dma2', 'scanline_timer', 'cd_dma3')
             card = ('player_card', 'card_vector', 'card_service', 'card_image', 'card_host_storage')
             subprocess.run(['cc', '-std=c11', '-O1', '-ffunction-sections', '-fdata-sections',
                             '-DMUSASHI_LINKED_BIOS_EXCEPTION=1', '-DMUSASHI_NATIVE_MEMSET_BINDING=1',
@@ -68,7 +68,8 @@ class GuestIrqTests(unittest.TestCase):
                          'draw-pending-operation', 'draw-pending-argument', 'draw-pending-unaligned',
                          'draw-pending-multiple', 'draw-frame-zero', 'draw-pending-frame-zero',
                          'draw-frame-out-of-range', 'draw-upload', 'draw-upload-active', 'draw-upload-foreign',
-                         'draw-upload-other-irq'):
+                         'draw-upload-other-irq', 'cd3-complete', 'cd3-next', 'cd3-slot',
+                         'cd3-image', 'cd3-other', 'cd3-active', 'cd3-missing'):
                 with self.subTest(mode=mode):
                     subprocess.run([exe, path, mode], env=runtime_env, check=True, timeout=10)
             for mode in ('complete', 'owner', 'handle', 'handler', 'event', 'file'):

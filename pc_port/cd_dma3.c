@@ -251,6 +251,14 @@ int musashi_cd_dma3_get_state(const MusashiCdDma3 *owner, MusashiCdDma3State *ou
     d->active = 0;
     return 1;
 }
+int musashi_cd_dma3_completed_for(const MusashiCdDma3 *d, const MusashiBootMemory *memory,
+    const MusashiDmaController *dma) {
+    MusashiCdDma3State state;
+    return d && d->memory==memory && d->dma==dma && musashi_cd_dma3_get_state(d,&state) &&
+        state.fault==MUSASHI_CD_DMA3_OK && state.transfers && state.bytes &&
+        state.chcr==0x00400100u && !(state.bcr&0xffffu) && !state.waiting_for_request;
+}
+
 int musashi_cd_dma3_close(MusashiCdDma3 *d) {
     if (!enter(d, 1)) return 0;
     free(d);

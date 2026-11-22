@@ -2530,7 +2530,7 @@ static int source_irq_dispatch(void *userdata, MusashiBootMemory *memory, uint32
         .timer=&boot->timer1, .timer_read16=musashi_scanline_timer_read16,
         .generation=boot->irq_draw_host.generation, .host=&boot->irq_draw_host
     };
-    MusashiGuestIrqServices services = {.draw=&draw, .card=&card, .spu=boot->spu ? &boot->cd_spu : NULL,
+    MusashiGuestIrqServices services = {.cd_dma3=boot->cd_dma, .draw=&draw, .card=&card, .spu=boot->spu ? &boot->cd_spu : NULL,
         .cd=boot->irq.cd_clock == &boot->execution_clock ? &cd : NULL};
     int result = musashi_boot_execute_guest_irq_with_services(&boot->irq_image, memory, context,
         installed, io, &boot->execution_clock, &boot->dma, &services, &boot->irq_guest_stop);

@@ -63,6 +63,9 @@ int musashi_cd_dma3_advance(MusashiCdDma3 *, uint64_t absolute_cycle);
  * and completion even while returning refusal. Never retry accepted bytes.
  * Close cancels outstanding unconsumed work, without completion/guest effects. */
 int musashi_cd_dma3_get_state(const MusashiCdDma3 *, MusashiCdDma3State *);
+/* Completed chopped transfer on this RAM/controller pair, on its owning thread. */
+int musashi_cd_dma3_completed_for(const MusashiCdDma3 *, const struct MusashiBootMemory *,
+    const struct MusashiDmaController *);
 int musashi_cd_dma3_close(MusashiCdDma3 *);
 
 #endif

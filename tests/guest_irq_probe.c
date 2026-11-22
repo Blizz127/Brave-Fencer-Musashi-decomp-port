@@ -18,9 +18,11 @@ SDL_mutex *g_intrMutex;
 int VSyncCallback(void (*callback)(void)) { vsync_callback = callback; return 0; }
 
 #include "guest_irq_draw_completion.h"
+#include "guest_irq_cd_dma3.h"
 
 typedef struct Machine {
     DrawFixture draw;
+    CdCompletion cd3;
     MusashiBootMemory memory;
     MusashiGuestIrqImage image;
     MusashiPsyCrossIrqScheduler scheduler;
@@ -44,6 +46,7 @@ static uint64_t thread(void *p) { (void)p; return (uint64_t)SDL_ThreadID(); }
 static int advance(void *p,uint32_t n) {
     Machine *m=p; m->cycles+=n;
     if (m->draw.channel && !draw_advance(&m->draw,n)) return 0;
+    if (m->cd3.channel && !musashi_cd_dma3_advance(m->cd3.channel,m->cycles)) return 0;
     return !m->spu || musashi_spu_cd_audio_advance(m->spu,m->cycles);
 }
 static int audio_ready(void *p) { return p!=NULL; }
@@ -90,7 +93,8 @@ static int guest(void *p,MusashiBootMemory *memory,uint32_t context,const uint32
     MusashiGuestIrqImage clone;
     if (!strcmp(m->mode,"copy")) { clone=m->image;image=&clone; }
     MusashiGuestIrqServices services={.spu=m->spu ? &m->spu_bus : NULL,.card=m->card,
-        .draw=m->draw.channel ? &m->draw.service : NULL};
+        .draw=m->draw.channel ? &m->draw.service : NULL, .cd=m->cd3.channel ? &m->cd3.cd : NULL,
+        .cd_dma3=!strcmp(m->mode,"cd3-missing") ? NULL : m->cd3.channel};
     return musashi_boot_execute_guest_irq_with_services(image,memory,context,saved,io,
         &m->clock,&m->dma,&services,&m->stop);
 }
@@ -239,7 +243,9 @@ int main(int argc,char **argv) {
         if (swap_timer) m->draw.service.timer=&other->draw;
         if (stale) m->draw.service.generation=old_generation;
     }
-    int vblank=!draw && strcmp(m->mode,"dma")!=0, dma=!strcmp(m->mode,"dma")||!strcmp(m->mode,"both");
+    int cd3=!strncmp(m->mode,"cd3-",4);
+    if (cd3) cd_test_begin(&m->cd3,&m->memory,&m->dma,m->mode,thread,&m->cycles);
+    int vblank=!draw && !cd3 && strcmp(m->mode,"dma")!=0, dma=!strcmp(m->mode,"dma")||!strcmp(m->mode,"both");
     assert(musashi_irq_controller_write16(&m->irq,0x1f801074u,9));
     if(vblank)assert(musashi_irq_controller_raise_vblank(&m->irq));
     if(dma) {
@@ -248,6 +254,7 @@ int main(int argc,char **argv) {
        assert(m->dma.interrupt==0x84840000u);
     }
     int success=(countdown && !bad_countdown) || equal || wrap || !strcmp(m->mode,"fade-limit") || !strcmp(m->mode,"title-fade") || !strcmp(m->mode,"vblank") || dma || !strcmp(m->mode,"card") || !strcmp(m->mode,"active");
+    if (cd3) success=!strcmp(m->mode,"cd3-complete") || !strcmp(m->mode,"cd3-next");
     if (draw) success=m->draw.queued ? m->draw.queued->complete :
                     !strcmp(m->mode,"draw-complete") || !strcmp(m->mode,"draw-timer") ||
                     !strcmp(m->mode,"draw-frame-zero") || !strcmp(m->mode,"draw-upload");
@@ -305,6 +312,8 @@ int main(int argc,char **argv) {
         unsigned steps=m->stop.instructions;
         assert(!musashi_psycross_irq_scheduler_dispatch_pending(s,m->outer) && steps==m->stop.instructions && m->calls==1);
         if (bad_countdown) assert(m->post==m->before+1 && m->stop.pc==0x8002d008u);
+        else if(cd3) assert(m->post==m->before && (m->stop.pc==0x80042ea8u ||
+            (!strcmp(m->mode,"cd3-image") && m->stop.pc==CD_TEST_CALLBACK)));
         else if(draw) assert(m->post==m->before);
         else if(!strcmp(m->mode,"code")||!strcmp(m->mode,"callback"))assert(m->post==m->before+1);
         else if(!strcmp(m->mode,"voice-range")) assert(m->post==m->before+1 && m->stop.pc==0x80031454u);
@@ -317,6 +326,7 @@ int main(int argc,char **argv) {
         else if(!strcmp(m->mode,"wrongslot"))assert(m->post==m->before && steps>0 && m->stop.pc==0x800428d4u);
         else assert(m->post==m->before && steps==0);
     }
+    if (cd3) cd_test_check(&m->cd3,&m->memory,&m->dma,m->mode,success);
     if (draw) draw_check(&m->draw,&m->memory,m->stop.pc,m->mode,success);
     if (other) {
         assert(!other->draw.chcr_reads && !other->draw.status_reads && !other->draw.timer_reads);

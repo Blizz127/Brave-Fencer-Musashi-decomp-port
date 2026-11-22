@@ -5,6 +5,7 @@
 #include "musashi_native_lane.h"
 #include "musashi_guest_irq.h"
 #include "musashi_gpu_dma2.h"
+#include "musashi_cd_dma3.h"
 #include "main12_internal.h"
 #ifdef MUSASHI_LINKED_BIOS_EXCEPTION
 #include "musashi_bios_exception.h"
@@ -6130,6 +6131,7 @@ typedef struct FormatterCpu {
     const MusashiDmaCallbackRegistrationDevice *irq_dma;
     const MusashiGuestIrqDraw *irq_draw;
     PendingDrawList pending_draw;
+    uint32_t movie_record;
     const MusashiExecutionClock *clock;
     const MusashiCdRegisterDevice *cd_register_device;
     const DmaRegistrationFrame *dma_registration;
@@ -14594,7 +14596,7 @@ typedef enum {
     IRQ_CARD_CLEAR_RESULT, IRQ_CARD_RESET_EVENTS, IRQ_CARD_POLL_EVENTS, IRQ_CARD_FLAGS,
     IRQ_CARD_TEST_EVENT, IRQ_CARD_INFO_BIOS, IRQ_CARD_LOAD_BIOS,
     IRQ_CARD_READ, IRQ_CARD_SEEK_BIOS, IRQ_CARD_READ_BIOS,
-    IRQ_DRAW_COMPLETE, IRQ_DRAW_MASK, IRQ_DRAW_FRAME, IRQ_DRAW_TIME, IRQ_DRAW_SUBMIT, IRQ_OUTSIDE
+    IRQ_DRAW_COMPLETE, IRQ_DRAW_MASK, IRQ_DRAW_FRAME, IRQ_DRAW_TIME, IRQ_DRAW_SUBMIT, IRQ_CD_DMA, IRQ_OUTSIDE
 } IrqRegion;
 typedef struct { uint32_t start; size_t offset, length; } IrqCodeRegion;
 #define IRQ_REGION(address, field) {address, offsetof(MusashiGuestIrqImage, field), sizeof(((MusashiGuestIrqImage *)0)->field)}
@@ -14632,7 +14634,8 @@ static const IrqCodeRegion irq_code[] = {
     IRQ_REGION(0x8001099cu, draw_frame),
     IRQ_REGION(0x8004239cu, draw_frame_time),
     /* The foreground callback map already holds this mounted operation. */
-    {0x8005b710u, 0, 0x4cu}
+    {0x8005b710u, 0, 0x4cu},
+    {0x800469ccu, 0, 0x90u}
 };
 #undef IRQ_REGION
 
@@ -14673,7 +14676,7 @@ int musashi_boot_map_irq_exe(MusashiGuestIrqImage *image, MusashiBootMemory *mem
         const IrqCodeRegion *region = &irq_code[i];
         const uint8_t *p = musashi_boot_ram_span(memory,region->start,region->length);
         if (!p) return 0;
-        if (i == IRQ_DRAW_SUBMIT) continue;
+        if (i == IRQ_DRAW_SUBMIT || i == IRQ_CD_DMA) continue;
         if (i == IRQ_CARD_READ) {
             for (size_t j=0; j<sizeof card_read_spans/sizeof card_read_spans[0]; ++j) {
                 size_t offset=card_read_spans[j].start-region->start;
@@ -14708,7 +14711,7 @@ static IrqRegion irq_region(uint32_t address) {
 static int irq_live_word(const MusashiGuestIrqImage *image, MusashiBootMemory *memory,
                          uint32_t pc, uint32_t *word) {
     IrqRegion i = irq_region(pc);
-    if (i == IRQ_DRAW_SUBMIT) return cd_parent_word(image,memory,pc,word);
+    if (i == IRQ_DRAW_SUBMIT || i == IRQ_CD_DMA) return cd_parent_word(image,memory,pc,word);
     if (i == IRQ_OUTSIDE || image->identity != image || image->memory != memory ||
         !musashi_boot_read32(memory,pc,word)) return 0;
     const IrqCodeRegion *r = &irq_code[i];
@@ -14993,16 +14996,18 @@ static int irq_draw_owner(const MusashiGuestIrqDraw *draw, const MusashiGuestIrq
 
 /* Follow the actual DMA status read, write-one-to-clear and registered slot
  * load. A second enabled channel can hold the same callback address. */
-static unsigned irq_draw_selection(unsigned selected, uint32_t pc, unsigned op,
-    uint32_t address, uint32_t value) {
+static unsigned irq_dma_selection(unsigned selected, unsigned channel, uint32_t callback,
+    uint32_t pc, unsigned op, uint32_t address, uint32_t value) {
+    uint32_t enabled=1u<<(16u+channel), pending=1u<<(24u+channel);
+    uint32_t asserted=0x80800000u|enabled|pending;
     switch (pc) {
     case 0x80042e88u:
-        return op==35u && address==0x1f8010f4u && (value&0x84840000u)==0x84840000u;
+        return op==35u && address==0x1f8010f4u && (value&asserted)==asserted;
     case 0x80042e94u:
         return selected==1 && op==43u && address==0x1f8010f4u &&
-            (value&0x7f840000u)==0x04840000u ? 2u : 0u;
+            (value&(0x7f800000u|enabled))==(0x00800000u|enabled|pending) ? 2u : 0u;
     case 0x80042e98u:
-        return selected==2 && op==35u && address==0x8006cbccu && value==0x8005ba90u ? 3u : 0u;
+        return selected==2 && op==35u && address==0x8006cbc4u+4u*channel && value==callback ? 3u : 0u;
     default:
         return selected;
     }
@@ -15053,11 +15058,51 @@ static int pending_draw_access(const FormatterCpu *cpu, IrqRegion region, unsign
            (address==DRAW_TAIL && value==item.next);
 }
 
+/* The movie reader publishes the current 32-byte sector record through its
+ * mapped DMA3 callback. Qualify the installed no-child case before the first
+ * guest write. Every instruction is acquired from the mounted program. */
+static uint32_t irq_movie_record(const MusashiGuestIrqImage *image, MusashiBootMemory *memory) {
+    uint32_t base, count, index, next, word;
+    if (!cd_irq_ram_word(memory,0x800a5e80u,0) || !cd_irq_ram_word(memory,0x800ae644u,1) ||
+        !musashi_boot_read32(memory,0x800c7c94u,&base) || base<CODE_IMAGE_END || (base&3u) ||
+        !musashi_boot_read32(memory,0x800c6d30u,&count) || !count || count>MUSASHI_RAM_SIZE/32u ||
+        !musashi_boot_ram_span(memory,base,32u*count) ||
+        !musashi_boot_read32(memory,0x800c6d3cu,&index) || index>=count ||
+        !musashi_boot_read32(memory,0x800c6d38u,&next) || next>=count) return 0;
+    for (uint32_t pc=irq_code[IRQ_CD_DMA].start;pc<0x80046a5cu;pc+=4u)
+        if (!cd_parent_word(image,memory,pc,&word)) return 0;
+    return base+32u*index;
+}
+
+static int irq_movie_access(const FormatterCpu *cpu,unsigned op,uint32_t address) {
+    uint32_t record=cpu->movie_record;
+    if (!record) return 0;
+    switch (cpu->pc) {
+    case 0x800469d0u: return op==35u && address==0x800c6d3cu;
+    case 0x800469d8u: return op==35u && address==0x800c7c94u;
+    case 0x800469e0u: return op==43u && address==0x8006cab4u;
+    case 0x800469f0u: return op==41u && address==record;
+    case 0x800469fcu: return op==34u && address==record+31u;
+    case 0x80046a00u: return op==38u && address==record+28u;
+    case 0x80046a08u: return op==42u && address==0x80078803u;
+    case 0x80046a0cu: return op==46u && address==0x80078800u;
+    case 0x80046a10u: return op==35u && address==record+8u;
+    case 0x80046a18u: return op==35u && address==0x800c6d38u;
+    case 0x80046a20u: return op==35u && address==0x800a5e80u;
+    case 0x80046a28u: return op==43u && address==0x80078804u;
+    case 0x80046a30u: return op==43u && address==0x800c6d3cu;
+    case 0x80046a48u: return op==43u && address==0x800ae644u;
+    case 0x80046a4cu: return op==35u && address==0x8006cab4u;
+    default: return 0;
+    }
+}
+
 static int irq_data_access(const FormatterCpu *cpu, uint32_t w) {
     unsigned op = w >> 26;
     if (op < 32) return 1;
     uint32_t address = cpu->r[(w >> 21) & 31u] + (uint32_t)(int32_t)(int16_t)w;
     IrqRegion region = irq_region(cpu->pc);
+    if (region==IRQ_CD_DMA) return irq_movie_access(cpu,op,address);
     /* The channel tick consumes one count from its nonzero 16-bit timer.
      * Its mapped store must still agree with the live count at issue. */
     if (region==IRQ_CHANNEL_TICK && cpu->pc==0x8002d008u) {
@@ -15379,7 +15424,7 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
     IrqGuestReturn stack[8];
     unsigned depth = 0;
     uint32_t selected_slot = 0, selected_vblank_slot = 0;
-    unsigned draw_selection = 0;
+    unsigned draw_selection = 0, cd_dma_selection = 0;
     PendingDrawList retired_draw = {0};
     uint32_t reg_address;
     if (!stop) return 0;
@@ -15428,6 +15473,10 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
                 if (!same_draw_item(&current,&cpu.pending_draw)) return 0;
             }
         }
+        if (origin==irq_code[IRQ_CD_DMA].start &&
+            (!services || !musashi_cd_dma3_completed_for(services->cd_dma3,memory,dma) ||
+             !cd_irq_ram_word(memory,0x8006cbd0u,origin) ||
+             !cpu.movie_record || irq_movie_record(image,memory)!=cpu.movie_record)) return 0;
         if (!irq_live_word(image,memory,origin,&w) || !irq_data_access(&cpu,w)) return 0;
         unsigned op = w >> 26, fn = w & 63u;
         if (origin == 0x800428c4u) {
@@ -15477,6 +15526,15 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
             } else if (op == 2u && region == dest && region >= IRQ_GAME_VBLANK &&
                        region < IRQ_OUTSIDE) {
                 /* A fixed in-function jump does not create an ABI return frame. */
+            } else if (origin==0x80042ea8u && !op && fn==9u &&
+                       target==irq_code[IRQ_CD_DMA].start) {
+                if (cd_dma_selection!=3 || region!=IRQ_DMA || depth!=2 ||
+                    stack[0].callee!=IRQ_DISPATCH || stack[1].callee!=IRQ_DMA ||
+                    selected_slot!=0x8006bb0cu || cpu.r[29]!=installed[1]-0x58u ||
+                    !services || !musashi_cd_dma3_completed_for(services->cd_dma3,memory,dma) ||
+                    !(cpu.movie_record=irq_movie_record(image,memory))) return 0;
+                cd_dma_selection=0;
+                stack[depth++]=(IrqGuestReturn){origin+8u,cpu.r[29],IRQ_CD_DMA};
             } else if (origin==0x80042ea8u && !op && fn==9u) {
                 const MusashiGuestIrqDraw *draw=services ? services->draw : NULL;
                 if (draw_selection!=3 || target!=0x8005ba90u || dest!=IRQ_DRAW_COMPLETE ||
@@ -15555,7 +15613,11 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
             }
         }
         if (!formatter_step(memory,&cpu)) return 0;
-        if (draw_observe) draw_selection=irq_draw_selection(draw_selection,origin,op,draw_address,cpu.r[draw_reg]);
+        if (draw_observe) {
+            draw_selection=irq_dma_selection(draw_selection,2,0x8005ba90u,origin,op,draw_address,cpu.r[draw_reg]);
+            cd_dma_selection=irq_dma_selection(cd_dma_selection,3,irq_code[IRQ_CD_DMA].start,
+                origin,op,draw_address,cpu.r[draw_reg]);
+        }
         ++stop->instructions;
         if (jump) {
             stop->pc = cpu.pc;

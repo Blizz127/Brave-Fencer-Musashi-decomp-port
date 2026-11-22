@@ -86,11 +86,13 @@ typedef struct MusashiGuestIrqDraw {
 } MusashiGuestIrqDraw;
 int musashi_boot_bind_irq_draw(MusashiGuestIrqImage *, MusashiGuestIrqDrawHost *,
     void *machine, int (*owns)(void *, const MusashiGuestIrqDraw *));
+struct MusashiCdDma3;
 typedef struct MusashiGuestIrqServices {
     const MusashiCdSpuDevice *spu;
     const struct MusashiGuestIrqCd *cd;
     const MusashiGuestIrqCard *card;
     const MusashiGuestIrqDraw *draw;
+    const struct MusashiCdDma3 *cd_dma3;
 } MusashiGuestIrqServices;
 
 int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *,
