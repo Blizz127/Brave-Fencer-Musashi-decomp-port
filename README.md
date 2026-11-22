@@ -48,8 +48,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 22 source update covers 284 regional function matches across seven scene overlays,
-totaling 36,420 bytes. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 22 source update covers 291 regional function matches across seven scene overlays,
+totaling 36,936 bytes. Four mine routines scan floor probes and pass their position to the map lookup.
 The mine collision code intersects the probe with a face and tests its side planes.
 A mine actor scheduler updates eligible actors and copies their positions to attached objects.
 Two earlier passes select actors for updates. A separate routine counts down a signed timer and adjusts the actor’s scale.
@@ -233,6 +233,15 @@ captured forest player, the comparison reached a collision routine that uses the
 guest scratchpad stack. Changing one actor field in that capture produced a
 transition from kind 0, action 1 to kind 2, action 0 in both versions before
 the same boundary. The standard player executes this action on the guest CPU.
+
+The kind-two player update uses all 16 bits of the action index and returns
+the selected callback's result. Action zero combines two contact results to
+choose a transition. When that check permits the next update, the code caps
+a player field at 24, calls four services in order and sets a game flag.
+An original forest input recording observed kind two during six frames of
+westward movement. The recording did not sample the action index. The
+standard player executes these seven routines on the guest CPU.
+Run the no-disc test with `python3 -m pytest -q tests/test_forest_kind2_action.py`.
 
 Two forest collision functions scan up to 96 actor slots twice. A contact can
 push the actor sideways or snap its coordinates to a surface. The actor's

@@ -27,8 +27,9 @@ extern ForestPlayerState D_80126B58;
 
 #if defined(__mips__) && !defined(__LP64__)
 extern u8 D_80126BA4;
-extern u32 D_8018860C[], D_801891AC[], D_8018925C[];
+extern u32 D_8018860C[], D_801891AC[], D_8018925C[], D_80189310[];
 #define FOREST_CURRENT_STATE D_80126BA4
+#define FOREST_ACTION_RESULT(table, index, actor) (((s32 (*)(ForestPlayerState *))D_##table[index])(actor))
 #define FOREST_ACTOR_GAME_ADDRESS(actor) ((u32)(actor))
 #define FOREST_PLAYER_CALL(table, index, actor) (((void (*)(ForestPlayerState *))D_##table[index])(actor))
 #else
@@ -39,6 +40,10 @@ u32 bfm_forest_action_actor_address(ForestPlayerState *actor);
 /* Table entries are four-byte game addresses, including on a 64-bit host. */
 u32 bfm_forest_player_table_word(u32 table_address, u32 index);
 void bfm_forest_player_call(u32 game_address, ForestPlayerState *actor);
+/* Some action callers forward the selected callback's returned register. */
+s32 bfm_forest_player_call_result(u32 game_address, ForestPlayerState *actor);
+#define FOREST_ACTION_RESULT(table, index, actor) \
+    bfm_forest_player_call_result(bfm_forest_player_table_word(0x##table##u, (index)), (actor))
 /* The owner stops or rolls back the whole query if either lookup is unavailable. */
 #define FOREST_PLAYER_CALL(table, index, actor) \
     bfm_forest_player_call(bfm_forest_player_table_word(0x##table##u, (index)), (actor))
@@ -51,4 +56,11 @@ void func_8014900C(ForestPlayerState *actor);
 void func_80146360(void);
 void func_80159968(ForestPlayerState *actor);
 void func_80159A20(ForestPlayerState *actor);
+s32 func_8015AD3C(ForestPlayerState *actor);
+s32 func_8015AD78(ForestPlayerState *actor);
+s32 func_8015ADB0(ForestPlayerState *actor);
+s32 func_80161104(ForestPlayerState *actor);
+s32 func_80161208(ForestPlayerState *actor);
+s32 func_801612B8(ForestPlayerState *actor, s32 flags);
+s32 func_8016130C(ForestPlayerState *actor, s32 contact);
 #endif

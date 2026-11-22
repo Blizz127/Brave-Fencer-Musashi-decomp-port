@@ -1103,6 +1103,7 @@ SCENE_PHASE_EXTENTS = {
     0x80159968: {"sc01_0077": (60, 0xB59A7B7CF404FBEB)},
     0x80159A20: {"sc01_0077": (232, 0xF35D76072A56E095)},
     0x80159C84: {"sc01_0077": (1348, 0x2C65A9449EB1F018)},
+    0x8015AD3C: {"sc01_0077": (60, 0xAACEF9A05EB2078A)},
     # These object services call into guest code from the middle of the frame.
     0x8014A2E4: dict.fromkeys(("main_0012", "sc02_0039"), (156, 0x4DBDD625CB4098C8)),
     0x8014C278: dict.fromkeys(("main_0012", "sc02_0039"), (56, 0x93E8D33159724249)),
@@ -1180,6 +1181,38 @@ def forest_floor_source_only(entry, src, info):
     return earlier is not None and hashlib.sha256(src.read_bytes()).hexdigest() in earlier
 
 
+# These forest action routines have byte-identical MAIN counterparts. They
+# share code addresses while the running forest callbacks remain unqualified.
+FOREST_ACTION_EARLIER_SOURCES = {
+    0x8015AD78: "c69db65f195346d72eaca4ed9e7475cabb8345fe9282dbd27fda591c7064599d",
+    0x8015ADB0: "4d683bf352164a9d211b42eb569d1788a495606afc075a57188808154dbc0589",
+    0x80161104: "692289b63197a663a1fd3048c171ea4dc342295c9d945474ea0d0f4e23981167",
+    0x80161208: "9089ba26074b204806d2f8895c14e75fdb360b33b4e12dcc74ffc4f8eb2c53b5",
+    0x801612B8: "7388a8f6c8aae5acf1b1d051a30796f83730471f713dcc100ba97a665c25483b",
+    0x8016130C: "cbee9e8f11aea41396bcdf978e0937aa7db1c7bf96567e354e55bb72ef27af84",
+}
+
+
+def forest_action_source_only(entry, src, info):
+    pc = entry["vram"]
+    previous = FOREST_ACTION_EARLIER_SOURCES.get(pc)
+    if previous is None:
+        return False
+    member = info["member"] if info else None
+    if entry.get("region") == "sc01_0077" or member == "sc01_0077":
+        return True
+    forest = ROOT / f"src/overlays/sc01_0077/{pc:08x}.c"
+    text = src.read_bytes()
+    if src.resolve() == forest or (forest.is_file() and text == forest.read_bytes()):
+        return True
+    if hashlib.sha256(text).hexdigest() != previous:
+        return False
+    # The earlier 612B8 source is also the published MAIN implementation.
+    if pc != 0x801612B8:
+        return True
+    return (member if member is not None else entry.get("region")) != "main_0012"
+
+
 def mine_slot_update_source_only(entry, src, info):
     pc = entry["vram"]
     if pc not in (0x8012A908, 0x80162B1C, 0x8017849C, 0x8017869C, 0x801787D4):
@@ -1237,6 +1270,8 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
             raise Reject("timing", "forest phase requires its guest callback and return timing")
         if overlay_extent_source_only(entry, src, info, SCENE_PHASE_EXTENTS):
             raise Reject("timing", "scene phase requires verified guest calls and event timing")
+        if forest_action_source_only(entry, src, info):
+            raise Reject("timing", "forest action requires ordered guest services and state updates")
         if mine_slot_update_source_only(entry, src, info):
             raise Reject("timing", "mine slot updates require guest callback and memory timing")
         if scene_player_motion_source_only(entry, src, info):

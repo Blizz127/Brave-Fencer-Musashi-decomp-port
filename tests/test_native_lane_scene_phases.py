@@ -19,6 +19,7 @@ PHASES = (
     ("sc02_0039", 0x801287B8, 248),
     ("sc02_0039", 0x80135D20, 400),
     ("sc01_0077", 0x80135D20, 400),
+    ("sc01_0077", 0x8015AD3C, 60),
     ("sc01_0077", 0x80150150, 32),
     ("main_0012", 0x801287B8, 248),
     ("main_0012", 0x8014A2E4, 156),
@@ -100,3 +101,32 @@ def test_mine_slot_dispatch_preserves_the_main_member(tmp_path, pc, size):
     assert not lane.mine_slot_update_source_only(dict(row, region="main_0012"), main,
                                                  dict(member="main_0012"))
     assert not lane.mine_slot_update_source_only(dict(row, region="sc99_0001"), main, None)
+
+
+@pytest.mark.parametrize("pc", (0x8015AD78, 0x8015ADB0, 0x80161104,
+                                0x80161208, 0x801612B8, 0x8016130C))
+def test_forest_action_uses_its_member_and_source(pc, tmp_path, monkeypatch):
+    import hashlib
+
+    selected = ROOT / f"src/overlays/sc01_0077/{pc:08x}.c"
+    copy = tmp_path / "action.c"
+    copy.write_bytes(selected.read_bytes())
+    other = dict(region="sc99_0001", vram=pc)
+    assert lane.forest_action_source_only(other, copy, None)
+
+    copy.write_text("int independent(int x) { return x + 1; }\n")
+    assert lane.forest_action_source_only(dict(other, region="sc01_0077"), copy, None)
+    assert lane.forest_action_source_only(other, copy, dict(member="sc01_0077"))
+    assert not lane.forest_action_source_only(other, copy, None)
+    assert not lane.forest_action_source_only(other, copy, dict(member="main_0012"))
+
+    # Model an older copy whose source identity is known, without needing the game.
+    monkeypatch.setitem(lane.FOREST_ACTION_EARLIER_SOURCES, pc,
+                        hashlib.sha256(copy.read_bytes()).hexdigest())
+    assert lane.forest_action_source_only(other, copy, None)
+    is_older_forest = lane.forest_action_source_only(dict(other, region="main_0012"), copy, None)
+    assert is_older_forest == (pc != 0x801612B8)
+    named_main = dict(other, region="main_0012")
+    assert lane.forest_action_source_only(named_main, copy, dict(member="sc99_0001"))
+    verified_main = lane.forest_action_source_only(other, copy, dict(member="main_0012"))
+    assert verified_main == (pc != 0x801612B8)
