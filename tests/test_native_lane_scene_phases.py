@@ -13,6 +13,7 @@ import native_lane_gen as lane
 
 
 PHASES = (
+    ("sc03_0116", 0x80182378, 60),
     ("sc02_0039", 0x8017E910, 272),
     ("sc02_0039", 0x8017E794, 380),
     ("sc02_0039", 0x8017EA20, 532),
@@ -163,6 +164,21 @@ PHASES = (
     ("main_0010", 0x800D1EBC, 156),
 )
 
+
+
+def test_room_252_selector_uses_its_complete_body(tmp_path, monkeypatch):
+    pc = 0x80182378
+    source = tmp_path / "independent.c"
+    source.write_text("int independent(void) { return 3; }\n")
+    body = bytes(range(60))
+    other = body[:28] + bytes((197,)) + body[29:]
+    extents = lane.SCENE_PHASE_EXTENTS
+    monkeypatch.setitem(extents[pc], "sc03_0116", (60, lane.fnv1a64(body)))
+    for size in (4, 56, 60, 64):
+        row = dict(vram=pc, region="unknown", size=size)
+        for data, held in ((body, True), (other, False), (body[:-1], False), (None, False)):
+            info = dict(member="unknown", vram=pc, start=0, data=data)
+            assert lane.overlay_extent_source_only(row, source, info, extents) == held
 
 
 @pytest.mark.parametrize("pc", (0x8017E758, 0x8017EE9C))

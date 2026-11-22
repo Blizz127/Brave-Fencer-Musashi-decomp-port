@@ -1104,6 +1104,7 @@ FOREST_ATTACHMENT_EXTENTS = {
 }
 
 SCENE_PHASE_EXTENTS = {
+    0x80182378: {"sc03_0116": (60, 0x4E8E9F64889C1744)},
     0x8017E910: {"sc02_0039": (272, 0x55E6A69E5D457E0F)},
     0x8017E794: {"sc02_0039": (380, 0x67331A91CF80E51D)},
     0x8017EA20: {"sc02_0039": (532, 0x34F44B1AA9D02239)},
@@ -1383,6 +1384,11 @@ def overlay_extent_source_only(entry, src, info, extents):
     elif pc in (0x8017E758, 0x8017E794, 0x8017E910, 0x8017EA20, 0x8017EE9C, 0x8017F050):
         if info and info.get("data") is not None and all(key in info for key in ("vram", "start")):
             size, fingerprint = variants["sc02_0039"]
+            if member_digest(info, pc, size) == fingerprint:
+                return True
+    elif pc == 0x80182378:
+        if info and info.get("data") is not None and "vram" in info and "start" in info:
+            size, fingerprint = variants["sc03_0116"]
             if member_digest(info, pc, size) == fingerprint:
                 return True
     elif pc in TOWER_INTRO_SOURCE_HASHES:
