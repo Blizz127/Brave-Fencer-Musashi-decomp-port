@@ -12,9 +12,11 @@ enum { NO_FILE = 0x02, BAD_FD = 0x09, IO_ERROR = 0x10, EXISTS = 0x11,
 typedef enum { NOTHING, FILE_READ, FILE_WRITE, RAW_READ, RAW_WRITE,
                INFO, INFO_SUB, LOAD, WRITE_TEST } Operation;
 typedef struct {
-    int used, stale, async, error;
+    int used, stale, literal_path, error;
+    uint32_t mode;
+    uint64_t open_id;
     unsigned slot;
-    uint32_t position, size;
+    uint32_t position, size, first_sector;
     char name[CARD_MAX_NAME + 1];
 } Descriptor;
 typedef struct {
@@ -27,17 +29,22 @@ typedef struct { uint32_t group, spec; } Event;
 typedef struct {
     Request request;
     Event events[2];
+    uint8_t listed[CS_DIRENT_BYTES];
     unsigned first_event, event_count;
     int status, changed, write_error;
 } Slot;
 typedef struct {
     unsigned slot;
+    int canonical_port;
     char name[CARD_MAX_NAME + 1];
 } CardPath;
 struct CardService {
     CsHost host;
     int initialized, started, files, error, ignore_next_change, pumping;
     unsigned last_port;
+    uint64_t last_open_id;
+    uint64_t completed_open_id;
+    CsCompletedRead completed_read;
     Slot slots[SLOT_COUNT];
     Descriptor descriptors[FD_LIMIT];
     uint8_t reserved[FD_LIMIT];
@@ -101,10 +108,13 @@ static int busy(const Slot *slot) {
 
 static void invalidate(CardService *s, unsigned slot, const char *name) {
     int fd;
+    memset(s->slots[slot].listed, 0, sizeof s->slots[slot].listed);
     for (fd = FD_FIRST; fd < FD_LIMIT; ++fd) {
         Descriptor *d = &s->descriptors[fd];
-        if (d->used && d->slot == slot && (!name || strcmp(d->name, name) == 0))
+        if (d->used && d->slot == slot && (!name || strcmp(d->name, name) == 0)) {
             d->stale = 1;
+            if (d->open_id == s->completed_open_id) s->completed_open_id = 0;
+        }
     }
 }
 
@@ -150,6 +160,7 @@ static int path_from_guest(CardService *s, uint32_t addr, CardPath *path) {
     ++i;
     if (n - i > CARD_MAX_NAME) return BAD_RANGE;
     path->slot = port >> 4;
+    path->canonical_port = i == 5 && buf[2] == (char)('0' + path->slot) && buf[3] == '0';
     memcpy(path->name, buf + i, n - i + 1);
     return 0;
 }
@@ -249,10 +260,55 @@ int32_t cs_open(CardService *s, uint32_t path_address, uint32_t mode) {
     d->used = 1;
     d->slot = path.slot;
     d->size = entry.size;
-    d->async = (mode & 0x8000u) != 0;
+    d->first_sector = entry.first_sector;
+    d->mode = mode;
+    d->literal_path = path.canonical_port && strcmp(path.name, entry.name) == 0;
+    /* On exhaustion ordinary opens still work. Never reissue an ID. */
+    if (s->last_open_id != UINT64_MAX) d->open_id = ++s->last_open_id;
     memcpy(d->name, entry.name, sizeof d->name);
     s->slots[path.slot].changed = 0;
     return fd;
+}
+
+static void word_at(uint8_t *bytes, unsigned at, uint32_t value) {
+    unsigned i;
+    for (i = 0; i != 4; ++i) bytes[at + i] = (uint8_t)(value >> (8u * i));
+}
+
+static void make_dirent(uint8_t row[CS_DIRENT_BYTES], const char *name, uint32_t size,
+                        uint32_t first_sector) {
+    memset(row, 0, CS_DIRENT_BYTES);
+    memcpy(row, name, strlen(name));
+    word_at(row, 0x14, 0x50);
+    word_at(row, 0x18, size);
+    word_at(row, 0x20, first_sector);
+}
+
+uint64_t cs_async_read_descriptor(const CardService *s, const void *host_owner,
+                                  unsigned slot, int32_t fd, const char *name,
+                                  const uint8_t row[CS_DIRENT_BYTES], uint32_t file_size,
+                                  uint32_t position, uint32_t count, const CsCompletedRead *completed) {
+    if (!s || !host_owner || s->host.context != host_owner || !name || !name[0] || !row ||
+        slot >= SLOT_COUNT || fd < FD_FIRST || fd >= FD_LIMIT ||
+        !s->started || !s->files || s->pumping || !cs_idle(s))
+        return 0;
+    const Descriptor *d = &s->descriptors[fd];
+    const Slot *media = &s->slots[slot];
+    if (!d->used || d->stale || d->error || d->slot != slot || d->mode != 0x8001u ||
+        !d->literal_path || strcmp(d->name, name) || d->size != file_size || media->changed ||
+        media->write_error || media->status != 1 || d->position != position ||
+        (position | count) % CS_SECTOR_BYTES || position > d->size ||
+        count > d->size - position)
+        return 0;
+    if (completed && (s->completed_open_id != d->open_id || !s->completed_open_id ||
+        s->completed_read.position != completed->position ||
+        s->completed_read.destination != completed->destination ||
+        s->completed_read.count != completed->count)) return 0;
+    uint8_t expected[CS_DIRENT_BYTES];
+    make_dirent(expected, d->name, d->size, d->first_sector);
+    if (memcmp(expected, row, sizeof expected) || memcmp(row, media->listed, sizeof expected))
+        return 0;
+    return d->open_id;
 }
 
 int32_t cs_seek(CardService *s, int32_t fd, int32_t displacement, unsigned origin) {
@@ -263,6 +319,7 @@ int32_t cs_seek(CardService *s, int32_t fd, int32_t displacement, unsigned origi
     if (origin == 1) p += d->position;
     else if (origin != 0) return fail(s, d, BAD_RANGE);
     if (p < 0 || p > INT32_MAX) return fail(s, d, BAD_RANGE);
+    s->completed_open_id = 0;
     d->position = (uint32_t)p;
     return (int32_t)p;
 }
@@ -272,6 +329,7 @@ int32_t cs_close(CardService *s, int32_t fd) {
     if (!d) return -1;
     if (busy(&s->slots[d->slot]) && s->slots[d->slot].request.fd == fd)
         return fail(s, d, IO_ERROR);
+    if (d->open_id == s->completed_open_id) s->completed_open_id = 0;
     memset(d, 0, sizeof *d);
     return fd;
 }
@@ -293,6 +351,8 @@ static uint32_t file_transfer(CardService *s, Descriptor *d, uint32_t addr,
     size_t actual = 0;
     uint8_t *span = guest(s, addr, count, !writing);
     CsMedia m;
+    /* Another queued operation may have completed since this one was submitted. */
+    s->completed_open_id = 0;
     if (!span) return CS_ERROR;
     m = load_image(s, d->slot);
     if (m != CS_MEDIA_OK) return media_spec(m);
@@ -310,6 +370,10 @@ static uint32_t file_transfer(CardService *s, Descriptor *d, uint32_t addr,
         r = card_read(image_of(s), d->name, d->position, out, count, &actual);
         if (r != CARD_OK || actual != count) return CS_ERROR;
         memcpy(span, out, actual);
+        if (d->mode & 0x8000u) {
+            s->completed_read = (CsCompletedRead){d->position, addr, count};
+            s->completed_open_id = d->open_id;
+        }
     }
     d->position += count;
     return CS_DONE;
@@ -334,7 +398,8 @@ static int32_t transfer(CardService *s, int32_t fd, uint32_t addr,
     if (writing && count > remain) return fail(s, d, BAD_RANGE);
     if (count > remain) count = remain;
     if (!guest(s, addr, count, !writing)) return fail(s, d, BAD_RANGE);
-    if (!d->async) {
+    s->completed_open_id = 0;
+    if (!(d->mode & 0x8000u)) {
         if (file_transfer(s, d, addr, count, writing) != CS_DONE)
             return fail(s, d, IO_ERROR);
         return (int32_t)count;
@@ -354,17 +419,13 @@ int32_t cs_write(CardService *s, int32_t fd, uint32_t addr, uint32_t count) {
     return transfer(s, fd, addr, count, 1);
 }
 
-static void word_at(uint8_t *bytes, unsigned at, uint32_t value) {
-    unsigned i;
-    for (i = 0; i != 4; ++i) bytes[at + i] = (uint8_t)(value >> (8u * i));
-}
 
 uint32_t cs_next(CardService *s, uint32_t addr) {
     CardEntry entries[CARD_MAX_FILES];
     const CardEntry *next = NULL;
     CardPath *p = &s->search.path;
     uint8_t *out;
-    uint8_t dirent[CS_DIRENT_BYTES] = {0};
+    uint8_t dirent[CS_DIRENT_BYTES];
     size_t i, count;
     if (!s->search.active || !available(s, p->slot)) return 0;
     if (!(out = guest(s, addr, sizeof dirent, 1))) return 0;
@@ -380,10 +441,8 @@ uint32_t cs_next(CardService *s, uint32_t addr) {
         s->search.active = 0;
         return 0;
     }
-    memcpy(dirent, next->name, strlen(next->name));
-    word_at(dirent, 0x14, 0x50);
-    word_at(dirent, 0x18, next->size);
-    word_at(dirent, 0x20, next->first_sector);
+    make_dirent(dirent, next->name, next->size, next->first_sector);
+    memcpy(s->slots[p->slot].listed, dirent, sizeof dirent);
     memcpy(out, dirent, sizeof dirent);
     s->search.after_sector = next->first_sector;
     return addr;
@@ -393,6 +452,8 @@ uint32_t cs_first(CardService *s, uint32_t pattern, uint32_t addr) {
     CardPath path;
     if (path_from_guest(s, pattern, &path) || !available(s, path.slot) ||
         room_for_fd(s) < 0 || !guest(s, addr, CS_DIRENT_BYTES, 1)) return 0;
+    /* A new listing supersedes this slot's previous result even if it is empty. */
+    memset(s->slots[path.slot].listed, 0, sizeof s->slots[path.slot].listed);
     s->search.path = path;
     s->search.after_sector = 0;
     s->search.active = 1;
@@ -438,6 +499,7 @@ static int submit_card(CardService *s, unsigned port, Operation op,
     if (op == RAW_READ || op == RAW_WRITE) {
         if (sector >= CS_IMAGE_BYTES / CS_SECTOR_BYTES ||
             !guest(s, addr, CS_SECTOR_BYTES, op == RAW_READ)) return 0;
+        s->completed_open_id = 0;
         status = op == RAW_READ ? 2 : 4;
         r.bypass_change = s->ignore_next_change;
         s->ignore_next_change = 0;
@@ -483,6 +545,7 @@ static uint32_t raw_transfer(CardService *s, unsigned index, const Request *r) {
     uint8_t *medium, *ram = NULL;
     CsMedia m;
     if (op == RAW_READ || op == RAW_WRITE) {
+        s->completed_open_id = 0;
         ram = guest(s, r->address, CS_SECTOR_BYTES, op == RAW_READ);
         if (!ram) return CS_ERROR;
     }

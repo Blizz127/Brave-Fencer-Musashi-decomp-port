@@ -8170,6 +8170,7 @@ typedef struct FormatterCpu {
     uint8_t main12_card_service;
     uint32_t main12_copy_dest;
     uint8_t main12_copy_pending;
+    uint8_t main12_directory_found;
 } FormatterCpu;
 
 typedef struct FormatterConsoleContext {
@@ -8328,7 +8329,7 @@ enum { MAIN12_BASE = 0x80128158u, MAIN12_BYTES = 0x5db28u,
        MAIN12_MENU_WORD = 0x80182638u, MAIN12_MAILBOX = 0x80185adcu, MAIN12_SERVICE = 0x8002b0b4u,
        MAIN12_SERVICE_END = 0x8002c304u, MAIN12_SERVICE_RETURN = 0x8017c2c4u,
        MAIN12_COPY = 0x80061770u, MAIN12_COPY_END = 0x800617ccu,
-       MAIN12_COPY_RETURN = 0x80060e10u };
+       MAIN12_COPY_RETURN = 0x80060e10u, MAIN12_FILE_COPY_RETURN = 0x800602a4u };
 
 static uint32_t main12_physical_pc(uint32_t pc) {
     uint32_t segment = pc & 0xe0000000u;
@@ -8367,6 +8368,7 @@ static int main12_callback_pc(const FormatterCpu *cpu) {
         {0x8017cf34u, 0x8017cf68u},
         {0x8017d050u, 0x8017d100u},
         {0x8017d10cu, 0x8017d124u},
+        {0x8017d14cu, 0x8017d154u},
         {0x8017d270u, 0x8017d2a4u},
     };
     for (size_t i = 0; i < sizeof paths / sizeof paths[0]; ++i) {
@@ -8431,22 +8433,29 @@ static int main12_copy_pc(const FormatterCpu *cpu) {
         cpu->pc >= MAIN12_COPY && cpu->pc < MAIN12_COPY_END;
 }
 
+static uint32_t main12_copy_destination(const FormatterCpu *cpu) {
+    if (cpu->r[31] == MAIN12_COPY_RETURN && cpu->r[29] == 0x1f8002c8u)
+        return cpu->r[29] + 16u;
+    if (cpu->r[31] == MAIN12_FILE_COPY_RETURN && cpu->r[29] == 0x1f800338u)
+        return 0x80078ca0u;
+    return 0;
+}
+
 static int main12_copy_matches(MusashiBootMemory *ram, const FormatterCpu *cpu) {
     MusashiMain12Owner *owner = main12_owner_for(cpu, ram);
+    uint32_t destination = main12_copy_destination(cpu);
     if (!owner || owner != cpu->main12_callback_frame || !owner->installed ||
-        !owner->resident_matches || cpu->r[29] != 0x1f8002c8u ||
-        cpu->pc == 0x800617a8u || cpu->r[31] != MAIN12_COPY_RETURN) return 0;
+        !owner->resident_matches || !destination || cpu->pc == 0x800617a8u) return 0;
     if (cpu->pc == MAIN12_COPY) {
-        if (cpu->r[4] || cpu->r[5] != cpu->r[29] + 16u || !main12_current(owner, ram))
-            return 0;
-    } else if (cpu->main12_copy_dest != cpu->r[29] + 16u) {
+        if (cpu->r[4] || cpu->r[5] != destination || !main12_current(owner, ram)) return 0;
+    } else if (cpu->main12_copy_dest != destination) {
         return 0;
     }
     return owner->resident_matches(owner, MAIN12_COPY, MAIN12_COPY_END - MAIN12_COPY) &&
-        owner->resident_matches(owner, MAIN12_COPY_RETURN - 8u, 8u);
+        owner->resident_matches(owner, cpu->r[31] - 8u, 8u);
 }
 
-/* The slot-zero request builds six bytes on its own scratch stack from
+/* The slot-zero callers build six bytes in their respective buffers from
  * six resident bytes. Left/right word transfers access the aligned word;
  * the table records the effective address before that bus alignment. */
 static int main12_copy_access(MusashiBootMemory *ram, const FormatterCpu *cpu,
@@ -8482,27 +8491,75 @@ static int main12_callback_word(MusashiBootMemory *ram, const FormatterCpu *cpu,
     return main12_current(owner, ram) && musashi_boot_read32(ram, cpu->pc, word);
 }
 
+static void main12_forget_file(MusashiMain12Owner *owner) {
+    owner->directory_fd_token = 0;
+    memset(&owner->metadata_read, 0, sizeof owner->metadata_read);
+}
+
+/* Bind the mounted file driver's actual results to this machine. A closed
+ * or reopened fd may use the same guest number, but has a new host identity. */
+static void main12_card_file_result(MusashiBootMemory *ram, FormatterCpu *cpu, uint32_t result) {
+    MusashiMain12Owner *owner = main12_owner_for(cpu, ram);
+    if (!owner || owner != cpu->main12_callback_frame || !owner->installed) return;
+    if (cpu->r[9] == 0x42u && cpu->r[31] == 0x80062128u &&
+        cpu->r[4] == 0x1f8002d8u && cpu->r[5] == 0x1f8002f8u) {
+        main12_forget_file(owner);
+        owner->directory_valid = (uint8_t)(result == cpu->r[5]);
+        cpu->main12_directory_found = owner->directory_valid;
+        if (owner->directory_valid)
+            memcpy(owner->directory_row, ram->scratchpad + 0x2f8u, sizeof owner->directory_row);
+    } else if (cpu->r[9] == 0x32u && cpu->r[31] == 0x800602c8u &&
+               cpu->r[29] == 0x1f800338u && cpu->r[4] == 0x80078ca0u && cpu->r[5] == 0x8001u) {
+        const MusashiCdDevice *file = cpu->cd_device;
+        main12_forget_file(owner);
+        if (result == 2u && owner->directory_valid && owner->mailbox[1] == 7u &&
+            owner->mailbox[9] == 7u && main12_current(owner, ram) && owner->resident_matches &&
+            owner->resident_matches(owner, 0x80060244u, 0x800602c8u - 0x80060244u) &&
+            file && file->metadata_events && file->metadata_descriptor) {
+            owner->directory_fd_token = file->metadata_descriptor(file->userdata, ram,
+                file->metadata_events, (int32_t)result, 0, 0);
+            if (owner->directory_fd_token) {
+                owner->metadata_read.files = file;
+                owner->metadata_read.events = file->metadata_events;
+            }
+        }
+    } else if (cpu->r[9] == 0x36u && cpu->r[4] == 2u) {
+        main12_forget_file(owner);
+    }
+}
+
 /* Only changes made by the authenticated running menu are recorded.
  * Every other byte, including noncurrent instructions, must still match
  * the read-only mounted transfer before a callback word may be fetched. */
-static int main12_write_mailbox(MusashiBootMemory *ram, const FormatterCpu *cpu,
-                                uint32_t address, uint8_t value) {
+static int main12_mailbox_store(MusashiBootMemory *ram, const FormatterCpu *cpu,
+                                uint32_t address, uint8_t value, int commit) {
+    if (address < MAIN12_MAILBOX || address >= MAIN12_MAILBOX + 16u) return 1;
+    const uint8_t *live = cpu_ram_span(ram, cpu, address, 1);
+    if (!live) return 0;
+    if (*live == value) return 1;
     MusashiMain12Owner *owner = main12_owner_for(cpu, ram);
     if (!owner || cpu->main12_callback_frame != owner || !owner->installed ||
-        !main12_current(owner, ram) || address < MAIN12_MAILBOX ||
-        address >= MAIN12_MAILBOX + 16u) return 0;
+        !main12_current(owner, ram)) return 0;
     unsigned index = address - MAIN12_MAILBOX;
     if (index < 8u) {
-        if (index != 1u || owner->mailbox[index] != 0u || value != 1u ||
-            cpu->pc != 0x8002c2b8u || !cpu->main12_card_service ||
+        if (index != 1u || cpu->pc != 0x8002c2b8u || !cpu->main12_card_service ||
             !main12_service_matches(ram, cpu)) return 0;
+        if (owner->mailbox[1] == 1u && value == 7u) {
+            const uint8_t *row = musashi_boot_ram_span(ram, 0x80076044u, sizeof owner->directory_row);
+            if (!cpu->main12_directory_found || cpu->r[31] != 0x8002c148u || !row ||
+                memcmp(row, owner->directory_row, sizeof owner->directory_row) ||
+                memcmp(ram->scratchpad + 0x2f8u, owner->directory_row, sizeof owner->directory_row))
+                return 0;
+        } else if (owner->mailbox[1] || value != 1u) {
+            return 0;
+        }
     } else if (cpu->pc == 0x8017c140u && value == 0xffu) {
         for (unsigned i = 8; i < 16; ++i)
             if (owner->mailbox[i] != (i < index ? 0xffu : 0u)) return 0;
     } else if (cpu->pc != 0x8017d0bcu || value != owner->mailbox[index - 8u]) {
         return 0;
     }
-    owner->mailbox[index] = value;
+    if (commit) owner->mailbox[index] = value;
     return 1;
 }
 
@@ -8510,9 +8567,8 @@ static int cpu_write8(MusashiBootMemory *memory, const FormatterCpu *cpu,
                        uint32_t address, uint32_t value) {
     uint8_t *p = cpu_ram_span(memory, cpu, address, 1);
     if (p) {
-        if (cpu->main12_callback_frame && address >= MAIN12_MAILBOX &&
-            address < MAIN12_MAILBOX + 16u && (uint8_t)value != *p &&
-            !main12_write_mailbox(memory, cpu, address, (uint8_t)value))
+        if (cpu->main12_callback_frame &&
+            !main12_mailbox_store(memory, cpu, address, (uint8_t)value, 1))
             return 0;
         *p = (uint8_t)value;
         return 1;
@@ -8563,6 +8619,8 @@ static int cpu_write16(MusashiBootMemory *memory, const FormatterCpu *cpu,
                 owner->installed = value == 1u && main12_identity(owner, memory, 0);
                 if (owner->installed) {
                     owner->menu_word_changed = 0;
+                    owner->directory_valid = 0;
+                    main12_forget_file(owner);
                     const uint8_t *mailbox = musashi_boot_ram_span(memory, MAIN12_MAILBOX, sizeof owner->mailbox);
                     memcpy(owner->mailbox, mailbox, sizeof owner->mailbox);
                 }
@@ -14047,6 +14105,10 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
             !(control_swc2 ? cpu->cpu_transfer->read_control
                            : cpu->cpu_transfer->read_data)) return formatter_refuse0(__LINE__, cpu->pc);
     }
+    if (cpu->main12_callback_frame && opcode == 40u &&
+        !main12_mailbox_store(memory, cpu, cpu->r[rs] + (uint32_t)(int32_t)signed_immediate,
+                             (uint8_t)cpu->r[rt], 0))
+        return formatter_refuse0(__LINE__, cpu->pc);
     merge_kind = merge_kind_for(cpu->pc, instruction);
     int copy_merge = 0;
     if (cpu->main12_copy_dest && main12_copy_pc(cpu) && opcode >= 32u) {
@@ -14436,17 +14498,21 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     cpu->main12_copy_pending = (uint8_t)(copy_merge && schedule_merge);
     if (cpu->pc == MAIN12_CALLBACK) {
         cpu->main12_copy_dest = 0;
+        cpu->main12_directory_found = 0;
         cpu->main12_callback_frame = main12_owner_for(cpu, memory);
         cpu->main12_return_pc = cpu->r[31];
         cpu->main12_card_service = 0;
     } else if (cpu->main12_callback_frame) {
         if (cpu->pc == MAIN12_SERVICE) cpu->main12_card_service = 1;
-        if (cpu->pc == MAIN12_COPY && cpu->main12_card_service) cpu->main12_copy_dest = cpu->r[29] + 16u;
-        if (old_npc == MAIN12_COPY_RETURN) cpu->main12_copy_dest = 0;
+        if (cpu->pc == MAIN12_COPY && cpu->main12_card_service)
+            cpu->main12_copy_dest = main12_copy_destination(cpu);
+        if (old_npc == MAIN12_COPY_RETURN || old_npc == MAIN12_FILE_COPY_RETURN)
+            cpu->main12_copy_dest = 0;
         if (old_npc == MAIN12_SERVICE_RETURN) cpu->main12_card_service = 0;
         if (old_npc == cpu->main12_return_pc) {
             cpu->main12_callback_frame = NULL;
             cpu->main12_return_pc = 0;
+            cpu->main12_directory_found = 0;
             cpu->main12_copy_dest = 0;
             cpu->main12_card_service = 0;
         }
@@ -15002,6 +15068,8 @@ static MusashiResetGraphPrefixStatus run_startup_cpu_loop(
             uint32_t result_word = cpu->r[2];
             if (cpu->cd_device->file_vector(cpu->cd_device->userdata, cpu->pc, cpu->r[9],
                                             cpu->r + 4, &result_word)) {
+                if (cpu->main12_card_service && cpu->pc == 0xb0u)
+                    main12_card_file_result(memory, cpu, result_word);
                 cpu->r[2] = result_word;
                 formatter_return(cpu);
                 continue;
@@ -16237,7 +16305,8 @@ typedef enum {
     IRQ_CHANNEL_UPDATE, IRQ_MIX_UPDATE, IRQ_LEVELS_UPDATE, IRQ_CARD_VBLANK,
     IRQ_CARD_INDEX, IRQ_CARD_RUN, IRQ_CARD_PUSH, IRQ_CARD_INFO, IRQ_CARD_LOAD,
     IRQ_CARD_CLEAR_RESULT, IRQ_CARD_RESET_EVENTS, IRQ_CARD_POLL_EVENTS, IRQ_CARD_FLAGS,
-    IRQ_CARD_TEST_EVENT, IRQ_CARD_INFO_BIOS, IRQ_CARD_LOAD_BIOS, IRQ_OUTSIDE
+    IRQ_CARD_TEST_EVENT, IRQ_CARD_INFO_BIOS, IRQ_CARD_LOAD_BIOS,
+    IRQ_CARD_READ, IRQ_CARD_SEEK_BIOS, IRQ_CARD_READ_BIOS, IRQ_OUTSIDE
 } IrqRegion;
 typedef struct { uint32_t start; size_t offset, length; } IrqCodeRegion;
 #define IRQ_REGION(address, field) {address, offsetof(MusashiGuestIrqImage, field), sizeof(((MusashiGuestIrqImage *)0)->field)}
@@ -16266,9 +16335,17 @@ static const IrqCodeRegion irq_code[] = {
     IRQ_REGION(0x80061e18u, card_event_flags),
     IRQ_REGION(0x8005cea8u, card_test_event),
     IRQ_REGION(0x80062258u, card_info_bios),
-    IRQ_REGION(0x80062268u, card_load_bios)
+    IRQ_REGION(0x80062268u, card_load_bios),
+    IRQ_REGION(0x800604c4u, card_read_worker),
+    IRQ_REGION(0x80061f58u, card_seek_bios),
+    IRQ_REGION(0x8005cf28u, card_read_bios)
 };
 #undef IRQ_REGION
+
+static const struct { uint32_t start, end; } card_read_spans[] = {
+    {0x800604c4u,0x800604f8u}, {0x80060500u,0x80060514u},
+    {0x8006051cu,0x800605b4u}, {0x800605e0u,0x80060614u}
+};
 
 /* Read-only dispatch-table words observed in the two card request sequences. */
 static const uint32_t card_case_address[] = {0x800744e8u, 0x80074510u, 0x80074560u, 0x80074564u};
@@ -16302,7 +16379,13 @@ int musashi_boot_map_irq_exe(MusashiGuestIrqImage *image, MusashiBootMemory *mem
         const IrqCodeRegion *region = &irq_code[i];
         const uint8_t *p = musashi_boot_ram_span(memory,region->start,region->length);
         if (!p) return 0;
-        memcpy((uint8_t *)image + region->offset, p, region->length);
+        if (i == IRQ_CARD_READ) {
+            for (size_t j=0; j<sizeof card_read_spans/sizeof card_read_spans[0]; ++j) {
+                size_t offset=card_read_spans[j].start-region->start;
+                size_t length=card_read_spans[j].end-card_read_spans[j].start;
+                memcpy(image->card_read_worker+offset,p+offset,length);
+            }
+        } else memcpy((uint8_t *)image + region->offset, p, region->length);
     }
     for (unsigned i = 0; i < sizeof(card_case_address)/sizeof(card_case_address[0]); ++i)
         if (!musashi_boot_read32(memory, card_case_address[i], &image->card_case_targets[i]))
@@ -16315,8 +16398,15 @@ int musashi_boot_map_irq_exe(MusashiGuestIrqImage *image, MusashiBootMemory *mem
 
 static IrqRegion irq_region(uint32_t address) {
     for (unsigned i = 0; i < IRQ_OUTSIDE; ++i)
-        if (address >= irq_code[i].start && address - irq_code[i].start < irq_code[i].length)
+        if (address >= irq_code[i].start && address - irq_code[i].start < irq_code[i].length) {
+            if (i == IRQ_CARD_READ) {
+                for (size_t j=0; j<sizeof card_read_spans/sizeof card_read_spans[0]; ++j)
+                    if (address>=card_read_spans[j].start && address<card_read_spans[j].end)
+                        return IRQ_CARD_READ;
+                return IRQ_OUTSIDE;
+            }
             return (IrqRegion)i;
+        }
     return IRQ_OUTSIDE;
 }
 
@@ -16443,6 +16533,26 @@ static int irq_data_access(const FormatterCpu *cpu, uint32_t w) {
     if (op < 32) return 1;
     uint32_t address = cpu->r[(w >> 21) & 31u] + (uint32_t)(int32_t)(int16_t)w;
     IrqRegion region = irq_region(cpu->pc);
+    if (region == IRQ_CARD_READ) {
+        /* The saved registers and queue fields have distinct owners. Even
+         * another admitted field cannot be substituted at a live access. */
+        static const struct { uint32_t pc, address; unsigned op; } accesses[] = {
+            {0x800604c8u,0x8006ca90u,43}, {0x800604d0u,0x8006ca94u,43},
+            {0x800604d4u,0x8006ca8cu,43}, {0x800604d8u,0x80078d38u,35},
+            {0x80060520u,0x80072a0cu,43}, {0x80060524u,0x80078d38u,43},
+            {0x80060530u,0x80078c90u,35}, {0x80060534u,0x80078c94u,35},
+            {0x80060540u,0x80078c94u,35}, {0x80060554u,0x80078d38u,43},
+            {0x80060568u,0x80078c90u,35}, {0x8006056cu,0x80078c9cu,35},
+            {0x80060570u,0x80078c98u,35}, {0x80060588u,0x80078d38u,43},
+            {0x800605ecu,0x80078c84u,43}, {0x800605fcu,0x8006ca94u,35},
+            {0x80060600u,0x8006ca90u,35}, {0x80060604u,0x8006ca8cu,35}
+        };
+        if (cpu->r[29]!=0x8006ca7cu) return 0;
+        for (size_t i=0; i<sizeof accesses/sizeof accesses[0]; ++i)
+            if (cpu->pc==accesses[i].pc)
+                return address==accesses[i].address && op==accesses[i].op;
+        return 0;
+    }
     /* The installed periodic sound callback reads and advances a group
      * of guest halfwords. The guest computes the value written to the level. */
     if (region == IRQ_SOUND_TICK && cpu->pc >= 0x8002ce38u && cpu->pc <= 0x8002ce70u) {
@@ -16545,6 +16655,122 @@ static int irq_card_event_owner(const MusashiGuestIrqCard *card, uint32_t ra, ui
         record->class_word == (pos < 4u ? 0xf4000001u : 0xf0000011u);
 }
 
+/* The mounted Continue selection seeks an open file, submits one async
+ * metadata read, then polls its completion on the following source VBlank.
+ * A later operation must still own the same open descriptor and event leases. */
+static int irq_metadata_bank(const MusashiGuestIrqCard *card,
+                             const MusashiMain12Owner *owner, int pinned) {
+    if (!owner || !card || !card->registered_events || !card->events || !card->events->b0_0b ||
+        !card->events->registered_owner ||
+        card->events->registered_owner(card->events->userdata)!=card->registered_events) return 0;
+    for (unsigned i=0; i<8u; ++i) {
+        uint32_t handle;
+        if (!musashi_boot_read32(card->memory,0x80078c3cu+4u*i,&handle) ||
+            !irq_card_event_owner(card,0x80061b70u+16u*i,handle)) return 0;
+        unsigned slot=handle & 0xffffu;
+        if (card->registered_events->records[slot].status!=0x2000u ||
+            (pinned && card->registered_events->allocation_serial[slot]!=
+                       owner->metadata_read.allocation[i])) return 0;
+    }
+    return 1;
+}
+
+static int irq_metadata_code(const MusashiGuestIrqImage *image) {
+    for (size_t i=0; i<sizeof card_read_spans/sizeof card_read_spans[0]; ++i) {
+        uint32_t start=card_read_spans[i].start, length=card_read_spans[i].end-start;
+        const uint8_t *live=musashi_boot_ram_span(image->memory,start,length);
+        if (!live || memcmp(live,image->card_read_worker+(start-0x800604c4u),length))
+            return 0;
+    }
+    for (IrqRegion i=IRQ_CARD_SEEK_BIOS; i<=IRQ_CARD_READ_BIOS; ++i) {
+        const IrqCodeRegion *span=&irq_code[i];
+        const uint8_t *live=musashi_boot_ram_span(image->memory,span->start,span->length);
+        if (!live || memcmp(live,(const uint8_t *)image+span->offset,span->length)) return 0;
+    }
+    return 1;
+}
+
+static int irq_metadata_owner(const MusashiGuestIrqImage *image, const MusashiGuestIrqCard *card,
+                              unsigned phase, uint32_t guest_phase, uint32_t flags) {
+    if (!image || image->identity!=image || !card || image->memory!=card->memory ||
+        !card->files || !card->files->file_vector || !card->files->metadata_descriptor ||
+        card->files->metadata_events!=card->registered_events ||
+        (phase!=0u && phase!=20u && phase!=30u)) return 0;
+    MusashiMain12Owner *owner=image->main12_owner;
+    MusashiBootMemory *ram=image->memory;
+    const uint8_t *row=musashi_boot_ram_span(ram,0x80076044u,40u);
+    if (!owner || owner->image!=image || owner->memory!=ram || !owner->installed ||
+        !owner->directory_valid || !owner->directory_fd_token ||
+        owner->metadata_read.files!=card->files ||
+        owner->metadata_read.events!=card->registered_events || !row ||
+        memcmp(row,owner->directory_row,sizeof owner->directory_row) ||
+        !main12_identity(owner,ram,1) || !irq_metadata_code(image) ||
+        !cd_irq_ram_word(ram,0x8006bb00u,0x80042ce8u) ||
+        !cd_irq_ram_word(ram,0x8006cbb4u,0x800616d0u) ||
+        !cd_irq_ram_word(ram,0x80072a34u,0u) || !cd_irq_ram_word(ram,0x80078d78u,0x800604c4u) ||
+        !cd_irq_ram_word(ram,0x80078c80u,5u) || !cd_irq_ram_word(ram,0x80078c88u,0u) ||
+        !cd_irq_ram_word(ram,0x80078d38u,guest_phase) ||
+        !cd_irq_ram_word(ram,0x80078c90u,2u) || !cd_irq_ram_word(ram,0x80078c94u,512u) ||
+        !cd_irq_ram_word(ram,0x80078c98u,640u) || !cd_irq_ram_word(ram,0x80078c9cu,0x80075a40u) ||
+        !irq_metadata_bank(card,owner,phase!=0u)) return 0;
+    for (unsigned i=0; i<8u; ++i)
+        if (!cd_irq_ram_word(ram,0x80078c5cu+4u*i,(flags>>i)&1u)) return 0;
+    uint32_t position=phase==0u ? 0u : phase==20u ? 512u : 1152u;
+    uint64_t id=card->files->metadata_descriptor(card->files->userdata,ram,card->registered_events,
+                                                2,position,phase==20u ? 640u : 0u);
+    if (!id || id!=owner->directory_fd_token || owner->metadata_read.phase!=phase) return 0;
+    return phase==0u ? owner->metadata_read.descriptor==0 :
+        owner->metadata_read.descriptor==id;
+}
+
+static int irq_metadata_entry(const MusashiGuestIrqImage *image,
+                              const MusashiGuestIrqCard *card, uint32_t phase) {
+    return irq_metadata_owner(image,card,phase,phase,phase==30u ? 1u : 0x10u);
+}
+
+static int irq_metadata_call(uint32_t phase, uint32_t call, IrqRegion dest) {
+    switch (call) {
+    case 0x80060538u: return phase==0u && dest==IRQ_CARD_SEEK_BIOS;
+    case 0x80060558u: return phase==20u && dest==IRQ_CARD_RESET_EVENTS;
+    case 0x80060574u: return phase==20u && dest==IRQ_CARD_READ_BIOS;
+    case 0x8006058cu: return phase==30u && dest==IRQ_CARD_FLAGS;
+    case 0x8006059cu: return phase==30u && dest==IRQ_CARD_POLL_EVENTS;
+    case 0x800605e0u: return phase==30u && dest==IRQ_CARD_CLEAR_RESULT;
+    default: return 0;
+    }
+}
+
+static int irq_metadata_service(FormatterCpu *cpu, const MusashiGuestIrqImage *image,
+    const MusashiGuestIrqCard *card, IrqRegion region, uint32_t phase) {
+    int seek=region==IRQ_CARD_SEEK_BIOS;
+    if (cpu->pc!=0xb0u || cpu->npc!=0xb4u || cpu->delay_slot || cpu->branch_pc ||
+        cpu->merge_pending || cpu->gte_load_pending || cpu->r[29]!=0x8006ca7cu ||
+        cpu->r[4]!=2u || cpu->r[9]!=(seek ? 0x33u : 0x34u) ||
+        cpu->r[31]!=(seek ? 0x80060540u : 0x8006057cu) ||
+        cpu->r[5]!=(seek ? 512u : 0x80075a40u) || cpu->r[6]!=(seek ? 0u : 640u) ||
+        phase!=(seek ? 0u : 20u) ||
+        !irq_metadata_owner(image,card,phase,seek ? 10u : 20u,seek ? 0x10u : 0u)) return 0;
+    MusashiMain12Owner *owner=image->main12_owner;
+    uint64_t allocation[8];
+    if (seek) {
+        for (unsigned i=0; i<8u; ++i) {
+            uint32_t handle;
+            if (!musashi_boot_read32(card->memory,0x80078c3cu+4u*i,&handle)) return 0;
+            allocation[i]=card->registered_events->allocation_serial[handle & 0xffffu];
+        }
+    }
+    uint32_t result=cpu->r[2];
+    if (!card->files->file_vector(card->files->userdata,0xb0u,cpu->r[9],cpu->r+4,&result) ||
+        result!=(seek ? 512u : 0u)) return 0;
+    if (seek) {
+        owner->metadata_read.descriptor=owner->directory_fd_token;
+        memcpy(owner->metadata_read.allocation,allocation,sizeof allocation);
+    }
+    owner->metadata_read.phase=seek ? 20u : 30u;
+    cpu->r[2]=result;
+    return formatter_return(cpu);
+}
+
 static int irq_card_bios(FormatterCpu *cpu, const MusashiGuestIrqCard *card, IrqRegion region) {
     uint32_t result = cpu->r[2];
     if (!card || cpu->gte_load_pending || cpu->merge_pending) return 0;
@@ -16586,6 +16812,7 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
     int card_available = card && card->files && card->files->file_vector && card->events &&
                          card->events->b0_0b && card->registered_events;
     uint32_t selected_card_case = 0;
+    uint32_t read_phase = UINT32_MAX;
     FormatterCpu cpu = {0};
     MusashiInputDevice bus = {0};
     IrqGuestReturn stack[8];
@@ -16636,7 +16863,7 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
             selected_vblank_slot = cpu.r[(w >> 21) & 31u] + (uint32_t)(int32_t)(int16_t)w;
         }
         int jump = op == 2u || op == 3u || (!op && (fn == 8u || fn == 9u));
-        int cd_call = 0, card_bios = 0;
+        int cd_call = 0, card_bios = 0, read_entry = 0, read_return = 0;
         if (origin == 0x8006005cu && (op != 35u || !irq_card_case(image, &cpu, w, &selected_card_case)))
             return 0;
         if (jump) {
@@ -16646,9 +16873,15 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
             if (!op && fn == 8u && ((w >> 21) & 31u) == 31u) {
                 if (!depth || stack[depth-1].callee != region ||
                     stack[depth-1].address != target || stack[depth-1].sp != cpu.r[29]) return 0;
+                if (region==IRQ_CARD_READ) {
+                    if (read_phase==UINT32_MAX || origin!=0x8006060cu || depth!=5u ||
+                        target!=0x80062958u || cpu.r[29]!=0x8006ca9cu) return 0;
+                    read_return=1;
+                }
                 --depth;
             } else if (card && ((region == IRQ_CARD_TEST_EVENT && target == 0xb0u) ||
-                               ((region == IRQ_CARD_INFO_BIOS || region == IRQ_CARD_LOAD_BIOS) && target == 0xa0u))) {
+                               ((region == IRQ_CARD_INFO_BIOS || region == IRQ_CARD_LOAD_BIOS) && target == 0xa0u) ||
+                               ((region == IRQ_CARD_SEEK_BIOS || region == IRQ_CARD_READ_BIOS) && target == 0xb0u))) {
                 if (!depth || op || fn != 8u || cpu.r[10] != target || stack[depth-1].callee != region ||
                     stack[depth-1].address != cpu.r[31] || stack[depth-1].sp != cpu.r[29])
                     return 0;
@@ -16680,7 +16913,23 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
                     ((op == 3u && irq_card_call(region, dest)) ||
                      (region == IRQ_CARD_RUN && origin == 0x80062950u && !op && fn == 9u &&
                       irq_card_queued_handler(memory, dest, target)));
-                int valid = card_child || vblank_child || (depth >= 3 && op == 3u && irq_vblank_call(origin,cpu.r[29],dest)) ||
+                if (region==IRQ_CARD_RUN && dest==IRQ_CARD_READ) {
+                    if (!card_available || origin!=0x80062950u || op || fn!=9u || depth!=4u ||
+                        stack[0].callee!=IRQ_DISPATCH || stack[1].callee!=IRQ_VBLANK ||
+                        stack[2].callee!=IRQ_CARD_VBLANK || stack[2].address!=0x80042d38u ||
+                        stack[3].callee!=IRQ_CARD_RUN || stack[3].address!=0x800616f0u ||
+                        cpu.r[31]!=0x800616f0u || cpu.r[29]!=0x8006ca9cu ||
+                        !musashi_boot_read32(memory,0x80078d38u,&read_phase) ||
+                        !irq_metadata_entry(image,card,read_phase)) return 0;
+                    read_entry=1;
+                }
+                if (region==IRQ_CARD_READ && op==3u) {
+                    if (depth!=5u || stack[4].callee!=IRQ_CARD_READ ||
+                        stack[4].address!=0x80062958u || cpu.r[29]!=0x8006ca7cu ||
+                        !irq_metadata_call(read_phase,origin,dest)) return 0;
+                    card_child=1;
+                }
+                int valid = read_entry || card_child || vblank_child || (depth >= 3 && op == 3u && irq_vblank_call(origin,cpu.r[29],dest)) ||
                     (origin == 0x80042788u && depth == 0 && op == 3u && dest == IRQ_DISPATCH) ||
                     (origin == 0x800428d4u && depth == 1 && !op && fn == 9u &&
                      (dest == IRQ_VBLANK || (dest == IRQ_DMA && dma &&
@@ -16709,9 +16958,27 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
                 stop->cd_instructions+=cd->frame->instructions;
                 if (!result) { stop->pc=cd->stop->call_address; return 0; }
             }
+            if (read_entry && (cpu.r[31]!=0x80062958u || cpu.r[4]!=0x80078d38u ||
+                !irq_metadata_entry(image,card,read_phase))) return 0;
+            if (read_return) {
+                MusashiMain12Owner *owner=image->main12_owner;
+                if (!owner || cpu.r[2]!=(read_phase==30u ? 1u : 0u) ||
+                    owner->metadata_read.phase!=(read_phase==0u ? 20u : 30u)) return 0;
+                if (read_phase==30u) memset(&owner->metadata_read,0,sizeof owner->metadata_read);
+                read_phase=UINT32_MAX;
+            }
             if (card_bios) {
                 stop->pc = target;
-                if (!irq_card_bios(&cpu, card, region)) return 0;
+                if (region==IRQ_CARD_SEEK_BIOS || region==IRQ_CARD_READ_BIOS) {
+                    if (depth!=6u || stack[4].callee!=IRQ_CARD_READ ||
+                        stack[4].address!=0x80062958u ||
+                        !irq_metadata_service(&cpu,image,card,region,read_phase)) return 0;
+                } else {
+                    if (read_phase!=UINT32_MAX &&
+                        (region!=IRQ_CARD_TEST_EVENT || depth!=7u ||
+                         !irq_metadata_bank(card,image->main12_owner,1))) return 0;
+                    if (!irq_card_bios(&cpu, card, region)) return 0;
+                }
                 --depth;
             } else if (target == 0xb0u) {
                 stop->pc = target;

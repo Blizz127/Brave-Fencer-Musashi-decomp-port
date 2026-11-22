@@ -223,6 +223,7 @@ typedef struct MusashiEntryRunStop {
 /* Explicit services reached by the bounded 8005FC68 CD startup sequence.
  * Selectors are intentionally named by vector/slot rather than inferred API
  * names. Each callback returns nonzero only when it accepted the operation. */
+struct MusashiBiosEventTable;
 typedef struct MusashiCdDevice {
     void *userdata;
     int (*enter_critical_section)(void *userdata);
@@ -238,6 +239,10 @@ typedef struct MusashiCdDevice {
      * vector remains available to other devices. Accepted void calls retain v0. */
     int (*file_vector)(void *userdata, uint32_t vector, uint32_t selector,
                        const uint32_t args[4], uint32_t *v0);
+    /* Optional read-only identity for the mounted card read operation. */
+    const struct MusashiBiosEventTable *metadata_events;
+    uint64_t (*metadata_descriptor)(void *, const MusashiBootMemory *,
+        const struct MusashiBiosEventTable *, int32_t fd, uint32_t position, uint32_t count);
 } MusashiCdDevice;
 
 /* Start from mapped EXE bytes, executing its source-owned CRT and caller on
@@ -271,6 +276,8 @@ typedef struct MusashiEventDevice {
     int (*enable_event)(void *userdata, int32_t handle, int32_t *result);
     int (*b0_0b)(void *userdata, int32_t handle, int32_t *result);
     int (*exit_critical_section)(void *userdata, int32_t *result);
+    /* Event table that this polling adapter actually services. */
+    const struct MusashiBiosEventTable *(*registered_owner)(void *userdata);
 } MusashiEventDevice;
 
 /* Owner-thread relative source execution timeline. The selected reference

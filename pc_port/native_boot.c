@@ -372,6 +372,12 @@ static int init_card(void *userdata, int32_t pad_started, int32_t *previous) {
 }
 
 #ifdef MUSASHI_WITH_BFM_PLAT
+static uint64_t player_metadata_descriptor(void *userdata, const MusashiBootMemory *memory,
+    const MusashiBiosEvents *events, int32_t fd, uint32_t position, uint32_t count) {
+    NativeBoot *boot = userdata;
+    return musashi_player_card_metadata_descriptor(&boot->file_card,memory,events,fd,position,count);
+}
+
 static int player_file_vector(void *userdata, uint32_t vector, uint32_t selector,
                               const uint32_t args[4], uint32_t *v0) {
     NativeBoot *boot = userdata;
@@ -401,6 +407,11 @@ static int enable_event(void *userdata, int32_t handle, int32_t *result) {
     if (accepted)
         fprintf(stderr, "native_boot: EVENT_ENABLE handle=%08x result=%d\n", (unsigned)handle, *result);
     return accepted;
+}
+
+static const MusashiBiosEvents *player_event_owner(void *userdata) {
+    NativeBoot *boot = userdata;
+    return boot ? &boot->bios.events : NULL;
 }
 
 static int test_event(void *userdata, int32_t handle, int32_t *result) {
@@ -4398,6 +4409,7 @@ int main(int argc, char **argv) {
     boot.event.open_event = open_event;
     boot.event.enable_event = enable_event;
     boot.event.b0_0b = test_event;
+    boot.event.registered_owner = player_event_owner;
     boot.input.userdata = &boot;
     boot.input.dequeue_irq_result = input_dequeue;
     boot.input.enqueue_irq_result = input_enqueue;
@@ -4496,9 +4508,11 @@ int main(int argc, char **argv) {
             if (musashi_card_save_directory(path, sizeof path)) directory = path;
             else fputs("Memory card slot 1 unavailable: save directory could not be opened.\n", stderr);
         }
-        if (musashi_player_card_open(&boot.file_card, &boot.memory, &boot.bios.events, directory))
+        if (musashi_player_card_open(&boot.file_card, &boot.memory, &boot.bios.events, directory)) {
             boot.cd.file_vector = player_file_vector;
-        else fputs("Memory card slot 1 unavailable: file service could not start.\n", stderr);
+            boot.cd.metadata_events = &boot.bios.events;
+            boot.cd.metadata_descriptor = player_metadata_descriptor;
+        } else fputs("Memory card slot 1 unavailable: file service could not start.\n", stderr);
     }
 #endif
     status = musashi_boot_run_entry_with_devices(&boot.memory, 0, &boot.startup_devices,

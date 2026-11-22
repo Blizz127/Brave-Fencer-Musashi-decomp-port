@@ -1,5 +1,8 @@
 /* Controlled guest-CPU entry and ownership checks for the first cold callback.
  * Instructions and initial state are read only from the tester's USA disc. */
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include "musashi_main12.h"
 #include "musashi_disc_media.h"
 #include "musashi_guest_irq.h"
@@ -259,62 +262,121 @@ static void check_active_menu_owner(void)
     expect_refused(&machine, &cpu);
 }
 
-static void check_slot_zero_prefix_copy(void)
+/* At these sites the instruction remains valid. The data-bus access or
+ * pending load must refuse without retiring the instruction. */
+static void expect_copy_access_refused(FormatterCpu *cpu)
 {
+    uint32_t word;
+    CHECK(formatter_fetch(&machine, cpu, &word));
+    FormatterCpu saved;
+    memcpy(&saved, cpu, sizeof saved);
+    memcpy(&before_step, &machine, sizeof machine);
+    unsigned previous_calls = clock_calls;
+    uint64_t previous_cycles = cycles;
+    CHECK(!formatter_step(&machine, cpu));
+    CHECK(!memcmp(&saved, cpu, sizeof saved) && !memcmp(&before_step, &machine, sizeof machine));
+    CHECK(clock_calls == previous_calls && cycles == previous_cycles);
+}
+
+static void check_slot_zero_prefix_copy(uint32_t caller_return)
+{
+    const int opening = caller_return == 0x800602a4u;
+    const uint32_t stack = opening ? 0x1f800338u : 0x1f8002c8u;
+    const uint32_t destination = opening ? 0x80078ca0u : stack + 16u;
+    const uint32_t source = 0x8007472cu;
     seed_machine();
     install_by_guest();
     FormatterCpu cpu = entry(callback_pc);
     CHECK(formatter_step(&machine, &cpu) && cpu.main12_callback_frame == owner);
-    /* This focused component supplies the measured caller frames. The
-     * checked CPU executes each entry, the copy, and its actual return. */
+    /* The surrounding directory/open service frames are supplied from the
+     * observed callers. The guest CPU executes each call and its delay slot. */
     cpu.pc = MAIN12_SERVICE; cpu.npc = cpu.pc + 4u;
     cpu.r[6] = MAIN12_MAILBOX;
     cpu.r[31] = MAIN12_SERVICE_RETURN;
     CHECK(formatter_step(&machine, &cpu) && cpu.main12_card_service);
-    cpu.pc = MAIN12_COPY_RETURN - 8u; cpu.npc = cpu.pc + 4u;
-    cpu.r[29] = 0x1f8002c8u; cpu.r[31] = 0x8002c148u;
-    cpu.r[4] = 0; cpu.r[5] = cpu.r[29] + 16u;
+    cpu.pc = caller_return - 8u; cpu.npc = cpu.pc + 4u;
+    cpu.r[29] = stack;
+    cpu.r[31] = opening ? 0x8002b208u : 0x8002c148u;
+    cpu.r[4] = 0;
+    if (opening) {
+        cpu.r[16] = destination;
+        cpu.r[6] = 1;
+        cpu.r[5] = 0;
+    } else {
+        cpu.r[5] = destination;
+    }
     CHECK(formatter_step(&machine, &cpu) && formatter_step(&machine, &cpu));
-    CHECK(cpu.pc == MAIN12_COPY && cpu.r[31] == MAIN12_COPY_RETURN);
-    uint8_t *dest = machine.scratchpad + (cpu.r[5] & 0x3ffu);
-    memset(dest - 1, 0xb7, 8);
-    CHECK(formatter_step(&machine, &cpu) && cpu.pc == MAIN12_COPY + 4u);
-    FormatterCpu unowned = cpu;
-    unowned.main12_copy_dest = 0;
-    expect_refused(&machine, &unowned);
-    for (unsigned i = 1; i < 4; ++i) CHECK(formatter_step(&machine, &cpu));
-    CHECK(cpu.pc == 0x80061780u && cpu.main12_copy_dest == 0x1f8002d8u);
-    uint32_t word;
-    CHECK(formatter_fetch(&machine, &cpu, &word));
+    CHECK(cpu.pc == MAIN12_COPY && cpu.r[31] == caller_return &&
+          cpu.r[29] == stack && !cpu.r[4] && cpu.r[5] == destination);
+
+    uint8_t *dst_zone = opening ? musashi_boot_ram_span(&machine, destination - 4u, 16) :
+        machine.scratchpad + (destination & 0x3ffu) - 4u;
+    uint8_t *input = musashi_boot_ram_span(&machine, source, 8);
     uint8_t *far = musashi_boot_ram_span(&machine, MAIN12_COPY_END - 1u, 1);
-    uint8_t *input = musashi_boot_ram_span(&machine, 0x8007472cu, 8);
-    CHECK(far && input);
+    uint8_t *caller = musashi_boot_ram_span(&machine, caller_return - 1u, 1);
+    CHECK(dst_zone && input && far && caller);
+    /* Use several distinct redzone bytes to catch an oversized or shifted write. */
+    for (unsigned i = 0; i < 16; ++i) dst_zone[i] = (uint8_t)(0xb0u + i);
+    uint8_t expected[16];
+    memcpy(expected, dst_zone, sizeof expected);
+    memcpy(expected + 4, input, 6);
+    FormatterCpu bad = cpu;
+    bad.r[31] += 4u;
+    expect_refused(&machine, &bad);
+    bad = cpu; bad.r[29] += 4u;
+    expect_refused(&machine, &bad);
+    bad = cpu; ++bad.r[5];
+    expect_refused(&machine, &bad);
+    bad = cpu; ++bad.r[4];
+    expect_refused(&machine, &bad);
+    MusashiGuestIrqImage separate_irq;
+    mount_machine(&other_machine, &separate_irq);
+    MusashiMain12Owner *other_owner = musashi_main12_open(&separate_irq, &other_machine, media);
+    CHECK(other_owner);
+    callbacks.main12_owner = other_owner;
+    expect_refused(&machine, &cpu);
+    callbacks.main12_owner = owner;
+    musashi_main12_close(other_owner);
+    *caller ^= 1u;
+    expect_refused(&machine, &cpu);
+    *caller ^= 1u;
+
+    FormatterCpu start = cpu;
+    unsigned begin_calls = clock_calls;
+    CHECK(formatter_step(&machine, &cpu) && cpu.pc == MAIN12_COPY + 4u);
+    bad = cpu; bad.main12_copy_dest = 0;
+    expect_refused(&machine, &bad);
+    for (unsigned i = 1; i < 4; ++i) CHECK(formatter_step(&machine, &cpu));
+    CHECK(cpu.pc == 0x80061780u && cpu.main12_copy_dest == destination);
     *far ^= 1u;
     expect_refused(&machine, &cpu);
     *far ^= 1u;
     input[5] ^= 1u;
-    CHECK(formatter_fetch(&machine, &cpu, &word));
-    uint64_t before = cycles;
-    FormatterCpu saved = cpu;
-    memcpy(&before_step, &machine, sizeof machine);
-    CHECK(!formatter_step(&machine, &cpu));
-    CHECK(cycles == before && !memcmp(&cpu, &saved, sizeof cpu) &&
-          !memcmp(&machine, &before_step, sizeof machine));
+    expect_copy_access_refused(&cpu);
     input[5] ^= 1u;
-    CHECK(formatter_step(&machine, &cpu) && formatter_step(&machine, &cpu));
-    CHECK(cpu.pc == 0x80061788u && cpu.merge_pending && cpu.merge_reg == 2u);
-    FormatterCpu wrong_register = cpu;
-    wrong_register.merge_reg = 24u;
-    saved = wrong_register;
-    before = cycles;
-    memcpy(&before_step, &machine, sizeof machine);
-    CHECK(!formatter_step(&machine, &wrong_register) && cycles == before &&
-          !memcmp(&wrong_register, &saved, sizeof saved) &&
-          !memcmp(&machine, &before_step, sizeof machine));
-    for (unsigned i = 6; i < 22; ++i) CHECK(formatter_step(&machine, &cpu));
-    CHECK(cpu.pc == MAIN12_COPY_RETURN && !cpu.main12_copy_dest &&
-          !cpu.main12_copy_pending && !memcmp(dest, input, 6));
-    CHECK(dest[-1] == 0xb7u && dest[6] == 0xb7u);
+    bad = cpu; ++bad.r[5];
+    expect_copy_access_refused(&bad);
+    for (unsigned i = 4; i < 22; ++i) {
+        if (cpu.pc == 0x80061788u) {
+            CHECK(cpu.main12_copy_pending && cpu.merge_pending && cpu.merge_reg == 2);
+            bad = cpu; bad.merge_reg = 24;
+            expect_copy_access_refused(&bad);
+        }
+        if (cpu.pc == 0x80061790u) {
+            bad = cpu; ++bad.r[7];
+            expect_copy_access_refused(&bad);
+        }
+        CHECK(formatter_step(&machine, &cpu));
+    }
+    CHECK(cpu.pc == caller_return && cpu.npc == caller_return + 4u && !cpu.delay_slot);
+    CHECK(!cpu.main12_copy_dest && !cpu.main12_copy_pending && !cpu.merge_pending);
+    CHECK(cpu.main12_callback_frame == owner && cpu.main12_card_service);
+    CHECK(clock_calls == begin_calls + 22u && !memcmp(expected, dst_zone, sizeof expected));
+    uint32_t registers[32];
+    memcpy(registers, start.r, sizeof registers);
+    registers[2] = input[2]; registers[3] = input[3];
+    registers[5] = source; registers[6] = input[5]; registers[7] = destination;
+    CHECK(!memcmp(registers, cpu.r, sizeof registers));
 }
 
 static void check_identity(void)
@@ -496,6 +558,8 @@ static void check_revocation(void)
     expect_refused_at(&machine, callback_pc);
 }
 
+#include "main12_metadata_irq.h"
+
 int main(int argc, char **argv)
 {
     const char *path = argc > 1 ? argv[1] : getenv("MUSASHI_TEST_DISC");
@@ -511,9 +575,11 @@ int main(int argc, char **argv)
         mapped_window = 1;
     }
     load_media(path, argc == 3);
+    check_metadata_irq();
     check_guest_path();
     check_active_menu_owner();
-    check_slot_zero_prefix_copy();
+    check_slot_zero_prefix_copy(0x80060e10u);
+    check_slot_zero_prefix_copy(0x800602a4u);
     seed_machine();
     install_by_guest(); check_identity(); check_missing_history();
     check_bus_owner(); check_mirrors_and_hooks(1); check_revocation();
@@ -521,6 +587,7 @@ int main(int argc, char **argv)
     callbacks.main12_owner = NULL;
     musashi_main12_close(owner); owner = NULL;
     musashi_disc_media_close(media);
+    puts("Both slot-zero prefix calls returned after 22 guest steps with six bytes copied and intact redzones.");
     puts("93 installer steps, callback dispatch to MAIN10, and ownership controls passed.");
     printf("12 RAM mirrors and independent fetch/context/step revocation passed; native collision %s.\n",
            mapped_window ? "verified" : "not requested");

@@ -89,12 +89,33 @@ int musashi_player_card_open(MusashiPlayerCard *card, MusashiBootMemory *memory,
         return 1;
     }
     CsMedia media = cs_prepare(card->service, 0);
-    if (media != CS_MEDIA_OK && media != CS_MEDIA_UNFORMATTED) {
+    card->slot0_mounted = media == CS_MEDIA_OK || media == CS_MEDIA_UNFORMATTED;
+    if (!card->slot0_mounted) {
         cs_media_changed(card->service, 0);
         cs_storage_detach(card->storage, 0);
         fputs("Memory card slot 1 unavailable: failed to load or create a valid image.\n", stderr);
     }
     return 1;
+}
+
+uint64_t musashi_player_card_metadata_descriptor(const MusashiPlayerCard *card,
+                     const MusashiBootMemory *memory, const MusashiBiosEvents *events,
+                     int32_t fd, uint32_t position, uint32_t count)
+{
+    if (!card || !memory || !events || card->memory != memory || card->events != events ||
+        !card->storage || !card->slot0_mounted || fd != 2) return 0;
+    if (!((position == 0 && count == 0) || (position == 512 && count == 640) ||
+          (position == 1152 && count == 0))) return 0;
+    /* The selected path and the directory row are separate guest buffers.
+     * The service verifies the latter against an actual listing and handle. */
+    const uint8_t *path = memory->bytes + (0x80078ca0u - 0x80000000u);
+    const uint8_t *row = memory->bytes + (0x80076044u - 0x80000000u);
+    if (memcmp(path, "bu00:", 5) || memchr(path + 5, 0, 19) || path[24] ||
+        memcmp(path + 5, row, 20)) return 0;
+    static const CsCompletedRead metadata_read = {512, 0x80075a40u, 640};
+    return cs_async_read_descriptor(card->service, card, 0, fd, (const char *)path + 5,
+                                    row, 8192, position, count,
+                                    position == 1152 ? &metadata_read : NULL);
 }
 
 int musashi_player_card_finish(MusashiPlayerCard *card)

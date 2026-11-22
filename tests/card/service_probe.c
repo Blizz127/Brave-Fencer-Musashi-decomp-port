@@ -645,12 +645,154 @@ static void async_files(CardService *s, TestHost *h)
     CHECK(cs_close(s, fd) == fd);
 }
 
+/* Both slots have a one-block SELECTED file followed by OTHER. Preserve each
+   selected directory row at its own guest address during later enumerations. */
+static uint64_t selected_id(CardService *s, TestHost *h, unsigned slot, uint32_t position,
+                            uint32_t count, const CsCompletedRead *completed)
+{
+    unsigned reads = h->snapshots, writes = h->commits, calls = h->attempts;
+    int error = cs_errno(s), idle = cs_idle(s);
+    uint64_t id = cs_async_read_descriptor(s, h, slot, (int32_t)slot + 2, "SELECTED",
+        h->memory + DIRECTORY + slot * CS_DIRENT_BYTES, BLOCK, position, count, completed);
+    CHECK(cs_errno(s) == error && cs_idle(s) == idle);
+    CHECK(h->snapshots == reads && h->commits == writes && h->attempts == calls);
+    return id;
+}
+
+static void check_latest_rows(CardService *s, TestHost *h, uint64_t ids[2])
+{
+    static const char *const names[2][2] = {
+        {"bu00:SELECTED", "bu00:OTHER"}, {"bu10:SELECTED", "bu10:OTHER"}
+    };
+    uint32_t next = DIRECTORY + 2 * CS_DIRENT_BYTES;
+    for (unsigned slot = 0; slot < 2; ++slot) {
+        int32_t fd = (int32_t)slot + 2;
+        uint32_t row = DIRECTORY + slot * CS_DIRENT_BYTES;
+        CHECK(cs_prepare(s, slot) == CS_MEDIA_OK);
+        for (unsigned i = 0; i < 2; ++i) {
+            CHECK(cs_open(s, path(h, names[slot][i]), (1u << 16) | 0x203) == fd);
+            if (i == 0) {
+                pattern(h->memory + DATA, 640, 512, 73 + slot);
+                CHECK(cs_seek(s, fd, 512, 0) == 512);
+                CHECK(cs_write(s, fd, DATA, 640) == 640);
+            }
+            CHECK(cs_close(s, fd) == fd);
+        }
+        CHECK(cs_open(s, path(h, names[slot][0]), 0x8001) == fd);
+        CHECK(!selected_id(s, h, slot, 0, 0, NULL));
+        CHECK(cs_first(s, path(h, names[slot][0]), row) == row);
+        ids[slot] = selected_id(s, h, slot, 0, 0, NULL);
+        CHECK(ids[slot]);
+    }
+    for (unsigned slot = 0; slot < 2; ++slot) {
+        uint32_t row = DIRECTORY + slot * CS_DIRENT_BYTES;
+        CHECK(cs_first(s, path(h, slot ? "bu10:*" : "bu00:*"), next) == next);
+        CHECK(!strcmp((char *)h->memory + next, "SELECTED"));
+        CHECK(cs_next(s, next) == next && !strcmp((char *)h->memory + next, "OTHER"));
+        CHECK(cs_next(s, next) == 0);
+        CHECK(!selected_id(s, h, slot, 0, 0, NULL));
+        CHECK(selected_id(s, h, 1 - slot, 0, 0, NULL) == ids[1 - slot]);
+        CHECK(cs_first(s, path(h, names[slot][0]), row) == row);
+        CHECK(cs_next(s, next) == 0 && selected_id(s, h, slot, 0, 0, NULL) == ids[slot]);
+        CHECK(cs_first(s, path(h, slot ? "bu10:MISSING" : "bu00:MISSING"), next) == 0);
+        CHECK(!selected_id(s, h, slot, 0, 0, NULL));
+        CHECK(cs_first(s, path(h, names[slot][0]), row) == row);
+    }
+}
+
+static void descriptor_receipts(CardService *s, TestHost *h)
+{
+    uint64_t ids[2];
+    const CsCompletedRead wanted = {512, DATA, 640};
+    uint8_t expected[640];
+    pattern(expected, sizeof expected, 512, 73);
+    check_latest_rows(s, h, ids);
+    CHECK(ids[0] != ids[1]);
+    CHECK(!cs_async_read_descriptor(s, &ids, 0, 2, "SELECTED", h->memory + DIRECTORY,
+                                    BLOCK, 0, 0, NULL));
+    CHECK(!cs_async_read_descriptor(s, h, 0, 3, "SELECTED", h->memory + DIRECTORY,
+                                    BLOCK, 0, 0, NULL));
+    h->memory[DIRECTORY + 24] ^= 1;
+    CHECK(!selected_id(s, h, 0, 0, 0, NULL));
+    h->memory[DIRECTORY + 24] ^= 1;
+    CHECK(cs_seek(s, 2, 1152, 0) == 1152);
+    CHECK(!selected_id(s, h, 0, 1152, 0, &wanted));
+    CHECK(cs_seek(s, 2, 512, 0) == 512);
+    CHECK(selected_id(s, h, 0, 512, 640, NULL) == ids[0]);
+    CHECK(!selected_id(s, h, 0, 640, 640, NULL));
+    CHECK(!selected_id(s, h, 0, 512, BLOCK, NULL));
+
+    reset_events(h);
+    CHECK(cs_card_info(s, 0x10));
+    CHECK(!selected_id(s, h, 0, 512, 640, NULL));
+    drain(s);
+    reset_events(h);
+    memset(h->memory + DATA - 1, 0xa6, sizeof expected + 2);
+    CHECK(cs_read(s, 2, DATA, 640) == 0);
+    CHECK(!selected_id(s, h, 0, 512, 640, NULL));
+    CHECK(uniform(h->memory + DATA, sizeof expected, 0xa6));
+    h->stall_after = 0;
+    CHECK(cs_pump(s) & 4);
+    CHECK(!selected_id(s, h, 0, 1152, 0, &wanted));
+    h->stall_after = -1;
+    drain(s);
+    CHECK(selected_id(s, h, 0, 1152, 0, &wanted) == ids[0]);
+    CHECK(h->accepted == 2);
+    check_event(h, 0, 2, CS_DONE);
+    check_event(h, 1, CS_EVENT_SW, CS_DONE);
+    CHECK(!memcmp(h->memory + DATA, expected, sizeof expected));
+    CHECK(h->memory[DATA - 1] == 0xa6 && h->memory[DATA + 640] == 0xa6);
+
+    /* Reaching the same cursor by another operation cannot certify this read. */
+    CHECK(cs_seek(s, 2, 0, 1) == 1152);
+    CHECK(!selected_id(s, h, 0, 1152, 0, &wanted));
+    CHECK(cs_seek(s, 2, 512, 0) == 512 && cs_read(s, 2, DATA + 640, 640) == 0);
+    drain(s);
+    CHECK(!selected_id(s, h, 0, 1152, 0, &wanted));
+    CHECK(cs_seek(s, 2, 640, 0) == 640 && cs_read(s, 2, DATA, 512) == 0);
+    drain(s);
+    CHECK(!selected_id(s, h, 0, 1152, 0, &wanted));
+    CHECK(cs_seek(s, 3, 512, 0) == 512);
+    CHECK(cs_seek(s, 2, 512, 0) == 512 && cs_read(s, 2, DATA, 640) == 0);
+    drain(s);
+    CHECK(selected_id(s, h, 0, 1152, 0, &wanted) == ids[0]);
+    CHECK(cs_read(s, 3, DATA, 640) == 0);
+    drain(s);
+    CHECK(!selected_id(s, h, 0, 1152, 0, &wanted));
+    CHECK(selected_id(s, h, 1, 1152, 0, &wanted) == ids[1]);
+    CHECK(cs_open(s, path(h, "bu00:OTHER"), 0x8002) == 4);
+    CHECK(cs_write(s, 4, DATA, SECTOR) == 0);
+    reset_events(h);
+    drain(s);
+    CHECK(!selected_id(s, h, 1, 1152, 0, &wanted));
+    CHECK(cs_close(s, 4) == 4);
+
+    CHECK(cs_seek(s, 2, 512, 0) == 512 && cs_read(s, 2, DATA, 640) == 0);
+    h->revoked_address = DATA + 639;
+    drain(s);
+    h->revoked_address = 0;
+    CHECK(cs_seek(s, 2, 1152, 0) == 1152 && !selected_id(s, h, 0, 1152, 0, &wanted));
+    CHECK(cs_close(s, 2) == 2 && cs_card_info(s, 0));
+    reset_events(h);
+    drain(s);
+    CHECK(cs_open(s, path(h, "bu00:SELECTED"), 0x8002) == 2);
+    CHECK(!selected_id(s, h, 0, 0, 0, NULL));
+    CHECK(cs_close(s, 2) == 2 && cs_open(s, path(h, "bu00:SELECTED"), 0x8001) == 2);
+    uint64_t reopened = selected_id(s, h, 0, 0, 0, NULL);
+    CHECK(reopened && reopened != ids[0]);
+    cs_media_changed(s, 0);
+    CHECK(!selected_id(s, h, 0, 0, 0, NULL));
+    CHECK(cs_close(s, 2) == 2 && cs_close(s, 3) == 3);
+}
+
 int main(int argc, char **argv)
 {
     CHECK(argc == 2);
     TestHost h = {0};
     CardService *s = new_service(&h);
-    if (!strcmp(argv[1], "create")) {
+    if (!strcmp(argv[1], "receipts")) {
+        descriptor_receipts(s, &h);
+    } else if (!strcmp(argv[1], "create")) {
         create_files(s, &h);
     } else if (!strcmp(argv[1], "reopen") || !strcmp(argv[1], "after-failure")) {
         verify_contents(s, &h);

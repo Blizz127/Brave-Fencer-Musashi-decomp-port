@@ -43,6 +43,13 @@ def test_file_operations(tmp_path):
             assert (store / "slot0.mcr").read_bytes() == saved
 
 
+def test_async_read_receipts(tmp_path):
+    binary = compile_probe(tmp_path, "receipt", FIXTURES / "service_probe.c",
+                           CARD / "card_service.c", CARD / "card_image.c")
+    (tmp_path / "card-store").mkdir()
+    subprocess.run([binary, "receipts"], cwd=tmp_path, check=True)
+
+
 def test_file_vectors(tmp_path):
     binary = compile_probe(tmp_path, "vectors", FIXTURES / "vector_probe.c", CARD / "card_vector.c",
                            CARD / "card_service.c", CARD / "card_image.c")

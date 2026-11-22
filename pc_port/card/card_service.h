@@ -69,6 +69,21 @@ void cs_media_changed(CardService *s, unsigned slot);
    here. Returns 0 on an invalid fd or a collision with a live card handle. */
 int cs_reserve_fd(CardService *s, int32_t fd, int reserved);
 int32_t cs_open(CardService *s, uint32_t path, uint32_t mode);
+typedef struct {
+    uint32_t position, destination, count;
+} CsCompletedRead;
+
+/* Pure inspection of one literal, async read-only handle. Both queues and
+   their notifications must be idle. The entire row must match the latest
+   result from this slot's current listing and this descriptor's file.
+   A zero count checks just the cursor, including EOF. If supplied, completed
+   must match the latest successful asynchronous file read through this open.
+   A positive ID identifies this open until close or media change. IDs belong
+   to this service instance and never repeat within it. */
+uint64_t cs_async_read_descriptor(const CardService *s, const void *host_owner,
+                                  unsigned slot, int32_t fd, const char *name,
+                                  const uint8_t row[CS_DIRENT_BYTES], uint32_t file_size,
+                                  uint32_t position, uint32_t count, const CsCompletedRead *completed);
 int32_t cs_seek(CardService *s, int32_t fd, int32_t displacement, unsigned origin);
 int32_t cs_read(CardService *s, int32_t fd, uint32_t destination, uint32_t count);
 int32_t cs_write(CardService *s, int32_t fd, uint32_t source, uint32_t count);

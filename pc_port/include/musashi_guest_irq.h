@@ -24,6 +24,8 @@ typedef struct MusashiGuestIrqImage {
     uint8_t card_clear_result[0x58], card_reset_events[0x108];
     uint8_t card_poll_events[0xdc], card_event_flags[0x3c];
     uint8_t card_test_event[0xc], card_info_bios[0xc], card_load_bios[0xc];
+    /* Unvisited gaps in the busy-5 worker stay unpopulated. */
+    uint8_t card_read_worker[0x150], card_seek_bios[0xc], card_read_bios[0xc];
     uint32_t card_case_targets[4];
     /* Packed source ranges admitted by the CD frame. Populated from this
      * machine's verified image; neither instructions nor data ship here. */

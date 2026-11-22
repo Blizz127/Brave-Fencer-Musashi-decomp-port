@@ -15,6 +15,7 @@ typedef struct MusashiPlayerCard {
     MusashiBiosEvents *events;
     MusashiBootMemory *event_memory;
     uint64_t last_vblank;
+    int slot0_mounted;
 } MusashiPlayerCard;
 
 /* The player owns the first slot. A missing directory leaves the device
@@ -23,6 +24,11 @@ int musashi_player_card_open(MusashiPlayerCard *, MusashiBootMemory *,
                              MusashiBiosEvents *, const char *directory);
 /* On graceful exit, complete accepted requests while RAM and storage are
  * present. An interruption may close directly, preserving only durable writes. */
+/* Descriptor identity for the observed busy-5 metadata seek, read and completion.
+ * No transfer, seek or event delivery. Zero means the current phase cannot run. */
+uint64_t musashi_player_card_metadata_descriptor(const MusashiPlayerCard *,
+                             const MusashiBootMemory *, const MusashiBiosEvents *,
+                             int32_t fd, uint32_t position, uint32_t count);
 int musashi_player_card_finish(MusashiPlayerCard *);
 void musashi_player_card_close(MusashiPlayerCard *);
 void musashi_player_card_pulse(MusashiPlayerCard *, uint64_t source_vblank);

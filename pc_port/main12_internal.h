@@ -13,8 +13,17 @@ struct MusashiMain12Owner {
     const uint8_t *exe_text; /* First sector payload of the mounted executable text. */
     int (*resident_matches)(const MusashiMain12Owner *owner, uint32_t start, uint32_t size);
     uint8_t mailbox[16];
+    uint8_t directory_row[40];
+    uint8_t directory_valid;
+    uint64_t directory_fd_token;
     uint8_t menu_word_changed;
     int installed;
+    struct {
+        const MusashiCdDevice *files;
+        const MusashiBiosEvents *events;
+        uint64_t descriptor, allocation[8];
+        unsigned phase;
+    } metadata_read;
 };
 
 #endif
