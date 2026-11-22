@@ -4732,6 +4732,27 @@
       "extent": "function",
       "optimization": "-O2",
       "source": "src/overlays/sc02_0039/8012853c.c"
+    },
+    {
+      "vram": 2148712168,
+      "name": "func_8012BEE8",
+      "source": "src/overlays/sc02_0005/8012bee8.c",
+      "size": 40,
+      "region": "sc02_0005",
+      "optimization": "-O2",
+      "recovery": "c",
+      "extent": "function"
+    },
+    {
+      "vram": 2149063044,
+      "name": "func_80181984",
+      "source": "src/overlays/sc02_0005/80181984.c",
+      "size": 612,
+      "region": "sc02_0005",
+      "optimization": "-O2",
+      "recovery": "c",
+      "extent": "function",
+      "rodata_base": 2149461536
     }
   ]
 }

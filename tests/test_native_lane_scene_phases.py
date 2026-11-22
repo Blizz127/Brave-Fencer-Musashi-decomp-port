@@ -12,6 +12,8 @@ import native_lane_gen as lane
 
 
 PHASES = (
+    ("sc02_0005", 0x8012BEE8, 40),
+    ("sc02_0005", 0x80181984, 612),
     ("sc02_0005", 0x801838A8, 612),
     ("sc02_0005", 0x80182810, 200),
     ("sc02_0005", 0x801828D8, 64),
@@ -655,3 +657,18 @@ def test_forest_impact_effect_selection(tmp_path, pc, size, region, member, rule
     result = lane.build_one(row, tmp_path, {}, {}, "clang", info)
     assert result.get("rule") == rule
     assert result["admitted"] == (rule is None)
+
+
+@pytest.mark.skipif(not shutil.which("clang") or not shutil.which("nm"), reason="needs clang and nm")
+def test_body_action_three_preserves_the_forest_timer(tmp_path, monkeypatch):
+    pc, size = 0x8012BEE8, 40
+    forest = ROOT / "src/overlays/sc01_0077/8012bee8.c"
+    row = dict(name="func_8012BEE8", vram=pc, size=size, region="sc01_0077", source=str(forest))
+    info = dict(member="sc01_0077", vram=pc, start=0, data=bytes(size), code=[(pc, pc + size)])
+    # The Tower and forest timers share their original instructions.
+    monkeypatch.setattr(lane, "member_digest", lambda info, address, extent: 0xDF34B31C1A8989CC)
+    (tmp_path / "ir").mkdir()
+    assert lane.build_one(row, tmp_path, {}, {}, "clang", info)["admitted"]
+    tower = ROOT / "src/overlays/sc02_0005/8012bee8.c"
+    row.update(source=str(tower), region="sc02_0005")
+    assert lane.build_one(row, tmp_path, {}, {}, "clang", info)["rule"] == "timing"
