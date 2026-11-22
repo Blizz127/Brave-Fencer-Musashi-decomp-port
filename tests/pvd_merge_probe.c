@@ -3,7 +3,6 @@
 #include "probe_code_words.h"
 #define kFile80045660Words PROBE_WORDS(0x80045660u, "MAIN", kFile80045660Words)
 #define kOverlay0004_800D24D0Words PROBE_WORDS(0x800d24d0u, "MAIN_0004", kOverlay0004_800D24D0Words)
-#define kOverlaySc02_8012A094Words PROBE_WORDS(0x8012a094u, "SC02_031", kOverlaySc02_8012A094Words)
 #define kOverlaySc02_8013D53CWords PROBE_WORDS(0x8013d53cu, "SC02_031", kOverlaySc02_8013D53CWords)
 
 #include <assert.h>
@@ -324,30 +323,18 @@ static void test_movie_inline_callback_guard(void) {
     g_overlay_0004_words=0;
 }
 
-static void test_camera_snapshot_merge(void) {
-    unsigned offset,n;
-    for(offset=0;offset<4;offset++) {
-        MusashiBootMemory memory={0};FormatterCpu cpu;Clock clock;
-        uint32_t base=DATA_BASE+offset;
-        unsigned char *bytes=musashi_boot_ram_span(&memory,DATA_BASE,64);
-        unsigned char before[64];
-        for(n=0;n<64;n++)bytes[n]=(unsigned char)(n*7u+3u);
-        memcpy(before,bytes,64);
-        probe_load_image(&memory,"SC02_031");
-        g_fetch_memory=&memory;code_sites_invalidate();
-        init_cpu(&cpu,&clock,0x8012a0a4u);cpu.r[4]=base;
-        g_overlay_sc02_0031_words=1;
-        for(n=0;n<8;n++) {
-            uint32_t word=kOverlaySc02_8012A094Words[4+n];
-            write_word(&memory,0x8012a0a4u+4*n,word);
-            assert(merge_kind_for(0x8012a0a4u+4*n,word)!=MERGE_NONE);
-            assert(merge_kind_for(0x8012a0a4u+4*n,word^1u)==MERGE_NONE);
-        }
-        for(n=0;n<8;n++)assert(formatter_step(&memory,&cpu));
-        for(n=0;n<64;n++)assert(bytes[n]==
-            (n>=offset+24u&&n<offset+32u?before[n+8u]:before[n]));
-        g_overlay_sc02_0031_words=0;
-    }
+static void test_camera_snapshot_fetch_is_refused(void) {
+    MusashiBootMemory memory = {0};
+    FormatterCpu cpu;
+    Clock clock = {0};
+    uint32_t word = 0x13579bdfu;
+
+    init_cpu(&cpu, &clock, 0x8012a0a4u);
+    write_word(&memory, cpu.pc, 0u);
+    g_overlay_sc02_0031_words = 1;
+    assert(!formatter_fetch(&memory, &cpu, &word));
+    assert(word == 0x13579bdfu);
+    g_overlay_sc02_0031_words = 0;
 }
 
 static void palette_setup(MusashiBootMemory *memory,FormatterCpu *cpu,
@@ -442,7 +429,7 @@ static void test_palette_copy_merge(void) {
 
 int main(void) {
     test_palette_copy_merge();
-    test_camera_snapshot_merge();
+    test_camera_snapshot_fetch_is_refused();
     test_movie_inline_callback_guard();test_movie_rectangle_copy();test_movie_header_copy();test_exact_source_words();
     test_load_pair_all_alignments();
     test_store_pair_all_alignments();

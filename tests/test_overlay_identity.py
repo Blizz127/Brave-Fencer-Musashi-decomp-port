@@ -7,14 +7,15 @@ import subprocess
 
 import pytest
 
-from test_bios_event_callbacks import _generate_formatter_includes
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def registered_pcs(region):
     """Every PC of each registered function of `region` (provenance registry)."""
-    registry = json.loads((ROOT / "provenance/matches.json").read_text())["matches"]
+    path = ROOT / "provenance/matches.json"
+    if not path.is_file():
+        pytest.skip("local match registry unavailable")
+    registry = json.loads(path.read_text())["matches"]
     ranges = [(m["vram"], m["size"]) for m in registry if m["region"] == region]
     assert ranges, region
     return {pc for vram, size in ranges for pc in range(vram, vram + size, 4)}
@@ -33,7 +34,7 @@ def formatter_pcs(prefix):
 _PROBE_SOURCE = r'''
 #include <stdint.h>
 #include <string.h>
-/* Compile the production selector directly. formatter_fetch is static, so the
+/* Compile the production selector directly. formatter_admitted is static, so the
  * probe includes the translation unit; -fvisibility=hidden plus
  * -Wl,--gc-sections drops the rest of the port and its externs. The old
  * harness sliced a literal if-chain out of the source and stopped compiling
@@ -50,9 +51,6 @@ int overlay_selector_probe(unsigned pc, unsigned overlay, uint32_t *out) {
     FormatterCpu cpu;
     memset(&cpu, 0, sizeof cpu);
     cpu.pc = pc;
-    /* Run off the disc: the selector admits addresses per overlay; the word
-     * itself is whatever the guest loaded, so only admission is compared. */
-    *out = 0xADD17ED0u;
     return formatter_admitted(&cpu, out) ? 1 : 0;
 }
 '''
@@ -61,9 +59,6 @@ int overlay_selector_probe(unsigned pc, unsigned overlay, uint32_t *out) {
 @pytest.fixture(scope="module")
 def selector(tmp_path_factory):
     work = tmp_path_factory.mktemp("overlay-identity")
-    generated = work / "generated"
-    generated.mkdir()
-    _generate_formatter_includes(generated)
     source = work / "selector.c"
     source.write_text(_PROBE_SOURCE)
     library_path = work / "selector.so"
@@ -72,7 +67,7 @@ def selector(tmp_path_factory):
         "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
         "-fvisibility=hidden",
         "-I", str(ROOT / "include"), "-I", str(ROOT / "pc_port"),
-        "-I", str(ROOT / "pc_port/include"), "-I", str(generated),
+        "-I", str(ROOT / "pc_port/include"),
         str(source), "-o", str(library_path),
     ], check=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=180)
     library = ctypes.CDLL(str(library_path))
@@ -82,19 +77,20 @@ def selector(tmp_path_factory):
     return library.overlay_selector_probe
 
 
-@pytest.mark.parametrize("overlay,pc", [(4, 0x800CEDFC), (10, 0x800CF104), (7, 0x800CEDFC)])
+@pytest.mark.parametrize("overlay,pc", [(4, 0x800CEDFC), (7, 0x800CEDFC)])
 def test_unmapped_overlay_does_not_execute_overlay_zero(selector, overlay, pc):
     word = ctypes.c_uint(0xDEADBEEF)
     assert selector(pc, overlay, ctypes.byref(word)) == 0
 
 
-@pytest.mark.parametrize("overlay,pc,expected", [
-    (0, 0x800CF104, 0x8FBF0010),
-    (4, 0x800CEEC8, 0x3C02800C),
-    (10, 0x800D0488, 0x27BDFFE0),
-    (7, 0x800CF104, 0x0C033D02),
+@pytest.mark.parametrize("overlay,pc", [
+    (0, 0x800CF104),
+    (10, 0x800CF104),
+    (4, 0x800CEEC8),
+    (10, 0x800D0488),
+    (7, 0x800CF104),
 ])
-def test_active_overlay_keeps_its_instructions(selector, overlay, pc, expected):
+def test_active_overlay_admits_its_pc(selector, overlay, pc):
     word = ctypes.c_uint()
     assert selector(pc, overlay, ctypes.byref(word)) == 1
 
@@ -107,10 +103,16 @@ def test_every_title_range_is_selected_from_its_own_overlay(selector):
         assert selector(pc, 10, ctypes.byref(word)) == 1, hex(pc)
 
 
-@pytest.mark.parametrize('overlay,expected', [(2031, 0x8C224F08), (0, 0x8C22EEA0)])
-def test_scene_entry_dispatch_uses_selected_pac(selector, overlay, expected):
+@pytest.mark.parametrize("overlay", [2031, 0])
+def test_scene_entry_dispatch_uses_selected_pac(selector, overlay):
     word = ctypes.c_uint()
     assert selector(0x801282AC, overlay, ctypes.byref(word)) == 1
+
+
+def test_sc02_refuses_pc_with_withdrawn_range(selector):
+    word = ctypes.c_uint(0xDEADBEEF)
+    assert selector(0x80148AB0, 2031, ctypes.byref(word)) == 0
+    assert word.value == 0xDEADBEEF
 
 
 def test_every_sc02_range_is_selected_with_its_pac(selector):

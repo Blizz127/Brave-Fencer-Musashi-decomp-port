@@ -39,6 +39,11 @@ stand. See "Resident-image walk: GTE bank leaves and the second wave".
 
 ## SC02 word-lane provenance (2026-09-10)
 
+The current public formatter omits three SC02/0031 range tables with 1,005
+execution ranges. The ordinary guest fetch refuses a PC whose only admission
+came from those tables. The independently admitted scene entry remains
+available. The September walkthrough below records the earlier build.
+
 The SC02 word lane identifies the image the guest loads. An earlier title capture
 contained the SC01 member. At word 48 of `func_80128288`, its first data reference
 differs from the reference in the resident SC02 member.
@@ -69,14 +74,13 @@ re-derived from the resident image (dispatch table `D_80184F08`, oracle MATCH
 re-derived the same way (279 by automatic retargeting, 4 by hand: the
 jump-table base `0x801B5BA8` for `func_80154C24` and the data blocks for
 `func_8013C9C4`/`func_8013D330`/`func_80164E40`), each re-earning MATCH against
-the resident image. **All 1907 wired SC02 streams now equal the resident
-image** and the guard has no mismatch to report.
+the resident image. In this September 10 run, all 1907 SC02 streams in that
+build matched the resident image.
 
 The walk then continues: `func_801612B8` (21/21) and `func_80133784`
 (203/203, donor register pins retargeted to this member's boxes and counters)
-were carved from the resident image as the next leaves, and the run now clears
-the SC02 path entirely. The stops after that were all device-layer gaps, each
-closed with exact retail evidence:
+were carved from the resident image as the next leaves. That build cleared the
+SC02 path on this run. The following stops were device-layer gaps:
 
 - `80047d3c` — `func_80133784` returns here, so its return alias joins the
   audited `gte_47d3c_caller` list.

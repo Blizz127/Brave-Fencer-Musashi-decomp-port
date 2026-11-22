@@ -23,15 +23,19 @@ We downloaded every historical player package from the public releases and
 checked its published size and SHA-256. All 22 distinct Linux and Windows
 executables contain a 36-byte game dispatch table. Nineteen also contain a
 32-byte warp callback. Fourteen Linux executables include two complete original
-diagnostic strings in their debug sections. The review covered 14 distinct
-archives across 12 release tags.
+diagnostic strings in their debug sections. The review covered 15 package attachments across 12 release tags, including
+14 distinct archives. All 22 distinct players also contain nine original scene
+address sequences in the start or end fields of their execution-range tables.
+This source revision removes the three affected tables. An affected scene can
+stop when it reaches an address with no remaining execution path.
 
 The public source now reads the dispatch table from your disc. Its developer
 menu has an empty warp list. A Linux player built at commit `7fd45d2` was
 checked for both tables and both strings. The source also delegates interrupt
-and device-library routines to the program on your disc. The current source
-still needs an ordinary inn save and a successful Continue after restarting
-before it can qualify as a replacement player download.
+and device-library routines to the program on your disc. In a cold-start test from commit `c532cb8`, the Linux player read the disc
+and stopped at `8002D08C` before it displayed the menu. A replacement
+download still needs to reach ordinary gameplay, save at an inn, and
+successfully Continue after restarting.
 
 The Linux instructions cover disc verification, the build and the first
 launch. Windows x64 users can cross-build the player on Linux with Zig and the
