@@ -274,3 +274,18 @@ def test_animation_commands_hold_relocated_code_and_source_copies(pc, tmp_path, 
         assert not lane.forest_animation_source_only(row, source, None)
     source.write_bytes((ROOT / f"src/overlays/sc01_0077/{pc:08x}.c").read_bytes())
     assert lane.forest_animation_source_only(row, source, None)
+
+@pytest.mark.parametrize("pc,size,source_member", [
+    (0x8012C724, 44, "sc02_0035"),
+    (0x8013E298, 44, "main_0012"),
+    (0x8013E370, 160, "main_0012"),
+    (0x8013E410, 56, "main_0012"),
+    (0x8013E448, 108, "main_0012"),
+])
+def test_forest_placement_aliases_stay_interpreted(tmp_path, pc, size, source_member):
+    source = ROOT / "src" / "overlays" / source_member / f"{pc:08x}.c"
+    row = dict(name=f"func_{pc:08X}", vram=pc, size=size, source=str(source))
+    (tmp_path / "ir").mkdir()
+    for region, info in (("sc01_0077", None), (source_member, dict(member="sc01_0077"))):
+        result = lane.build_one(dict(row, region=region), tmp_path, {}, {}, "clang", info)
+        assert result.get("rule") == "timing"

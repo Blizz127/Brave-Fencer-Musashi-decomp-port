@@ -1517,6 +1517,9 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
         if wrapped_angle and (size != 12 or hashlib.sha256(src.read_bytes()).hexdigest() !=
                 "7e1d58c1eca9742e5c025641f349f594066b5cadd3b4eb1c4a64f8706bb7ace2"):
             raise Reject("source", "wrapped-angle step requires the verified clean source")
+        if (vram in (0x8012C724, 0x8013E298, 0x8013E370, 0x8013E410, 0x8013E448) and
+                (entry.get("region") == "sc01_0077" or member == "sc01_0077")):
+            raise Reject("timing", "forest placement requires ordered actor allocation and callback timing")
         if forest_animation_source_only(entry, src, info):
             raise Reject("timing", "animation commands require checked scripts, recursive calls and timed services")
         if forest_floor_source_only(entry, src, info):
