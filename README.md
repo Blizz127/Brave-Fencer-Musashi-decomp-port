@@ -38,13 +38,14 @@ menu has an empty warp list. A Linux player built at commit `7fd45d2` was
 checked for both tables and both strings. The source also delegates interrupt
 and device-library routines to the program on your disc.
 
-On a cold launch from a USA disc, the Linux player reached **Continue** and
-displayed a Chapter 1 save in File 1. After the player selected the file and
-confirmed **Yes**, the game read the 768-byte save payload from the configured
-memory card and copied its 732-byte restore record into game memory. The screen
-still showed **Loading data** when execution stopped at `0x8017CFB0`, before
-**Loaded data!** or a return to the field. A replacement player download still
-needs to reach ordinary gameplay, save at an inn, and Continue after restarting.
+On a cold launch from a USA disc, a Linux test build reached **Continue** and
+displayed a Chapter 1 save in File 1. After the player chose File 1 and confirmed
+**Yes**, the game read the 768-byte save payload from the configured memory card,
+copied its 732-byte restore record into game memory, and displayed **Loaded data!**
+The player pressed Cross to dismiss the message. Execution stopped in the file
+menu at `0x8017C3FC` before the field appeared. A replacement player download
+still needs to reach ordinary gameplay, save at an inn, and Continue after
+restarting.
 
 Compiled host code now handles the opening movie’s output callback. In an
 ordinary Linux run, it processed 1,760 strips across 88 complete movie frames

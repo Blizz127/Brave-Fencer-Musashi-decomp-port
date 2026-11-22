@@ -6170,6 +6170,7 @@ typedef struct FormatterCpu {
     uint8_t main12_clearing_file;
     uint8_t main12_card_service;
     uint32_t main12_copy_dest;
+    uint32_t main12_payload_pc; /* Next mounted instruction of the selected-file copy. */
     uint8_t main12_copy_pending;
     uint8_t main12_directory_found;
 } FormatterCpu;
@@ -7245,7 +7246,7 @@ static size_t g_lane_count;
 static int formatter_call(MusashiBootMemory *memory, FormatterCpu *cpu,
                            MusashiConsoleSink sink, void *userdata) {
     uint32_t address = cpu->pc;
-    if (cpu->main12_clearing_file) return formatter_step(memory, cpu);
+    if (cpu->main12_clearing_file || main12_payload_copy_pc(cpu)) return formatter_step(memory, cpu);
     if (cpu->gte_load_pending) return 0;
     /* A host intrinsic whose matched C the lane admitted runs as that C
      * (tools/native_lane_gen.py INTRINSIC_PCS) instead of the bespoke host
@@ -9103,6 +9104,7 @@ static int formatter_fetch(MusashiBootMemory *memory, const FormatterCpu *cpu, u
     if (!cpu || (cpu->pc & 3u)) return 0;
     if (cpu->main12_clearing_file) return main12_clear_word(memory, cpu, out);
     if (cpu->main12_row_pc) return main12_row_word(memory, cpu, out);
+    if (main12_payload_copy_pc(cpu)) return main12_payload_copy_word(memory, cpu, out);
     if (cpu->dma_registration) {
         if (cpu->irq_image || cpu->registration_stack) return 0;
         return dma_registration_word(memory, cpu->dma_registration, cpu->pc, out);
@@ -12146,7 +12148,8 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         g_lane_run_frames->main_entry.next = 0;
     if ((cpu->pc & 3u) || !spu_source_guard(memory, cpu))
         return formatter_refuse0(__LINE__, cpu->pc);
-    if ((cpu->main12_clearing_file || cpu->main12_row_pc || main12_owns_fetch(cpu) || main12_service_pc(cpu) || main12_copy_pc(cpu)) && publish_flow && g_entry_hook &&
+    const int copying_payload = main12_payload_copy_pc(cpu);
+    if ((copying_payload || cpu->main12_clearing_file || cpu->main12_row_pc || main12_owns_fetch(cpu) || main12_service_pc(cpu) || main12_copy_pc(cpu)) && publish_flow && g_entry_hook &&
         cpu->pc == g_entry_pending && !formatter_fetch(memory, cpu, &instruction))
         return formatter_refuse0(__LINE__, cpu->pc);
     if (publish_flow && g_entry_hook && cpu->pc == g_entry_pending) {
@@ -12155,7 +12158,7 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     }
     if (!cpu->dma_registration && !cpu->irq_image && !cpu->cd_parent_image && !registration_code_pc(cpu->pc) &&
         !startup_exchange_pc(cpu->pc) &&
-        !cpu->main12_clearing_file && !cpu->main12_row_pc && !main12_owns_fetch(cpu) && !main12_service_pc(cpu) && !main12_copy_pc(cpu) && !reset_calls_guest_fill(cpu) &&
+        !copying_payload && !cpu->main12_clearing_file && !cpu->main12_row_pc && !main12_owns_fetch(cpu) && !main12_service_pc(cpu) && !main12_copy_pc(cpu) && !reset_calls_guest_fill(cpu) &&
         (g_lane_count || g_lane_ovl_count)) {
         int lane = lane_try(memory, cpu);
         if (lane > 0) return 1;
@@ -12635,7 +12638,7 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     const MusashiMain12Owner *display_owner = cpu->main12_callback_frame;
     const int cold_request = display_owner && store_pc == 0x8017c124u;
     const int grid_issue = main12_file_grid_pc(memory, cpu, display_owner);
-    const int restore_issue = main12_restore_pc(memory, cpu, display_owner) ||
+    const int restore_issue = copying_payload || main12_restore_pc(memory, cpu, display_owner) ||
         (display_owner && display_owner->restore.closed &&
          ((store_pc == 0x8017c2d0u && !display_owner->restore.consumed) ||
           (display_owner->restore.result &&
@@ -12763,7 +12766,8 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
             cpu->pc != store_pc || cpu->hi != display_hi || cpu->lo != display_lo ||
             memcmp(display_registers, cpu->r, sizeof display_registers) ||
             !(clearing_file ? main12_clear_word(memory, cpu, &current) :
-              building_row ? main12_row_word(memory, cpu, &current) : restore_issue ?
+              building_row ? main12_row_word(memory, cpu, &current) :
+              copying_payload ? main12_payload_copy_word(memory, cpu, &current) : restore_issue ?
               (main12_current(cpu->main12_callback_frame, memory) &&
                main12_restore_matches(memory, cpu, display_owner) && formatter_fetch(memory, cpu, &current)) :
               main12_callback_word(memory, cpu, &current)) || current != instruction)
@@ -13136,6 +13140,8 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         (opcode == 0u && ((instruction & 63u) == 8u || (instruction & 63u) == 9u)));
     cpu->branch_pc = cpu->delay_slot ? cpu->pc : 0u;
     cpu->main12_copy_pending = (uint8_t)(copy_merge && schedule_merge);
+    if (copying_payload)
+        cpu->main12_payload_pc = old_npc == MAIN12_PAYLOAD_CALL + 8u ? 0u : old_npc;
     if (cpu->pc == MAIN12_CALLBACK) {
         cpu->main12_copy_dest = 0;
         cpu->main12_directory_found = 0;
