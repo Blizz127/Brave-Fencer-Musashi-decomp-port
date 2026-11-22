@@ -18,6 +18,7 @@ typedef struct {
 #endif
 
 extern s32 D_801270C8;
+u32 func_8017FCFC(TowerIntroPlayer *player);
 u32 func_8017FF8C(TowerIntroPlayer *player);
 u32 func_8017FFF0(TowerIntroPlayer *player);
 

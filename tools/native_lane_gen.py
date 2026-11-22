@@ -1085,6 +1085,12 @@ TOWER_POOL_PRIOR_SOURCE = "37f8c8016ea1b697c77467c8ee51f6fe1f89930cfacf04a68d81b
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    # The request and control instructions also occur in other room members.
+    0x8017FCFC: {"sc02_0005": (184, 0x46D58ECC4D744307)},
+    0x801399F0: {"sc02_0005": None},
+    0x80139914: {"sc02_0005": None},
+    0x8013A8B0: {"sc02_0005": None},
+    0x80147060: {"sc02_0005": None},
     0x8017FF8C: {"sc02_0005": (100, 0x7C0B44E8DBD7119A)},
     0x8017FFF0: {"sc02_0005": (112, 0x407B1C410C020ED8)},
     # Actor cleanup has the same instructions in other scene members.
@@ -1275,8 +1281,13 @@ TOWER_EARLIER_CALLERS = {
 }
 
 
-# Detached copies of the two Tower introduction callbacks also require guest timing.
+# Detached copies of the Tower introduction sources also require guest timing.
 TOWER_INTRO_SOURCE_HASHES = {
+    0x8017FCFC: "8074d448279c642cdc7a210fd31f9da7639da72835ce81524179498f764468db",
+    0x801399F0: "ad9fb12d1be8b8f0ddcd3c5205141adbf7a352bb5c8a615de8788dc33d4f22cc",
+    0x80139914: "ff6407e5b0fed4e54dfa0735e74428e103bc1503c8405b4a813b82e3946e0bcd",
+    0x8013A8B0: "2d071880baf947d35578c2ff7e0d07d0153a6b99493345b11c4415fe6d65c67c",
+    0x80147060: "4e3a609fc9a189be5a023fc989368806e0b6a153e80cc8191eabde8f573b7606",
     0x8017FF8C: "c8719c350874a9a81367d3bd62508d3595a56368601c288dcc45e25621c6c937",
     0x8017FFF0: "7621a18e7fc92be495fb76204810db643e9379099ba87e454668308648c92701",
 }
@@ -1294,9 +1305,11 @@ def overlay_extent_source_only(entry, src, info, extents):
         if src.is_file() and hashlib.sha256(src.read_bytes()).hexdigest() == TOWER_INTRO_SOURCE_HASHES[pc]:
             return True
         # Custom registries can report another size. Identify the whole verified callback.
-        size, digest = variants["sc02_0005"]
-        if info and all(key in info for key in ("vram", "start", "data")) and member_digest(info, pc, size) == digest:
-            return True
+        extent = variants["sc02_0005"]
+        if extent and info and all(key in info for key in ("vram", "start", "data")):
+            size, digest = extent
+            if member_digest(info, pc, size) == digest:
+                return True
     elif info and any(variants.values()) and (entry["size"], member_digest(info, pc, entry["size"])) in variants.values():
         return True
     previous = TOWER_EARLIER_CALLERS.get(pc)
