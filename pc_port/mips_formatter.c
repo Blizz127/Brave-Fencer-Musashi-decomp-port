@@ -4,6 +4,7 @@
 #include "musashi_sha256_digest.h"
 #include "musashi_native_lane.h"
 #include "musashi_guest_irq.h"
+#include "musashi_gpu_dma2.h"
 #include "main12_internal.h"
 #ifdef MUSASHI_LINKED_BIOS_EXCEPTION
 #include "musashi_bios_exception.h"
@@ -6107,6 +6108,13 @@ enum {
     DMA_REG_DICR = 0x1f8010f4u
 };
 
+/* A selected queue item belongs to this one interrupt. The underlying
+ * channel snapshots the guest's linked list when its start word is written. */
+typedef struct PendingDrawList {
+    uint32_t list, record, next;
+    uint64_t initial_starts;
+} PendingDrawList;
+
 typedef struct FormatterCpu {
     uint32_t r[32];
     uint32_t hi, lo;
@@ -6121,6 +6129,7 @@ typedef struct FormatterCpu {
     const MusashiGuestIrqImage *cd_parent_image;
     const MusashiDmaCallbackRegistrationDevice *irq_dma;
     const MusashiGuestIrqDraw *irq_draw;
+    PendingDrawList pending_draw;
     const MusashiExecutionClock *clock;
     const MusashiCdRegisterDevice *cd_register_device;
     const DmaRegistrationFrame *dma_registration;
@@ -14585,7 +14594,7 @@ typedef enum {
     IRQ_CARD_CLEAR_RESULT, IRQ_CARD_RESET_EVENTS, IRQ_CARD_POLL_EVENTS, IRQ_CARD_FLAGS,
     IRQ_CARD_TEST_EVENT, IRQ_CARD_INFO_BIOS, IRQ_CARD_LOAD_BIOS,
     IRQ_CARD_READ, IRQ_CARD_SEEK_BIOS, IRQ_CARD_READ_BIOS,
-    IRQ_DRAW_COMPLETE, IRQ_DRAW_MASK, IRQ_DRAW_FRAME, IRQ_DRAW_TIME, IRQ_OUTSIDE
+    IRQ_DRAW_COMPLETE, IRQ_DRAW_MASK, IRQ_DRAW_FRAME, IRQ_DRAW_TIME, IRQ_DRAW_SUBMIT, IRQ_OUTSIDE
 } IrqRegion;
 typedef struct { uint32_t start; size_t offset, length; } IrqCodeRegion;
 #define IRQ_REGION(address, field) {address, offsetof(MusashiGuestIrqImage, field), sizeof(((MusashiGuestIrqImage *)0)->field)}
@@ -14621,7 +14630,9 @@ static const IrqCodeRegion irq_code[] = {
     IRQ_REGION(0x8005ba90u, draw_complete),
     IRQ_REGION(0x800426fcu, draw_irq_mask),
     IRQ_REGION(0x8001099cu, draw_frame),
-    IRQ_REGION(0x8004239cu, draw_frame_time)
+    IRQ_REGION(0x8004239cu, draw_frame_time),
+    /* The foreground callback map already holds this mounted operation. */
+    {0x8005b710u, 0, 0x4cu}
 };
 #undef IRQ_REGION
 
@@ -14662,6 +14673,7 @@ int musashi_boot_map_irq_exe(MusashiGuestIrqImage *image, MusashiBootMemory *mem
         const IrqCodeRegion *region = &irq_code[i];
         const uint8_t *p = musashi_boot_ram_span(memory,region->start,region->length);
         if (!p) return 0;
+        if (i == IRQ_DRAW_SUBMIT) continue;
         if (i == IRQ_CARD_READ) {
             for (size_t j=0; j<sizeof card_read_spans/sizeof card_read_spans[0]; ++j) {
                 size_t offset=card_read_spans[j].start-region->start;
@@ -14696,6 +14708,7 @@ static IrqRegion irq_region(uint32_t address) {
 static int irq_live_word(const MusashiGuestIrqImage *image, MusashiBootMemory *memory,
                          uint32_t pc, uint32_t *word) {
     IrqRegion i = irq_region(pc);
+    if (i == IRQ_DRAW_SUBMIT) return cd_parent_word(image,memory,pc,word);
     if (i == IRQ_OUTSIDE || image->identity != image || image->memory != memory ||
         !musashi_boot_read32(memory,pc,word)) return 0;
     const IrqCodeRegion *r = &irq_code[i];
@@ -14848,7 +14861,7 @@ static int irq_draw_data(uint32_t pc, unsigned op, uint32_t address) {
         {0x800423bcu,0x1f801814u,4,0}, {0x800423c0u,0x1f801110u,4,0},
         {0x800423c8u,0x8006ba9cu,4,0}, {0x800424ccu,0x8006ca7cu,4,0},
         {0x800424d0u,0x8006ca78u,4,0}, {0x800424d4u,0x8006ca74u,4,0},
-        {0x800109ccu,0x800b9a02u,2,0}, {0x800109e8u,0x800ae814u,4,1},
+        {0x800109ccu,0x800b9a02u,2,0},
         {0x800109f0u,0x8006ca9cu,4,0}, {0x800109f4u,0x8006ca98u,4,0},
         {0x800109f8u,0x8006ca94u,4,0}, {0x8005bd50u,0x8007288cu,4,0},
         {0x8005bd58u,0x80072890u,4,0}, {0x8005bd68u,0x8006cab8u,4,0},
@@ -14872,13 +14885,69 @@ static int irq_draw_image(const MusashiGuestIrqImage *image, MusashiBootMemory *
     return 1;
 }
 
-static int irq_draw_queue(MusashiBootMemory *memory) {
+enum {
+    DRAW_HEAD = 0x8007288cu, DRAW_TAIL = 0x80072890u,
+    DRAW_RECORDS = 0x800c5510u, DRAW_RECORD_SIZE = 96u, DRAW_RECORD_COUNT = 64u,
+    DRAW_HISTORY = 0x8007287cu, DRAW_PORTS = 0x8007285cu, DRAW_LIST_OP = 0x8005b710u
+};
+
+/* Borrow a single linked-list submission from the selected queue slot. The
+ * reset route initializes this table as a 6144-byte span. Other operations
+ * and queue depths retain their existing admission policy. */
+static int pending_draw_list(const MusashiGuestIrqDraw *draw, MusashiBootMemory *memory,
+                             PendingDrawList *item) {
+    uint32_t head, tail, list;
+    if (!draw || !draw->gpu || !draw->gpu->write32 ||
+        !musashi_boot_read32(memory,DRAW_HEAD,&head) ||
+        !musashi_boot_read32(memory,DRAW_TAIL,&tail) || tail>=DRAW_RECORD_COUNT ||
+        head!=(tail+1u)%DRAW_RECORD_COUNT) return 0;
+    uint32_t record=DRAW_RECORDS+tail*DRAW_RECORD_SIZE;
+    if (!cd_irq_ram_word(memory,record,DRAW_LIST_OP) ||
+        !musashi_boot_read32(memory,record+4,&list) || !list || (list&3u) ||
+        !musashi_boot_ram_span(memory,list,4) || !cd_irq_ram_word(memory,record+8,0) ||
+        !cd_irq_ram_word(memory,DRAW_PORTS,0x1f801814u) ||
+        !cd_irq_ram_word(memory,DRAW_PORTS+4,0x1f8010a0u) ||
+        !cd_irq_ram_word(memory,DRAW_PORTS+8,0x1f8010a4u)) return 0;
+    *item=(PendingDrawList){.list=list,.record=record,.next=head};
+    return 1;
+}
+
+static int same_draw_item(const PendingDrawList *a, const PendingDrawList *b) {
+    return a->list==b->list && a->record==b->record && a->next==b->next;
+}
+
+static int retired_draw_history(MusashiBootMemory *memory, const PendingDrawList *retired) {
+    return retired->list && cd_irq_ram_word(memory,DRAW_HEAD,retired->next) &&
+        cd_irq_ram_word(memory,DRAW_TAIL,retired->next) &&
+        cd_irq_ram_word(memory,DRAW_HISTORY,DRAW_LIST_OP) &&
+        cd_irq_ram_word(memory,DRAW_HISTORY+4,retired->list) && cd_irq_ram_word(memory,DRAW_HISTORY+8,0u);
+}
+
+static int retired_draw_completion(const MusashiGuestIrqDraw *draw, MusashiBootMemory *memory,
+                                   const PendingDrawList *retired) {
+    MusashiGpuDma2State channel;
+    return retired_draw_history(memory,retired) && cd_irq_ram_word(memory,0x80072790u,0u) &&
+        musashi_gpu_dma2_get_state(draw->channel,&channel) && !channel.fault &&
+        channel.starts==retired->initial_starts+1u && channel.transfers==channel.starts &&
+        channel.start_madr==(retired->list & 0x00ffffffu);
+}
+
+/* The installed frame callback stores its timer sample in the indexed
+ * result word of the current double buffer (func_8001099C). */
+static uint32_t irq_draw_frame_result(MusashiBootMemory *memory) {
+    uint16_t slot;
+    if (!musashi_boot_read16(memory,0x800b9a02u,&slot) || slot>=2u) return 0;
+    return 0x800ae810u+4u*slot;
+}
+
+static int irq_draw_queue(const MusashiGuestIrqDraw *draw, MusashiBootMemory *memory,
+                          const PendingDrawList *retired) {
+    PendingDrawList item;
     uint32_t head, tail;
-    uint16_t frame_slot;
-    return musashi_boot_read16(memory,0x800b9a02u,&frame_slot) && frame_slot==1 &&
-        musashi_boot_read32(memory,0x8007288cu,&head) &&
-        musashi_boot_read32(memory,0x80072890u,&tail) && head==tail &&
-        cd_irq_ram_word(memory,0x80072790u,1) &&
+    return irq_draw_frame_result(memory) &&
+        musashi_boot_read32(memory,DRAW_HEAD,&head) &&
+        musashi_boot_read32(memory,DRAW_TAIL,&tail) && (head==tail || pending_draw_list(draw,memory,&item)) &&
+        (cd_irq_ram_word(memory,0x80072790u,1) || retired_draw_completion(draw,memory,retired)) &&
         cd_irq_ram_word(memory,0x80072794u,0x8001099cu) &&
         cd_irq_ram_word(memory,0x80072868u,0x1f8010a8u) &&
         cd_irq_ram_word(memory,0x8006ba94u,0x1f801814u) &&
@@ -14899,13 +14968,14 @@ int musashi_boot_bind_irq_draw(MusashiGuestIrqImage *image, MusashiGuestIrqDrawH
 }
 
 static int irq_draw_owner(const MusashiGuestIrqDraw *draw, const MusashiGuestIrqImage *image,
-    MusashiBootMemory *memory, const MusashiDmaController *dma, const MusashiExecutionClock *clock) {
+    MusashiBootMemory *memory, const MusashiDmaController *dma, const MusashiExecutionClock *clock,
+    const PendingDrawList *retired) {
     return irq_draw_bound(image,draw) && draw->memory==memory &&
         dma && draw->dma==dma && draw->channel &&
         dma->gpu_owner==draw->channel && dma->gpu_channel_control==0x401u && draw->clock==clock &&
         draw->gpu && draw->gpu->read32 && draw->timer && draw->timer_read16 &&
         cd_irq_ram_word(memory,0x8006cbccu,0x8005ba90u) &&
-        irq_draw_queue(memory) && irq_draw_image(image,memory);
+        irq_draw_queue(draw,memory,retired) && irq_draw_image(image,memory);
 }
 
 /* Follow the actual DMA status read, write-one-to-clear and registered slot
@@ -14923,6 +14993,51 @@ static unsigned irq_draw_selection(unsigned selected, uint32_t pc, unsigned op,
     default:
         return selected;
     }
+}
+
+static int pending_draw_submitted(const FormatterCpu *cpu) {
+    MusashiGpuDma2State channel;
+    return musashi_gpu_dma2_get_state(cpu->irq_draw->channel,&channel) &&
+        channel.fault==MUSASHI_GPU_DMA2_OK &&
+        channel.starts==cpu->pending_draw.initial_starts+1u &&
+        channel.start_madr==(cpu->pending_draw.list & 0x00ffffffu);
+}
+
+/* Authorize the guest's reads and writes to the selected command only.
+ * Submission, queue history and retirement are all executed by the mapped
+ * code and continue to consume its own instruction and device time. */
+static int pending_draw_access(const FormatterCpu *cpu, IrqRegion region, unsigned op,
+                               uint32_t address, uint32_t value) {
+    MusashiBootMemory *m=cpu->irq_draw->memory;
+    PendingDrawList item;
+    if (!irq_draw_bound(cpu->irq_image,cpu->irq_draw)) return 0;
+    if (!pending_draw_list(cpu->irq_draw,m,&item)) {
+        /* After retirement the parent re-reads both indexes. Only the
+         * submitted record's corresponding published history may end it. */
+        return region==IRQ_DRAW_COMPLETE && op==35u &&
+            (address==DRAW_HEAD || address==DRAW_TAIL) &&
+            retired_draw_history(m,&cpu->pending_draw) && pending_draw_submitted(cpu);
+    }
+    if (!same_draw_item(&item,&cpu->pending_draw)) return 0;
+    if (region==IRQ_DRAW_SUBMIT) {
+        if (op==35u) return !(address&3u) && address>=DRAW_PORTS && address<=DRAW_PORTS+12;
+        if (op!=43u) return 0;
+        return (address==0x1f801814u && value==0x04000002u) ||
+            (address==0x1f8010a0u && (value==item.list || value==(item.list&0x00ffffffu))) ||
+            (address==0x1f8010a4u && !value) ||
+            (address==0x1f8010a8u && value==0x01000401u);
+    }
+    if (region!=IRQ_DRAW_COMPLETE) return 0;
+    if (op==35u)
+        return address==DRAW_HEAD || address==DRAW_TAIL || address==0x80072794u ||
+            address==DRAW_PORTS || address==DRAW_PORTS+12 || address==0x1f8010a8u ||
+            address==0x1f801814u ||
+            (!(address&3u) && address>=item.record && address<=item.record+8);
+    if (op!=43u || !pending_draw_submitted(cpu)) return 0;
+    return (address==DRAW_HISTORY && value==DRAW_LIST_OP) ||
+           (address==DRAW_HISTORY+4 && value==item.list) ||
+           (address==DRAW_HISTORY+8 && value==0) ||
+           (address==DRAW_TAIL && value==item.next);
 }
 
 static int irq_data_access(const FormatterCpu *cpu, uint32_t w) {
@@ -14983,8 +15098,15 @@ static int irq_data_access(const FormatterCpu *cpu, uint32_t w) {
                     (op != 40u || (uint8_t)cpu->r[(w >> 16) & 31u] == 1u);
         }
     }
-    if (region >= IRQ_DRAW_COMPLETE && region <= IRQ_DRAW_TIME)
-        return cpu->irq_draw && irq_draw_data(cpu->pc,op,address);
+    if (region >= IRQ_DRAW_COMPLETE && region <= IRQ_DRAW_SUBMIT) {
+        if (!cpu->irq_draw) return 0;
+        if (region==IRQ_DRAW_FRAME && cpu->pc==0x800109e8u)
+            return op==43u && address && irq_draw_bound(cpu->irq_image,cpu->irq_draw) &&
+                address==irq_draw_frame_result(cpu->irq_draw->memory);
+        if (irq_draw_data(cpu->pc,op,address)) return 1;
+        return cpu->pending_draw.list &&
+            pending_draw_access(cpu,region,op,address,cpu->r[(w>>16)&31u]);
+    }
     if (region >= IRQ_GAME_VBLANK && region < IRQ_OUTSIDE)
         return irq_vblank_data(region,op,address);
     int write = op == 41u || op == 43u;
@@ -15237,6 +15359,7 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
     unsigned depth = 0;
     uint32_t selected_slot = 0, selected_vblank_slot = 0;
     unsigned draw_selection = 0;
+    PendingDrawList retired_draw = {0};
     uint32_t reg_address;
     if (!stop) return 0;
     *stop = (MusashiGuestIrqStop){0};
@@ -15271,12 +15394,18 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
         uint32_t w, origin = cpu.pc, target = 0, live;
         IrqRegion region = irq_region(origin);
         stop->pc = origin;
-        if (region >= IRQ_DRAW_COMPLETE && region <= IRQ_DRAW_TIME) {
-            if (!cpu.irq_draw || !irq_draw_pc(region,origin) || !dma ||
+        if (region >= IRQ_DRAW_COMPLETE && region <= IRQ_DRAW_SUBMIT) {
+            int pending_path=cpu.pending_draw.list && (region==IRQ_DRAW_COMPLETE || region==IRQ_DRAW_SUBMIT);
+            if (!cpu.irq_draw || (!irq_draw_pc(region,origin) && !pending_path) || !dma ||
                 dma->gpu_owner!=cpu.irq_draw->channel) return 0;
             /* The entry jump and its delay slot each advance devices. Recheck
              * the live registration and machine ownership before the callee. */
-            if (origin==0x8005ba90u && !irq_draw_owner(cpu.irq_draw,image,memory,dma,clock)) return 0;
+            if (origin==0x8005ba90u) {
+                PendingDrawList current={0};
+                if (!irq_draw_owner(cpu.irq_draw,image,memory,dma,clock,&retired_draw)) return 0;
+                pending_draw_list(cpu.irq_draw,memory,&current);
+                if (!same_draw_item(&current,&cpu.pending_draw)) return 0;
+            }
         }
         if (!irq_live_word(image,memory,origin,&w) || !irq_data_access(&cpu,w)) return 0;
         unsigned op = w >> 26, fn = w & 63u;
@@ -15332,7 +15461,16 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
                 if (draw_selection!=3 || target!=0x8005ba90u || dest!=IRQ_DRAW_COMPLETE ||
                     region!=IRQ_DMA || depth!=2 || stack[0].callee!=IRQ_DISPATCH ||
                     stack[1].callee!=IRQ_DMA || selected_slot!=0x8006bb0cu ||
-                    cpu.r[29]!=installed[1]-0x58u || !irq_draw_owner(draw,image,memory,dma,clock)) return 0;
+                    cpu.r[29]!=installed[1]-0x58u || !irq_draw_owner(draw,image,memory,dma,clock,&retired_draw)) return 0;
+                if (pending_draw_list(draw,memory,&cpu.pending_draw)) {
+                    MusashiGpuDma2State channel;
+                    uint32_t word;
+                    for (uint32_t offset=0; offset<irq_code[IRQ_DRAW_SUBMIT].length; offset+=4)
+                        if (!cd_parent_word(image,memory,DRAW_LIST_OP+offset,&word)) return 0;
+                    if (!musashi_gpu_dma2_get_state(draw->channel,&channel) ||
+                        channel.fault || channel.starts==UINT64_MAX) return 0;
+                    cpu.pending_draw.initial_starts=channel.starts;
+                } else cpu.pending_draw=(PendingDrawList){0};
                 cpu.irq_draw=draw;
                 cpu.gpu_io_device=draw->gpu;
                 draw_selection=0;
@@ -15370,13 +15508,19 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
                         !irq_metadata_call(read_phase,origin,dest)) return 0;
                     card_child=1;
                 }
-                int draw_child = cpu.irq_draw && (
+                int submit_child = cpu.irq_draw && cpu.pending_draw.list && depth==3 &&
+                    region==IRQ_DRAW_COMPLETE && dest==IRQ_DRAW_SUBMIT &&
+                    origin==0x8005bbe4u && !op && fn==9u && cpu.r[29]==installed[1]-0x70u &&
+                    cpu.r[4]==cpu.pending_draw.list && !cpu.r[5] &&
+                    cd_irq_ram_word(memory,cpu.pending_draw.record,target) &&
+                    cd_irq_ram_word(memory,cpu.pending_draw.record+4,cpu.pending_draw.list);
+                int draw_child = submit_child || (cpu.irq_draw && (
                     (depth==3 && region==IRQ_DRAW_COMPLETE && cpu.r[29]==installed[1]-0x70u &&
                      ((op==3u && dest==IRQ_DRAW_MASK && (origin==0x8005bab8u || origin==0x8005bcd0u)) ||
                       (!op && fn==9u && dest==IRQ_DRAW_FRAME && origin==0x8005bd44u &&
                        cd_irq_ram_word(memory,0x80072794u,target)))) ||
                     (depth==4 && region==IRQ_DRAW_FRAME && cpu.r[29]==installed[1]-0x90u &&
-                     op==3u && dest==IRQ_DRAW_TIME && origin==0x800109bcu));
+                     op==3u && dest==IRQ_DRAW_TIME && origin==0x800109bcu)));
                 int valid = read_entry || draw_child || card_child || vblank_child || (depth >= 3 && op == 3u && irq_vblank_call(origin,cpu.r[29],dest)) ||
                     (origin == 0x80042788u && depth == 0 && op == 3u && dest == IRQ_DISPATCH) ||
                     (origin == 0x800428d4u && depth == 1 && !op && fn == 9u &&
@@ -15400,6 +15544,13 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
             ++stop->instructions;
             if (cpu.pc != target || cpu.npc != target+4u || cpu.delay_slot) return 0;
             if (draw_return) {
+                if (cpu.pending_draw.list && (!pending_draw_submitted(&cpu) ||
+                    !retired_draw_history(memory,&cpu.pending_draw))) return 0;
+                /* The device may already have raised completion for this
+                 * just-submitted list. A second dispatch in this same IRQ
+                 * can observe idle, after the guest published its history. */
+                retired_draw=cpu.pending_draw;
+                cpu.pending_draw=(PendingDrawList){0};
                 cpu.irq_draw=NULL;
                 cpu.gpu_io_device=NULL;
             }

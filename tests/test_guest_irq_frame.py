@@ -63,7 +63,10 @@ class GuestIrqTests(unittest.TestCase):
                          'draw-complete', 'draw-timer', 'draw-lease', 'draw-owner', 'draw-clock',
                          'draw-image', 'draw-queue', 'draw-binding', 'draw-frame-slot',
                          'draw-foreign-gpu', 'draw-foreign-timer', 'draw-stale', 'draw-unbound',
-                         'draw-replacement'):
+                         'draw-replacement', 'draw-pending', 'draw-pending-next', 'draw-pending-wrap',
+                         'draw-pending-operation', 'draw-pending-argument', 'draw-pending-unaligned',
+                         'draw-pending-multiple', 'draw-frame-zero', 'draw-pending-frame-zero',
+                         'draw-frame-out-of-range'):
                 with self.subTest(mode=mode):
                     subprocess.run([exe, path, mode], env=runtime_env, check=True, timeout=10)
             for mode in ('complete', 'owner', 'handle', 'handler', 'event', 'file'):

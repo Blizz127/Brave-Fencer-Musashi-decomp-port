@@ -2509,6 +2509,7 @@ static int source_irq_owns_draw(void *machine, const MusashiGuestIrqDraw *draw) 
     return draw->memory==&boot->memory && draw->dma==&boot->dma &&
         draw->channel==boot->gpu_dma && draw->clock==&boot->execution_clock &&
         draw->gpu==&boot->gpu_io && draw->gpu->userdata==boot && draw->gpu->read32==gpu_io_read32 &&
+        draw->gpu->write32==gpu_io_write32 &&
         draw->timer==&boot->timer1 && draw->timer_read16==musashi_scanline_timer_read16;
 }
 

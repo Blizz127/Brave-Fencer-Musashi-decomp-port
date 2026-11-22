@@ -234,7 +234,9 @@ int main(int argc,char **argv) {
        assert(m->dma.interrupt==0x84840000u);
     }
     int success=equal || wrap || !strcmp(m->mode,"fade-limit") || !strcmp(m->mode,"title-fade") || !strcmp(m->mode,"vblank") || dma || !strcmp(m->mode,"card") || !strcmp(m->mode,"active");
-    if (draw) success=!strcmp(m->mode,"draw-complete") || !strcmp(m->mode,"draw-timer");
+    if (draw) success=m->draw.queued ? m->draw.queued->complete :
+                    !strcmp(m->mode,"draw-complete") || !strcmp(m->mode,"draw-timer") ||
+                    !strcmp(m->mode,"draw-frame-zero");
     if (!strcmp(m->mode,"wrongslot")) {
         m->irq.status=2u;
         assert(musashi_irq_controller_write16(&m->irq,0x1f801074u,2u));
