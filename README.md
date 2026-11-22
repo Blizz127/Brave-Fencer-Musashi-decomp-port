@@ -113,6 +113,13 @@ test runs all three phases with synthetic scene state and checks every 16-bit
 actor ID in the setup routine. The hybrid player retains guest execution for
 these paths. Run `python3 -m unittest discover -s tests -p test_scene_phase.py`.
 
+The 644-byte MAIN/0010 room selector chooses a resource row and track, submits
+a load when the row is present, and commits a changed group on success.
+The C source matches the original game. A host test covers group changes,
+track reuse, room overrides, and callbacks that change the selected room.
+Run `python3 -m unittest discover -s tests -p test_room_stream_selector.py`.
+The hybrid player executes this overlay routine on the guest CPU.
+
 Room 3050 also has a matched 248-byte frame update. Retail execution
 reached its return sequence during the idle demonstration. It calls
 scene services in order, updates a frame counter and conditionally processes
