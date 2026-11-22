@@ -1075,7 +1075,7 @@ FOREST_FLOOR_EXTENTS = {
 }
 
 
-# These scene phase callbacks call back into guest code. Several of their
+# These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
     # Actor steps depend on the view query and may run repeatedly in the same caller.
@@ -1102,6 +1102,10 @@ SCENE_PHASE_EXTENTS = {
         "sc02_0039": (248, 0xBEA43DF222B8BA28),
         "sc03_0001": (248, 0xFF9FB166A2180DC7),
     },
+    # Both actor halfword updates load V0 and store in the return delay slot.
+    # The counter returns the full sum, including 65536 when the halfword wraps.
+    0x80146CA0: {"sc02_0035": (20, 0x3E4DBB3EB66FDFAF)},
+    0x8014900C: dict.fromkeys(("main_0012", "sc02_0035"), (20, 0xE50FD3C212372182)),
     # These forest player states dispatch through member-specific game address tables.
     0x80146360: {"sc01_0077": (64, 0xD6FF4D78017740C9)},
     0x80159968: {"sc01_0077": (60, 0xB59A7B7CF404FBEB)},
@@ -1280,7 +1284,7 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
                 "bcac09920911836169ac8b046074783fa94dde9ffcf4df65542f7bfbfedb00bc"):
             raise Reject("timing", "forest phase requires its guest callback and return timing")
         if overlay_extent_source_only(entry, src, info, SCENE_PHASE_EXTENTS):
-            raise Reject("timing", "scene phase requires verified guest calls and event timing")
+            raise Reject("timing", "scene operation requires instruction-level guest state and event timing")
         if forest_action_source_only(entry, src, info):
             raise Reject("timing", "forest action requires ordered guest services and state updates")
         if mine_slot_update_source_only(entry, src, info):
