@@ -1081,6 +1081,7 @@ FOREST_FLOOR_EXTENTS = {
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    0x801853EC: {"sc02_0005": (160, 0x6FD1708294A2B1E9)},
     # Both passes share mutable guest records, callback tables and linked positions.
     0x80165CA0: {"sc02_0039": (396, 0xD0040599098500D1)},
     # Mine dispatchers read mutable callback targets and require an identified owner.
