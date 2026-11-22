@@ -1081,6 +1081,9 @@ FOREST_FLOOR_EXTENTS = {
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    # Fade state transitions update shared data before issuing screen callbacks.
+    0x8013A448: {"sc02_0039": (124, 0x734318216920BE79)},
+    0x8013A4C4: {"sc02_0039": (108, 0x86E68244540D595F)},
     # Mine actor and fade callbacks depend on guest state and frame timing.
     0x801379FC: {"sc02_0039": (388, 0x996017639B1A6852)},
     0x8013A380: {"sc02_0039": (200, 0x3158F085FABFA816)},
