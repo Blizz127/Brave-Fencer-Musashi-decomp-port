@@ -1535,6 +1535,8 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
             raise Reject("timing", "ground attachment requires checked guest callbacks, return values and timing")
         if vram in (0x8017DDB0, 0x8017DE00, 0x8017E25C, 0x8017E2F4, 0x8017E428, 0x8017E500) and mine_member_source_only(entry, src, info):
             raise Reject("timing", "mine actor actions require original model services, callbacks and event timing")
+        if vram == 0x8012C890 and mine_member_source_only(entry, src, info):
+            raise Reject("timing", "mine actor allocation requires its room setup handlers and timing")
         if vram == 0x8017DC7C and mine_member_source_only(entry, src, info):
             raise Reject("timing", "mine rotor update requires its original model and sound timing")
         if vram == 0x8017DE84 and mine_member_source_only(entry, src, info):
