@@ -69,7 +69,7 @@ CsMedia cs_prepare(CardService *s, unsigned slot);
 void cs_init_card(CardService *s);
 void cs_start_card(CardService *s);
 void cs_stop_card(CardService *s);
-void cs_init_files(CardService *s);
+int cs_init_files(CardService *s);
 /* Required for every detach, swap or reattach. Serialize with all I/O and
    notify on the old slot before detaching its storage or exposing replacement
    bytes. Stale descriptors must be closed; queued transfers complete as

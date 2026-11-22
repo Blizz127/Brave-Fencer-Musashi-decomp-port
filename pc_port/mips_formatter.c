@@ -6166,6 +6166,8 @@ typedef struct FormatterCpu {
     MusashiMain12Owner *main12_callback_frame;
     uint32_t main12_return_pc;
     uint32_t main12_row_pc, main12_row_npc, main12_row_branch;
+    uint8_t main12_building_row;
+    uint8_t main12_clearing_file;
     uint8_t main12_card_service;
     uint32_t main12_copy_dest;
     uint8_t main12_copy_pending;
@@ -6500,10 +6502,132 @@ static int main12_copy_access(MusashiBootMemory *ram, const FormatterCpu *cpu,
     return 0;
 }
 
+/* The file grid is reached after the mounted card's directory and metadata
+ * have been consumed by the game's foreground callback. */
+static int main12_menu_metadata_matches(const MusashiMain12Owner *, MusashiBootMemory *,
+                                        const FormatterCpu *);
+
+static int main12_event_leases(const MusashiGuestIrqCard *card, const uint64_t allocation[8]);
+
+#include "main12_file_restore.h"
+
+static int main12_file_grid_pc(MusashiBootMemory *ram, const FormatterCpu *cpu,
+                               const MusashiMain12Owner *owner)
+{
+    uint32_t pc = cpu->pc;
+    if (!owner || !owner->display.complete || pc < 0x8017c3fcu || pc >= 0x8017df40u) return 0;
+    /* A confirmed read displays its completion message for 75 menu updates.
+     * The positive countdown jumps back to the normal dispatcher and
+     * decrements the guest halfword in that jump's delay slot. */
+    if (pc >= 0x8017c7d0u && pc < 0x8017c7f0u) {
+        const uint32_t timer = 0x80115118u;
+        uint16_t mode, remaining;
+        if (!owner->restore.consumed || !owner->restore.label ||
+            !main12_restore_matches(ram, cpu, owner) ||
+            !musashi_boot_read16(ram, 0x8011512cu, &mode) || mode != 4u ||
+            !musashi_boot_read16(ram, timer, &remaining) || !remaining || remaining > 75u ||
+            cpu->r[29] != 0x1f800378u || cpu->r[31] != 0x8017c3f0u) return 0;
+        if (pc >= 0x8017c7d8u && cpu->r[3] != timer) return 0;
+        if ((pc == 0x8017c7e0u || pc == 0x8017c7e4u) && cpu->r[2] != remaining) return 0;
+        if (pc >= 0x8017c7e8u && cpu->r[2] != (uint32_t)remaining - 1u) return 0;
+        return pc != 0x8017c7ecu || (cpu->delay_slot && cpu->branch_pc == 0x8017c7e8u &&
+                                     cpu->npc == 0x8017c8dcu);
+    }
+    int file_selection = (pc >= 0x8017c3fcu && pc < 0x8017c460u) ||
+        (pc >= 0x8017c490u && pc < 0x8017c4fcu) ||
+        (pc >= 0x8017c550u && pc < 0x8017c560u) ||
+        (pc >= 0x8017df18u && pc < 0x8017df40u) ||
+        (pc >= 0x8017c9f0u && pc <= 0x8017c9fcu && (cpu->r[16] & 0x40u) &&
+         owner->display.menu_code == 25u);
+    int neutral_input = (pc >= 0x8017c8f0u && pc < 0x8017c8fcu) ||
+        (pc >= 0x8017c93cu && pc < 0x8017c944u) ||
+        (pc >= 0x8017c978u && pc < 0x8017c980u) ||
+        (pc >= 0x8017c9b0u && pc < 0x8017c9b8u) ||
+        (pc >= 0x8017c9e8u && pc < 0x8017c9f0u) || pc == 0x8017c9fcu;
+    int cursor = pc >= 0x8017dd28u && pc < 0x8017df18u;
+    int confirmation_window = (pc >= 0x8017caa0u && pc < 0x8017caa8u) ||
+        (pc >= 0x8017caacu && pc < 0x8017cac0u) ||
+        (pc >= 0x8017cf08u && pc < 0x8017cf14u);
+    int windows = (pc >= 0x8017ca54u && pc < 0x8017ca60u) ||
+        (pc >= 0x8017ca98u && pc < 0x8017caa0u) ||
+        (pc >= 0x8017cc14u && pc < 0x8017cc30u) || pc == 0x8017cd24u ||
+        (pc >= 0x8017cdb0u && pc < 0x8017ce50u) ||
+        (pc >= 0x8017cf14u && pc < 0x8017cf34u);
+    if ((!file_selection && !neutral_input && !cursor && !windows && !confirmation_window) ||
+        !main12_menu_metadata_matches(owner, ram, cpu))
+        return 0;
+    if (file_selection) {
+        uint16_t mode, slot, operation;
+        const uint8_t *occupied = musashi_boot_ram_span(ram, MAIN12_MAILBOX + 4u, 1u);
+        if (!(cpu->r[16] & 0x40u) ||
+            !musashi_boot_read16(ram, 0x8011512cu, &mode) ||
+            !musashi_boot_read16(ram, 0x8011511au, &slot) || slot != 1u ||
+            !musashi_boot_read16(ram, 0x80115126u, &operation) || operation != 0u ||
+            !occupied || *occupied != 1u) return 0;
+        if (pc >= 0x8017df18u) {
+            uint32_t sp = pc == 0x8017df18u || pc >= 0x8017df38u ? 0x1f800378u : 0x1f800360u;
+            uint32_t link = pc <= 0x8017df28u || pc >= 0x8017df34u ? 0x8017c4b8u : 0x8017df30u;
+            return mode == 2u && cpu->r[29] == sp && cpu->r[31] == link;
+        }
+        if (cpu->r[29] != 0x1f800378u) return 0;
+        if (pc < 0x8017c42cu) {
+            if (mode != 1u && mode != 2u) return 0;
+            uint32_t target = mode == 1u ? 0x8017c42cu : 0x8017c4b0u;
+            return cpu->r[31] == 0x8017c3f0u && (pc != 0x8017c424u || cpu->r[2] == target);
+        }
+        if (pc < 0x8017c4b0u)
+            return mode == (pc <= 0x8017c4a4u ? 1u : 2u) && cpu->r[31] == 0x8017c3f0u;
+        if (pc < 0x8017c560u) {
+            uint32_t link = pc == 0x8017c4b0u ? 0x8017c3f0u : 0x8017c4b8u;
+            return mode == (pc <= 0x8017c554u ? 2u : 3u) && cpu->r[31] == link;
+        }
+        uint32_t link = mode == 2u ? 0x8017c3f0u : 0x8017c4b8u;
+        return (mode == 2u || mode == 3u) &&
+               cpu->r[31] == (pc < 0x8017c9f8u ? link : 0x8017c9fcu);
+    }
+    if (neutral_input) return cpu->r[31] == 0x8017c3f0u && cpu->r[29] == 0x1f800378u;
+    uint16_t mode;
+    if (!musashi_boot_read16(ram, 0x8011512cu, &mode)) return 0;
+    if (mode == 3u || mode == 4u) {
+        if (cursor || owner->display.confirm_phase != 2u || owner->display.menu_code != 25u ||
+            (mode == 4u && (!owner->restore.consumed || !main12_restore_matches(ram, cpu, owner))))
+            return 0;
+    } else if ((mode != 1u && mode != 2u) || confirmation_window) {
+        return 0;
+    }
+    if (cursor) {
+        if (pc == 0x8017dd9cu && mode != 2u) return 0;
+        uint32_t sp = pc == 0x8017dd28u || pc >= 0x8017df10u ? 0x1f800378u : 0x1f800348u;
+        uint32_t link = pc <= 0x8017de7cu || pc >= 0x8017defcu ? 0x8017ca5cu : 0x8017de84u;
+        return cpu->r[29] == sp && cpu->r[31] == link;
+    }
+    return pc >= 0x8017cbc8u || cpu->r[29] == 0x1f800378u;
+}
+
+/* Only the selected-file callback clears the restore staging area here.
+ * Its stores remain individually visible to the CPU clock. Other callers
+ * of the resident clear keep their usual native implementation. */
+static int main12_clear_word(MusashiBootMemory *ram, const FormatterCpu *cpu,
+                             uint32_t *word)
+{
+    MusashiMain12Owner *owner = main12_owner_for(cpu, ram);
+    const uint32_t start = STARTUP_ENVIRONMENT_CLEAR, size = 164u;
+    if (!owner || owner != cpu->main12_callback_frame || !cpu->main12_clearing_file ||
+        cpu->pc - start >= size || cpu->r[31] != 0x8017df30u || cpu->r[29] != 0x1f800360u ||
+        !owner->display.complete || owner->display.menu_code != 25u || owner->display.confirm_phase ||
+        owner->restore.open_id || !main12_current(owner, ram) || !main12_menu_metadata_matches(owner, ram, cpu) ||
+        !owner->resident_matches || !owner->resident_matches(owner, start, size)) return 0;
+    if (cpu->pc == start && (cpu->r[4] != MAIN12_RESTORE_BUFFER || cpu->r[5] != MAIN12_RESTORE_SIZE))
+        return 0;
+    return musashi_boot_read32(ram, cpu->pc, word);
+}
+
 static int main12_callback_word(MusashiBootMemory *ram, const FormatterCpu *cpu, uint32_t *word) {
     MusashiMain12Owner *owner = main12_owner_for(cpu, ram);
     if (!word || !owner || !owner->installed || (cpu->pc & 3u) ||
-        cpu->pc != main12_physical_pc(cpu->pc) || !main12_callback_pc(cpu) ||
+        cpu->pc != main12_physical_pc(cpu->pc) ||
+        (!main12_callback_pc(cpu) && !main12_file_grid_pc(ram, cpu, owner) &&
+         !main12_restore_pc(ram, cpu, owner)) ||
         (cpu->main12_callback_frame && cpu->main12_callback_frame != owner)) return 0;
     return main12_current(owner, ram) && musashi_boot_read32(ram, cpu->pc, word);
 }
@@ -6518,8 +6642,6 @@ static void main12_forget_file(MusashiMain12Owner *owner) {
     owner->directory_fd_token = 0;
     memset(&owner->metadata_read, 0, sizeof owner->metadata_read);
 }
-
-static int main12_event_leases(const MusashiGuestIrqCard *card, const uint64_t allocation[8]);
 
 static void main12_note_completed_read(MusashiMain12Owner *owner, MusashiBootMemory *ram,
                                        const MusashiGuestIrqCard *card) {
@@ -6559,18 +6681,29 @@ static int main12_menu_metadata_matches(const MusashiMain12Owner *owner, Musashi
         !memcmp(live, owner->menu_metadata.bytes, sizeof owner->menu_metadata.bytes);
 }
 
+#include "main12_file_rows.h"
+
 /* A cursor is armed by the actual post-close mirror loop. The two short resident
  * lookups run on this CPU and use the mounted executable even on a cache hit. */
 static int main12_row_word(MusashiBootMemory *ram, const FormatterCpu *cpu, uint32_t *word) {
     MusashiMain12Owner *owner = main12_owner_for(cpu, ram);
     uint32_t pc = cpu->pc;
-    if (!owner || !word || pc != cpu->main12_row_pc || cpu->npc != cpu->main12_row_npc ||
+    if (!owner || owner != cpu->main12_callback_frame || !word ||
+        pc != cpu->main12_row_pc || cpu->npc != cpu->main12_row_npc ||
         cpu->branch_pc != cpu->main12_row_branch ||
-        cpu->delay_slot != (cpu->main12_row_branch != 0) || cpu->r[29] != 0x1f800380u ||
+        cpu->delay_slot != (cpu->main12_row_branch != 0) ||
         owner->menu_metadata.stage != MAIN12_METADATA_READY ||
         owner->mailbox[1] != 8u || owner->mailbox[4] != 1u ||
         memcmp(owner->mailbox, owner->mailbox + 8u, 8u) ||
         !main12_current(owner, ram) || !main12_menu_metadata_matches(owner, ram, cpu)) return 0;
+    if (cpu->main12_building_row)
+        return main12_display_word(owner, ram, cpu, word);
+    if (owner->display.complete && pc >= 0x8017d270u && pc < 0x8017d2a4u) {
+        uint32_t sp = pc < 0x8017d29cu ? 0x1f800380u : 0x1f8003a8u;
+        uint32_t link = pc <= 0x8017d280u ? 0x8017d270u : 0x8017c2e4u;
+        return cpu->r[29] == sp && cpu->r[31] == link && musashi_boot_read32(ram, pc, word);
+    }
+    if (cpu->r[29] != 0x1f800380u) return 0;
     int first_lookup = pc >= 0x8002af48u && pc < 0x8002af60u;
     int second_lookup = pc >= 0x8002af60u && pc < 0x8002af70u;
     uint32_t ra = cpu->r[31];
@@ -6616,8 +6749,19 @@ static int main12_row_store(MusashiBootMemory *ram, const FormatterCpu *cpu,
  * close, including cases in which the menu cannot use this metadata. */
 static uint64_t main12_closing_read(MusashiBootMemory *ram, const FormatterCpu *cpu) {
     if (cpu->pc != 0xb0u || cpu->r[9] != 0x36u || !cpu->main12_card_service ||
-        cpu->r[4] != 2u || cpu->r[31] != 0x800603e8u || cpu->r[29] != 0x1f800350u) return 0;
+        cpu->r[31] != 0x800603e8u) return 0;
     MusashiMain12Owner *owner = main12_owner_for(cpu, ram);
+    if (owner && owner == cpu->main12_callback_frame && owner->restore.open_id && !owner->restore.closed) {
+        const MusashiCdDevice *files = cpu->cd_device;
+        const MusashiGuestIrqCard leased = {ram, files, cpu->event_device, owner->restore.events};
+        if (cpu->r[4] != (uint32_t)owner->restore.fd || !files || files != owner->restore.files ||
+            files->metadata_events != owner->restore.events || !main12_event_leases(&leased, owner->restore.allocation) ||
+            !files->payload_descriptor || !main12_current(owner, ram) ||
+            files->payload_descriptor(files->userdata, ram, owner->restore.events, owner->restore.fd,
+                                      1920u, 0u) != owner->restore.open_id) return 0;
+        return owner->restore.open_id;
+    }
+    if (cpu->r[4] != 2u || cpu->r[29] != 0x1f800350u) return 0;
     if (!owner || owner->menu_metadata.stage != MAIN12_METADATA_READ ||
         owner->directory_fd_token != owner->menu_metadata.open_id || !owner->directory_valid ||
         owner->mailbox[1] != 7u || owner->mailbox[9] != 7u ||
@@ -6636,6 +6780,13 @@ static void main12_card_file_result(MusashiBootMemory *ram, FormatterCpu *cpu,
                                     uint32_t result, uint64_t closing_read) {
     MusashiMain12Owner *owner = main12_owner_for(cpu, ram);
     if (!owner || owner != cpu->main12_callback_frame || !owner->installed) return;
+    if (cpu->r[9] == 0x36u && owner->restore.open_id && !owner->restore.closed &&
+        cpu->r[4] == (uint32_t)owner->restore.fd) {
+        if (closing_read == owner->restore.open_id && result == (uint32_t)owner->restore.fd &&
+            cpu->r[31] == 0x800603e8u && main12_current(owner, ram)) owner->restore.closed = 1;
+        else memset(&owner->restore, 0, sizeof owner->restore);
+        return;
+    }
     if (cpu->r[9] == 0x42u && cpu->r[31] == 0x80062128u &&
         cpu->r[4] == 0x1f8002d8u && cpu->r[5] == 0x1f8002f8u) {
         main12_forget_file(owner);
@@ -6644,21 +6795,38 @@ static void main12_card_file_result(MusashiBootMemory *ram, FormatterCpu *cpu,
         if (owner->directory_valid)
             memcpy(owner->directory_row, ram->scratchpad + 0x2f8u, sizeof owner->directory_row);
     } else if (cpu->r[9] == 0x32u && cpu->r[31] == 0x800602c8u &&
-               cpu->r[29] == 0x1f800338u && cpu->r[4] == 0x80078ca0u && cpu->r[5] == 0x8001u) {
+               cpu->r[4] == 0x80078ca0u && cpu->r[5] == 0x8001u) {
         const MusashiCdDevice *file = cpu->cd_device;
+        /* Capture the earned file selection before retiring its old handle. */
+        int payload = owner->display.complete && owner->display.confirm_phase == 2u &&
+            owner->display.menu_code == 25u && owner->menu_metadata.stage == MAIN12_METADATA_READY &&
+            owner->row_pointer_written && owner->mailbox[1] == 8u && owner->mailbox[4] == 1u &&
+            !memcmp(owner->mailbox, owner->mailbox + 8, 8) &&
+            main12_menu_metadata_matches(owner, ram, cpu);
+        if (!payload && cpu->r[29] != 0x1f800338u) return;
+        uint64_t previous_open = owner->menu_metadata.open_id;
         main12_forget_file(owner);
-        if (result == 2u && owner->directory_valid && owner->mailbox[1] == 7u &&
-            owner->mailbox[9] == 7u && main12_current(owner, ram) && owner->resident_matches &&
-            owner->resident_matches(owner, 0x80060244u, 0x800602c8u - 0x80060244u) &&
-            file && file->metadata_events && file->metadata_descriptor) {
+        if (!owner->directory_valid || !main12_current(owner, ram) || !owner->resident_matches ||
+            !owner->resident_matches(owner, 0x80060244u, 0x800602c8u - 0x80060244u) ||
+            !file || !file->metadata_events) return;
+        if (payload && previous_open && result <= INT32_MAX && file->payload_descriptor) {
+            uint64_t id = file->payload_descriptor(file->userdata, ram, file->metadata_events,
+                                                   (int32_t)result, 0, 0);
+            if (!id || id == previous_open) return;
+            owner->directory_fd_token = id;
+            owner->metadata_read.payload = 1;
+            owner->metadata_read.payload_fd = (int32_t)result;
+        } else if (cpu->r[29] == 0x1f800338u && result == 2u && owner->mailbox[1] == 7u &&
+                   owner->mailbox[9] == 7u && file->metadata_descriptor) {
             owner->directory_fd_token = file->metadata_descriptor(file->userdata, ram,
                 file->metadata_events, (int32_t)result, 0, 0);
-            if (owner->directory_fd_token) {
-                owner->metadata_read.files = file;
-                owner->metadata_read.events = file->metadata_events;
-            }
         }
-    } else if (cpu->r[9] == 0x36u && cpu->r[4] == 2u) {
+        if (owner->directory_fd_token) {
+            owner->metadata_read.files = file;
+            owner->metadata_read.events = file->metadata_events;
+        }
+    } else if (cpu->r[9] == 0x36u && cpu->r[4] == (owner->metadata_read.payload ?
+               (uint32_t)owner->metadata_read.payload_fd : 2u)) {
         int saved = result == 2u && closing_read && owner->menu_metadata.stage == MAIN12_METADATA_READ &&
             closing_read == owner->menu_metadata.read_id &&
             owner->menu_metadata.open_id == owner->directory_fd_token &&
@@ -6683,6 +6851,17 @@ static MusashiMain12Owner *main12_publishing_metadata(const FormatterCpu *cpu) {
  * the read-only mounted transfer before a callback word may be fetched. */
 static int main12_mailbox_store(MusashiBootMemory *ram, const FormatterCpu *cpu,
                                 uint32_t address, uint8_t value, int commit) {
+    if (address == MAIN12_MAILBOX + 9u && cpu->pc == 0x8017d04cu && value == 0xffu) {
+        MusashiMain12Owner *owner = main12_owner_for(cpu, ram);
+        if (!owner || owner->restore.consumed || !owner->restore.request_cleared ||
+            owner->mailbox[9] != 8u || !main12_restore_pc(ram, cpu, owner) || !main12_current(owner, ram))
+            return 0;
+        if (commit) {
+            owner->mailbox[9] = value;
+            owner->restore.consumed = 1;
+        }
+        return 1;
+    }
     MusashiMain12Owner *publishing = main12_publishing_metadata(cpu);
     if (publishing) {
         int status_store = cpu->pc == 0x8002c2b8u;
@@ -6794,6 +6973,8 @@ static int cpu_write16(MusashiBootMemory *memory, const FormatterCpu *cpu,
                 if (owner->installed) {
                     owner->menu_word_changed = 0;
                     owner->row_pointer_written = 0;
+                    memset(&owner->display, 0, sizeof owner->display);
+                    memset(&owner->restore, 0, sizeof owner->restore);
                     owner->directory_valid = 0;
                     main12_forget_file(owner);
                     const uint8_t *mailbox = musashi_boot_ram_span(memory, MAIN12_MAILBOX, sizeof owner->mailbox);
@@ -6922,13 +7103,84 @@ static int cpu_write32(MusashiBootMemory *memory, const FormatterCpu *cpu,
             if (!main12_row_store(memory, cpu, address, value)) return 0;
             cpu->main12_callback_frame->row_pointer_written = 1;
         }
+        if (cpu->main12_callback_frame && address == MAIN12_MAILBOX + 16u) {
+            MusashiMain12Owner *owner = main12_owner_for(cpu, memory);
+            uint32_t previous;
+            if (!musashi_boot_read32(memory, address, &previous)) return 0;
+            if (previous != value) {
+                if (cpu->pc != 0x8017c2d0u || !main12_restore_matches(memory, cpu, owner) ||
+                    !main12_current(owner, memory) ||
+                    !((value == 1u && !previous && !owner->restore.consumed) ||
+                      (!value && previous == 1u && owner->restore.consumed))) return 0;
+                owner->restore.result = (uint8_t)value;
+            }
+        }
+        if (cpu->main12_callback_frame && address - MAIN12_RESTORE_BUFFER < MAIN12_RESTORE_SIZE) {
+            if (cpu->main12_clearing_file) {
+                uint32_t previous;
+                if (value || !musashi_boot_read32(memory, address, &previous) || previous) return 0;
+            } else {
+                MusashiMain12Owner *owner = main12_owner_for(cpu, memory);
+                if (!main12_store_payload(memory, cpu, owner, address, value)) return 0;
+                owner->restore.copied += 4u;
+            }
+        }
+        if (cpu->main12_callback_frame && address == MAIN12_FILE_ICON_POSITION) {
+            MusashiMain12Owner *owner = main12_owner_for(cpu, memory);
+            uint32_t record;
+            uint16_t x, y;
+            uint32_t position = cpu->r[20] - 0x801824acu;
+            if (cpu->pc != 0x8017ce24u || !cpu->delay_slot || cpu->branch_pc != 0x8017ce20u ||
+                !owner || owner != cpu->main12_callback_frame || !owner->display.complete ||
+                !main12_current(owner, memory) || !main12_menu_metadata_matches(owner, memory, cpu) ||
+                position % 28u || position / 28u >= MAIN12_ROW_COUNT ||
+                cpu->r[21] != cpu->r[20] + 2u ||
+                !musashi_boot_read32(memory, 0x801826fcu, &record) || record != address ||
+                !musashi_boot_read16(memory, cpu->r[20], &x) || !musashi_boot_read16(memory, cpu->r[21], &y) ||
+                value != ((uint32_t)y << 16 | x)) return 0;
+            owner->display.icon_written = 1;
+            owner->display.icon_position = value;
+        }
+        if (cpu->main12_callback_frame &&
+            (address == MAIN12_CONFIRM_LABEL || address == MAIN12_LOAD_REQUEST)) {
+            MusashiMain12Owner *owner = main12_owner_for(cpu, memory);
+            int first = address == MAIN12_CONFIRM_LABEL;
+            if (!owner || owner != cpu->main12_callback_frame || !main12_current(owner, memory)) return 0;
+            if (!first && cpu->pc == 0x8017c124u) {
+                /* The cold menu initializes its request before it opens the card. */
+                uint32_t previous;
+                if (cpu->r[31] != 0x8017c0f4u || owner->display.started || owner->display.confirm_phase ||
+                    owner->restore.open_id || value || !musashi_boot_read32(memory, address, &previous) ||
+                    previous) return 0;
+            } else if (owner->display.menu_code != 25u) {
+                return 0;
+            } else if (cpu->pc == (first ? 0x8017c4d0u : 0x8017c4e4u)) {
+                if (owner->display.confirm_phase != (first ? 0u : 1u) || value != (first ? 20u : 2u) ||
+                    !main12_file_grid_pc(memory, cpu, owner)) return 0;
+                ++owner->display.confirm_phase;
+            } else {
+                if (cpu->pc != (first ? 0x8017cfe8u : 0x8017d044u) || value != (first ? 21u : 0u) ||
+                    !main12_restore_pc(memory, cpu, owner) || owner->restore.copied != MAIN12_RESTORE_SIZE ||
+                    owner->restore.label != !first) return 0;
+                if (first) owner->restore.label = 1;
+                else owner->restore.request_cleared = 1;
+            }
+        }
         if (cpu->main12_callback_frame && address == MAIN12_MENU_WORD) {
             MusashiMain12Owner *owner = main12_owner_for(cpu, memory);
             uint32_t previous;
             if (!musashi_boot_read32(memory, address, &previous) || !owner ||
                 owner != cpu->main12_callback_frame || !main12_current(owner, memory)) return 0;
             if (previous != value) {
-                if (cpu->pc != 0x8017d27cu || value != 10u) return 0;
+                if (cpu->pc == 0x8017d27cu) {
+                    if (value != 10u) {
+                        uint32_t word;
+                        if (value != 12u || previous != 10u || !owner->display.complete ||
+                            !main12_row_word(memory, cpu, &word)) return 0;
+                    }
+                } else if (cpu->pc != 0x8017c498u || previous != 12u || value != 25u ||
+                           !main12_file_grid_pc(memory, cpu, owner)) return 0;
+                owner->display.menu_code = (uint8_t)value;
                 owner->menu_word_changed = 1;
             }
         }
@@ -6986,12 +7238,14 @@ static int intrinsic_string(MusashiBootMemory *memory, const FormatterCpu *cpu,
     return 0;
 }
 
+static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu);
 static int lane_try(MusashiBootMemory *memory, FormatterCpu *cpu);
 static size_t g_lane_count;
 
 static int formatter_call(MusashiBootMemory *memory, FormatterCpu *cpu,
                            MusashiConsoleSink sink, void *userdata) {
     uint32_t address = cpu->pc;
+    if (cpu->main12_clearing_file) return formatter_step(memory, cpu);
     if (cpu->gte_load_pending) return 0;
     /* A host intrinsic whose matched C the lane admitted runs as that C
      * (tools/native_lane_gen.py INTRINSIC_PCS) instead of the bespoke host
@@ -8847,6 +9101,7 @@ static int formatter_fetch(MusashiBootMemory *memory, const FormatterCpu *cpu, u
     const FormatterRange *resident = NULL;
     uint32_t shape;
     if (!cpu || (cpu->pc & 3u)) return 0;
+    if (cpu->main12_clearing_file) return main12_clear_word(memory, cpu, out);
     if (cpu->main12_row_pc) return main12_row_word(memory, cpu, out);
     if (cpu->dma_registration) {
         if (cpu->irq_image || cpu->registration_stack) return 0;
@@ -9494,10 +9749,11 @@ int musashi_boot_continuation_host_context(const void *continuation,
     switch (cpu->pc) {
     case RESETGRAPH_FILL:
         accepted = !reset_calls_guest_fill(cpu); break;
+    case STARTUP_ENVIRONMENT_CLEAR: accepted = !cpu->main12_clearing_file; break;
     case FORMATTER_CONSOLE_CHAR: case FORMATTER_SEARCH:
     case FORMATTER_STRING_LENGTH:
     case CALLBACK_CLEAR: case CALLBACK_INSTALLER_CLEAR:
-    case CALLBACK_CHANNEL_CLEAR: case STARTUP_ENVIRONMENT_CLEAR:
+    case CALLBACK_CHANNEL_CLEAR:
     case STARTUP_CLEAR_29044: case STARTUP_CLEAR_2906C:
     case STARTUP_CLEAR_29094: case STARTUP_CLEAR_29218:
     case STARTUP_RECORD_CLEAR: case CD_INITIALIZER_STRING_EMIT:
@@ -11441,7 +11697,6 @@ static MusashiResetGraphPrefixStatus run_startup_cpu(
     MusashiConsoleSink sink, void *userdata, int32_t *result,
     MusashiResetGraphPrefixStop *stop, MusashiEntryRunStop *entry_stop,
     MusashiEntryObserver observer, void *observer_userdata);
-static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu);
 
 static int lane_entry_cmp(const void *a, const void *b) {
     const MusashiNativeLaneEntry *x = a, *y = b;
@@ -11891,7 +12146,7 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         g_lane_run_frames->main_entry.next = 0;
     if ((cpu->pc & 3u) || !spu_source_guard(memory, cpu))
         return formatter_refuse0(__LINE__, cpu->pc);
-    if ((cpu->main12_row_pc || main12_owns_fetch(cpu) || main12_service_pc(cpu) || main12_copy_pc(cpu)) && publish_flow && g_entry_hook &&
+    if ((cpu->main12_clearing_file || cpu->main12_row_pc || main12_owns_fetch(cpu) || main12_service_pc(cpu) || main12_copy_pc(cpu)) && publish_flow && g_entry_hook &&
         cpu->pc == g_entry_pending && !formatter_fetch(memory, cpu, &instruction))
         return formatter_refuse0(__LINE__, cpu->pc);
     if (publish_flow && g_entry_hook && cpu->pc == g_entry_pending) {
@@ -11900,7 +12155,7 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     }
     if (!cpu->dma_registration && !cpu->irq_image && !cpu->cd_parent_image && !registration_code_pc(cpu->pc) &&
         !startup_exchange_pc(cpu->pc) &&
-        !cpu->main12_row_pc && !main12_owns_fetch(cpu) && !main12_service_pc(cpu) && !main12_copy_pc(cpu) && !reset_calls_guest_fill(cpu) &&
+        !cpu->main12_clearing_file && !cpu->main12_row_pc && !main12_owns_fetch(cpu) && !main12_service_pc(cpu) && !main12_copy_pc(cpu) && !reset_calls_guest_fill(cpu) &&
         (g_lane_count || g_lane_ovl_count)) {
         int lane = lane_try(memory, cpu);
         if (lane > 0) return 1;
@@ -12375,6 +12630,28 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     }
     MusashiMain12Owner *publishing_metadata = opcode == 40u ? main12_publishing_metadata(cpu) : NULL;
     const uint32_t store_pc = cpu->pc;
+    const int building_row = cpu->main12_building_row;
+    const int clearing_file = cpu->main12_clearing_file;
+    const MusashiMain12Owner *display_owner = cpu->main12_callback_frame;
+    const int cold_request = display_owner && store_pc == 0x8017c124u;
+    const int grid_issue = main12_file_grid_pc(memory, cpu, display_owner);
+    const int restore_issue = main12_restore_pc(memory, cpu, display_owner) ||
+        (display_owner && display_owner->restore.closed &&
+         ((store_pc == 0x8017c2d0u && !display_owner->restore.consumed) ||
+          (display_owner->restore.result &&
+           ((store_pc >= 0x8002b00cu && store_pc < 0x8002b064u) ||
+            (store_pc >= 0x80029774u && store_pc < 0x800298bcu)))));
+    if (restore_issue && !main12_restore_matches(memory, cpu, display_owner))
+        return formatter_refuse0(__LINE__, cpu->pc);
+    uint32_t display_hi = cpu->hi, display_lo = cpu->lo;
+    uint32_t display_registers[32];
+    if (cold_request || clearing_file || building_row || grid_issue || restore_issue) {
+        if (clearing_file && opcode >= 32u && (instruction != MIPS_I(43, 4, 0, 0) ||
+            cpu->r[4] - MAIN12_RESTORE_BUFFER >= MAIN12_RESTORE_SIZE)) return formatter_refuse0(__LINE__, cpu->pc);
+        if (building_row && opcode >= 32u && !main12_display_access(cpu, opcode,
+                cpu->r[rs] + (uint32_t)(int32_t)signed_immediate)) return formatter_refuse0(__LINE__, cpu->pc);
+        memcpy(display_registers, cpu->r, sizeof display_registers);
+    }
     const MusashiMain12Owner *row_owner = cpu->main12_row_pc &&
         (store_pc == 0x8017d1d0u || store_pc == 0x8017d268u ||
          store_pc == 0x8017d26cu) ? cpu->main12_callback_frame : NULL;
@@ -12411,6 +12688,25 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         }
         copy_merge = merge_kind != MERGE_NONE;
     }
+    int restore_merge = 0;
+    uint32_t restore_start = store_pc >= 0x8017e084u && store_pc <= 0x8017e094u ? 0x8017e084u :
+        store_pc >= 0x80029878u && store_pc <= 0x80029888u ? 0x80029878u : 0u;
+    if (restore_issue && restore_start && store_pc != restore_start + 8u) {
+        int area = restore_start == 0x80029878u;
+        uint32_t index = cpu->r[area ? 6 : 8];
+        int loading = store_pc < restore_start + 8u;
+        uint32_t base = area ? (loading ? 0x800ba2b8u : 0x800791a4u)
+                             : (loading ? 0x80185a74u : 0x800ba2b8u);
+        unsigned off = (store_pc == restore_start || store_pc == restore_start + 12u) ? 3u : 0u;
+        if (index >= 24u || cpu->r[31] != (area ? 0x8017cfc0u : 0x8017cfb8u) ||
+            cpu->r[rs] + (uint32_t)(int32_t)signed_immediate != base + index * 4u + off ||
+            opcode != (loading ? (off ? 34u : 38u) : (off ? 42u : 46u)) ||
+            (area && (!display_owner->resident_matches ||
+             !display_owner->resident_matches(display_owner, 0x80029774u, 0x148u))))
+            return formatter_refuse0(__LINE__, cpu->pc);
+        merge_kind = loading ? (off ? MERGE_LWL : MERGE_LWR) : (off ? MERGE_SWL : MERGE_SWR);
+        restore_merge = 1;
+    }
     if ((opcode == 34u || opcode == 38u || opcode == 42u || opcode == 46u) &&
         merge_kind == MERGE_NONE)
         return formatter_refuse0(__LINE__, cpu->pc);
@@ -12420,7 +12716,11 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
           cpu->merge_reg == rt) ||
          (cpu->pc == 0x80061788u && cpu->merge_kind == MERGE_LWR &&
           cpu->merge_reg == 2u && cpu->merge_reg != rs && cpu->merge_reg != rt));
-    if (!copy_retire && !merge_pending_matches(cpu, instruction))
+    int restore_retire = restore_issue && restore_start && cpu->merge_pending &&
+        cpu->merge_next_pc == cpu->pc && cpu->merge_reg == (restore_start == 0x80029878u ? 2u : 4u) &&
+        ((cpu->pc == restore_start + 4u && restore_merge && cpu->merge_kind == MERGE_LWL) ||
+         (cpu->pc == restore_start + 8u && instruction == 0u && cpu->merge_kind == MERGE_LWR));
+    if (!copy_retire && !restore_retire && !merge_pending_matches(cpu, instruction))
         return formatter_refuse0(__LINE__, cpu->pc);
     if (merge_kind == MERGE_LWL || merge_kind == MERGE_LWR ||
         merge_kind == MERGE_SWL || merge_kind == MERGE_SWR) {
@@ -12454,6 +12754,19 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
             !main12_row_word(memory, cpu, &current) || current != instruction ||
             (store_pc == 0x8017d1d0u && !main12_row_store(memory, cpu,
                 cpu->r[rs] + (uint32_t)(int32_t)signed_immediate, cpu->r[rt])))
+            return formatter_refuse0(__LINE__, cpu->pc);
+    }
+    if (cold_request || clearing_file || building_row || grid_issue || restore_issue) {
+        uint32_t current;
+        if (cpu->main12_clearing_file != clearing_file || cpu->main12_building_row != building_row ||
+            cpu->main12_callback_frame != display_owner ||
+            cpu->pc != store_pc || cpu->hi != display_hi || cpu->lo != display_lo ||
+            memcmp(display_registers, cpu->r, sizeof display_registers) ||
+            !(clearing_file ? main12_clear_word(memory, cpu, &current) :
+              building_row ? main12_row_word(memory, cpu, &current) : restore_issue ?
+              (main12_current(cpu->main12_callback_frame, memory) &&
+               main12_restore_matches(memory, cpu, display_owner) && formatter_fetch(memory, cpu, &current)) :
+              main12_callback_word(memory, cpu, &current)) || current != instruction)
             return formatter_refuse0(__LINE__, cpu->pc);
     }
     if (cpu->gte_load_pending) {
@@ -12814,6 +13127,11 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         cpu->merge_kind = MERGE_NONE;
     }
     cpu->r[0] = 0;
+    if (building_row && (opcode == 40u || opcode == 41u || opcode == 43u)) {
+        unsigned width = opcode == 40u ? 1u : opcode == 41u ? 2u : 4u;
+        main12_remember_display_store(cpu->main12_callback_frame, memory,
+                                      display_registers[rs] + (uint32_t)(int32_t)signed_immediate, width);
+    }
     cpu->delay_slot = (uint8_t)((opcode >= 1u && opcode <= 7u) ||
         (opcode == 0u && ((instruction & 63u) == 8u || (instruction & 63u) == 9u)));
     cpu->branch_pc = cpu->delay_slot ? cpu->pc : 0u;
@@ -12825,11 +13143,25 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         cpu->main12_return_pc = cpu->r[31];
         cpu->main12_card_service = 0;
     } else if (cpu->main12_callback_frame) {
+        if (grid_issue && issued_pc == 0x8017df2cu && old_npc == STARTUP_ENVIRONMENT_CLEAR)
+            cpu->main12_clearing_file = 1;
+        if (clearing_file && old_npc == 0x8017df30u)
+            cpu->main12_clearing_file = 0;
+        if (cpu->main12_row_pc && cpu->pc == 0x8017d26cu && old_npc == 0x8017d730u)
+            cpu->main12_building_row = 1;
+        if (building_row && cpu->pc == 0x8017d730u)
+            main12_begin_display(cpu->main12_callback_frame, memory);
+        if (building_row && cpu->pc == 0x8017dc44u && old_npc == 0x8017d270u) {
+            cpu->main12_building_row = 0;
+            cpu->main12_callback_frame->display.complete = 1;
+        }
         if (cpu->main12_row_pc || (cpu->pc == 0x8017d0f4u && old_npc == 0x8017d154u)) {
             cpu->main12_row_pc = old_npc;
             cpu->main12_row_npc = target_npc;
             cpu->main12_row_branch = cpu->branch_pc;
         }
+        if (cpu->pc == 0x8017d2a0u && old_npc == 0x8017c2e4u)
+            cpu->main12_row_pc = cpu->main12_row_npc = cpu->main12_row_branch = 0;
         if (cpu->pc == MAIN12_SERVICE) cpu->main12_card_service = 1;
         if (cpu->pc == MAIN12_COPY && cpu->main12_card_service)
             cpu->main12_copy_dest = main12_copy_destination(cpu);
@@ -15411,16 +15743,28 @@ static int irq_metadata_code(const MusashiGuestIrqImage *image) {
     return 1;
 }
 
+typedef struct {
+    uint32_t fd, offset, destination, count;
+} Main12ReadRequest;
+
+static Main12ReadRequest main12_read_request(const MusashiMain12Owner *owner) {
+    if (owner->metadata_read.payload)
+        return (Main12ReadRequest){(uint32_t)owner->metadata_read.payload_fd, 1152u, 0x80075cc0u, 768u};
+    return (Main12ReadRequest){2u, 512u, 0x80075a40u, 640u};
+}
+
 static int irq_metadata_owner(const MusashiGuestIrqImage *image, const MusashiGuestIrqCard *card,
                               unsigned phase, uint32_t guest_phase, uint32_t flags) {
     if (!image || image->identity!=image || !card || image->memory!=card->memory ||
-        !card->files || !card->files->file_vector || !card->files->metadata_descriptor ||
+        !card->files || !card->files->file_vector ||
         card->files->metadata_events!=card->registered_events ||
         (phase!=0u && phase!=20u && phase!=30u)) return 0;
     MusashiMain12Owner *owner=image->main12_owner;
     MusashiBootMemory *ram=image->memory;
     const uint8_t *row=musashi_boot_ram_span(ram,0x80076044u,40u);
-    if (!owner || owner->image!=image || owner->memory!=ram || !owner->installed ||
+    if (!owner) return 0;
+    Main12ReadRequest request = main12_read_request(owner);
+    if (owner->image!=image || owner->memory!=ram || !owner->installed ||
         !owner->directory_valid || !owner->directory_fd_token ||
         owner->metadata_read.files!=card->files ||
         owner->metadata_read.events!=card->registered_events || !row ||
@@ -15431,14 +15775,21 @@ static int irq_metadata_owner(const MusashiGuestIrqImage *image, const MusashiGu
         !cd_irq_ram_word(ram,0x80072a34u,0u) || !cd_irq_ram_word(ram,0x80078d78u,0x800604c4u) ||
         !cd_irq_ram_word(ram,0x80078c80u,5u) || !cd_irq_ram_word(ram,0x80078c88u,0u) ||
         !cd_irq_ram_word(ram,0x80078d38u,guest_phase) ||
-        !cd_irq_ram_word(ram,0x80078c90u,2u) || !cd_irq_ram_word(ram,0x80078c94u,512u) ||
-        !cd_irq_ram_word(ram,0x80078c98u,640u) || !cd_irq_ram_word(ram,0x80078c9cu,0x80075a40u) ||
+        !cd_irq_ram_word(ram,0x80078c90u,request.fd) || !cd_irq_ram_word(ram,0x80078c94u,request.offset) ||
+        !cd_irq_ram_word(ram,0x80078c98u,request.count) || !cd_irq_ram_word(ram,0x80078c9cu,request.destination) ||
         !irq_metadata_bank(card,owner,phase!=0u)) return 0;
     for (unsigned i=0; i<8u; ++i)
         if (!cd_irq_ram_word(ram,0x80078c5cu+4u*i,(flags>>i)&1u)) return 0;
-    uint32_t position=phase==0u ? 0u : phase==20u ? 512u : 1152u;
-    uint64_t id=card->files->metadata_descriptor(card->files->userdata,ram,card->registered_events,
-                                                2,position,phase==20u ? 640u : 0u);
+    uint32_t position = phase == 0u ? 0u : request.offset;
+    if (phase == 30u) position += request.count;
+    uint32_t count = phase == 20u ? request.count : 0u;
+    const MusashiCdDevice *files = card->files;
+    uint64_t (*descriptor)(void *, const MusashiBootMemory *, const MusashiBiosEvents *,
+                           int32_t, uint32_t, uint32_t) =
+        owner->metadata_read.payload ? files->payload_descriptor : files->metadata_descriptor;
+    if (!descriptor) return 0;
+    uint64_t id = descriptor(files->userdata, ram, card->registered_events,
+                             (int32_t)request.fd, position, count);
     if (!id || id!=owner->directory_fd_token || owner->metadata_read.phase!=phase) return 0;
     return phase==0u ? owner->metadata_read.descriptor==0 :
         owner->metadata_read.descriptor==id;
@@ -15464,11 +15815,13 @@ static int irq_metadata_call(uint32_t phase, uint32_t call, IrqRegion dest) {
 static int irq_metadata_service(FormatterCpu *cpu, const MusashiGuestIrqImage *image,
     const MusashiGuestIrqCard *card, IrqRegion region, uint32_t phase) {
     int seek=region==IRQ_CARD_SEEK_BIOS;
+    if (!image || !image->main12_owner) return 0;
+    Main12ReadRequest request = main12_read_request(image->main12_owner);
     if (cpu->pc!=0xb0u || cpu->npc!=0xb4u || cpu->delay_slot || cpu->branch_pc ||
         cpu->merge_pending || cpu->gte_load_pending || cpu->r[29]!=0x8006ca7cu ||
-        cpu->r[4]!=2u || cpu->r[9]!=(seek ? 0x33u : 0x34u) ||
+        cpu->r[4]!=request.fd || cpu->r[9]!=(seek ? 0x33u : 0x34u) ||
         cpu->r[31]!=(seek ? 0x80060540u : 0x8006057cu) ||
-        cpu->r[5]!=(seek ? 512u : 0x80075a40u) || cpu->r[6]!=(seek ? 0u : 640u) ||
+        cpu->r[5]!=(seek ? request.offset : request.destination) || cpu->r[6]!=(seek ? 0u : request.count) ||
         phase!=(seek ? 0u : 20u) ||
         !irq_metadata_owner(image,card,phase,seek ? 10u : 20u,seek ? 0x10u : 0u)) return 0;
     MusashiMain12Owner *owner=image->main12_owner;
@@ -15482,7 +15835,7 @@ static int irq_metadata_service(FormatterCpu *cpu, const MusashiGuestIrqImage *i
     }
     uint32_t result=cpu->r[2];
     if (!card->files->file_vector(card->files->userdata,0xb0u,cpu->r[9],cpu->r+4,&result) ||
-        result!=(seek ? 512u : 0u)) return 0;
+        result!=(seek ? request.offset : 0u)) return 0;
     if (seek) {
         owner->metadata_read.descriptor=owner->directory_fd_token;
         memcpy(owner->metadata_read.allocation,allocation,sizeof allocation);
@@ -16101,7 +16454,29 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
                 if (!owner || cpu.r[2]!=(read_phase==30u ? 1u : 0u) ||
                     owner->metadata_read.phase!=(read_phase==0u ? 20u : 30u)) return 0;
                 if (read_phase==30u) {
-                    main12_note_completed_read(owner, memory, card);
+                    if (owner->metadata_read.payload) {
+                        Main12ReadRequest request = main12_read_request(owner);
+                        const MusashiCdDevice *files = owner->metadata_read.files;
+                        if (!card || card->files != files || !files || !files->payload_descriptor ||
+                            files->metadata_events != owner->metadata_read.events ||
+                            files->metadata_events != card->registered_events ||
+                            !main12_event_leases(card, owner->metadata_read.allocation) ||
+                            !owner->directory_fd_token || owner->metadata_read.descriptor != owner->directory_fd_token ||
+                            files->payload_descriptor(files->userdata, memory, files->metadata_events,
+                                (int32_t)request.fd, request.offset + request.count, 0) != owner->directory_fd_token)
+                            return 0;
+                        const uint8_t *read = musashi_boot_ram_span(memory, request.destination, request.count);
+                        if (!read || request.count != sizeof owner->restore.bytes || owner->restore.open_id) return 0;
+                        memcpy(owner->restore.bytes, read, request.count);
+                        memcpy(owner->restore.allocation, owner->metadata_read.allocation, sizeof owner->restore.allocation);
+                        owner->restore.open_id = owner->directory_fd_token;
+                        owner->restore.files = files;
+                        owner->restore.events = files->metadata_events;
+                        owner->restore.fd = (int32_t)request.fd;
+                        owner->directory_fd_token = 0;
+                    } else {
+                        main12_note_completed_read(owner, memory, card);
+                    }
                     memset(&owner->metadata_read,0,sizeof owner->metadata_read);
                 }
                 read_phase=UINT32_MAX;

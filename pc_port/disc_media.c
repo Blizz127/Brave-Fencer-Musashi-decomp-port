@@ -461,19 +461,61 @@ static int musashi_main12_transfer_matches(const MusashiMain12Owner *owner, cons
     if (live[MAIN12_STATE] != (uint8_t)installed ||
         (mailbox && memcmp(live + MAIN12_MAILBOX, mailbox, 16))) return 0;
     const uint8_t *source = owner->transfer;
+    uint32_t cursor = 0;
+    if (installed && owner->display.icon_written) {
+        uint32_t offset = MAIN12_FILE_ICON_POSITION - 0x80128158u;
+        if (!transfer_range_matches(source, live, 0, offset) ||
+            le32(live + offset) != owner->display.icon_position) return 0;
+        cursor = offset + 4u;
+    }
+    if (installed && owner->display.started) {
+        uint32_t offset = MAIN12_ROW_DESCRIPTORS - 0x80128158u;
+        if (!transfer_range_matches(source, live, cursor, offset) ||
+            memcmp(live + offset, owner->display.descriptors, sizeof owner->display.descriptors)) return 0;
+        cursor = offset + sizeof owner->display.descriptors;
+    }
     if (installed && owner->menu_word_changed) {
-        if (le32(live + MAIN12_MENU_WORD) != 10u ||
-            !transfer_range_matches(source, live, 0, MAIN12_MENU_WORD) ||
-            !transfer_range_matches(source, live, MAIN12_MENU_WORD + 4u, MAIN12_STATE))
-            return 0;
-    } else if (!transfer_range_matches(source, live, 0, MAIN12_STATE)) return 0;
+        uint32_t expected = owner->display.menu_code ? owner->display.menu_code : 10u;
+        if (le32(live + MAIN12_MENU_WORD) != expected ||
+            !transfer_range_matches(source, live, cursor, MAIN12_MENU_WORD)) return 0;
+        cursor = MAIN12_MENU_WORD + 4u;
+    }
+    if (installed && owner->display.confirm_phase >= 1u) {
+        uint32_t offset = MAIN12_CONFIRM_LABEL - 0x80128158u;
+        if (!transfer_range_matches(source, live, cursor, offset) || le32(live + offset) != (owner->restore.label ? 21u : 20u)) return 0;
+        cursor = offset + 4u;
+    }
+    if (!transfer_range_matches(source, live, cursor, MAIN12_STATE)) return 0;
     if (!mailbox) return transfer_range_matches(source, live, MAIN12_STATE + 1u, MAIN12_BYTES);
-    if (!transfer_range_matches(source, live, MAIN12_STATE + 1u, MAIN12_MAILBOX)) return 0;
+    cursor = MAIN12_STATE + 1u;
+    if (installed && owner->display.started) {
+        uint32_t offset = MAIN12_ROW_STRINGS - 0x80128158u;
+        if (!transfer_range_matches(source, live, cursor, offset) ||
+            memcmp(live + offset, owner->display.strings, sizeof owner->display.strings)) return 0;
+        cursor = offset + sizeof owner->display.strings;
+    }
+    if (installed && owner->restore.copied) {
+        uint32_t offset = MAIN12_RESTORE_BUFFER - 0x80128158u;
+        if (owner->restore.copied > MAIN12_RESTORE_SIZE || !transfer_range_matches(source, live, cursor, offset) ||
+            memcmp(live + offset, owner->restore.bytes, owner->restore.copied)) return 0;
+        cursor = offset + owner->restore.copied;
+    }
+    if (installed && owner->display.confirm_phase >= 2u) {
+        uint32_t offset = MAIN12_LOAD_REQUEST - 0x80128158u;
+        if (!transfer_range_matches(source, live, cursor, offset) || le32(live + offset) != (owner->restore.request_cleared ? 0u : 2u)) return 0;
+        cursor = offset + 4u;
+    }
+    if (!transfer_range_matches(source, live, cursor, MAIN12_MAILBOX)) return 0;
+    cursor = MAIN12_MAILBOX + 16u;
+    if (installed && owner->restore.result) {
+        if (le32(live + cursor) != 1u) return 0;
+        cursor += 4u;
+    }
     if (!installed || !owner->row_pointer_written)
-        return transfer_range_matches(source, live, MAIN12_MAILBOX + 16u, MAIN12_BYTES);
+        return transfer_range_matches(source, live, cursor, MAIN12_BYTES);
     const uint32_t cell = MUSASHI_MAIN12_ROW_CELL - 0x80128158u;
     return le32(live + cell) == MUSASHI_MAIN12_ROW_DATA &&
-        transfer_range_matches(source, live, MAIN12_MAILBOX + 16u, cell) &&
+        transfer_range_matches(source, live, cursor, cell) &&
         transfer_range_matches(source, live, cell + 4u, MAIN12_BYTES);
 }
 

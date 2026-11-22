@@ -247,6 +247,10 @@ typedef struct MusashiCdDevice {
      * output validates the existing bytes without copying them. */
     uint64_t (*copy_completed_metadata)(void *, const MusashiBootMemory *,
         const struct MusashiBiosEventTable *, int32_t fd, uint64_t open_id, uint8_t out[640]);
+    /* File 1 reopens the selected file for its game payload. Returns the live
+     * open identity, including a completion check at the final position. */
+    uint64_t (*payload_descriptor)(void *, const MusashiBootMemory *,
+        const struct MusashiBiosEventTable *, int32_t fd, uint32_t position, uint32_t count);
 } MusashiCdDevice;
 
 /* Start from mapped EXE bytes, executing its source-owned CRT and caller on

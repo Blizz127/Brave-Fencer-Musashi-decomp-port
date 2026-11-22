@@ -379,6 +379,12 @@ static uint64_t player_metadata_descriptor(void *userdata, const MusashiBootMemo
     return musashi_player_card_metadata_descriptor(&boot->file_card,memory,events,fd,position,count);
 }
 
+static uint64_t player_payload_descriptor(void *userdata, const MusashiBootMemory *memory,
+    const MusashiBiosEvents *events, int32_t fd, uint32_t position, uint32_t count) {
+    NativeBoot *boot = userdata;
+    return musashi_player_card_payload_descriptor(&boot->file_card, memory, events, fd, position, count);
+}
+
 static uint64_t player_copy_completed_metadata(void *userdata, const MusashiBootMemory *memory,
     const MusashiBiosEvents *events, int32_t fd, uint64_t open_id, uint8_t out[640]) {
     NativeBoot *boot = userdata;
@@ -2507,7 +2513,8 @@ static int init_backup_unit(void *userdata,int32_t *guest_result) {
     boot->host_service_depth++;
     accepted=run_backup_unit(userdata,guest_result);
 #ifdef MUSASHI_WITH_BFM_PLAT
-    if (accepted && boot->file_card.service) cs_init_files(boot->file_card.service);
+    if (accepted && boot->file_card.service)
+        accepted = musashi_player_card_init_files(&boot->file_card);
 #endif
     boot->host_service_depth--;
     return accepted;
@@ -4552,6 +4559,7 @@ int main(int argc, char **argv) {
             boot.cd.file_vector = player_file_vector;
             boot.cd.metadata_events = &boot.bios.events;
             boot.cd.metadata_descriptor = player_metadata_descriptor;
+            boot.cd.payload_descriptor = player_payload_descriptor;
             boot.cd.copy_completed_metadata = player_copy_completed_metadata;
         } else fputs("Memory card slot 1 unavailable: file service could not start.\n", stderr);
     }

@@ -95,7 +95,7 @@ static unsigned metadata_irq(const MusashiGuestIrqCard *card, int expected)
     return stop.instructions;
 }
 
-enum MetadataCloseCase { CLOSE_OK, CLOSE_NO_WITNESS, CLOSE_NEW_EVENT, CLOSE_FAILED, CLOSE_CHANGED, CLOSE_PRELOADED };
+enum MetadataCloseCase { CLOSE_OK, CLOSE_NO_WITNESS, CLOSE_NEW_EVENT, CLOSE_FAILED, CLOSE_CHANGED, CLOSE_PRELOADED, CLOSE_ROW_CHANGED };
 
 static void metadata_at(FormatterCpu *cpu, uint32_t pc)
 {
@@ -167,8 +167,11 @@ static int metadata_store_clock(void *userdata, uint32_t cycles_requested)
     return 1;
 }
 
+#include "main12_file_rows.h"
+
 static void metadata_close(FormatterCpu cpu, MetadataFile *file, enum MetadataCloseCase which)
 {
+    const int clean_close = which == CLOSE_OK || which == CLOSE_ROW_CHANGED;
     uint32_t state;
     CHECK(musashi_boot_read32(&machine, 0x8007609cu, &state) && state == 7);
     if (which == CLOSE_PRELOADED) {
@@ -218,7 +221,7 @@ static void metadata_close(FormatterCpu cpu, MetadataFile *file, enum MetadataCl
     CHECK(cpu.r[2] == (which == CLOSE_FAILED ? UINT32_MAX : 2u) && !owner->directory_fd_token);
     CHECK(file->closed == (which != CLOSE_FAILED));
     cpu.callback_device = &callbacks;
-    CHECK(owner->menu_metadata.stage == (which == CLOSE_OK || which == CLOSE_PRELOADED ?
+    CHECK(owner->menu_metadata.stage == (clean_close || which == CLOSE_PRELOADED ?
           MAIN12_METADATA_CLOSED : MAIN12_METADATA_NONE));
 
     /* The two store frames use the observed mailbox base and return stack.
@@ -227,7 +230,7 @@ static void metadata_close(FormatterCpu cpu, MetadataFile *file, enum MetadataCl
     metadata_at(&cpu, 0x8002c2c8u); cpu.r[2] = 1;
     refused_mailbox_step(cpu); /* Ready cannot precede menu state 8. */
     metadata_at(&cpu, 0x8002c2b8u); cpu.r[2] = 8;
-    if (which != CLOSE_OK) { refused_mailbox_step(cpu); return; }
+    if (!clean_close) { refused_mailbox_step(cpu); return; }
     machine.bytes[0x75a40u] ^= 1;
     refused_mailbox_step(cpu);
     machine.bytes[0x75a40u] ^= 1;
@@ -256,6 +259,8 @@ static void metadata_close(FormatterCpu cpu, MetadataFile *file, enum MetadataCl
     CHECK(formatter_step(&machine, &cpu) && owner->menu_metadata.stage == MAIN12_METADATA_READY);
     CHECK(owner->mailbox[4] == 1 && machine.bytes[(MAIN12_MAILBOX & 0x1fffffu) + 4] == 1);
     CHECK(clock_calls == start + 2u && cycles == start_cycles + 6u);
+    check_file_row_display(cpu, file, which == CLOSE_ROW_CHANGED);
+    if (which == CLOSE_ROW_CHANGED) return;
     puts("The resident state store preceded close. Menu state 8 and ready 1 took two guest stores and six cycles.");
 }
 
@@ -335,7 +340,15 @@ static void check_metadata_case(enum MetadataCloseCase which)
     CHECK(!irq_metadata_entry(&irq, &card, 30)); /* The completion flag alone cannot make the request ready. */
     file.pending = 0;
     file.position = 1152;
-    for (unsigned i = 0; i < sizeof file.payload; ++i) file.payload[i] = (uint8_t)(i*11u + 9u);
+    if (which == CLOSE_OK || which == CLOSE_ROW_CHANGED) {
+        /* File 1 has a 16-byte header and a 112-byte body. Mark it
+         * occupied and encode the byte sum of its single nonzero field. */
+        file.payload[128] = 1;
+        file.payload[128 + 2] = 1;
+        file.payload[128 + 16 + 78] = 1;
+    } else {
+        for (unsigned i = 0; i < sizeof file.payload; ++i) file.payload[i] = (uint8_t)(i*11u + 9u);
+    }
     memcpy(machine.bytes + 0x75a40u, file.payload, sizeof file.payload);
     unsigned complete_steps = metadata_irq(&card, 1);
     CHECK(file.seeks == 1 && file.reads == 1 && file.polls == 12 && !owner->metadata_read.phase);
@@ -353,5 +366,6 @@ static void check_metadata_irq(void)
     check_metadata_case(CLOSE_FAILED);
     check_metadata_case(CLOSE_CHANGED);
     check_metadata_case(CLOSE_PRELOADED);
+    check_metadata_case(CLOSE_ROW_CHANGED);
     check_metadata_case(CLOSE_OK);
 }

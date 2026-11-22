@@ -738,12 +738,22 @@ static uint32_t irq_channel_cond_release_row(const FormatterCpu *cpu, uint32_t c
     return 0x800a46e8u + row*0x54u;
 }
 
-/* The original selected one remaining field and cleared its row. Other
- * counts and the marker that retains the row take different guest paths. */
+/* Several channels can share a type-1 sound. A release removes only its
+ * own field. The final field takes the existing path that clears the row. */
+static int irq_channel_remaining_fields(const uint8_t *row) {
+    unsigned count = 0;
+    for (unsigned field = 0; field < 8u; ++field) {
+        uint8_t active = row[14u + field];
+        if (active > 1u) return -1;
+        count += active;
+    }
+    return (int)count;
+}
 static int irq_channel_cond_release_ready(const FormatterCpu *cpu, uint32_t slot) {
     const uint8_t *row = musashi_boot_ram_span(cpu->irq_image->memory, slot, 0x54u);
     return row && (row[0] & 63u) == 1u && row[10] != 5u &&
-        row[12] == 1u && !row[13] && row[14u+cpu->r[4]] == 1u;
+        !row[13] && row[14u+cpu->r[4]] == 1u &&
+        (row[12] == 1u || (row[12] > 1u && irq_channel_remaining_fields(row) == row[12]));
 }
 
 /* A mode-3 key-off clears the channel before invoking its registered
@@ -797,11 +807,11 @@ static int irq_channel_cond_release_data(const FormatterCpu *cpu, uint32_t word,
         return op == 40u && !value && address == slot+14u+field &&
             cpu->r[2] == slot+field && irq_channel_cond_release_ready(cpu, slot);
     case 0x8003335cu:
-        return op == 37u && address == slot+12u && !row[14u+field] &&
-            row[12] == 1u && !row[13];
     case 0x80033368u:
-        return op == 41u && !value && address == slot+12u && !row[14u+field] &&
-            row[12] == 1u && !row[13];
+        if (address != slot+12u || row[14u+field] || row[13] || !row[12] ||
+            (row[12] > 1u && irq_channel_remaining_fields(row) != row[12] - 1)) return 0;
+        if (cpu->pc == 0x8003335cu) return op == 37u;
+        return op == 41u && value == (uint32_t)row[12] - 1u;
     case 0x80033378u:
         return op == 36u && address == slot+10u && !row[12] && !row[13] && row[10] != 5u;
     case 0x80033388u:
@@ -822,7 +832,10 @@ static int irq_channel_cond_release_return(const FormatterCpu *cpu, uint32_t tar
         cpu->r[31] != target ||
         cpu->r[2] != 5u || cpu->r[5] != slot) return 0;
     const uint8_t *row = musashi_boot_ram_span(cpu->irq_image->memory, slot, 0x54u);
-    return row && !row[0] && !row[1] && !row[10] && !row[12] && !row[13] && !row[14u+cpu->r[4]];
+    if (!row || row[13] || row[14u+cpu->r[4]]) return 0;
+    if (row[12])
+        return (row[0] & 63u) == 1u && row[10] != 5u && irq_channel_remaining_fields(row) == row[12];
+    return !row[0] && !row[1] && !row[10];
 }
 
 /* The channel timer reaches zero before this call. The observed voice

@@ -10,7 +10,8 @@
 #define ROW_ADDR UINT32_C(0x80076044)
 #define READ_ADDR UINT32_C(0x80075a40)
 #define OTHER_ADDR UINT32_C(0x80010000)
-enum { METADATA_SIZE = 640 };
+#define PAYLOAD_ADDR UINT32_C(0x80075cc0)
+enum { METADATA_SIZE = 640, PAYLOAD_SIZE = 768 };
 static const char name[] = "bu00:SYNTHETIC-CARD-ROW1";
 static const char alternate[] = "bu00:SYNTHETIC-CARD-ROW2";
 static MusashiBootMemory ram, other_ram;
@@ -32,19 +33,123 @@ static uint8_t *span(uint32_t address, size_t size)
     return out;
 }
 
+/* The guest reads a pointer and byte length here, then walks 80-byte drivers. */
+#define DEVICE_TABLE UINT32_C(0x80000150)
+enum { DEVICE_BYTES = 80, DIRECTORY_CALLBACK_OFFSET = 52 };
+
+static uint32_t device_word(uint32_t address)
+{
+    uint32_t value;
+    assert(musashi_boot_read32(&ram, address, &value));
+    return value;
+}
+
+static uint32_t cached_ram(uint32_t address)
+{
+    assert(address < MUSASHI_RAM_SIZE ||
+           (address >= 0x80000000u && address < 0x80000000u + MUSASHI_RAM_SIZE) ||
+           (address >= 0xa0000000u && address < 0xa0000000u + MUSASHI_RAM_SIZE));
+    return 0x80000000u | (address & (MUSASHI_RAM_SIZE - 1u));
+}
+
+static void refused_init_preserves_ram(void)
+{
+    memcpy(&other_ram, &ram, sizeof ram);
+    assert(!musashi_player_card_init_files(&player));
+    assert(!memcmp(&other_ram, &ram, sizeof ram));
+}
+
+static void install_file_driver(uint32_t *record, uint32_t *device_name)
+{
+    assert(!device_word(DEVICE_TABLE) && !device_word(DEVICE_TABLE + 4));
+    refused_init_preserves_ram();
+    cs_init_card(player.service);
+    refused_init_preserves_ram();
+    cs_start_card(player.service);
+    assert(musashi_player_card_init_files(&player));
+    assert(device_word(DEVICE_TABLE) && device_word(DEVICE_TABLE + 4) == DEVICE_BYTES);
+    *record = cached_ram(device_word(DEVICE_TABLE));
+    assert(device_word(*record));
+    *device_name = cached_ram(device_word(*record));
+    assert(!memcmp(span(*device_name, 3), "bu", 3));
+
+    /* The guest can replace this driver callback while enumerating a directory. */
+    const uint32_t callback = UINT32_C(0x80010000);
+    assert(musashi_boot_write32(&ram, *record + DIRECTORY_CALLBACK_OFFSET, callback));
+    memcpy(&other_ram, &ram, sizeof ram);
+    assert(musashi_player_card_init_files(&player));
+    assert(!memcmp(&other_ram, &ram, sizeof ram));
+}
+
+static void check_registration_conflicts(const char *directory, uint32_t record, uint32_t device_name)
+{
+    memset(&ram, 0, sizeof ram);
+    musashi_bios_events_init(&events);
+    assert(musashi_player_card_open_selected(&player, &ram, &events, directory, 1));
+    assert(player.slot0_mounted);
+    cs_init_card(player.service);
+    cs_start_card(player.service);
+
+    assert(musashi_boot_write32(&ram, DEVICE_TABLE, OTHER_ADDR));
+    assert(musashi_boot_write32(&ram, DEVICE_TABLE + 4, DEVICE_BYTES));
+    *span(OTHER_ADDR, 1) = 0x72;
+    refused_init_preserves_ram();
+    assert(musashi_boot_write32(&ram, DEVICE_TABLE, 0));
+    refused_init_preserves_ram();
+    assert(musashi_boot_write32(&ram, DEVICE_TABLE + 4, 0));
+
+    *span(record + DEVICE_BYTES - 1, 1) = 0x37;
+    refused_init_preserves_ram();
+    *span(record + DEVICE_BYTES - 1, 1) = 0;
+    *span(device_name, 1) = 'x';
+    refused_init_preserves_ram();
+    *span(device_name, 1) = 0;
+    assert(musashi_player_card_init_files(&player));
+
+    /* Another driver took the header. Closing may not free its guest RAM. */
+    assert(musashi_boot_write32(&ram, DEVICE_TABLE, OTHER_ADDR));
+    refused_init_preserves_ram();
+    musashi_player_card_close(&player);
+    assert(!memcmp(&other_ram, &ram, sizeof ram));
+}
+
+static void check_file_vectors(void)
+{
+    uint32_t result = 0, error = 0;
+    uint32_t args[4] = {PATH_ADDR, ROW_ADDR, 0, 0};
+    static const char missing[] = "bu00:ABSENT";
+    memcpy(span(PATH_ADDR, sizeof missing), missing, sizeof missing);
+    assert(musashi_player_card_vector(&player, 0xb0, 0x42, args, &result, &error));
+    assert(result == 0);
+    args[1] = 1;
+    assert(musashi_player_card_vector(&player, 0xb0, 0x32, args, &result, &error));
+    assert(result == UINT32_MAX && error == 2);
+
+    memcpy(span(PATH_ADDR, sizeof name), name, sizeof name);
+    args[1] = ROW_ADDR;
+    assert(musashi_player_card_vector(&player, 0xb0, 0x42, args, &result, &error));
+    assert(result == ROW_ADDR && !memcmp(span(ROW_ADDR, 20), name + 5, 20));
+    args[0] = ROW_ADDR;
+    assert(musashi_player_card_vector(&player, 0xb0, 0x43, args, &result, &error));
+    assert(!result);
+}
+
 static void set_path(const char *full_name)
 {
     assert(strlen(full_name) == 24);
     memcpy(span(PATH_ADDR, 25), full_name, 25);
 }
 
-static void seed_file(const char *full_name, const uint8_t bytes[METADATA_SIZE])
+static void seed_file(const char *full_name, const uint8_t bytes[METADATA_SIZE],
+                      const uint8_t payload[PAYLOAD_SIZE])
 {
     set_path(full_name);
     assert(cs_open(player.service, PATH_ADDR, (1u << 16) | 0x203) == 2);
     assert(cs_seek(player.service, 2, 512, 0) == 512);
     memcpy(span(OTHER_ADDR, METADATA_SIZE), bytes, METADATA_SIZE);
     assert(cs_write(player.service, 2, OTHER_ADDR, METADATA_SIZE) == METADATA_SIZE);
+    memcpy(span(OTHER_ADDR, PAYLOAD_SIZE), payload, PAYLOAD_SIZE);
+    assert(cs_write(player.service, 2, OTHER_ADDR, PAYLOAD_SIZE) == PAYLOAD_SIZE);
     assert(cs_close(player.service, 2) == 2);
 }
 
@@ -201,29 +306,84 @@ static void verify(const uint8_t expected[METADATA_SIZE])
     assert(cs_close(s, 2) == 2);
 }
 
+static uint64_t payload_id(int fd, uint32_t position, uint32_t count)
+{
+    return musashi_player_card_payload_descriptor(&player, &ram, &events, fd, position, count);
+}
+
+static void verify_payload(const uint8_t expected[PAYLOAD_SIZE])
+{
+    CardService *s = player.service;
+    set_path(name);
+    assert(cs_first(s, PATH_ADDR, ROW_ADDR) == ROW_ADDR);
+    uint64_t previous = 0;
+    for (unsigned occupied = 0; occupied < 2; ++occupied) {
+        int other = -1;
+        if (occupied) {
+            set_path(alternate);
+            other = cs_open(s, PATH_ADDR, 0x8001);
+            assert(other >= 0);
+            set_path(name);
+            assert(!payload_id(other, 0, 0));
+        }
+        int fd = cs_open(s, PATH_ADDR, 0x8001);
+        assert(fd >= 0 && fd != other);
+        uint64_t id = payload_id(fd, 0, 0);
+        assert(id && id != previous);
+        previous = id;
+        assert(cs_seek(s, fd, 1920, 0) == 1920 && !payload_id(fd, 1920, 0));
+        assert(cs_seek(s, fd, 1152, 0) == 1152);
+        assert(!payload_id(fd, 1152, METADATA_SIZE) && payload_id(fd, 1152, PAYLOAD_SIZE) == id);
+        assert(cs_read(s, fd, OTHER_ADDR, PAYLOAD_SIZE) == 0);
+        pump();
+        assert(!payload_id(fd, 1920, 0));
+        assert(cs_seek(s, fd, 1152, 0) == 1152);
+        uint8_t *destination = span(PAYLOAD_ADDR, PAYLOAD_SIZE);
+        memset(destination, 0xe6, PAYLOAD_SIZE);
+        assert(cs_read(s, fd, PAYLOAD_ADDR, PAYLOAD_SIZE) == 0);
+        assert(!payload_id(fd, 1920, 0) && destination[0] == 0xe6);
+        pump();
+        assert(!memcmp(destination, expected, PAYLOAD_SIZE) && payload_id(fd, 1920, 0) == id);
+        destination[PAYLOAD_SIZE - 1] ^= 1;
+        assert(!payload_id(fd, 1920, 0));
+        destination[PAYLOAD_SIZE - 1] ^= 1;
+        assert(payload_id(fd, 1920, 0) == id);
+        assert(cs_close(s, fd) == fd && !payload_id(fd, 1920, 0));
+        if (other >= 0) assert(cs_close(s, other) == other);
+    }
+}
+
 int main(int argc, char **argv)
 {
     uint8_t expected[METADATA_SIZE] = {0};
+    uint32_t record, device_name;
     assert(argc == 4);
     if (!strcmp(argv[3], "pattern")) {
         for (size_t i = 0; i < sizeof expected; ++i) expected[i] = (uint8_t)(i * 13u + (i >> 4) + 7u);
     } else {
         assert(!strcmp(argv[3], "zeros"));
     }
+    uint8_t payload[PAYLOAD_SIZE];
+    for (size_t i = 0; i < sizeof payload; ++i) payload[i] = expected[i % METADATA_SIZE];
     musashi_bios_events_init(&events);
     assert(musashi_player_card_open(&player, &ram, &events, argv[2]));
     assert(player.slot0_mounted);
-    cs_init_card(player.service);
-    cs_start_card(player.service);
-    cs_init_files(player.service);
+    install_file_driver(&record, &device_name);
     if (!strcmp(argv[1], "create")) {
-        seed_file(name, expected);
-        seed_file(alternate, expected);
+        seed_file(name, expected, payload);
+        seed_file(alternate, expected, payload);
     } else {
         assert(!strcmp(argv[1], "verify"));
+        check_file_vectors();
         verify(expected);
+        verify_payload(payload);
     }
     assert(musashi_player_card_finish(&player));
     musashi_player_card_close(&player);
+    assert(!device_word(DEVICE_TABLE) && !device_word(DEVICE_TABLE + 4));
+    const uint8_t empty_record[DEVICE_BYTES] = {0};
+    assert(!memcmp(span(record, DEVICE_BYTES), empty_record, DEVICE_BYTES));
+    assert(!memcmp(span(device_name, 3), empty_record, 3));
+    if (!strcmp(argv[1], "verify")) check_registration_conflicts(argv[2], record, device_name);
     return 0;
 }

@@ -67,6 +67,12 @@
       "file": "extracted/overlays/sc03/0113.pac0.bin",
       "base": 2148696408,
       "sha256": "c064ba8647ae73490d1643986ab9de62f059d5bcf0bb56f7a3468810933ab09f"
+    },
+    "sc03_0002": {
+      "kind": "blob",
+      "file": "extracted/overlays/sc03/0002.pac0.bin",
+      "base": 2148696408,
+      "sha256": "1c8903c1fb7676a59685b226193000a35d3e603f9dfd72333636bf15e5c56821"
     }
   },
   "matches": [
@@ -5794,6 +5800,84 @@
       "origin": "Reconstructed from the USA SC03.CD member 0001 type-4 payload, the project\u2019s first-party floor-query work and its public floor declarations.",
       "source_sha256": "31bc143b9f058fbb4adf606e2879c197429185a3b4db66faa304dc86ee041cc8",
       "span_sha256": "bea3d5d5f043df120a0d1d94884f189b743bda16a7c48df61fa98b6154cfb7de"
+    },
+    {
+      "name": "func_8017FAE8",
+      "region": "sc03_0002",
+      "vram": 2149055208,
+      "size": 60,
+      "source": "src/overlays/sc03_0002/8017fae8.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA SC03.CD member 0002 type-4 payload and the public integer types.",
+      "source_sha256": "35c44b8b3e11ebb6e94959a41b55991525854df297762dfeef575dd63d0bf20a",
+      "span_sha256": "310ed5affebd28f8517472698d574670aacb3af79490b5ee85f55dc61478ee4d"
+    },
+    {
+      "name": "func_8017FB24",
+      "region": "sc03_0002",
+      "vram": 2149055268,
+      "size": 204,
+      "source": "src/overlays/sc03_0002/8017fb24.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA SC03.CD member 0002 type-4 payload and the public integer types.",
+      "source_sha256": "78a65900a04cc4939a040dea234b0bb1da34d284961fc8599d4f1929561c46ef",
+      "span_sha256": "f4d7446fa3be6f4227c80729fdd7d2aecb9e15006dbc66927f16d751c0372b6f"
+    },
+    {
+      "name": "func_8017FBF0",
+      "region": "sc03_0002",
+      "vram": 2149055472,
+      "size": 8,
+      "source": "src/overlays/sc03_0002/8017fbf0.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA SC03.CD member 0002 type-4 payload and the public integer types.",
+      "source_sha256": "4067c4483245a7b488a9d6ccb85deface03cd8218f51da096d467c0e2348d75e",
+      "span_sha256": "6d64edf91449c1b17746c1ef18afa2eb25c70bdf1322ab3df5a2630993b7e2f1"
+    },
+    {
+      "name": "func_8017FBF8",
+      "region": "sc03_0002",
+      "vram": 2149055480,
+      "size": 152,
+      "source": "src/overlays/sc03_0002/8017fbf8.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA SC03.CD member 0002 type-4 payload and the public integer types.",
+      "source_sha256": "3da67faff806c30108f06e35c3b2171c280154feb17616dec3eaab5d4223d069",
+      "span_sha256": "286ec680ec57451955b9dc5e3385f809ce627073f547819b9eecba449c61c2dd"
+    },
+    {
+      "name": "func_8017FC90",
+      "region": "sc03_0002",
+      "vram": 2149055632,
+      "size": 64,
+      "source": "src/overlays/sc03_0002/8017fc90.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA SC03.CD member 0002 type-4 payload and the public integer types.",
+      "source_sha256": "3f2934997dc5aae443229e5bd6ad4ec7c552ad7a1f3685897d0afb507b3f40ab",
+      "span_sha256": "da7257fef41710bcf414e63d031eaf90f2632b54a2563624139c446d2ccf30ad"
+    },
+    {
+      "name": "func_8017FCD0",
+      "region": "sc03_0002",
+      "vram": 2149055696,
+      "size": 116,
+      "source": "src/overlays/sc03_0002/8017fcd0.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA SC03.CD member 0002 type-4 payload and the public integer types.",
+      "source_sha256": "52c510f410f091ab584002936902a2c450594511459702bac9bd621cac670e74",
+      "span_sha256": "bec42554579aa4f18c130212f0407f2d70c240a6fc6fa23e942667267e2d9a2f"
     }
   ]
 }

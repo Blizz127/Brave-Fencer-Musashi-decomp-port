@@ -16,8 +16,11 @@ typedef struct MusashiPlayerCard {
     MusashiBootMemory *event_memory;
     uint64_t last_vblank;
     int slot0_mounted;
+    int file_device_installed;
     uint64_t metadata_open_id, metadata_read_id;
     uint8_t metadata_digest[32];
+    uint64_t payload_open_id;
+    uint8_t payload_digest[32];
 } MusashiPlayerCard;
 
 /* The player owns the first slot. A missing directory leaves the device
@@ -26,11 +29,18 @@ int musashi_player_card_open(MusashiPlayerCard *, MusashiBootMemory *,
                              MusashiBiosEvents *, const char *directory);
 int musashi_player_card_open_selected(MusashiPlayerCard *, MusashiBootMemory *,
                                       MusashiBiosEvents *, const char *directory, int require_existing);
+/* Publish the host backup-unit driver to the guest's device search after
+ * InitCARD and StartCARD. Publication is independent of inserted media. */
+int musashi_player_card_init_files(MusashiPlayerCard *);
 /* On graceful exit, complete accepted requests while RAM and storage are
  * present. An interruption may close directly, preserving only durable writes. */
 /* Descriptor identity for the observed busy-5 metadata seek, read and completion.
  * No transfer, seek or event delivery. Zero means the current phase cannot run. */
 uint64_t musashi_player_card_metadata_descriptor(const MusashiPlayerCard *,
+                             const MusashiBootMemory *, const MusashiBiosEvents *,
+                             int32_t fd, uint32_t position, uint32_t count);
+/* Verify the selected File 1 handle and the expected payload transfer phase. */
+uint64_t musashi_player_card_payload_descriptor(const MusashiPlayerCard *,
                              const MusashiBootMemory *, const MusashiBiosEvents *,
                              int32_t fd, uint32_t position, uint32_t count);
 /* Return this mounted instance's ID for the exact completed metadata read.

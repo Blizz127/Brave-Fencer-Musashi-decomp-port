@@ -78,11 +78,65 @@ static int deliver(void *context, uint32_t group, uint32_t spec)
 
 static const CsCompletedRead metadata_transfer = {512u, 0x80075a40u, 640u};
 
-static void remember_metadata(void *context, unsigned slot, int32_t fd, uint64_t open_id,
+/* The guest file API searches an array of 80-byte drive records via two
+ * words in kernel RAM. Reserve one record and its name in the host kernel's
+ * low RAM, below the callback stack and executable. The guest may replace
+ * the record's operation fields. Host file I/O still uses cs_vector_dispatch. */
+enum {
+    IO_DEVICE_TABLE = 0x150,
+    BU_RECORD = 0x7000,
+    DEVICE_RECORD_BYTES = 80,
+    BU_NAME = BU_RECORD + DEVICE_RECORD_BYTES
+};
+
+static int owns_file_device(const MusashiPlayerCard *card)
+{
+    uint32_t table, size, name;
+    return card->file_device_installed &&
+        musashi_boot_read32(card->memory, 0x80000000u + IO_DEVICE_TABLE, &table) &&
+        musashi_boot_read32(card->memory, 0x80000000u + IO_DEVICE_TABLE + 4, &size) &&
+        musashi_boot_read32(card->memory, 0x80000000u + BU_RECORD, &name) &&
+        table == BU_RECORD && size == DEVICE_RECORD_BYTES && name == BU_NAME &&
+        memcmp(card->memory->bytes + BU_NAME, "bu", sizeof "bu") == 0;
+}
+
+int musashi_player_card_init_files(MusashiPlayerCard *card)
+{
+    if (!card || !card->service || !card->memory) return 0;
+    if (card->file_device_installed)
+        return owns_file_device(card) && cs_init_files(card->service);
+
+    MusashiBootMemory *memory = card->memory;
+    for (unsigned i = 0; i < 8; ++i)
+        if (memory->bytes[IO_DEVICE_TABLE + i]) return 0;
+    for (unsigned i = 0; i < DEVICE_RECORD_BYTES + sizeof "bu"; ++i)
+        if (memory->bytes[BU_RECORD + i]) return 0;
+    if (!cs_init_files(card->service)) return 0;
+
+    memcpy(memory->bytes + BU_NAME, "bu", sizeof "bu");
+    musashi_boot_write32(memory, 0x80000000u + BU_RECORD, BU_NAME);
+    musashi_boot_write32(memory, 0x80000000u + IO_DEVICE_TABLE + 4, DEVICE_RECORD_BYTES);
+    musashi_boot_write32(memory, 0x80000000u + IO_DEVICE_TABLE, BU_RECORD);
+    card->file_device_installed = 1;
+    return 1;
+}
+
+static const CsCompletedRead payload_transfer = {1152u, 0x80075cc0u, 768u};
+
+static void remember_read(void *context, unsigned slot, int32_t fd, uint64_t open_id,
                               const CsCompletedRead *transfer, const uint8_t *bytes)
 {
     MusashiPlayerCard *card = context;
-    if (slot != 0 || fd != 2 || transfer->position != metadata_transfer.position ||
+    if (slot != 0) return;
+    if (transfer->position == payload_transfer.position &&
+        transfer->destination == payload_transfer.destination &&
+        transfer->count == payload_transfer.count) {
+        card->payload_open_id = 0;
+        if (open_id && musashi_sha256_digest(bytes, transfer->count, card->payload_digest))
+            card->payload_open_id = open_id;
+        return;
+    }
+    if (fd != 2 || transfer->position != metadata_transfer.position ||
         transfer->destination != metadata_transfer.destination ||
         transfer->count != metadata_transfer.count) return;
     /* Re-reading even identical bytes on the same fd earns a different ID.
@@ -110,7 +164,7 @@ int musashi_player_card_open_selected(MusashiPlayerCard *card, MusashiBootMemory
     card->memory = memory;
     card->events = events;
     card->storage = cs_storage_create();
-    card->service = cs_create_with_read_observer(host, remember_metadata);
+    card->service = cs_create_with_read_observer(host, remember_read);
     if (!card->storage || !card->service) {
         musashi_player_card_close(card);
         return 0;
@@ -132,14 +186,15 @@ int musashi_player_card_open_selected(MusashiPlayerCard *card, MusashiBootMemory
     return 1;
 }
 
-uint64_t musashi_player_card_metadata_descriptor(const MusashiPlayerCard *card,
+static uint64_t selected_read_descriptor(const MusashiPlayerCard *card,
                      const MusashiBootMemory *memory, const MusashiBiosEvents *events,
-                     int32_t fd, uint32_t position, uint32_t count)
+                     int32_t fd, uint32_t position, uint32_t count, const CsCompletedRead *read)
 {
     if (!card || !memory || !events || card->memory != memory || card->events != events ||
-        !card->storage || !card->slot0_mounted || fd != 2) return 0;
-    if (!((position == 0 && count == 0) || (position == 512 && count == 640) ||
-          (position == 1152 && count == 0))) return 0;
+        !card->storage || !card->slot0_mounted) return 0;
+    const uint32_t end = read->position + read->count;
+    if (!((position == 0 && count == 0) || (position == read->position && count == read->count) ||
+          (position == end && count == 0))) return 0;
     /* The selected path and the directory row are separate guest buffers.
      * The service verifies the latter against an actual listing and handle. */
     const uint8_t *path = memory->bytes + (0x80078ca0u - 0x80000000u);
@@ -148,7 +203,28 @@ uint64_t musashi_player_card_metadata_descriptor(const MusashiPlayerCard *card,
         memcmp(path + 5, row, 20)) return 0;
     return cs_async_read_descriptor(card->service, card, 0, fd, (const char *)path + 5,
                                     row, 8192, position, count,
-                                    position == 1152 ? &metadata_transfer : NULL);
+                                    position == end ? read : NULL);
+}
+
+uint64_t musashi_player_card_metadata_descriptor(const MusashiPlayerCard *card,
+                     const MusashiBootMemory *memory, const MusashiBiosEvents *events,
+                     int32_t fd, uint32_t position, uint32_t count)
+{
+    if (fd != 2) return 0;
+    return selected_read_descriptor(card, memory, events, fd, position, count, &metadata_transfer);
+}
+
+uint64_t musashi_player_card_payload_descriptor(const MusashiPlayerCard *card,
+                     const MusashiBootMemory *memory, const MusashiBiosEvents *events,
+                     int32_t fd, uint32_t position, uint32_t count)
+{
+    uint64_t id = selected_read_descriptor(card, memory, events, fd, position, count, &payload_transfer);
+    if (!id || position != payload_transfer.position + payload_transfer.count) return id;
+    const uint8_t *bytes = memory->bytes + (payload_transfer.destination - 0x80000000u);
+    uint8_t digest[32];
+    if (id != card->payload_open_id || !musashi_sha256_digest(bytes, payload_transfer.count, digest) ||
+        memcmp(digest, card->payload_digest, sizeof digest)) return 0;
+    return id;
 }
 
 uint64_t musashi_player_card_copy_completed_metadata(const MusashiPlayerCard *card,
@@ -178,6 +254,10 @@ int musashi_player_card_finish(MusashiPlayerCard *card)
 void musashi_player_card_close(MusashiPlayerCard *card)
 {
     if (!card) return;
+    if (owns_file_device(card)) {
+        memset(card->memory->bytes + IO_DEVICE_TABLE, 0, 8);
+        memset(card->memory->bytes + BU_RECORD, 0, DEVICE_RECORD_BYTES + sizeof "bu");
+    }
     if (card->service) {
         if (!cs_idle(card->service))
             fputs("Memory card closed with a pending command or notification. Completed writes remain on disk.\n", stderr);

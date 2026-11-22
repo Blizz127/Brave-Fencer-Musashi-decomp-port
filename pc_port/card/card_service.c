@@ -106,7 +106,10 @@ CsMedia cs_prepare(CardService *s, unsigned slot) {
 void cs_init_card(CardService *s) { s->initialized = 1; }
 void cs_start_card(CardService *s) { s->started = s->initialized; }
 void cs_stop_card(CardService *s) { s->started = 0; }
-void cs_init_files(CardService *s) { s->files = s->started; }
+int cs_init_files(CardService *s) {
+    s->files = s->started;
+    return s->files;
+}
 
 static int busy(const Slot *slot) {
     return slot->request.op != NOTHING || slot->event_count != 0;
