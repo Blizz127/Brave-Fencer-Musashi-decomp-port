@@ -42,8 +42,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 22 source update covers 269 functions across seven scene overlays,
-totaling 30,604 bytes of matching executable code. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 22 source update covers 270 functions across seven scene overlays,
+totaling 30,984 bytes of matching executable code. Four mine routines scan floor probes and pass their position to the map lookup.
 The mine collision code intersects the probe with a face and tests its side planes.
 A mine actor scheduler updates eligible actors and copies their positions to attached objects.
 Two earlier passes select actors for updates. A separate routine counts down a signed timer and adjusts the actor’s scale.
@@ -97,6 +97,8 @@ Three of the frame update’s object services select a floor probe, check
 nearby contacts and find an action target. Seven routines have the same
 compiled body in the mine and MAIN member 0012. Together they cover both
 floor probes, the 96-entry object pool and the signed distance comparison.
+The mine pickup handler marks the first item touched and dispatches its effect.
+A host test exercises the scanner and handler with synthetic item values and callbacks.
 The two resident distance routines build the coordinate differences, call the
 math services and return the result. The hybrid player still uses guest code
 for the nested calls. Run the host pointer and distance checks with

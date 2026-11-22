@@ -1096,6 +1096,8 @@ SCENE_PHASE_EXTENTS = {
     0x80150150: dict.fromkeys(("main_0012", "sc02_0039"), (32, 0x7E508B16726EDF52)),
     0x80150460: dict.fromkeys(("main_0012", "sc02_0039"), (32, 0x7E508B16726EDF52)),
     0x801505FC: dict.fromkeys(("main_0012", "sc02_0039"), (168, 0x840FD970AD98C205)),
+    # The pickup can call twice into item state and rereads its signed table index.
+    0x801506A4: {"sc02_0039": (380, 0x7138AD8777ECFBE1)},
     0x801508B4: dict.fromkeys(("main_0012", "sc02_0039"), (68, 0x3C6364F78110B674)),
     0x80135D20: {"sc02_0039": (400, 0xFC11FE9020A17C22)},
     0x8016EE40: dict.fromkeys(
