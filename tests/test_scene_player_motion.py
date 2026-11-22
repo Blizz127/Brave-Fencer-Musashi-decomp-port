@@ -51,3 +51,19 @@ def test_player_motion_admission(pc, tmp_path, monkeypatch):
     differing = dict(info, data=b"\x01" + data[1:])
     assert check(copy, "sc99_0001", differing)["admitted"]
     assert check(copy, "main", None)["admitted"]
+
+
+def test_forest_player_velocity(tmp_path):
+    registry = json.loads((ROOT / "provenance/scene-objects.json").read_text())
+    row = next(r for r in registry["matches"] if r["region"] == "sc01_0077" and r["vram"] == 0x801473EC)
+    source = ROOT / row["source"]
+    subprocess.run([
+        "cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT / "include"),
+        str(ROOT / "tests/forest_player_velocity_probe.c"), str(source), "-o", str(tmp_path / "velocity"),
+    ], check=True)
+    subprocess.run([str(tmp_path / "velocity")], check=True)
+    (tmp_path / "ir").mkdir()
+    assert lane.build_one(dict(row, source=str(source)), tmp_path, {}, {}, "clang").get("rule") == "memory"
+    copied = tmp_path / "copy.c"
+    copied.write_bytes(source.read_bytes())
+    assert lane.build_one(dict(row, region="other", source=str(copied)), tmp_path, {}, {}, "clang").get("rule") == "memory"

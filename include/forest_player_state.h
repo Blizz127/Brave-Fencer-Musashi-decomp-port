@@ -10,7 +10,8 @@ typedef union {
 
 typedef struct {
     u16 kind, action;
-    u8 pad04[0x20 - 4];
+    u32 position[3], velocity[3];
+    u8 pad1c[4];
     u32 model;
     ForestPlayerWord field_24;
     u8 pad28[4];

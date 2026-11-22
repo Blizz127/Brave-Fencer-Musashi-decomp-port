@@ -1382,12 +1382,16 @@ def scene_player_motion_source_only(entry, src, info):
     extent = SC01_PLAYER_MOTION_EXTENTS.get(pc)
     if extent is None:
         return False
-    if entry.get("region") == "sc01_0000" or (info and info["member"] == "sc01_0000"):
+    regions = ("sc01_0000", "sc01_0077") if pc == 0x801473EC else ("sc01_0000",)
+    if entry.get("region") in regions or (info and info["member"] in regions):
         return True
     if info and entry["size"] == extent[0] and member_digest(info, pc, extent[0]) == extent[1]:
         return True
-    source = ROOT / "src/overlays/sc01_0000" / f"{pc:08x}.c"
-    return src.resolve() == source or (source.is_file() and src.read_bytes() == source.read_bytes())
+    for region in regions:
+        source = ROOT / "src/overlays" / region / f"{pc:08x}.c"
+        if src.resolve() == source or (source.is_file() and src.read_bytes() == source.read_bytes()):
+            return True
+    return False
 
 
 # The two immediate halfwords locate a member's command switch table. The
