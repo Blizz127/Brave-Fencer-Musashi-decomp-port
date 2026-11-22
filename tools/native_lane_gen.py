@@ -1680,6 +1680,8 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
             raise Reject("timing", "mine local pose reads require the original model state and guest call timing")
         if vram in (0x8012C750, 0x8013E4B4) and mine_member_source_only(entry, src, info):
             raise Reject("timing", "mine initial placement needs the original actor pool, callbacks and guest call timing")
+        if vram in (0x801473EC, 0x80147460) and mine_member_source_only(entry, src, info):
+            raise Reject("timing", "mine actor movement needs the original actor and guest call timing")
         if forest_ground_attachment_source_only(entry, src, info):
             raise Reject("timing", "ground attachment requires checked guest callbacks, return values and timing")
         if vram in (0x8017DDB0, 0x8017DE00, 0x8017E25C, 0x8017E2F4, 0x8017E428, 0x8017E500) and mine_member_source_only(entry, src, info):
