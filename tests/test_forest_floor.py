@@ -45,14 +45,14 @@ def test_floor_sources_stay_interpreted(tmp_path, monkeypatch):
             assert not lane.forest_floor_source_only(row, alternative, None)
 
 
-def test_mine_plane_sources_require_their_member_even_without_a_disc(tmp_path):
+def test_mine_floor_sources_require_their_member_even_without_a_disc(tmp_path):
     import sys
     sys.path.insert(0, str(ROOT / "tools"))
     import native_lane_gen as lane
 
     copy = tmp_path / "independent.c"
     copy.write_text("int independent(int value) { return value + 1; }\n")
-    for pc, size in ((0x801347A0, 648), (0x80134A28, 76)):
+    for pc, size in ((0x801347A0, 648), (0x80134A28, 76), (0x80135480, 1032)):
         row = dict(region="sc02_0039", vram=pc, size=size)
         assert lane.forest_floor_source_only(row, copy, None)
         assert not lane.forest_floor_source_only(dict(row, region="sc99_0001"), copy, None)
