@@ -7,7 +7,7 @@ extern u16 D_80126B66;
 extern s16 D_8018A8FC[];
 extern s32 D_8018A8F8;
 extern void func_8017F5BC(u8 *actor);
-extern s32 func_8002D4C8(u16 command, u16 argument);
+extern void func_8002D4C8(u16 command, u16 argument);
 
 void func_8017F460(u8 *actor)
 {

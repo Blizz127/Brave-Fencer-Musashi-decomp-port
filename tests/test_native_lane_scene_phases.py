@@ -910,3 +910,16 @@ def test_forest_actor_attachment_selection(tmp_path, pc, extent):
     for region, member in (("sc01_0077", None), ("unknown", info), ("unknown", None)):
         result = lane.build_one(dict(row, region=region), tmp_path, {}, {}, "clang", member)
         assert result.get("rule") == "timing"
+
+
+@pytest.mark.parametrize("pc", (0x801845EC, 0x8018469C, 0x801846F8, 0x8018470C))
+def test_forest_attack_timing_matches_the_complete_member(tmp_path, monkeypatch, pc):
+    size, digest = lane.FOREST_ATTACHMENT_EXTENTS[pc]
+    source = tmp_path / "different.c"
+    source.write_text("void unrelated_scene_function(void) {}\n")
+    info = dict(member="unknown", vram=pc, start=0, data=bytes(size))
+    row = dict(vram=pc, size=size - 4, region="unknown")
+    assert not lane.overlay_extent_source_only(row, source, info, lane.SCENE_PHASE_EXTENTS)
+    monkeypatch.setattr(lane, "member_digest",
+                        lambda member, addr, length: digest if length == size else None)
+    assert lane.overlay_extent_source_only(row, source, info, lane.SCENE_PHASE_EXTENTS)

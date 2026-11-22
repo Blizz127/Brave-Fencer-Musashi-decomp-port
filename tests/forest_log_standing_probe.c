@@ -30,11 +30,10 @@ void func_8017F5BC(u8 *actor)
     calls = 1;
 }
 
-s32 func_8002D4C8(u16 command, u16 arg)
+void func_8002D4C8(u16 command, u16 arg)
 {
     assert(command == 0x495 && arg == 0 && calls == 1);
     calls = 2;
-    return -1;
 }
 
 static void run(int role, int kind, int phase, int ticks, unsigned flags,

@@ -109,7 +109,7 @@ s32 func_8012D714(u8 *actor, s32 mode)
     return predicate_result;
 }
 
-s32 func_8002D4C8(u16 cmd, u16 arg)
+void func_8002D4C8(u16 cmd, u16 arg)
 {
     assert(arg == 0 && get16(current, 2) == 2);
     if (cmd == 0x495)
@@ -118,7 +118,6 @@ s32 func_8002D4C8(u16 cmd, u16 arg)
         assert(cmd == 0x487 && get16(current, 0x34) == 0);
         ++sound_bounce;
     }
-    return -1;
 }
 
 s32 func_8012C588(s16 effect, ForestEffectSource *source)

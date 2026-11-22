@@ -3,7 +3,7 @@
 extern u16 D_80126B96;
 extern s32 func_8012BEE8(u8 *actor);
 extern s32 func_8012D714(u8 *actor, s32 mode);
-extern s32 func_8002D4C8(u16 command, u16 argument);
+extern void func_8002D4C8(u16 command, u16 argument);
 extern void func_8017F694(u8 *actor);
 
 void func_8018047C(u8 *actor)
