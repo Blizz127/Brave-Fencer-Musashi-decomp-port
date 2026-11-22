@@ -40,7 +40,7 @@ extern FloorGrid *D_801D94F0;
 extern u16 D_801D9500;
 
 u32 func_80134510(FloorPoint *point);
-s32 func_801345F8(FloorGrid *grid, FloorPoint *start, FloorPoint *end);
+s32 func_801345F8(FloorGrid *grid);
 s32 func_801347A0(s16 five_planes, FloorFace *face, FloorPoint *vertices, s32 *distances);
 s32 func_80134A28(FloorPoint *normal, FloorPoint *point, s32 distance);
 
@@ -82,6 +82,7 @@ extern FloorMatrix D_801D9504;
 extern FloorBox D_801D9524;
 s32 func_80135480(FloorContactRecord *record, u32 packed, FloorPoint *near_point, FloorPoint *far_point);
 
+s32 func_80135D20(u32 record, u32 geometry, FloorPoint *probe);
 s32 func_80135EB0(FloorBox *box, s32 flags);
 s32 func_80136334(FloorBox *box, s32 flags, s16 z);
 s32 func_801365B8(FloorBox *box, s32 flags, s16 x);
@@ -94,9 +95,16 @@ s32 func_801343C4(s16 mode, FloorPoint *start, FloorPoint *end);
 s16 func_80133CD4(s16 flags, FloorFace *face, FloorPoint *vertices, s32 *distances);
 extern s16 D_801D94FC;
 extern FloorPoint D_801152B0;
-#ifndef __mips__
+#if !defined(__mips__) || defined(__LP64__)
 /* Resolve box handles to FloorBox and grid handles to widened FloorGrid. Zero ends a list. */
 void *bfm_forest_contact_model(u32 address, s32 is_box);
+/* Stop the current host query when its game handle has no owned projection. */
+#ifdef __cplusplus
+[[noreturn]]
+#else
+_Noreturn
+#endif
+void bfm_forest_model_invalid_handle(u32 address);
 #endif
 
 extern FloorPoint D_80126720;

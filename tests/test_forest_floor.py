@@ -127,3 +127,13 @@ def test_grid_origin_overlaps_contact_fields(tmp_path):
         ROOT / "tests/forest_grid_scalar_alias_probe.c", "-o", binary,
     ], check=True)
     subprocess.run([binary], check=True)
+
+
+def test_vertical_model_contact_handles(tmp_path):
+    binary = tmp_path / "vertical-contact"
+    subprocess.run([
+        "cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-I", ROOT / "include",
+        ROOT / "tests/forest_vertical_contact_probe.c",
+        ROOT / "src/overlays/sc01_0077/80135d20.c", "-o", binary,
+    ], check=True)
+    subprocess.run([binary], check=True)

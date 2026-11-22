@@ -21,7 +21,7 @@ u32 func_80134510(FloorPoint *point)
     near_point->z = z;
     far_point->z = z;
     slope = 0;
-    if (func_801345F8(D_801D94F0, near_point, far_point)) {
+    if (func_801345F8(D_801D94F0)) {
         s32 normal_y;
         point->y = D_801870B4->y - 2;
         normal_y = D_801870AC->w;

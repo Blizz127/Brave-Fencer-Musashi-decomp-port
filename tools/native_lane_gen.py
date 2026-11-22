@@ -1093,13 +1093,16 @@ SCENE_PHASE_EXTENTS = {
     0x8014C278: dict.fromkeys(("main_0012", "sc02_0039"), (56, 0x93E8D33159724249)),
     0x8014FDF4: dict.fromkeys(("main_0012", "sc02_0039"), (108, 0xBE00661D1711B59B)),
     # The second floor probe calls the cell map while a guest return address is on the stack.
-    0x80150150: dict.fromkeys(("main_0012", "sc02_0039"), (32, 0x7E508B16726EDF52)),
+    0x80150150: dict.fromkeys(("main_0012", "sc01_0077", "sc02_0039"), (32, 0x7E508B16726EDF52)),
     0x80150460: dict.fromkeys(("main_0012", "sc02_0039"), (32, 0x7E508B16726EDF52)),
     0x801505FC: dict.fromkeys(("main_0012", "sc02_0039"), (168, 0x840FD970AD98C205)),
     # The pickup can call twice into item state and rereads its signed table index.
     0x801506A4: {"sc02_0039": (380, 0x7138AD8777ECFBE1)},
     0x801508B4: dict.fromkeys(("main_0012", "sc02_0039"), (68, 0x3C6364F78110B674)),
-    0x80135D20: {"sc02_0039": (400, 0xFC11FE9020A17C22)},
+    0x80135D20: {
+        "sc02_0039": (400, 0xFC11FE9020A17C22),
+        "sc01_0077": (400, 0x5E2B50C772BBC3C2),
+    },
     0x8016EE40: dict.fromkeys(
         ("sc02_0039", "sc01_0077", "sc02_0035", "sc03_0001", "main_0012"),
         (84, 0x0A847F9F21DC5E21)),

@@ -42,8 +42,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 22 source update covers 270 functions across seven scene overlays,
-totaling 30,984 bytes of matching executable code. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 22 source update covers 274 regional function matches across seven scene overlays,
+totaling 32,168 bytes. Four mine routines scan floor probes and pass their position to the map lookup.
 The mine collision code intersects the probe with a face and tests its side planes.
 A mine actor scheduler updates eligible actors and copies their positions to attached objects.
 Two earlier passes select actors for updates. A separate routine counts down a signed timer and adjusts the actor’s scale.
@@ -180,6 +180,19 @@ It classifies the slope using the contact normal. Its source is shared with
 MAIN/0012. A no-disc test checks both signed slope thresholds and confirms
 that the actor keeps its original coordinates on a miss. The standard player
 uses the guest routine.
+
+In the forest, the ground check scans up to 96 actor slots for object surfaces,
+queries the room floor, then stores the selected ground point and normal.
+Three of the four forest matches for this check reuse existing MAIN/0012 C.
+The fourth recovers the forest model probe, including its calls to the box
+and grid tests. A recording of ordinary forest play reached the room-floor
+query twice. Separate offline tests compared this check with the original.
+Another ordinary forest run recorded a successful return from the model-grid
+query through its starting-cell caller. The query left the near point unchanged
+and moved the far point from Y −248 to −258. A separate offline run using
+the same inputs and an earlier capture of the room reproduced these values
+with the compiled forest code.
+The standard player still executes these routines on the guest CPU.
 
 Another actor routine copies its coordinates into the endpoint before calling
 the model-grid sweep in mode one. A hit writes the corrected coordinates

@@ -1,14 +1,14 @@
 /* Walk the cell face IDs from last to first. A high ID bit selects the five-plane face table. */
 #include "forest_floor.h"
 
-#ifdef __mips__
+#if defined(__mips__) && !defined(__LP64__)
 typedef u32 FloorAddress;
 #else
 #include <stdint.h>
 typedef uintptr_t FloorAddress;
 #endif
 
-s32 func_801345F8(FloorGrid *grid, FloorPoint *start, FloorPoint *end)
+s32 func_801345F8(FloorGrid *grid)
 {
     FloorPoint *probe = D_801870AC;
     s16 cell_x, cell_z;
@@ -26,8 +26,6 @@ s32 func_801345F8(FloorGrid *grid, FloorPoint *start, FloorPoint *end)
     s32 bias = 0x8000;
 
     /* The caller passes both ends; the query reads the shared probe. */
-    (void)start;
-    (void)end;
     cell_x = ((probe->x + bias) >> 7 & 0x1FF) - grid->x0;
     if ((u32)(cell_x & 0xFFFF) >= width) {
         return 0;

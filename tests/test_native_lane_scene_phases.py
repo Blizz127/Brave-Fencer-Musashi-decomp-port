@@ -14,6 +14,8 @@ PHASES = (
     ("sc02_0039", 0x801299C8, 632),
     ("sc02_0039", 0x801287B8, 248),
     ("sc02_0039", 0x80135D20, 400),
+    ("sc01_0077", 0x80135D20, 400),
+    ("sc01_0077", 0x80150150, 32),
     ("main_0012", 0x801287B8, 248),
     ("main_0012", 0x8014A2E4, 156),
     ("main_0012", 0x8014C278, 56),
@@ -37,7 +39,9 @@ PHASES = (
 
 @pytest.mark.parametrize("member,pc,size", PHASES)
 def test_phase_source_stays_interpreted(member, pc, size, tmp_path, monkeypatch):
-    source = ROOT / "src/overlays" / member / f"{pc:08x}.c"
+    # The forest floor wrapper uses the identical registered MAIN source.
+    source_member = "main_0012" if (member, pc) == ("sc01_0077", 0x80150150) else member
+    source = ROOT / "src/overlays" / source_member / f"{pc:08x}.c"
     row = dict(name=f"func_{pc:08X}", vram=pc, size=size, source=str(source), region=member)
     (tmp_path / "ir").mkdir()
 
