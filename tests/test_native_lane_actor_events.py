@@ -16,6 +16,7 @@ EVENTS = (
     ("main_0012", 0x80146750, 188),
     ("main_0012", 0x8014680C, 188),
     ("sc01_0077", 0x801498E0, 116),
+    ("main_0012", 0x80149954, 272),
     ("sc01_0077", 0x80149AA8, 44),
     ("sc01_0077", 0x80149B54, 88),
     ("sc01_0077", 0x8014BEF8, 32),
@@ -53,7 +54,7 @@ def test_event_source_and_member_identity(member, pc, size, tmp_path, monkeypatc
 
     # Use synthetic bytes to test exact whole-body matching in another room.
     origin = pc - 8
-    extent = bytes(range(size))
+    extent = bytes(i & 0xff for i in range(size))
     info = dict(member=other, vram=origin, start=4, data=bytes(12) + extent,
                 code=[(pc, pc + size)])
     monkeypatch.setitem(lane.FOREST_EVENT_EXTENTS[pc], member, (size, lane.fnv1a64(extent)))

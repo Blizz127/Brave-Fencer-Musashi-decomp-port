@@ -1245,6 +1245,8 @@ FOREST_EVENT_EXTENTS = {
     0x80146750: dict.fromkeys(("main_0012", "sc01_0077", "sc01_0005"), (188, 0x43E37B45848E8CD0)),
     0x8014680C: dict.fromkeys(("main_0012", "sc01_0077", "sc01_0000"), (188, 0xB522F1058C2D9B5F)),
     0x801498E0: dict.fromkeys(("sc01_0077", "main_0012", "sc01_0005"), (116, 0xF1ECAE0BE88F0991)),
+    # The secondary request also calls the active field overlay and positional sound.
+    0x80149954: dict.fromkeys(("main_0012", "sc01_0077"), (272, 0xF7C0F4613A875408)),
     0x80149AA8: dict.fromkeys(
         ("sc01_0077", "main_0012", "sc02_0035", "sc03_0001", "sc01_0005", "sc02_0031"),
         (44, 0x9855CACC76C548AD)),
@@ -1272,6 +1274,12 @@ FOREST_EVENT_SOURCE_HASHES = {
         "6ea31a4287a152c69cb86aaa1b8485b43f5a605e6104fb592233497cdb0e20cf",
         "7f022c3cb05db879d3ce8fa0aafb48e2b06cbee5632bcdd56db8fe7a2da8a50b",
         "03c287fabb5fb626a804fd6162e8e35d44baad7ffbab56394171464d99dce3a1",
+    },
+    0x80149954: {
+        "2823f787de7a201e743ae9fc89ec83635cb78fd6ebbfa2f9fbb8fd3792dfaa99",
+        "71ba60eba7e368b1d9442ef0d21ebb3c5e1c67b67cf76a0fdd12923fe32691f0",
+        "d1e47433da72bb4ba914a477d70797b76783e7dbf50dab478b5898c58d632068",
+        "7bb9da4482e7b9ecc10403556dce1f943fe5526d891d86e40c39dac7cf83ae48",
     },
     0x80149AA8: {
         "a1d83d6898fa0b250683a1234803711dd77eadbc79f70eccbea2e037ee9b8ed9",
