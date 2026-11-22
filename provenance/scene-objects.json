@@ -5768,6 +5768,19 @@
       "extent": "function",
       "optimization": "-O2",
       "source": "src/overlays/sc03_0116/80181864.c"
+    },
+    {
+      "name": "func_80187A64",
+      "region": "sc03_0001",
+      "vram": 2149087844,
+      "size": 456,
+      "source": "src/overlays/sc03_0001/80187a64.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA SC03.CD member 0001 type-4 payload and the public village actor caller declaration.",
+      "source_sha256": "546c2765e7b9ea56db139e384fa919ada6e07adb4db11fe24c778a2659ee48c1",
+      "span_sha256": "62ecc0734c7cfa11429862f4d39eff1af1ab59457aa65da092ec57cc3891c3f5"
     }
   ]
 }

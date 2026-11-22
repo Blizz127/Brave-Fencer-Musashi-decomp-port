@@ -1105,6 +1105,8 @@ FOREST_ATTACHMENT_EXTENTS = {
 }
 
 SCENE_PHASE_EXTENTS = {
+    # Village waypoint motion needs the live actor, its movement services and guest timing.
+    0x80187A64: {"sc03_0001": (456, 0x467F92EE8AC88EA4)},
     0x80180994: {"sc03_0116": (60, 0xC1D82A67EF1E15BB)},
     0x801809D0: {"sc03_0116": (68, 0xB403F0AA729BC236)},
     0x80180FBC: {"sc03_0116": (60, 0x18F643941ADDD7FF)},
