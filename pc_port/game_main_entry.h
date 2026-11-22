@@ -6,7 +6,9 @@ enum { CRT_GAME_CALL = 0x80010094u, GAME_MAIN_ENTRY = 0x80010178u,
        GAME_MAIN_RESUME = GAME_CTOR_CALL+8u, GAME_EXCHANGE_CALL = 0x800101acu,
        GAME_EXCHANGE = 0x80043060u, POST_EXCHANGE = GAME_EXCHANGE_CALL+8u,
        GRAPHICS_CALL = 0x800101c0u, GRAPHICS_ENTRY = 0x800141f0u,
-       GRAPHICS_LIBRARY_CALL = GRAPHICS_ENTRY+8u, GRAPHICS_LIBRARY = 0x80059234u };
+       GRAPHICS_LIBRARY_CALL = GRAPHICS_ENTRY+8u, GRAPHICS_LIBRARY = 0x80059234u,
+       GRAPHICS_RETURN_JR = GRAPHICS_ENTRY+64u, POST_GRAPHICS = GRAPHICS_CALL+8u,
+       CD_START_CALL = POST_GRAPHICS+4u, CD_START_ENTRY = 0x8005fc68u };
 
 static int game_main_owner(LaneRunFrame *frame, MusashiBootMemory *memory,
                            const FormatterCpu *cpu)
@@ -76,6 +78,15 @@ static void game_main_capture(LaneRunFrame *frame, MusashiBootMemory *memory, Fo
     memcpy(entry->post_exchange,ram+(POST_EXCHANGE-CODE_IMAGE_BASE),sizeof entry->post_exchange);
     memcpy(entry->graphics,ram+(GRAPHICS_ENTRY-CODE_IMAGE_BASE),sizeof entry->graphics);
     entry->follow_graphics = 1;
+    if (!intrinsic_span(cpu,GRAPHICS_RETURN_JR,sizeof entry->graphics_return) ||
+        !intrinsic_span(cpu,POST_GRAPHICS,sizeof entry->cd_start)) return;
+    for (unsigned off=0; off<sizeof entry->graphics_return; off+=4u)
+        if (lane_find(GRAPHICS_RETURN_JR+off)) return;
+    for (unsigned off=0; off<sizeof entry->cd_start; off+=4u)
+        if (lane_find(POST_GRAPHICS+off)) return;
+    memcpy(entry->graphics_return,ram+(GRAPHICS_RETURN_JR-CODE_IMAGE_BASE),sizeof entry->graphics_return);
+    memcpy(entry->cd_start,ram+(POST_GRAPHICS-CODE_IMAGE_BASE),sizeof entry->cd_start);
+    entry->capture_return = 1;
 }
 
 static void game_main_crt_retired(LaneRunFrame *frame, MusashiBootMemory *memory,

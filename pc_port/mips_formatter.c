@@ -11332,7 +11332,8 @@ typedef struct GameMainEntry {
     void *worker;
     uint8_t call[8], game[32], constructor[112], resume[28];
     unsigned follow_constructor, follow_graphics;
-    uint8_t post_exchange[20], graphics[16];
+    uint8_t post_exchange[20], graphics[16], graphics_return[8], cd_start[12];
+    unsigned capture_return, return_stage;
 } GameMainEntry;
 
 typedef struct LaneRunFrame {
@@ -11834,6 +11835,9 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     uint32_t scheduled_next_pc = 0;
     uint8_t scheduled_merge_reg = 0;
     const uint32_t issued_pc = cpu->pc;
+    if (g_lane_run_frames && g_lane_run_frames->main_entry.return_stage == 2u &&
+        issued_pc != GRAPHICS_RETURN_JR+4u)
+        g_lane_run_frames->main_entry.return_stage = 0;
     if (g_lane_run_frames && g_lane_run_frames->main_entry.follow_constructor &&
         (uint32_t)(g_lane_run_frames->main_entry.next-GAME_CTOR) < GAME_CTOR_END-GAME_CTOR &&
         g_lane_run_frames->main_entry.next != issued_pc)
@@ -12779,6 +12783,8 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         game_main_constructor_retired(g_lane_run_frames,memory,cpu,issued_pc);
     else if (startup_exchange_pc(issued_pc))
         game_exchange_retired(g_lane_run_frames,memory,cpu,issued_pc);
+    else if (issued_pc == GRAPHICS_RETURN_JR || issued_pc == GRAPHICS_RETURN_JR+4u)
+        game_graphics_return_retired(g_lane_run_frames,memory,cpu,issued_pc);
     return 1;
 
 gte_transfer_refused:
@@ -13180,8 +13186,14 @@ static MusashiResetGraphPrefixStatus run_startup_cpu(
     LaneRunFrame frame;
     MusashiResetGraphPrefixStatus status;
     frame.prev = g_lane_run_frames;
-    if (frame.prev) frame.prev->main_entry.next = 0;
+    if (frame.prev) {
+        frame.prev->main_entry.next = 0;
+        /* A nested CPU between JR and its delay slot breaks the return witness. */
+        if (frame.prev->main_entry.return_stage == 2u)
+            frame.prev->main_entry.return_stage = 0;
+    }
     frame.main_entry.next = 0;
+    frame.main_entry.capture_return = frame.main_entry.return_stage = 0;
     frame.main_entry.follow_constructor = frame.main_entry.follow_graphics = 0;
     frame.cpu = cpu;
     frame.sink = sink;

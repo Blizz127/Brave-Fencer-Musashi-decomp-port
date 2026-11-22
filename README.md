@@ -13,6 +13,10 @@ calls the startup exchange in seven more host instructions. Both original
 constructor paths reached that call in 14 cycles from the return. The startup
 exchange itself still runs on the guest CPU. Nine compiled game instructions
 then store the startup setting and enter the first graphics library call.
+After the graphics wrapper returns on its original stack, three host
+instructions clear the argument and call the CD library. The original game
+took six cycles between that return and CD entry. A cold caller test checks
+the same interval with test providers for the graphics and subsystem calls.
 
 ## Player downloads and source builds
 
