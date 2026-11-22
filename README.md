@@ -4,6 +4,12 @@ An experimental PC port of *Brave Fencer Musashi* for the USA PlayStation disc
 (SLUS-00726). The player reads your own disc. Its hybrid runtime runs part of
 the game as compiled host code and uses a CPU interpreter for the rest.
 
+With the native lane active, the game can set up its first stack frame and
+call the constructor on the host. A cold-start test follows the original CRT
+call through all eight game instructions. It checks the saved registers and
+the 20 elapsed source cycles at constructor entry. The constructor still
+runs on the guest CPU.
+
 ## Player downloads and source builds
 
 **November 21, 2026. Player downloads are under review.**

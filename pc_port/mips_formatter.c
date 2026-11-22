@@ -13182,7 +13182,20 @@ static size_t g_lane_count;
 static uint32_t g_lane_min = UINT32_MAX, g_lane_max;
 static int g_lane_env = -1;
 
+/* A cold root can own the game caller only across a directly observed CRT call. */
+typedef struct GameMainEntry {
+    uint32_t next;
+    MusashiBootMemory *memory;
+    const MusashiExecutionClock *clock;
+    MusashiExecutionClock charge;
+    const MusashiCallbackDevice *callback;
+    int (*checkpoint)(void *, const void *);
+    void *worker;
+    uint8_t call[8], game[32];
+} GameMainEntry;
+
 typedef struct LaneRunFrame {
+    GameMainEntry main_entry;
     struct LaneRunFrame *prev;
     FormatterCpu *cpu;
     MusashiConsoleSink sink;
@@ -13659,6 +13672,8 @@ static int lane_try(MusashiBootMemory *memory, FormatterCpu *cpu) {
     return formatter_return(cpu) ? 1 : -1;
 }
 
+#include "game_main_entry.h"
+
 static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     uint32_t instruction, opcode, rs, rt, rd, immediate, old_npc;
     uint32_t target_npc;
@@ -13676,6 +13691,7 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     uint32_t scheduled_merge = 0;
     uint32_t scheduled_next_pc = 0;
     uint8_t scheduled_merge_reg = 0;
+    const uint32_t issued_pc = cpu->pc;
     if ((cpu->pc & 3u) || !spu_source_guard(memory, cpu))
         return formatter_refuse0(__LINE__, cpu->pc);
     if ((main12_owns_fetch(cpu) || main12_service_pc(cpu) || main12_copy_pc(cpu)) && publish_flow && g_entry_hook &&
@@ -13692,6 +13708,12 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         int lane = lane_try(memory, cpu);
         if (lane > 0) return 1;
         if (lane < 0) return formatter_refuse0(__LINE__, cpu->pc);
+    }
+    if ((uint32_t)(cpu->pc-GAME_MAIN_ENTRY) < 32u && g_lane_run_frames &&
+        g_lane_run_frames->main_entry.next) {
+        const int issue = game_main_issue(g_lane_run_frames,memory,cpu);
+        if (issue > 0) return 1;
+        if (issue < 0) return formatter_refuse0(__LINE__,cpu->pc);
     }
     if (cpu->pc == 0x80128158u) {
         g_overlay_sc02_0031_words = sc02_entry_matches(memory);
@@ -14563,6 +14585,8 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     }
     cpu->pc = old_npc;
     cpu->npc = target_npc;
+    if (issued_pc == CRT_GAME_CALL || issued_pc == CRT_GAME_CALL+4u)
+        game_main_crt_retired(g_lane_run_frames,memory,cpu,issued_pc);
     return 1;
 
 gte_transfer_refused:
@@ -14964,6 +14988,8 @@ static MusashiResetGraphPrefixStatus run_startup_cpu(
     LaneRunFrame frame;
     MusashiResetGraphPrefixStatus status;
     frame.prev = g_lane_run_frames;
+    if (frame.prev) frame.prev->main_entry.next = 0;
+    frame.main_entry.next = 0;
     frame.cpu = cpu;
     frame.sink = sink;
     frame.userdata = userdata;
@@ -14976,6 +15002,8 @@ static MusashiResetGraphPrefixStatus run_startup_cpu(
      * first step; bind this run's guest memory up front. */
     g_fetch_memory = memory;
     code_sites_invalidate();
+    if (!frame.prev && entry_stop && cpu->pc == CODE_IMAGE_BASE)
+        game_main_capture(&frame,memory,cpu);
     if (g_trace_state >= 0) musashi_trace_function_entry(cpu->pc, cpu->r[31], 'd');
     status = run_startup_cpu_loop(memory, cpu, sink, userdata, result, stop,
                                   entry_stop, observer, observer_userdata);
