@@ -1081,6 +1081,9 @@ FOREST_FLOOR_EXTENTS = {
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    # Mine actor and fade callbacks depend on guest state and frame timing.
+    0x801379FC: {"sc02_0039": (388, 0x996017639B1A6852)},
+    0x8013A380: {"sc02_0039": (200, 0x3158F085FABFA816)},
     # The controller can issue two draws and reread target state between callbacks.
     0x80165E90: {"sc02_0039": (276, 0x616A9BEC6ADB779B)},
     # Actor steps depend on the view query and may run repeatedly in the same caller.
