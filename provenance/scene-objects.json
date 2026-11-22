@@ -5020,6 +5020,26 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2"
+    },
+    {
+      "name": "func_8012CEB0",
+      "vram": 2148716208,
+      "size": 248,
+      "region": "sc02_0039",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "source": "src/overlays/sc02_0039/8012ceb0.c"
+    },
+    {
+      "name": "func_8012CC88",
+      "vram": 2148715656,
+      "size": 420,
+      "region": "sc02_0039",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "source": "src/overlays/sc02_0039/8012cc88.c"
     }
   ]
 }

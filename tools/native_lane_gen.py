@@ -1085,6 +1085,8 @@ TOWER_POOL_PRIOR_SOURCE = "37f8c8016ea1b697c77467c8ee51f6fe1f89930cfacf04a68d81b
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    0x8012CC88: {"sc02_0039": None},
+    0x8012CEB0: {"sc02_0039": None},
     # The request and control instructions also occur in other room members.
     0x8017FCFC: {"sc02_0005": (184, 0x46D58ECC4D744307)},
     0x801399F0: {"sc02_0005": None},
@@ -1311,6 +1313,10 @@ def overlay_extent_source_only(entry, src, info, extents):
             if member_digest(info, pc, size) == digest:
                 return True
     elif info and any(variants.values()) and (entry["size"], member_digest(info, pc, entry["size"])) in variants.values():
+        return True
+    # The earlier source declared the terrain mode as a halfword.
+    if pc == 0x8012CEB0 and hashlib.sha256(src.read_bytes()).hexdigest() == (
+            "ef3dc9b0d0cb3acf3b6355373d1c8b5c159910ad42cdf4af9af10ad7beafbae0"):
         return True
     previous = TOWER_EARLIER_CALLERS.get(pc)
     if previous and hashlib.sha256(src.read_bytes()).hexdigest() in previous:
@@ -1736,6 +1742,17 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
                 member_digest(info, vram, 336) == 0x219DBA359D04D973 and
                 member_digest(info, 0x80133784, 812) == 0x309DE57F9074D361):
             raise Reject("timing", "mine terrain action requires its room query and event ordering")
+        # The segment wrapper shares its instructions across rooms. Its terrain query identifies the mine.
+        if (vram == 0x8012CEB0 and entry["size"] == 248 and info and info.get("data") is not None and
+                member_digest(info, vram, 248) == 0x9B48077248B310BA and
+                member_digest(info, 0x80133784, 812) == 0x309DE57F9074D361):
+            raise Reject("timing", "mine vector terrain queries require ordered room contacts")
+        # The actor and vector wrappers share instructions across rooms. Their terrain service identifies the mine.
+        if (vram == 0x8012CC88 and entry["size"] == 420 and info and info.get("data") is not None and
+                member_digest(info, vram, 420) == 0xA21742D4B95893BB and
+                member_digest(info, 0x8012CEB0, 248) == 0x9B48077248B310BA and
+                member_digest(info, 0x80133784, 812) == 0x309DE57F9074D361):
+            raise Reject("timing", "mine actor terrain movement requires its ordered vector and terrain queries")
         if forest_action_source_only(entry, src, info):
             raise Reject("timing", "forest action requires ordered guest services and state updates")
         if forest_event_source_only(entry, src, info):
