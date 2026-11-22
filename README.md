@@ -505,8 +505,8 @@ from unpublished port sources (windows-port `c427ee546`); this recipe does
 not build it. The packaged menu and save instructions above describe the historical binaries.
 
 The public build uses a curated main-executable registry at
-`provenance/native-main.json`. It records 259 owner-authored C sources totaling
-24,396 matched bytes. The registry includes three motion routines used by the
+`provenance/native-main.json`. It records 260 owner-authored C sources totaling
+24,928 matched bytes. The registry includes three motion routines used by the
 no-disc smoke test. The existing native-lane allowlist and compiler checks
 decide which routines the player can run as host code. Other paths use the
 interpreter. See [EXCLUDED.md](EXCLUDED.md) for the source inclusion criteria.
@@ -515,6 +515,12 @@ The 72-byte graphics startup wrapper calls three graphics services, clears its
 152-byte state and runs subsystem initialization. A host test checks call order
 and the state clear. The player continues to run the underlying graphics
 library through the guest CPU.
+
+The 532-byte disc directory initializer locates the game files and builds their
+archive entries. On the original USA disc it made 521 service calls. A host
+test reproduced their arguments, and a separate native disc-reader test matched
+all 447 resulting archive entries. The player runs this initializer on the
+guest CPU.
 
 The 856-byte sound startup routine initializes the game’s sound records and
 calls 14 services. An original-disc run captured each call and return through

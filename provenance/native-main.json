@@ -2569,6 +2569,17 @@
       "extent": "function",
       "optimization": "-O2",
       "origin": "Independently reconstructed from the USA game executable and owner-authored type declarations. The record flags and count reloads were checked against original startup observations."
+    },
+    {
+      "name": "func_8001971C",
+      "vram": 2147587868,
+      "size": 532,
+      "region": "main",
+      "source": "src/main/8001971c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA game executable. The game code expands directory records. All external services are opaque in the host test."
     }
   ]
 }
