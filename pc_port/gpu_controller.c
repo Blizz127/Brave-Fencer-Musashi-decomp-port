@@ -1010,7 +1010,7 @@ static uint16_t modulate_texel(uint16_t texel, uint32_t rgb) {
     return (uint16_t)(r | (g << 5) | (b << 10) | (texel & 0x8000u));
 }
 
-enum { TEXTURE_ONE = 65536, TEXTURE_HALF = 32768 };
+enum { TEXTURE_ONE = 65536, TEXTURE_HALF = 32768, TEXTURE_RAMP_ONE = 4096 };
 
 typedef struct {
     int x, y, u, v;
@@ -1025,6 +1025,8 @@ typedef struct {
 typedef struct {
     TextureEdge long_edge, upper, lower;
     int64_t du_dx, dv_dx;
+    int64_t u_origin, v_origin;
+    int u_horizontal, v_horizontal;
     int drawable;
 } TextureTriangle;
 
@@ -1051,6 +1053,23 @@ static int vertex_after(TextureVertex a, TextureVertex b) {
     return a.y > b.y || (a.y == b.y && a.x > b.x);
 }
 
+/* A texture component that varies only along screen X advances from its
+ * leftmost vertex with 12 fractional bits. */
+static int horizontal_texture_ramp(int x0, int x1, int x2, int q0, int q1, int q2,
+                                   int64_t *step, int64_t *origin) {
+    int dx1 = x1 - x0, dx2 = x2 - x0;
+    int dq1 = q1 - q0, dq2 = q2 - q0;
+    if ((!dq1 && !dq2) || dq1 * dx2 != dq2 * dx1) return 0;
+    int left_x = x0, left_q = q0;
+    if (x1 < left_x) { left_x = x1; left_q = q1; }
+    if (x2 < left_x) { left_x = x2; left_q = q2; }
+    int slope = dx1 ? dq1 * TEXTURE_RAMP_ONE / dx1 : dq2 * TEXTURE_RAMP_ONE / dx2;
+    int64_t increment = (int64_t)slope * (TEXTURE_ONE / TEXTURE_RAMP_ONE);
+    *step = increment;
+    *origin = (int64_t)left_q * TEXTURE_ONE - left_x * increment;
+    return 1;
+}
+
 static TextureTriangle texture_triangle(TextureVertex a, TextureVertex b, TextureVertex c) {
     TextureVertex swap;
     if (vertex_after(a, b)) { swap = a; a = b; b = swap; }
@@ -1068,6 +1087,10 @@ static TextureTriangle texture_triangle(TextureVertex a, TextureVertex b, Textur
     if (width) {
         t.du_dx = ((int64_t)(b.u - a.u) * TEXTURE_ONE - (c.u - a.u) * middle) * TEXTURE_ONE / width;
         t.dv_dx = ((int64_t)(b.v - a.v) * TEXTURE_ONE - (c.v - a.v) * middle) * TEXTURE_ONE / width;
+        t.u_horizontal = horizontal_texture_ramp(a.x, b.x, c.x, a.u, b.u, c.u,
+                                                &t.du_dx, &t.u_origin);
+        t.v_horizontal = horizontal_texture_ramp(a.x, b.x, c.x, a.v, b.v, c.v,
+                                                &t.dv_dx, &t.v_origin);
         t.drawable = 1;
     }
     return t;
@@ -1097,6 +1120,8 @@ static TextureRow texture_row(const TextureTriangle *triangle, int y) {
         .v = (int64_t)edge->start.v * TEXTURE_ONE + rows * edge->dv +
              texture_floor(-fraction * triangle->dv_dx) + TEXTURE_HALF
     };
+    if (triangle->u_horizontal) row.u = triangle->u_origin + base * triangle->du_dx + TEXTURE_HALF;
+    if (triangle->v_horizontal) row.v = triangle->v_origin + base * triangle->dv_dx + TEXTURE_HALF;
     return row;
 }
 

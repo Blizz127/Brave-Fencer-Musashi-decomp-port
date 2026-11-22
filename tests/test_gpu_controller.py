@@ -1023,6 +1023,26 @@ class GpuControllerTests(unittest.TestCase):
                     self.assertEqual(reads, [(640 + u, 256 + v) for u, v in expected])
                     self.assertEqual(set(writes), {(left + i, y) for i in range(3)})
 
+    def test_horizontal_texture_ramps_keep_signed_fractional_steps(self):
+        # A one-texel change over 180 pixels has a signed step of 22/4096.
+        # Both directions cross the half-texel boundary between x=93 and 94.
+        for opcode in (0x25, 0x2D, 0x35, 0x3D):
+            with self.subTest(opcode=opcode):
+                _, reads = self._geometry_probe(area=(92, 4, 95, 4))
+                points = [(0, 0), (180, 0), (180, 8)]
+                if opcode & 8:
+                    points = [(0, 0), (180, 0), (0, 8), (180, 8)]
+                words = [(opcode << 24) | 0x808080]
+                for i, (x, y) in enumerate(points):
+                    if i and opcode & 0x10:
+                        words.append(0x808080)
+                    u, v = (21, 50) if x else (20, 51)
+                    page = 0x11A if i == 1 else 0
+                    words.extend((x | (y << 16), u | (v << 8) | (page << 16)))
+                for word in words:
+                    self.assertEqual(self.write(word), 1, hex(word))
+                self.assertEqual(reads, [(660, 307), (660, 307), (661, 306), (661, 306)])
+
     def test_texture_triangle_collapsing_at_middle_scanline(self):
         for opcode in (0x25, 0x35):
             with self.subTest(opcode=opcode):
