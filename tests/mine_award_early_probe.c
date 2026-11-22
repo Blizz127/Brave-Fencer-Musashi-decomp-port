@@ -60,7 +60,7 @@ void func_80171A34(u8 *actor, s32 phase)
     actor[0x214] = (u8)phase;
 }
 
-s32 func_80171CC4(u8 *actor, const u8 *vector)
+s32 func_80171CC4(u8 *actor, u8 *vector)
 {
     assert(actor == player && vector == D_80126B30.bytes);
     visit('M');

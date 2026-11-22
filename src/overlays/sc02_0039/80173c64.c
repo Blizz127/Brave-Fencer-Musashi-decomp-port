@@ -5,7 +5,7 @@ void func_80173C64(u8 *actor)
 {
 #if defined(__mips__) && defined(__GNUC__) && __GNUC__ == 2
     extern s16 D_80126B30[4];
-    if (D_80126B30[3] && !func_80171CC4(actor, (const u8 *)D_80126B30))
+    if (D_80126B30[3] && !func_80171CC4(actor, (u8 *)D_80126B30))
         return;
 #else
     extern MineAwardVector D_80126B30;

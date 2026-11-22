@@ -12,7 +12,7 @@ static int selector, default_arg;
 static int amounts[4];
 
 static void record(char name) { assert(n + 1 < sizeof calls); calls[n++] = name; calls[n] = 0; }
-void func_80147060(void *p) { assert(p == actor && D_80126938 == 1); record('L'); }
+void func_80147060(u8 *p) { assert(p == actor && D_80126938 == 1); record('L'); }
 void func_80029124(s32 f,s32 bit) { assert(bit == 1); flag_id = f; record('F'); }
 u8 func_80029178(s32 f) { assert(f == 0x11d); record('?'); return flag; }
 void func_80029514(s32 v) { progression = v; record('P'); }
@@ -34,7 +34,7 @@ s32 func_800D0EC4(void) { record('G'); D_80126B3A = -307; return 54; }
 void func_800D0F0C(s32 x,s32 y) { assert(x == 54); default_arg = y; record('D'); }
 void func_800D128C(s32 x,s32 y) { assert(x == 0x70 && !y); record('S'); }
 void func_80145EE8(s32 v) { assert(!v); record('E'); }
-void func_80171A1C(void *p) { assert(p == actor); record('Z'); }
+void func_80171A1C(u8 *p) { assert(p == actor); record('Z'); }
 
 int main(void)
 {

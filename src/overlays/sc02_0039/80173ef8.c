@@ -16,8 +16,8 @@ extern s32 func_800D0EC4(void);
 extern void func_800D0F0C(s32 a, s32 b);
 extern void func_800D128C(s32 a, s32 b);
 extern void func_80145EE8(s32 a);
-extern void func_80147060(void *o);
-extern void func_80171A1C(void *o);
+extern void func_80147060(u8 *o);
+extern void func_80171A1C(u8 *o);
 
 void func_80173EF8(u8 *o) {
 #if defined(__mips__) && defined(__GNUC__) && __GNUC__ == 2
