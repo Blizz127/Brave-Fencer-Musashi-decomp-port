@@ -1076,6 +1076,8 @@ FOREST_FLOOR_EXTENTS = {
 # These scene phase callbacks call back into guest code. Several of their
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    # Target indicators reuse a primitive and matrix across ten ordered submit callbacks.
+    0x80167AE0: {"sc02_0039": (732, 0xEB04EFADECE21D52)},
     # The dialog updater reads and writes scene colors, with loads interleaved with stores.
     0x801299C8: {"sc02_0039": (632, 0xB666EDF924654ECB)},
     # The mine script reads duration after two observable guest stores.

@@ -42,8 +42,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 22 source update covers 274 regional function matches across seven scene overlays,
-totaling 32,168 bytes. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 22 source update covers 275 regional function matches across seven scene overlays,
+totaling 32,900 bytes. Four mine routines scan floor probes and pass their position to the map lookup.
 The mine collision code intersects the probe with a face and tests its side planes.
 A mine actor scheduler updates eligible actors and copies their positions to attached objects.
 Two earlier passes select actors for updates. A separate routine counts down a signed timer and adjusts the actor’s scale.
@@ -130,6 +130,9 @@ It writes both outputs before it reads the duration from the next byte.
 
 The mine dialog code scales three color channels for the selected backdrop band.
 The five selector values cover a preset, two record palettes and two flat colors.
+
+The mine target indicator builds ten colored quadrilaterals in three groups.
+The game supplies its vertex tables and submits each primitive through the drawing interface.
 
 The same scene descriptors also contain a two-phase callback. Its setup starts
 a second fade, resets its level and advances the actor phase. The next phase
