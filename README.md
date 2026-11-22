@@ -61,13 +61,14 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 22 source update covers 339 regional function matches across eight scene overlays,
-totaling 48,596 bytes. The Steam Knight damage routine subtracts the incoming hit from the actor’s HP and selects its reaction. The contact routine records the hit type, damage, and position on eligible actors. A surviving attachment can queue its reaction ID in a four-entry list. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 22 source update covers 340 regional function matches across eight scene overlays,
+totaling 48,912 bytes. The Steam Knight damage routine subtracts the incoming hit from the actor’s HP and selects its reaction. The contact routine records the hit type, damage, and position on eligible actors. A surviving attachment can queue its reaction ID in a four-entry list. Four mine routines scan floor probes and pass their position to the map lookup.
 The mine collision code intersects the probe with a face and tests its side planes.
 A mine actor dispatches its setup or update callback according to its current state. Its setup creates the parent model or links a child to its collision box. Its update controls model visibility, damps the angle, and checks up to five segments across the box. The parent rotor changes its model angle and sound volume as the player approaches.
 A mine rotor runs its state action and synchronizes its model. Its initializer allocates the primary model and optional accessory, then issues four child spawn requests.
 The forest camera sets the rotation and translation matrices before transforming a short vector.
 The mine actor pool initializes a slot from its placement, assigns its owner and runs its setup handler. A rejected setup releases the slot and its model.
+The mine room selector looks up a descriptor in the room table supplied by the loaded member.
 The mine camera update selects a camera, updates seven view components and publishes its guest address.
 A host test supplies the rendering callbacks and checks the matrix copy.
 A mine actor scheduler updates eligible actors and copies their positions to attached objects.

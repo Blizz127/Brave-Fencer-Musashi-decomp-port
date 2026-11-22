@@ -124,7 +124,7 @@ def test_mine_slot_dispatch_preserves_the_main_member(tmp_path, pc, size):
 
 
 @pytest.mark.parametrize("pc,size", [
-    (0x8012C890, 596), (0x8017DDB0, 80), (0x8017DE00, 132), (0x8017E25C, 152),
+    (0x8012C890, 596), (0x801457A4, 316), (0x8017DDB0, 80), (0x8017DE00, 132), (0x8017E25C, 152),
     (0x8017E2F4, 308), (0x8017E428, 216), (0x8017E500, 320),
 ])
 def test_mine_model_actions_stay_with_their_member(tmp_path, pc, size):
@@ -147,6 +147,12 @@ def test_mine_slot_guard_preserves_other_regional_initializers():
         source = ROOT / f"src/overlays/{region}/8012c890.c"
         row = dict(vram=0x8012C890, region=region)
         assert not lane.mine_member_source_only(row, source, dict(member=region))
+
+
+def test_mine_descriptor_guard_preserves_main_lookup():
+    source = ROOT / "src/overlays/main_0012/801457a4.c"
+    row = dict(vram=0x801457A4, region="main_0012")
+    assert not lane.mine_member_source_only(row, source, dict(member="main_0012"))
 
 
 def test_mine_rotor_update_stays_with_its_member(tmp_path):
