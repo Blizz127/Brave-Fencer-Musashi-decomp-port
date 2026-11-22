@@ -11,7 +11,7 @@ extern void *func_8012C1B8(void);
 extern u16 D_80195B4C[], D_80195B68[];
 extern ArmorTemplate D_80195D74[];
 extern u8 D_80196490[];
-extern s32 func_8012CAE4(u8 *actor);
+#include "steam_knight_actor_dispose.h"
 #include "steam_knight_model_binding.h"
 extern s32 func_8012AD50(u8 *actor);
 #define OWNER_LINK(key) (((SteamKnightPart *)(key))->linked_address)

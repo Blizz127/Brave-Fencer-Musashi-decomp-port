@@ -2,7 +2,7 @@
 #include "steam_knight_resource.h"
 
 extern u8 D_80078EAE;
-extern void func_8012CAE4(u8 *actor);
+#include "steam_knight_actor_dispose.h"
 extern void func_8001C214(void *model, s32 resource);
 
 #if defined(__mips__) && !defined(__LP64__)

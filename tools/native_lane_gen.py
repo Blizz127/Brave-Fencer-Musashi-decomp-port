@@ -1085,6 +1085,8 @@ TOWER_POOL_PRIOR_SOURCE = "37f8c8016ea1b697c77467c8ee51f6fe1f89930cfacf04a68d81b
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    # Actor cleanup has the same instructions in other scene members.
+    0x8012CAE4: {"sc02_0005": None},
     0x8014FA70: {"sc02_0039": None},
     # Tower resource instructions are shared by all scene members.
     0x8012913C: {"sc02_0005": None},
@@ -1244,11 +1246,30 @@ SCENE_PHASE_EXTENTS = {
 
 # Earlier copies of the Tower callers retain their timing hold.
 TOWER_EARLIER_CALLERS = {
-    0x80183FCC: "d291052de8b96a64ce9299721645518e27e25d54ff747396369df812ace2f9b8",
-    0x8018BA38: "e32056cefd34e8e4c45e272c30e5979b9360b9d1fa2326f2e47fbf37a84144e8",
-    0x80182918: "0f0ca5a402ac5b07d0d07835239b1e3dca84e7901c339ed3c38289178eb0899b",
-    0x80184EC0: "ae9b370a04dc19aa21be83b44411900ec71005d2af1be8616c13b659998b1fba",
-    0x8018968C: "d5900e57b02f7d861c5c700cc8c6a0ec3142a87c5bb4b2133b810873f834dc3f",
+    0x8012C354: {
+        "1f493e9d4e1b3d830486396f67228a3b77ccbaf7da7d0ecbbd604887f0116e7d",
+        "3ee21577767e61a084132b404d353cdf3f2efc30b3946297b90b7cb81d18a2f7",
+        "43c4547365f3a1489458707ef6d693612ca115cb1e50b1c9a425743aac66ade9",
+    },
+    0x80182918: {
+        "0f0ca5a402ac5b07d0d07835239b1e3dca84e7901c339ed3c38289178eb0899b",
+    },
+    0x80183FCC: {
+        "d291052de8b96a64ce9299721645518e27e25d54ff747396369df812ace2f9b8",
+    },
+    0x80184EC0: {
+        "ab241ef0b82bfbb75e909a39d97c8e48f54e684482951540e2e24c279d6c4fcf",
+        "ae9b370a04dc19aa21be83b44411900ec71005d2af1be8616c13b659998b1fba",
+    },
+    0x8018968C: {
+        "7eb67ab93e567687eb442044454d07fc609c5d3b1c34d4cd9fd00d6b3f6c9443",
+        "d5900e57b02f7d861c5c700cc8c6a0ec3142a87c5bb4b2133b810873f834dc3f",
+    },
+    0x8018BA38: {
+        "2e00200ca5822841766d39e5ccc038551eb2f348a6bdf929bf62683386064595",
+        "4a59508f421e41922c07af3587d5b5720a6d029bc52f04b43d27a2fed827ad97",
+        "e32056cefd34e8e4c45e272c30e5979b9360b9d1fa2326f2e47fbf37a84144e8",
+    },
 }
 
 
@@ -1263,7 +1284,7 @@ def overlay_extent_source_only(entry, src, info, extents):
     if info and any(variants.values()) and (entry["size"], member_digest(info, pc, entry["size"])) in variants.values():
         return True
     previous = TOWER_EARLIER_CALLERS.get(pc)
-    if previous is not None and hashlib.sha256(src.read_bytes()).hexdigest() == previous:
+    if previous and hashlib.sha256(src.read_bytes()).hexdigest() in previous:
         return True
     # The first published forest grid query used unsigned formal coordinates.
     if pc == 0x80134A74 and hashlib.sha256(src.read_bytes()).hexdigest() == (
@@ -1674,8 +1695,7 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
             earlier_pool = (vram == 0x8012C658 and
                             hashlib.sha256(src.read_bytes()).hexdigest() == TOWER_POOL_PRIOR_SOURCE)
             earlier_template = (vram == 0x8012C354 and
-                                hashlib.sha256(src.read_bytes()).hexdigest() ==
-                                "43c4547365f3a1489458707ef6d693612ca115cb1e50b1c9a425743aac66ade9")
+                                hashlib.sha256(src.read_bytes()).hexdigest() in TOWER_EARLIER_CALLERS[vram])
             if (tower_initializer or earlier_pool or earlier_template or member == "sc02_0005" or
                     entry.get("region") == "sc02_0005" or
                     (tower.is_file() and (src.resolve() == tower or src.read_bytes() == tower.read_bytes()))):

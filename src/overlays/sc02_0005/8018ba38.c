@@ -5,7 +5,8 @@ extern s32 func_8005C49C(void);
 #if defined(__mips__) && !defined(__LP64__)
 #include "steam_knight_resource.h"
 #define ALLOCATE_MODEL() ((u32)func_8012C1B8())
-extern void func_8012CAE4(SteamKnightPart *);
+#include "steam_knight_actor_dispose.h"
+#define DISPOSE(actor) func_8012CAE4((u8 *)(actor))
 extern void func_8001C214(u32 model, u32 list);
 extern void func_8012A828(SteamKnightPart *, u32 script);
 extern u8 D_801966A8[], D_801966B0[], D_80190C0C[];
@@ -14,7 +15,7 @@ extern u8 D_801966A8[], D_801966B0[], D_80190C0C[];
 #define SCRIPT_ADDRESS  ((u32)D_80190C0C)
 #else
 #define ALLOCATE_MODEL() bfm_tower_actor84_allocate_model()
-#define func_8012CAE4 bfm_tower_actor84_dispose
+#define DISPOSE(actor) bfm_tower_actor84_dispose(actor)
 #define func_8001C214 bfm_tower_actor84_model_list
 #define func_8012A828 bfm_tower_actor84_animation
 #define MODEL_LIST_EVEN 0x801966A8u
@@ -31,7 +32,7 @@ void func_8018BA38(SteamKnightPart *actor)
     model = ALLOCATE_MODEL();
     actor->model_address = model;
     if (!model) {
-        func_8012CAE4(actor);
+        DISPOSE(actor);
         return;
     }
     list = MODEL_LIST_EVEN;

@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "steam_knight_resource.h"
+#include "steam_knight_actor_dispose.h"
 
 s32 func_8012C354(u8 *actor, u8 *record);
 u8 D_80078EAE;
@@ -68,12 +69,13 @@ struct Record *func_8001CFDC(int first, int limit)
     return test->allocation == ALLOC_FAIL ? NULL : (struct Record *)(arena + test->model);
 }
 
-void func_8012CAE4(u8 *actor)
+s32 func_8012CAE4(u8 *actor)
 {
     assert(actor == arena+ACTOR && allocations == 1 && encodes == 1);
     assert(disposals++ == 0 && attachments == 0);
     assert(memcmp(arena, before_last_service, ARENA_SIZE) == 0);
     actor[0] = 0;
+    return -1;
 }
 
 void func_8001C214(void *model, s32 resource)

@@ -4930,6 +4930,16 @@
       "extent": "function",
       "optimization": "-O2",
       "source": "src/overlays/sc02_0039/8014fa70.c"
+    },
+    {
+      "vram": 2148715236,
+      "name": "func_8012CAE4",
+      "source": "src/overlays/sc02_0005/8012cae4.c",
+      "size": 128,
+      "region": "sc02_0005",
+      "optimization": "-O2",
+      "recovery": "c",
+      "extent": "function"
     }
   ]
 }

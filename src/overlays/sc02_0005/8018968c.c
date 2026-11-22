@@ -5,7 +5,7 @@ extern s32 func_8018B300(void);
 extern u8 *func_8012913C(u16 kind);
 extern void func_801292C8(char *resource);
 extern void *func_8012C1B8(void);
-extern s32 func_8012CAE4(u8 *actor);
+#include "steam_knight_actor_dispose.h"
 
 #if defined(__mips__) && !defined(__LP64__)
 #include "steam_knight_model_binding.h"
