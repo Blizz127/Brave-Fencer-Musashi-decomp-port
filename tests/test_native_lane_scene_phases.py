@@ -2,6 +2,7 @@
 import hashlib
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 
 import pytest
@@ -957,3 +958,34 @@ def test_forest_diagnostic_distinguishes_other_scene_at_same_pc(tmp_path, monkey
     monkeypatch.setattr(lane, "member_digest",
                         lambda member, addr, length: digest if length == size else None)
     assert lane.overlay_extent_source_only(row, source, info, lane.SCENE_PHASE_EXTENTS)
+
+
+@pytest.mark.parametrize("pc,size", [
+    (0x8012BCCC, 72), (0x8012C51C, 108), (0x8012C658, 204), (0x8012D5E4, 64),
+])
+def test_forest_actor_allocation_regional_alias(tmp_path, pc, size):
+    (tmp_path / "ir").mkdir()
+    name = f"{pc:08x}.c"
+    forest = ROOT / "src/overlays/sc01_0077" / name
+    main = ROOT / "src/overlays/main_0012" / name
+    separate = tmp_path / name
+    separate.write_bytes(forest.read_bytes())
+    if main.exists() and pc != 0x8012C658:
+        assert forest.read_bytes() == main.read_bytes()
+    for source, region, member in ((separate, "sc01_0077", None),
+                                    (separate, "main_0012", "sc01_0077"),
+                                    (forest, "other", "other")):
+        row = dict(vram=pc, name=f"func_{pc:08X}", size=size, source=str(source), region=region)
+        info = dict(member=member, vram=pc, start=0, data=bytes(size), code=[(pc, pc + size)]) if member else None
+        result = lane.build_one(row, tmp_path, {}, {}, "clang", info)
+        assert result.get("rule") == "timing"
+
+
+def test_forest_child_allocator_agrees_with_its_caller():
+    source = '#include "80184c0c.c"\n#include "8012c658.c"\n'
+    subprocess.run(
+        ["clang", "-target", "mipsel-none-elf", "-std=c11", "-fsyntax-only",
+         "-Werror=incompatible-pointer-types", "-I", str(ROOT / "include"),
+         "-I", str(ROOT / "src/overlays/sc01_0077"), "-x", "c", "-"],
+        input=source, text=True, check=True,
+    )

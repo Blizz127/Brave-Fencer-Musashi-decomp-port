@@ -1814,6 +1814,10 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
         if vram == 0x80159968 and hashlib.sha256(src.read_bytes()).hexdigest() == (
                 "bcac09920911836169ac8b046074783fa94dde9ffcf4df65542f7bfbfedb00bc"):
             raise Reject("timing", "forest phase requires its guest callback and return timing")
+        if vram in (0x8012BCCC, 0x8012C51C, 0x8012C658, 0x8012D5E4) and (
+                entry.get("region") == "sc01_0077" or member == "sc01_0077" or
+                src.resolve() == ROOT / f"src/overlays/sc01_0077/{vram:08x}.c"):
+            raise Reject("timing", "forest actor queries and allocation require the active room state and guest timing")
         if vram in (0x8012C354, 0x8012C658, 0x8012C890):
             # The template and slot search have identical instructions in other rooms.
             # Only the Tower slot initializer can be identified by its code alone.
