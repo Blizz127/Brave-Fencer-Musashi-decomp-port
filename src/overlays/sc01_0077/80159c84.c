@@ -38,7 +38,7 @@ void func_80159C84(ForestActionPlayer *actor)
         }
         break;
     case 3:
-        func_801498E0(actor);
+        func_801498E0(FOREST_ACTOR_GAME_ADDRESS(actor));
         break;
     case 4:
         func_80149954(actor);

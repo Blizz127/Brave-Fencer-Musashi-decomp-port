@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <setjmp.h>
 #include <stdlib.h>
 #include <string.h>
 #include "forest_action.h"
@@ -14,6 +15,7 @@ enum Operation {
     CHECK_RESET,
     LOAD_VECTOR,
     RESTART_ANIMATION,
+    KIND_REQUEST,
     SELECT_ANIMATION_0,
     SELECT_ANIMATION_1,
     SELECT_ANIMATION_2,
@@ -27,7 +29,9 @@ enum Operation {
 
 static enum Operation events[40];
 static size_t count;
-static s32 initial_condition, sample, next_step;
+static s32 initial_condition, sample, next_step, selected_mode;
+static int actor_mapped;
+static jmp_buf held;
 u16 D_800B99DA;
 
 static void observe(enum Operation event, ForestActionPlayer *actor)
@@ -46,6 +50,8 @@ static void reset(void)
 {
     memset(&player, 0, sizeof player);
     initial_condition = 0;
+    selected_mode = 7;
+    actor_mapped = 1;
     count = 0;
     D_800B99DA = 3;
     sample = 1;
@@ -75,7 +81,7 @@ ZERO_PREDICATE(func_80161BE0)
 ZERO_PREDICATE(func_801496D4)
 ZERO_PREDICATE(func_80149CD4)
 ZERO_PREDICATE(func_801488A8)
-s32 func_801619A4(ForestActionPlayer *actor) { assert(actor == &player); return 7; }
+s32 func_801619A4(ForestActionPlayer *actor) { assert(actor == &player); return selected_mode; }
 s32 func_80161208(ForestActionPlayer *actor) { observe(CHECK_FINAL_ACTION, actor); return 1; }
 
 s32 bfm_forest_action_sample(void) { observe(SAMPLE, &player); return sample; }
@@ -112,6 +118,8 @@ s32 func_801473EC(ForestActionPlayer *actor) { observe(UPDATE_EFFECT, actor); re
 u32 bfm_forest_action_actor_address(ForestPlayerState *actor)
 {
     observe(RESOLVE_ACTOR, actor);
+    if (!actor_mapped)
+        longjmp(held, 1);
     return actor_address;
 }
 s32 func_8014C010(s32 address, s32 request)
@@ -134,7 +142,12 @@ UNEXPECTED_RESULT(func_80172590)
 UNEXPECTED_CALL(func_80149AD4)
 UNEXPECTED_CALL(func_8014A830)
 UNEXPECTED_CALL(func_80149BAC)
-UNEXPECTED_CALL(func_801498E0)
+s32 func_801498E0(u32 address)
+{
+    assert(address == actor_address);
+    observe(KIND_REQUEST, &player);
+    return 1;
+}
 UNEXPECTED_CALL(func_80149954)
 UNEXPECTED_CALL(func_800CCCC0)
 UNEXPECTED_CALL(func_8015E880)
@@ -159,6 +172,25 @@ int main(void)
     static const enum Operation wrapped[] = {
         TEST_TRANSITION, CHECK_RESET, RESTART_ANIMATION, CHECK_FINAL_ACTION
     };
+
+    static const enum Operation kind_request[] = {
+        TEST_TRANSITION, RESOLVE_ACTOR, KIND_REQUEST, CHECK_FINAL_ACTION
+    };
+    static const enum Operation unavailable_actor[] = {TEST_TRANSITION, RESOLVE_ACTOR};
+
+    reset();
+    selected_mode = 3;
+    func_80159C84(&player);
+    expect(kind_request, sizeof kind_request / sizeof kind_request[0]);
+
+    reset();
+    selected_mode = 3;
+    actor_mapped = 0;
+    if (setjmp(held) == 0) {
+        func_80159C84(&player);
+        abort();
+    }
+    expect(unavailable_actor, sizeof unavailable_actor / sizeof unavailable_actor[0]);
 
     reset();
     initial_condition = 1;
