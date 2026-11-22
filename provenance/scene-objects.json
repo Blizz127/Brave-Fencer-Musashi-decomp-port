@@ -2581,6 +2581,17 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2"
+    },
+    {
+      "name": "func_80135A4C",
+      "vram": 2148751948,
+      "size": 724,
+      "region": "sc01_0077",
+      "source": "src/overlays/sc01_0077/80135a4c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "rodata_base": 2149417352
     }
   ]
 }

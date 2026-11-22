@@ -86,6 +86,14 @@ s32 func_80136334(FloorBox *box, s32 flags, s16 z);
 s32 func_801365B8(FloorBox *box, s32 flags, s16 x);
 s32 func_80136824(FloorBox *box, s32 flags, s16 y);
 s32 func_80135888(FloorContactRecord *record, s32 packed, FloorPoint *start, FloorPoint *end);
+s32 func_80135A4C(FloorContactRecord *record, s32 packed, FloorPoint *start, FloorPoint *end);
+s32 func_80133AB0(s32 flags, s16 x, s16 z, FloorGrid *grid);
+extern s16 D_801D94FC;
+extern FloorPoint D_801152B0;
+#ifndef __mips__
+/* Resolve box handles to FloorBox and grid handles to widened FloorGrid. Zero ends a list. */
+void *bfm_forest_contact_model(u32 address, s32 is_box);
+#endif
 
 extern FloorPoint D_80126720;
 void func_80136A94(s32 rotate, FloorContactRecord *record, FloorPoint *output, void *matrix);

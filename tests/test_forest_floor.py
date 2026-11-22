@@ -86,3 +86,13 @@ def test_actor_slope_coordinates(tmp_path):
         ROOT / "src/main/80015978.c", ROOT / "src/main/80015954.c", "-o", binary,
     ], check=True)
     subprocess.run([binary], check=True)
+
+
+def test_model_contact_link_and_grid_retries(tmp_path):
+    binary = tmp_path / "model-contact"
+    subprocess.run([
+        "cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-I", ROOT / "include",
+        ROOT / "tests/forest_model_contact_probe.c", ROOT / "src/overlays/sc01_0077/80135a4c.c",
+        "-o", binary,
+    ], check=True)
+    subprocess.run([binary], check=True)
