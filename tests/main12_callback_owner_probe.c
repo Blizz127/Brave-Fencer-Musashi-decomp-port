@@ -7,6 +7,11 @@
 
 #include "musashi_sha256_digest.h"
 
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 #define CHECK(expr) do { if (!(expr)) { \
     fprintf(stderr, "main12 test line %d: %s\n", __LINE__, #expr); exit(1); \
 } } while (0)
@@ -78,6 +83,9 @@ static void load_media(const char *path, int check_stdin)
     transfer = member + TRANSFER_OFFSET;
     check_digest(transfer, TRANSFER_SIZE, initial_hash);
     if (check_stdin) {
+#ifdef _WIN32
+        CHECK(_setmode(_fileno(stdin), _O_BINARY) != -1);
+#endif
         unsigned char block[4096];
         for (size_t off = 0; off < TRANSFER_SIZE;) {
             size_t count = TRANSFER_SIZE - off;
