@@ -1010,6 +1010,96 @@ static uint16_t modulate_texel(uint16_t texel, uint32_t rgb) {
     return (uint16_t)(r | (g << 5) | (b << 10) | (texel & 0x8000u));
 }
 
+enum { TEXTURE_ONE = 65536, TEXTURE_HALF = 32768 };
+
+typedef struct {
+    int x, y, u, v;
+} TextureVertex;
+
+typedef struct {
+    TextureVertex start;
+    int width, height;
+    int64_t du, dv;
+} TextureEdge;
+
+typedef struct {
+    TextureEdge long_edge, upper, lower;
+    int64_t du_dx, dv_dx;
+    int drawable;
+} TextureTriangle;
+
+typedef struct {
+    int x;
+    int64_t u, v;
+} TextureRow;
+
+static int64_t texture_floor(int64_t value) {
+    return value / TEXTURE_ONE - (value % TEXTURE_ONE < 0);
+}
+
+static TextureEdge texture_edge(TextureVertex start, TextureVertex end) {
+    TextureEdge edge = { .start = start, .width = end.x - start.x, .height = end.y - start.y };
+    int height = end.y - start.y;
+    if (height) {
+        edge.du = (int64_t)(end.u - start.u) * TEXTURE_ONE / height;
+        edge.dv = (int64_t)(end.v - start.v) * TEXTURE_ONE / height;
+    }
+    return edge;
+}
+
+static int vertex_after(TextureVertex a, TextureVertex b) {
+    return a.y > b.y || (a.y == b.y && a.x > b.x);
+}
+
+static TextureTriangle texture_triangle(TextureVertex a, TextureVertex b, TextureVertex c) {
+    TextureVertex swap;
+    if (vertex_after(a, b)) { swap = a; a = b; b = swap; }
+    if (vertex_after(b, c)) { swap = b; b = c; c = swap; }
+    if (vertex_after(a, b)) { swap = a; a = b; b = swap; }
+    /* Quantize the long edge at the middle vertex before computing the
+     * horizontal texture gradient. Its width can round to zero. */
+    int64_t middle = (int64_t)(b.y - a.y) * TEXTURE_ONE / (c.y - a.y);
+    int64_t width = (int64_t)(b.x - a.x) * TEXTURE_ONE - (c.x - a.x) * middle;
+    TextureTriangle t = {
+        .long_edge = texture_edge(a, c),
+        .upper = texture_edge(a, b),
+        .lower = texture_edge(b, c)
+    };
+    if (width) {
+        t.du_dx = ((int64_t)(b.u - a.u) * TEXTURE_ONE - (c.u - a.u) * middle) * TEXTURE_ONE / width;
+        t.dv_dx = ((int64_t)(b.v - a.v) * TEXTURE_ONE - (c.v - a.v) * middle) * TEXTURE_ONE / width;
+        t.drawable = 1;
+    }
+    return t;
+}
+
+static int64_t edge_x(const TextureEdge *edge, int y) {
+    int64_t x = (int64_t)edge->start.x * TEXTURE_ONE;
+    if (edge->height)
+        x += (int64_t)edge->width * (y - edge->start.y) * TEXTURE_ONE / edge->height;
+    return x;
+}
+
+/* Carry the truncated scanline increments from the left edge. Decomposing
+ * its X coordinate keeps the subpixel correction bounded on thin triangles. */
+static TextureRow texture_row(const TextureTriangle *triangle, int y) {
+    const TextureEdge *edge = y < triangle->lower.start.y ? &triangle->upper : &triangle->lower;
+    int64_t x = edge_x(edge, y);
+    int64_t long_x = edge_x(&triangle->long_edge, y);
+    if (long_x <= x) { edge = &triangle->long_edge; x = long_x; }
+    int rows = y - edge->start.y;
+    int base = (int)texture_floor(x);
+    int64_t fraction = x - (int64_t)base * TEXTURE_ONE;
+    TextureRow row = {
+        .x = base,
+        .u = (int64_t)edge->start.u * TEXTURE_ONE + rows * edge->du +
+             texture_floor(-fraction * triangle->du_dx) + TEXTURE_HALF,
+        .v = (int64_t)edge->start.v * TEXTURE_ONE + rows * edge->dv +
+             texture_floor(-fraction * triangle->dv_dx) + TEXTURE_HALF
+    };
+    return row;
+}
+
 static int fill_textured_triangle(MusashiGpuController *controller,
                                   int x0, int y0, unsigned u0, unsigned v0,
                                   int x1, int y1, unsigned u1, unsigned v1,
@@ -1031,7 +1121,12 @@ static int fill_textured_triangle(MusashiGpuController *controller,
     area = (long long)(x1 - x0) * (y2 - y0) - (long long)(y1 - y0) * (x2 - x0);
     if (!area) return 1;
     TriangleCoverage coverage = triangle_coverage(x0, y0, x1, y1, x2, y2, area);
+    TextureTriangle texture = texture_triangle((TextureVertex){x0, y0, (int)u0, (int)v0},
+                                               (TextureVertex){x1, y1, (int)u1, (int)v1},
+                                               (TextureVertex){x2, y2, (int)u2, (int)v2});
+    if (!texture.drawable) return 1;
     for (y = miny; y <= maxy; ++y) {
+        TextureRow row = texture_row(&texture, y);
         for (x = minx; x <= maxx; ++x) {
             long long w0 = (long long)(x1 - x) * (y2 - y) -
                            (long long)(y1 - y) * (x2 - x);
@@ -1040,13 +1135,10 @@ static int fill_textured_triangle(MusashiGpuController *controller,
             long long w2 = (long long)(x0 - x) * (y1 - y) -
                            (long long)(y0 - y) * (x1 - x);
             uint16_t texel = 0;
-            long long u_num, v_num;
             int u, v;
             if (!covers_sample(&coverage, w0, w1, w2)) continue;
-            u_num = (long long)w0 * (long long)u0 + (long long)w1 * (long long)u1 + (long long)w2 * (long long)u2;
-            v_num = (long long)w0 * (long long)v0 + (long long)w1 * (long long)v1 + (long long)w2 * (long long)v2;
-            u = (int)(u_num / area);
-            v = (int)(v_num / area);
+            u = (int)texture_floor(row.u + (x - row.x) * texture.du_dx);
+            v = (int)texture_floor(row.v + (x - row.x) * texture.dv_dx);
             if (!sample_texel(controller, fmt, tx, ty, clut_x, clut_y,
                               (unsigned)u & 255u, (unsigned)v & 255u, &texel))
                 return 0;
@@ -1140,7 +1232,12 @@ static int fill_textured_gouraud_triangle(MusashiGpuController *controller,
     if (!area) return 1;
     TriangleCoverage coverage = triangle_coverage(x0, y0, x1, y1, x2, y2, area);
 
+    TextureTriangle texture = texture_triangle((TextureVertex){x0, y0, (int)u0, (int)v0},
+                                               (TextureVertex){x1, y1, (int)u1, (int)v1},
+                                               (TextureVertex){x2, y2, (int)u2, (int)v2});
+    if (!texture.drawable) return 1;
     for (y = miny; y <= maxy; ++y) {
+        TextureRow row = texture_row(&texture, y);
         for (x = minx; x <= maxx; ++x) {
             long long w0 = (long long)(x1 - x) * (y2 - y) -
                            (long long)(y1 - y) * (x2 - x);
@@ -1149,15 +1246,12 @@ static int fill_textured_gouraud_triangle(MusashiGpuController *controller,
             long long w2 = (long long)(x0 - x) * (y1 - y) -
                            (long long)(y0 - y) * (x1 - x);
             uint16_t texel = 0;
-            long long u_num, v_num;
             int u, v;
 
             if (!covers_sample(&coverage, w0, w1, w2)) continue;
 
-            u_num = (long long)w0 * (long long)u0 + (long long)w1 * (long long)u1 + (long long)w2 * (long long)u2;
-            v_num = (long long)w0 * (long long)v0 + (long long)w1 * (long long)v1 + (long long)w2 * (long long)v2;
-            u = (int)(u_num / area);
-            v = (int)(v_num / area);
+            u = (int)texture_floor(row.u + (x - row.x) * texture.du_dx);
+            v = (int)texture_floor(row.v + (x - row.x) * texture.dv_dx);
             if (!sample_texel(controller, fmt, tx, ty, clut_x, clut_y,
                               (unsigned)u & 255u, (unsigned)v & 255u, &texel))
                 return 0;

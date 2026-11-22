@@ -997,6 +997,40 @@ class GpuControllerTests(unittest.TestCase):
         for word in words:
             self.assertEqual(self.write(word), 1, hex(word))
 
+    def test_texture_coordinates_on_clipped_scanlines(self):
+        # Independent software GPU readback. Adjacent samples straddle texel
+        # boundaries with positive, negative and oblique screen-space slopes.
+        cases = [
+            (((0, 0), (997, 0), (0, 23)), ((10, 13), (25, 87), (19, 87)),
+             498, 0, ((17, 50), (17, 50), (18, 50))),
+            (((0, 28), (991, 28), (7, 51)), ((81, 99), (16, 71), (72, 13)),
+             525, 28, ((47, 84), (47, 84), (46, 84))),
+            (((69, 161), (989, 140), (10, 160)), ((75, 19), (85, 29), (54, 46)),
+             310, 155, ((73, 27), (73, 27), (74, 27))),
+        ]
+        for points, uv, left, y, expected in cases:
+            for opcode in (0x25, 0x35):
+                with self.subTest(points=points, opcode=opcode):
+                    writes, reads = self._geometry_probe(area=(left, y, left + 2, y))
+                    words = [(opcode << 24) | 0x808080]
+                    for i, ((px, py), (u, v)) in enumerate(zip(points, uv)):
+                        if i and opcode & 0x10:
+                            words.append(0x808080)
+                        words.extend((px | (py << 16),
+                                      u | (v << 8) | ((0x11a << 16) if i == 1 else 0)))
+                    for word in words:
+                        self.assertEqual(self.write(word), 1)
+                    self.assertEqual(reads, [(640 + u, 256 + v) for u, v in expected])
+                    self.assertEqual(set(writes), {(left + i, y) for i in range(3)})
+
+    def test_texture_triangle_collapsing_at_middle_scanline(self):
+        for opcode in (0x25, 0x35):
+            with self.subTest(opcode=opcode):
+                writes, reads = self._geometry_probe(area=(0, 0, 512, 129))
+                self._polygon(opcode, ((0, 0), (127, 32), (512, 129)))
+                self.assertEqual(reads, [])
+                self.assertEqual(writes, {})
+
     def test_polygon_extent_is_checked_before_drawing_area_clip(self):
         # Only a small interior window is observed. The long edges straddle it.
         for opcode in (0x20, 0x25, 0x30, 0x35):
