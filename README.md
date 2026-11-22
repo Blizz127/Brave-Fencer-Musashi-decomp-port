@@ -42,8 +42,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 22 source update covers 247 functions across seven scene overlays,
-totaling 20,412 bytes of matching executable code. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 22 source update covers 248 functions across seven scene overlays,
+totaling 20,768 bytes of matching executable code. Four mine routines scan floor probes and pass their position to the map lookup.
 In the opening scene, one
 routine calls the handler selected by the player state byte. Another sets the
 facing direction and counts frames. A separate scene event uses that timer
@@ -126,6 +126,13 @@ intersecting face in a grid cell and return its slope class. The component test
 covers face order, plane boundaries, material selection and collision scratch
 state on a late miss. The player interprets these routines. Run
 `python3 -m pytest -q tests/test_forest_floor.py`.
+
+A second segment routine tests the starting cell, then tries the ending cell
+when the segment crosses a 128-unit cell boundary and the first search misses.
+It writes the projected contact and material to the endpoint on a hit. During
+ordinary original play in room 3008, the starting-cell call was observed twice.
+The forest floor test covers first hits, retries and overlapping output. The
+player continues to execute this routine on the guest CPU.
 
 Three additional forest routines test a moving segment against the faces in
 its grid cell. An accepted contact calls the original VectorNormalSS service

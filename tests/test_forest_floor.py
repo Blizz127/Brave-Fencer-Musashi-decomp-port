@@ -53,3 +53,13 @@ def test_forest_contact_transform(tmp_path):
         ROOT / "src/overlays/sc01_0077/80136a94.c", "-o", binary,
     ], check=True)
     subprocess.run([binary], check=True)
+
+
+def test_moving_segment_cell_retry(tmp_path):
+    binary = tmp_path / "moving-segment"
+    source = ROOT / "src/overlays/sc01_0077/80135004.c"
+    subprocess.run([
+        "cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-I", ROOT / "include",
+        ROOT / "tests/forest_moving_segment_probe.c", source, "-o", binary,
+    ], check=True)
+    subprocess.run([binary], check=True)

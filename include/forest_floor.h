@@ -49,6 +49,8 @@ s32 func_80134A74(s32 flags, s16 x, s16 z, FloorGrid *grid);
 s32 func_80134C20(s16 flags, FloorFace *face, FloorPoint *vertices, s32 *distances);
 s32 func_80134FB8(FloorPoint *normal, FloorPoint *point, s32 distance);
 
+s32 func_80135004(u16 flags, FloorPoint *from, FloorPoint *to);
+
 /* The rotation occupies five words at +0x34. The translation follows at +0x48. */
 typedef union {
     s16 coefficients[10];
