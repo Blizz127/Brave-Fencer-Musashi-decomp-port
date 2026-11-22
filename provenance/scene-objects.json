@@ -1954,6 +1954,32 @@
       "optimization": "-O2"
     },
     {
+      "name": "func_801859AC",
+      "region": "sc03_0001",
+      "vram": 2149079468,
+      "size": 424,
+      "source": "src/overlays/sc03_0001/801859ac.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "rodata_base": 2149502600,
+      "origin": "Independently reconstructed from the USA SC03.CD member 0001 type-4 payload and the public village actor call declarations.",
+      "source_sha256": "2db6899023855653a51df3e026e8c0ffd05a69201b6eb7a79936e07d61224f1c",
+      "span_sha256": "bf4d67e89fb762f1d917a813d3691003a5b4b5eeede04ec90a1f99f6a5c388a6",
+      "jump_tables": [
+        {
+          "vram": 2149502600,
+          "size": 20,
+          "sha256": "94df6e46672cabb1f432a96a79cc202be1376cddbd667338b02869b9e8961539"
+        },
+        {
+          "vram": 2149502624,
+          "size": 120,
+          "sha256": "590137da6cd718fd608446fd4d91a201b5f4c0049088664197958b4e6047e782"
+        }
+      ]
+    },
+    {
       "name": "func_8018C89C",
       "region": "sc03_0001",
       "vram": 2149107868,
