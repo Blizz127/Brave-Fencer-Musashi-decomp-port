@@ -13,7 +13,7 @@ typedef struct Probe {
     const void *continuation;
     unsigned checkpoints, crt_returns, graphics_entries;
     unsigned elapsed, exchange_start, exchange_steps, exchange_returns;
-    int change_exchange;
+    unsigned change_exchange_step;
 } Probe;
 
 static int advance(void *userdata, uint32_t cycles) {
@@ -37,11 +37,13 @@ static int checkpoint(void *userdata, const void *continuation) {
             assert(i < 6 && cpu.pc == EXCHANGE + 4u * i);
             if (i == 0) probe->exchange_start = probe->elapsed;
             assert(probe->elapsed - probe->exchange_start == clocks[i]);
-            if (probe->change_exchange && i == 2) {
+            if (probe->change_exchange_step == i + 1u) {
                 uint32_t value;
                 assert(musashi_boot_read32(&probe->memory, EXCHANGE+20u, &value));
                 assert(musashi_boot_write32(&probe->memory, EXCHANGE+20u, value ^ 1u));
+                assert(!musashi_boot_cpu_context(continuation, MUSASHI_CPU_CONTEXT_SOURCE, &cpu));
             }
+            assert(!musashi_boot_continuation_host_context(continuation, &cpu));
         } else if (cpu.pc == EXCHANGE_RETURN) {
             assert(probe->exchange_steps == 6 && probe->elapsed - probe->exchange_start == 14);
             assert(cpu.gpr[1] == 0x80070000u && cpu.gpr[2] == 0);
@@ -93,10 +95,6 @@ int main(int argc, char **argv) {
     assert(fclose(file) == 0);
     assert(musashi_boot_map_exe(&probe.memory, exe, 0x65000u));
     assert(musashi_boot_load_entry(&probe.expected, exe, 0x65000u, 0, &expected_entry));
-    changed.memory = probe.memory;
-    changed.expected = probe.expected;
-    changed.change_exchange = 1;
-    free(exe);
     device.userdata = &probe;
     device.checkpoint = checkpoint;
     MusashiExecutionClock clock = {&probe, advance};
@@ -110,12 +108,20 @@ int main(int argc, char **argv) {
     assert(stop.cpu.r[29] != 0x801fff80u); /* No old diagnostic frame reset. */
     /* Changing a later instruction invalidates the whole service at the
      * current fetch, before the following instruction can charge its clock. */
-    clock.userdata = &changed;
-    device.userdata = &changed;
-    assert(musashi_boot_run_entry_with_devices(&changed.memory, 0, &services, sink, NULL,
-        observe, &changed, &stop) == MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT);
-    assert(stop.cpu.pc == EXCHANGE+8u && changed.exchange_steps == 3 && !changed.exchange_returns);
-    assert(changed.elapsed - changed.exchange_start == 5);
+    for (unsigned step = 1; step <= 3; step += 2) {
+        memset(&changed, 0, sizeof changed);
+        assert(musashi_boot_map_exe(&changed.memory, exe, 0x65000u));
+        changed.expected = probe.expected;
+        changed.change_exchange_step = step;
+        clock.userdata = &changed;
+        device.userdata = &changed;
+        assert(musashi_boot_run_entry_with_devices(&changed.memory, 0, &services, sink, NULL,
+            observe, &changed, &stop) == MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT);
+        assert(stop.cpu.pc == EXCHANGE + 4u * (step - 1u));
+        assert(changed.exchange_steps == step && !changed.exchange_returns);
+        assert(changed.elapsed - changed.exchange_start == (step == 1 ? 0u : 5u));
+    }
+    free(exe);
 
     /* Test-owned malformed CRT stack metadata exercises ADDI's real signed
      * overflow refusal. The production image is never modified this way. */

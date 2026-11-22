@@ -11300,6 +11300,8 @@ int musashi_boot_cpu_context(const void *continuation,
     return 1;
 }
 
+static int startup_prefix_owns_cpu(const FormatterCpu *cpu);
+
 int musashi_boot_continuation_host_context(const void *continuation,
     MusashiCpuContext *out) {
     const FormatterCpu *cpu = continuation;
@@ -11324,8 +11326,9 @@ int musashi_boot_continuation_host_context(const void *continuation,
     case STARTUP_CLEAR_29044: case STARTUP_CLEAR_2906C:
     case STARTUP_CLEAR_29094: case STARTUP_CLEAR_29218:
     case STARTUP_RECORD_CLEAR: case CD_INITIALIZER_STRING_EMIT:
-    case 0x80043060u:
         accepted = 1; break;
+    case STARTUP_EXCHANGE:
+        accepted = startup_prefix_owns_cpu(cpu); break;
     case INPUT_C0_3:
         accepted = input && input->dequeue_irq_result; break;
     case INPUT_C0_2:
@@ -13201,6 +13204,11 @@ typedef struct LaneActive {
 /* The owner thread runs one CPU loop at a time; frames nest by recursion. */
 static LaneRunFrame *g_lane_run_frames;
 static LaneActive *g_lane_active;
+
+/* The bounded loop binds a host exchange. The full entry fetches it from RAM. */
+static int startup_prefix_owns_cpu(const FormatterCpu *cpu) {
+    return g_lane_run_frames && g_lane_run_frames->cpu == cpu && !g_lane_run_frames->entry_stop;
+}
 
 /* musashi_native_lane_map_guest is host-specific: pc_port/platform/. */
 
@@ -15221,7 +15229,7 @@ static MusashiResetGraphPrefixStatus run_startup_cpu_loop(
             formatter_return(cpu);
             continue;
         }
-        if (!entry_stop && cpu->pc == STARTUP_EXCHANGE) {
+        if (cpu->pc == STARTUP_EXCHANGE && startup_prefix_owns_cpu(cpu)) {
             int32_t previous;
             if (!musashi_boot_call_80043060(memory, (int32_t)cpu->r[4], &previous))
                 return MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT;

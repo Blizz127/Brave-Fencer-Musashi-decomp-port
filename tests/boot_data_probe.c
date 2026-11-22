@@ -20,6 +20,16 @@ static void record_console(void *userdata, const uint8_t *bytes, int32_t length)
     console_bytes[console_length++] = bytes[0];
 }
 
+static int prefix_exchange_checkpoint(void *userdata, const void *continuation) {
+    unsigned *calls = userdata;
+    MusashiCpuContext context;
+    if (!musashi_boot_continuation_host_context(continuation, &context) ||
+        context.identity != continuation || context.provenance != MUSASHI_CPU_CONTEXT_HOST_BIOS_SERVICE ||
+        context.instruction_valid) return 0;
+    ++*calls;
+    return 1;
+}
+
 int main(int argc, char **argv) {
     static MusashiBootMemory memory;
     static uint8_t image[0x65001];
@@ -37,6 +47,14 @@ int main(int argc, char **argv) {
     CHECK(previous == -19088744);
     CHECK(musashi_boot_read32(&memory, 0x8006cbe8u, &value));
     CHECK(value == 0xffffffffu);
+    unsigned prefix_checkpoints = 0;
+    MusashiCallbackDevice callback = {.userdata = &prefix_checkpoints, .checkpoint = prefix_exchange_checkpoint};
+    MusashiStartupPrefixDevice devices = {.callback = &callback};
+    MusashiResetGraphPrefixStop prefix_stop;
+    CHECK(musashi_boot_execute_source_function(&memory, &devices, 0x80043060u,
+        record_console, NULL, &prefix_stop) == MUSASHI_RESETGRAPH_PREFIX_COMPLETE);
+    CHECK(prefix_checkpoints == 1 && prefix_stop.target_address == UINT32_MAX);
+    CHECK(musashi_boot_read32(&memory, 0x8006cbe8u, &value) && value == 0);
     CHECK(!musashi_boot_write32(&memory, 0x1f801814u, 0));
     CHECK(!musashi_boot_ram_span(&memory, 0x801fffffu, 2));
     record = musashi_boot_ram_span(&memory, 0x80078d98u, 0x4c);
