@@ -47,6 +47,9 @@ typedef struct MusashiGpuDma2State {
  * Pinned PCSX-Redux gpu.cc model: submit actual ordered GP0 words synchronously
  * at start; schedule completion at cycle+1+headers+payload. First6-word packet
  * costs8 model cycles. This is NOT physical arbitration/stalls/FIFO/cycle parity.
+ * Block readback consumes the buffered GPU image in FIFO order, writes it to
+ * RAM and schedules channel 2 completion at cycle+1+words. A short image
+ * or an out-of-range destination is rejected before consuming any data.
  * Accepted words persist on later failure; no incomplete stream completes.
  * CHCR has ONE authority in the shared DMA controller. Completion clears only
  * busy, leaving401, MADRFFFFFF and BCR unchanged; IRQ uses shared DMA channel2.

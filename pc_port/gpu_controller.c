@@ -156,10 +156,6 @@ int musashi_gpu_controller_get_store_image(const MusashiGpuController *controlle
                                            uint16_t *width, uint16_t *height,
                                            uint32_t *total_halfwords);
 int musashi_gpu_controller_store_image_phase(const MusashiGpuController *controller);
-uint32_t musashi_gpu_controller_store_image_remaining_words(const MusashiGpuController *controller);
-int musashi_gpu_controller_read_store_image_buffer(MusashiGpuController *controller,
-                                                  uint32_t *out_words, uint32_t max_words,
-                                                  uint32_t *actual_words);
 
 static int backend_bound(const MusashiGpuController *controller) {
     return controller && controller->backend.reset &&

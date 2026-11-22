@@ -129,6 +129,10 @@ int musashi_gpu_controller_init(MusashiGpuController *controller,
                                 const MusashiGpuBackend *backend);
 int musashi_gpu_controller_read32(MusashiGpuController *controller,
                                    uint32_t address, uint32_t *value);
+uint32_t musashi_gpu_controller_store_image_remaining_words(const MusashiGpuController *controller);
+int musashi_gpu_controller_read_store_image_buffer(MusashiGpuController *controller,
+                                                   uint32_t *out_words, uint32_t max_words,
+                                                   uint32_t *actual_words);
 int musashi_gpu_controller_write32(MusashiGpuController *controller,
                                    uint32_t address, uint32_t value);
 /* Advance the source-owned odd/even GPUSTAT bit for one real VBlank edge. */

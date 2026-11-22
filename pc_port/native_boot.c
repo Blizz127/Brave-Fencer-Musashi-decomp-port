@@ -730,6 +730,8 @@ static int gpu_io_write32(void *userdata, uint32_t address, uint32_t value) {
         if (accepted && address==0x1f801814u && (value>>24)==0)
             boot->gpu_reset_sequence=boot->epoch.last_sequence;
     } else if (address==0x1f8010a0u || address==0x1f8010a4u || address==0x1f8010a8u) {
+        int readback = address == 0x1f8010a8u && value == 0x01000200u;
+        uint32_t available = readback ? musashi_gpu_controller_store_image_remaining_words(&boot->gpu) : 0;
         if (address==0x1f8010a8u && value==0x01000201u)
             fprintf(stderr,"native_boot: GPU_STORE_BEFORE_BLOCK phase=%u remaining=%u "
                     "pixels=%llu xy=%u,%u wh=%u,%u px=%u,%u\n",
@@ -738,6 +740,14 @@ static int gpu_io_write32(void *userdata, uint32_t address, uint32_t value) {
                     boot->gpu.store_x,boot->gpu.store_y,boot->gpu.store_w,boot->gpu.store_h,
                     boot->gpu.store_px,boot->gpu.store_py);
         accepted=musashi_gpu_dma2_write32(boot->gpu_dma,address,value);
+        if (readback) {
+            MusashiGpuDma2State transfer;
+            if (musashi_gpu_dma2_get_state(boot->gpu_dma, &transfer))
+                fprintf(stderr, "native_boot: GPU_DMA2_READBACK accepted=%d bcr=%08x "
+                        "madr_after=%08x available_before=%u available_after=%u\n",
+                        accepted, transfer.bcr, transfer.madr, available,
+                        musashi_gpu_controller_store_image_remaining_words(&boot->gpu));
+        }
         if (address==0x1f8010a8u && (value&0x01000000u)) observe_gpu_dma(boot,"START");
     } else if (address==0x1f8010e0u || address==0x1f8010e4u || address==0x1f8010e8u) {
         accepted=boot->dma_otc && musashi_dma_otc_write32(boot->dma_otc,address,value);

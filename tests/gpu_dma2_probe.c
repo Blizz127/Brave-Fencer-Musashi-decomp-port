@@ -396,7 +396,78 @@ static void image_block(void) {
     assert(state().transfers == 1 && (state().chcr & 0x01000000u) == 0);
     close_owner();
 }
+
+static int read_pixel(void *context, uint16_t x, uint16_t y, uint16_t *pixel) {
+    (void)context;
+    *pixel = (uint16_t)(x + 1024u * y);
+    return 1;
+}
+
+static void request_image(uint32_t width, uint32_t height) {
+    gpu.backend.read_vram = read_pixel;
+    assert(musashi_gpu_controller_write32(&gpu, MUSASHI_GPU_GP1, 0x04000003));
+    assert(musashi_gpu_controller_write32(&gpu, MUSASHI_GPU_GP0, 0xc0000000));
+    assert(musashi_gpu_controller_write32(&gpu, MUSASHI_GPU_GP0, (7u << 16) | 5u));
+    assert(musashi_gpu_controller_write32(&gpu, MUSASHI_GPU_GP0, (height << 16) | width));
+}
+
+static void image_readback(void) {
+    const uint32_t destination = 0x1400;
+    const uint32_t request = 0x01000200;
+    uint32_t status;
+    setup(100);
+    request_image(16, 8);
+    config(destination, 0x00040010);
+    assert(musashi_dma_controller_write32(&dma, 0x1f8010f4, 0x00840000));
+    const uint64_t commands = gpu.accepted_gp0_words;
+    assert(musashi_gpu_dma2_write32(owner, CHCR, request));
+    for (unsigned i = 0; i < 128; ++i) {
+        unsigned pixel = (5u + i % 16u) + 1024u * (7u + i / 16u);
+        assert(ram.bytes[destination + i * 2u] == (uint8_t)pixel);
+        assert(ram.bytes[destination + i * 2u + 1u] == (uint8_t)(pixel >> 8));
+    }
+    assert(ram.bytes[destination - 1] == 0xa5 && ram.bytes[destination + 256] == 0xa5);
+    MusashiGpuDma2State s = state();
+    assert(s.madr == destination + 256 && s.bcr == 0x00040010 && s.chcr == request);
+    assert(s.payload_words == 64 && s.accepted_in_transfer == 64 && s.transfers == 0);
+    assert(gpu.accepted_gp0_words == commands && !musashi_gpu_controller_store_image_remaining_words(&gpu));
+    assert(musashi_gpu_controller_read32(&gpu, MUSASHI_GPU_GPUSTAT, &status));
+    assert(!(status & 0x0a000000u));
+    assert(musashi_gpu_dma2_advance(owner, 164) && !state().transfers && !irq.status);
+    assert(musashi_gpu_dma2_advance(owner, 165));
+    assert(state().chcr == 0x200 && state().transfers == 1 && (irq.status & 8u));
+    close_owner();
+
+    setup(0);
+    request_image(3, 1);
+    config(0x100, 0x00010001);
+    assert(musashi_gpu_dma2_write32(owner, CHCR, request));
+    assert(musashi_gpu_controller_store_image_remaining_words(&gpu) == 1);
+    assert(musashi_gpu_dma2_advance(owner, 2));
+    config(0x104, 0x00010001);
+    assert(musashi_gpu_dma2_write32(owner, CHCR, request));
+    assert(!musashi_gpu_controller_store_image_remaining_words(&gpu));
+    assert(musashi_boot_read32(&ram, 0x80000104, &status) && status == 7u + 7u * 1024u);
+    assert(musashi_gpu_dma2_advance(owner, 4));
+    close_owner();
+}
+
+static void refuse_image_readback(uint32_t destination, uint32_t size) {
+    setup(0);
+    request_image(16, 8);
+    before_ram = ram;
+    config(destination, size);
+    assert(!musashi_gpu_dma2_write32(owner, CHCR, 0x01000200));
+    assert(!state().starts && !state().transfers && !irq.status);
+    assert(musashi_gpu_controller_store_image_remaining_words(&gpu) == 64);
+    assert(!memcmp(&ram, &before_ram, sizeof(ram)));
+    close_owner();
+}
+
 int main(void) {
+    image_readback();
+    refuse_image_readback(0x1400, 0x00010041);
+    refuse_image_readback(MUSASHI_RAM_SIZE - 4, 0x00040010);
     split_fill();
     consecutive_irqs(SECOND_IRQ_REASSERTS);
     consecutive_irqs(SECOND_IRQ_COALESCES);

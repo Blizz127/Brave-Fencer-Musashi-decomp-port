@@ -12,6 +12,7 @@
 #define DMA2_BUSY 0x01000000u
 #define DMA2_START 0x01000401u
 #define DMA2_BLOCK_START 0x01000201u
+#define DMA2_BLOCK_READ 0x01000200u
 #define DMA2_WORD_LIMIT (MUSASHI_RAM_SIZE / 4u)
 
 struct MusashiGpuDma2 {
@@ -194,8 +195,9 @@ static int start(MusashiGpuDma2 *d, uint32_t value) {
 static int start_block(MusashiGpuDma2 *d, uint32_t value) {
     uint32_t status, block, count, words, physical, offset;
     uint64_t delay;
-    if (value != DMA2_BLOCK_START || !(d->dma->control & 0x800u) ||
-        d->gpu->dma_direction != 2u)
+    int readback = value == DMA2_BLOCK_READ;
+    if (!(d->dma->control & 0x800u) ||
+        d->gpu->dma_direction != (readback ? 3u : 2u))
         return fault(d, MUSASHI_GPU_DMA2_ACCESS);
     block = d->state.bcr & 0xffffu;
     count = d->state.bcr >> 16;
@@ -209,24 +211,34 @@ static int start_block(MusashiGpuDma2 *d, uint32_t value) {
     if (!musashi_gpu_controller_read32(d->gpu, MUSASHI_GPU_GPUSTAT, &status) ||
         d->violation || d->gpu->faulted)
         return fault(d, MUSASHI_GPU_DMA2_BACKEND);
-    /* Block CPU-to-GP0 continues a partial packet; command-ready (bit26) is low. */
-    if (!(status & 0x10000000u))
+    if (readback) {
+        /* GPUREAD repeats its latch after an image ends. Only transfer
+         * words supplied by the pending VRAM image request. */
+        if ((status & 0x0a000000u) != 0x0a000000u ||
+            musashi_gpu_controller_store_image_remaining_words(d->gpu) < words)
+            return fault(d, MUSASHI_GPU_DMA2_BACKEND);
+    } else if (!(status & 0x10000000u)) {
+        /* Block CPU-to-GP0 continues even when command-ready (bit26) is low. */
         return fault(d, MUSASHI_GPU_DMA2_BACKEND);
-    if (d->capacity < words) {
-        uint32_t *grown = realloc(d->snapshot, words * sizeof(*grown));
-        if (!grown) return fault(d, MUSASHI_GPU_DMA2_RESOURCE);
-        d->snapshot = grown;
-        d->capacity = words;
     }
-    for (offset = 0; offset < words; ++offset)
-        d->snapshot[offset] = ram_word(d, physical + offset * 4u);
     delay = 1u + words;
     if (d->state.cycle > UINT64_MAX - delay || d->state.starts == UINT64_MAX ||
         d->state.transfers == UINT64_MAX ||
         d->state.fetched_words > UINT64_MAX - words ||
         d->state.accepted_words > UINT64_MAX - words ||
-        d->gpu->accepted_gp0_words > UINT64_MAX - words)
+        (!readback && d->gpu->accepted_gp0_words > UINT64_MAX - words))
         return fault(d, MUSASHI_GPU_DMA2_OVERFLOW);
+    if (!reserve(d, words)) return 0;
+    if (readback) {
+        uint32_t received;
+        if (!musashi_gpu_controller_read_store_image_buffer(d->gpu, d->snapshot,
+                                                             words, &received) ||
+            received != words)
+            return fault(d, MUSASHI_GPU_DMA2_BACKEND);
+    } else {
+        for (offset = 0; offset < words; ++offset)
+            d->snapshot[offset] = ram_word(d, physical + offset * 4u);
+    }
     d->state.start_madr = d->state.madr;
     d->state.nodes = 1;
     d->state.header_words = 0;
@@ -239,21 +251,26 @@ static int start_block(MusashiGpuDma2 *d, uint32_t value) {
     d->pending = 1;
     d->used = words;
     for (offset = 0; offset < words; ++offset) {
-        uint64_t before = d->gpu->accepted_gp0_words;
-        uint64_t after;
-        int accepted;
         d->state.fault_node = physical;
         d->state.fault_word = physical + offset * 4u;
-        accepted = musashi_gpu_controller_write32(d->gpu, MUSASHI_GPU_GP0,
-                                                   d->snapshot[offset]);
-        after = d->gpu->accepted_gp0_words;
-        if (after == before + 1u) {
+        if (readback) {
+            if (!musashi_boot_write32(d->memory, 0x80000000u | d->state.fault_word,
+                                      d->snapshot[offset]))
+                return fault(d, MUSASHI_GPU_DMA2_ACCESS);
             ++d->state.accepted_in_transfer;
             ++d->state.accepted_words;
+        } else {
+            uint64_t before = d->gpu->accepted_gp0_words;
+            int accepted = musashi_gpu_controller_write32(d->gpu, MUSASHI_GPU_GP0,
+                                                          d->snapshot[offset]);
+            if (d->gpu->accepted_gp0_words == before + 1u) {
+                ++d->state.accepted_in_transfer;
+                ++d->state.accepted_words;
+            }
+            if (!accepted || d->gpu->accepted_gp0_words != before + 1u ||
+                d->violation || d->gpu->faulted)
+                return fault(d, MUSASHI_GPU_DMA2_BACKEND);
         }
-        if (!accepted || after != before + 1u || d->violation ||
-            d->gpu->faulted)
-            return fault(d, MUSASHI_GPU_DMA2_BACKEND);
     }
     d->state.madr = physical + words * 4u;
     d->state.fault_node = d->state.fault_word = 0;
@@ -314,7 +331,8 @@ int musashi_gpu_dma2_write32(void *userdata, uint32_t address, uint32_t value) {
     case DMA2_BCR: d->state.bcr = value; break;
     case DMA2_CHCR:
         if (value == 0 || value == 0x401u) d->dma->gpu_channel_control = value;
-        else if (value == DMA2_BLOCK_START) return leave(d, start_block(d, value));
+        else if (value == DMA2_BLOCK_START || value == DMA2_BLOCK_READ)
+            return leave(d, start_block(d, value));
         else return leave(d, start(d, value));
         break;
     default: return leave(d, fault(d, MUSASHI_GPU_DMA2_ACCESS));
@@ -325,7 +343,8 @@ int musashi_gpu_dma2_advance(MusashiGpuDma2 *d, uint64_t cycle) {
     if (!enter(d, 0)) return 0;
     if (cycle < d->state.cycle) return leave(d, fault(d, MUSASHI_GPU_DMA2_CLOCK));
     if (d->pending && d->dma->gpu_channel_control != DMA2_START &&
-        d->dma->gpu_channel_control != DMA2_BLOCK_START)
+        d->dma->gpu_channel_control != DMA2_BLOCK_START &&
+        d->dma->gpu_channel_control != DMA2_BLOCK_READ)
         return leave(d, fault(d, MUSASHI_GPU_DMA2_ACCESS));
     if (d->pending && cycle >= d->state.due) {
         d->state.cycle = d->state.due;
