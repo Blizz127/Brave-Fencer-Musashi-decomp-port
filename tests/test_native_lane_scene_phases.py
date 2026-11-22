@@ -12,6 +12,8 @@ import native_lane_gen as lane
 
 
 PHASES = (
+    ("sc02_0039", 0x8017E758, 60),
+    ("sc02_0039", 0x8017EE9C, 60),
     ("sc03_0109", 0x8017D2E0, 164),
     ("sc03_0109", 0x8017D384, 60),
     ("sc03_0113", 0x8017F07C, 164),
@@ -144,6 +146,23 @@ PHASES = (
     ("sc02_0039", 0x8017CFF4, 40),
     ("main_0010", 0x800D1EBC, 156),
 )
+
+
+
+@pytest.mark.parametrize("pc", (0x8017E758, 0x8017EE9C))
+def test_mine_emitter_selector_uses_complete_body(pc, tmp_path, monkeypatch):
+    source = tmp_path / "independent.c"
+    source.write_text("int independent(void) { return 7; }\n")
+    data = bytes(range(60))
+    entry = dict(region="sc99_0001", vram=pc, size=4)
+    info = dict(member="sc99_0001", vram=pc, start=0, data=data)
+    fingerprint = lane.fnv1a64(data)
+    monkeypatch.setitem(lane.SCENE_PHASE_EXTENTS[pc], "sc02_0039", (60, fingerprint))
+    assert lane.overlay_extent_source_only(entry, source, info, lane.SCENE_PHASE_EXTENTS)
+    assert not lane.overlay_extent_source_only(entry, source, dict(info, data=data[:4]), lane.SCENE_PHASE_EXTENTS)
+    assert not lane.overlay_extent_source_only(entry, source, dict(info, data=None), lane.SCENE_PHASE_EXTENTS)
+    changed = data[:-1] + bytes([data[-1] ^ 1])
+    assert not lane.overlay_extent_source_only(entry, source, dict(info, data=changed), lane.SCENE_PHASE_EXTENTS)
 
 
 @pytest.mark.parametrize("member,pc,size", PHASES)

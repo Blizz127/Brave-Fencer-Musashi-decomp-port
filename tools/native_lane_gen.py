@@ -1085,6 +1085,8 @@ TOWER_POOL_PRIOR_SOURCE = "37f8c8016ea1b697c77467c8ee51f6fe1f89930cfacf04a68d81b
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    0x8017E758: {"sc02_0039": (60, 0x070CB4DE7F5952EF)},
+    0x8017EE9C: {"sc02_0039": (60, 0xD615A064914C526A)},
     0x8017D2E0: {"sc03_0109": (164, 0xACBD125C7ED85BB9)},
     0x8017D384: {"sc03_0109": (60, 0xFAB1DF77A867F056)},
     0x8017F07C: {"sc03_0113": (164, 0xAD79B5CCBA7AF226)},
@@ -1326,7 +1328,12 @@ def overlay_extent_source_only(entry, src, info, extents):
         if any(member_digest(info, pc, size) == digest for size, digest in variants.values()):
             return True
     # A member with a shared original body is identified only by its room or source.
-    if pc in TOWER_INTRO_SOURCE_HASHES:
+    if pc in (0x8017E758, 0x8017EE9C):
+        if info and info.get("data") is not None and all(key in info for key in ("vram", "start")):
+            size, fingerprint = variants["sc02_0039"]
+            if member_digest(info, pc, size) == fingerprint:
+                return True
+    elif pc in TOWER_INTRO_SOURCE_HASHES:
         if src.is_file() and hashlib.sha256(src.read_bytes()).hexdigest() == TOWER_INTRO_SOURCE_HASHES[pc]:
             return True
         # Custom registries can report another size. Identify the whole verified callback.
