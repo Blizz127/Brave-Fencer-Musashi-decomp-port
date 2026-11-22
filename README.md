@@ -42,8 +42,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 21 source update covers 242 functions across seven scene overlays,
-totaling 18,872 bytes of matching executable code. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 21 source update covers 245 functions across seven scene overlays,
+totaling 19,928 bytes of matching executable code. Four mine routines scan floor probes and pass their position to the map lookup.
 In the opening scene, one
 routine calls the handler selected by the player state byte. Another sets the
 facing direction and counts frames. A separate scene event uses that timer
@@ -97,6 +97,14 @@ math services and return the result. The hybrid player still uses guest code
 for the nested calls. Run the host pointer and distance checks with
 `python3 -m unittest discover -s tests -p 'test_scene_object_distance.py'`
 and `python3 -m unittest discover -s tests -p 'test_scene_target_pointer.py'`.
+
+The mine’s model surface query extends a vertical probe by 768 coordinate
+units. Tagged geometry selects a linked list of collision boxes. Untagged
+geometry selects the floor grid. A successful query transforms the contact
+into the caller’s point. The source test follows both floor probes through
+nine game routines with synthetic geometry. It supplies the
+classifier, box and plane tests, coordinate transform and address mapping.
+Run it with `python3 -m unittest discover -s tests -p test_mine_model_surface.py`.
 
 The same scene descriptors also contain a two-phase callback. Its setup starts
 a second fade, resets its level and advances the actor phase. The next phase

@@ -1014,11 +1014,13 @@ SC01_PLAYER_MOTION_EXTENTS = {
 # guest loads, exception handling and timing before player dispatch.
 FOREST_FLOOR_EXTENTS = {
     0x80134510: {
+        "sc02_0039": (232, 0x595D4E3722DE9DFB),
         "sc01_0077": (232, 0xCB033B4706965762),
         "main_0012": (232, 0xD45CC4EC505088D6),
         "sc02_0035": (232, 0xB122B781A31FF157),
     },
     0x801345F8: {
+        "sc02_0039": (424, 0x6230774866449889),
         "sc01_0077": (424, 0xF2C4C0EB8C6E5FAF),
         "main_0012": (424, 0x059F1C87841DD46E),
     },
@@ -1078,6 +1080,7 @@ SCENE_PHASE_EXTENTS = {
     0x80150460: dict.fromkeys(("main_0012", "sc02_0039"), (32, 0x7E508B16726EDF52)),
     0x801505FC: dict.fromkeys(("main_0012", "sc02_0039"), (168, 0x840FD970AD98C205)),
     0x801508B4: dict.fromkeys(("main_0012", "sc02_0039"), (68, 0x3C6364F78110B674)),
+    0x80135D20: {"sc02_0039": (400, 0xFC11FE9020A17C22)},
     0x8016EE40: dict.fromkeys(
         ("sc02_0039", "sc01_0077", "sc02_0035", "sc03_0001", "main_0012"),
         (84, 0x0A847F9F21DC5E21)),
