@@ -342,6 +342,13 @@ if(MUSASHI_BUILD_PC_PORT)
         ${CMAKE_CURRENT_SOURCE_DIR}/extracted/disc/files/SLUS_007.26)
     set_tests_properties(game_main_entry PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT "MUSASHI_NATIVE_LANE=1")
 
+    add_executable(musashi_game_main_resume_probe tests/game_main_resume_probe.c)
+    target_compile_features(musashi_game_main_resume_probe PRIVATE c_std_99)
+    target_link_libraries(musashi_game_main_resume_probe PRIVATE musashi_pc_port)
+    add_test(NAME game_main_resume COMMAND musashi_game_main_resume_probe
+        ${CMAKE_CURRENT_SOURCE_DIR}/extracted/disc/files/SLUS_007.26)
+    set_tests_properties(game_main_resume PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT "MUSASHI_NATIVE_LANE=1")
+
     add_executable(musashi_boot_data_probe tests/boot_data_probe.c)
     target_compile_features(musashi_boot_data_probe PRIVATE c_std_99)
     target_link_libraries(musashi_boot_data_probe PRIVATE musashi_pc_port)

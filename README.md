@@ -7,8 +7,10 @@ the game as compiled host code and uses a CPU interpreter for the rest.
 With the native lane active, the game can set up its first stack frame and
 call the constructor on the host. A cold-start test follows the original CRT
 call through all eight game instructions. It checks the saved registers and
-the 20 elapsed source cycles at constructor entry. The constructor still
-runs on the guest CPU.
+the 20 elapsed source cycles at constructor entry. The constructor runs on
+the guest CPU. After its observed return, the game sets up two pointers and
+calls the startup exchange in seven more host instructions. Both original
+constructor paths reached that call in 14 cycles from the return.
 
 ## Player downloads and source builds
 

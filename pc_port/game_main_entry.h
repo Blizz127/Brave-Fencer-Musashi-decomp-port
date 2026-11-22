@@ -1,7 +1,10 @@
 /* The normal checkpoint runs before each game instruction. The caller begins
  * only after the original CRT call and its delay slot retire in this root. */
 enum { CRT_GAME_CALL = 0x80010094u, GAME_MAIN_ENTRY = 0x80010178u,
-       GAME_CTOR_CALL = 0x80010190u, GAME_CTOR = 0x800100a0u };
+       GAME_CTOR_CALL = 0x80010190u, GAME_CTOR = 0x800100a0u,
+       GAME_CTOR_RETURN = 0x80010108u, GAME_CTOR_END = GAME_CTOR_RETURN+8u,
+       GAME_MAIN_RESUME = GAME_CTOR_CALL+8u, GAME_EXCHANGE_CALL = 0x800101acu,
+       GAME_EXCHANGE = 0x80043060u };
 
 static int game_main_owner(LaneRunFrame *frame, MusashiBootMemory *memory,
                            const FormatterCpu *cpu)
@@ -51,6 +54,15 @@ static void game_main_capture(LaneRunFrame *frame, MusashiBootMemory *memory, Fo
     entry->checkpoint = cpu->callback_device->checkpoint;
     entry->worker = cpu->callback_device->userdata;
     entry->next = CRT_GAME_CALL;
+    if (!intrinsic_span(cpu,GAME_CTOR,sizeof entry->constructor) ||
+        !intrinsic_span(cpu,GAME_MAIN_RESUME,sizeof entry->resume)) return;
+    for (unsigned off=0; off<sizeof entry->constructor; off+=4u)
+        if (lane_find(GAME_CTOR+off)) return;
+    for (unsigned off=0; off<sizeof entry->resume; off+=4u)
+        if (lane_find(GAME_MAIN_RESUME+off)) return;
+    memcpy(entry->constructor,ram+(GAME_CTOR-CODE_IMAGE_BASE),sizeof entry->constructor);
+    memcpy(entry->resume,ram+(GAME_MAIN_RESUME-CODE_IMAGE_BASE),sizeof entry->resume);
+    entry->follow_constructor = 1;
 }
 
 static void game_main_crt_retired(LaneRunFrame *frame, MusashiBootMemory *memory,
@@ -83,10 +95,85 @@ static int game_main_frame(LaneRunFrame *frame, MusashiBootMemory *memory,
         intrinsic_span(cpu,GAME_MAIN_ENTRY,sizeof frame->main_entry.game) && intrinsic_span(cpu,stack,56u);
 }
 
+/* Only the ordinary instruction path can attest a constructor retirement.
+ * Its code and branches come from the current user's mapped image. A call
+ * outside this observed interval leaves the following game caller on the CPU. */
+static void game_main_constructor_retired(LaneRunFrame *frame, MusashiBootMemory *memory,
+                                          const FormatterCpu *cpu, uint32_t issued)
+{
+    if (!frame || !frame->main_entry.follow_constructor || !frame->main_entry.next) return;
+    GameMainEntry *entry = &frame->main_entry;
+    const uint8_t *live = musashi_boot_ram_span(memory,GAME_CTOR,sizeof entry->constructor);
+    int owned = game_main_owner(frame,memory,cpu) && entry->next == issued &&
+        !lane_find(issued) && intrinsic_span(cpu,GAME_CTOR,sizeof entry->constructor) &&
+        live && !memcmp(live,entry->constructor,sizeof entry->constructor);
+    if (issued == GAME_CTOR_RETURN)
+        owned = owned && cpu->pc == GAME_CTOR_RETURN+4u && cpu->npc == GAME_MAIN_RESUME &&
+            cpu->r[31] == GAME_MAIN_RESUME && cpu->delay_slot && cpu->branch_pc == issued;
+    else if (issued == GAME_CTOR_RETURN+4u)
+        owned = owned && cpu->pc == GAME_MAIN_RESUME && cpu->npc == GAME_MAIN_RESUME+4u &&
+            !cpu->delay_slot && !cpu->branch_pc && cpu->r[31] == GAME_MAIN_RESUME &&
+            cpu->r[29] == 0x801fffc0u && cpu->r[30] == cpu->r[29];
+    else
+        owned = owned && (uint32_t)(cpu->pc-GAME_CTOR) < sizeof entry->constructor &&
+            (uint32_t)(cpu->npc-GAME_CTOR) < sizeof entry->constructor;
+    entry->next = owned ? cpu->pc : 0u;
+}
+
+static int game_main_resumed_frame(LaneRunFrame *frame, MusashiBootMemory *memory,
+                                   const FormatterCpu *cpu, uint32_t pc)
+{
+    const int delay = pc == GAME_EXCHANGE_CALL+4u;
+    return game_main_owner(frame,memory,cpu) && frame->main_entry.next == pc && cpu->pc == pc &&
+        cpu->npc == (delay ? GAME_EXCHANGE : pc+4u) && cpu->delay_slot == (unsigned)delay &&
+        cpu->branch_pc == (delay ? GAME_EXCHANGE_CALL : 0u) &&
+        cpu->r[31] == (delay ? GAME_EXCHANGE_CALL+8u : GAME_MAIN_RESUME) &&
+        cpu->r[29] == 0x801fffc0u && cpu->r[30] == cpu->r[29];
+}
+
+static int game_main_resumed_issue(LaneRunFrame *frame, MusashiBootMemory *memory, FormatterCpu *cpu)
+{
+    GameMainEntry *entry = &frame->main_entry;
+    const uint32_t pc = cpu->pc;
+    const uint8_t *live = musashi_boot_ram_span(memory,GAME_MAIN_RESUME,sizeof entry->resume);
+    if (!entry->follow_constructor || !game_main_resumed_frame(frame,memory,cpu,pc) ||
+        !intrinsic_span(cpu,GAME_MAIN_RESUME,sizeof entry->resume) || !live ||
+        memcmp(live,entry->resume,sizeof entry->resume) || lane_find(pc)) {
+        entry->next = 0;
+        return 0;
+    }
+    if (!entry->charge.advance(entry->charge.userdata,2u) ||
+        !game_main_resumed_frame(frame,memory,cpu,pc) ||
+        memcmp(live,entry->resume,sizeof entry->resume) || lane_find(pc)) {
+        entry->next = 0;
+        return -1;
+    }
+    switch ((pc-GAME_MAIN_RESUME)/4u) {
+    case 0: cpu->r[16] = 0x800c0000u; break;
+    case 1: cpu->r[16] -= 0x5ee8u; break;
+    case 2: cpu->r[17] = 0x800b0000u; break;
+    case 3: cpu->r[17] -= 0x09d0u; break;
+    case 4: cpu->r[4] = 0; break;
+    case 5:
+        cpu->r[31] = pc+8u;
+        if (g_trace_state >= 0) musashi_trace_function_entry(GAME_EXCHANGE,pc,'j');
+        if (g_entry_hook) g_entry_pending = GAME_EXCHANGE;
+        break;
+    }
+    cpu->pc = cpu->npc;
+    cpu->npc = pc == GAME_EXCHANGE_CALL ? GAME_EXCHANGE : cpu->pc+4u;
+    cpu->delay_slot = pc == GAME_EXCHANGE_CALL;
+    cpu->branch_pc = cpu->delay_slot ? pc : 0u;
+    entry->next = cpu->pc == GAME_EXCHANGE ? 0u : cpu->pc;
+    return 1;
+}
+
 static int game_main_issue(LaneRunFrame *frame, MusashiBootMemory *memory, FormatterCpu *cpu)
 {
     GameMainEntry *entry = &frame->main_entry;
     const uint32_t pc = cpu->pc;
+    if ((uint32_t)(pc-GAME_MAIN_RESUME) < sizeof entry->resume)
+        return game_main_resumed_issue(frame,memory,cpu);
     const unsigned issue = (pc-GAME_MAIN_ENTRY)/4u;
     const uint8_t *ram = musashi_boot_ram_span(memory,GAME_MAIN_ENTRY,sizeof entry->game);
     if (issue >= 8u || !game_main_frame(frame,memory,cpu,pc) || !ram ||
@@ -117,6 +204,6 @@ static int game_main_issue(LaneRunFrame *frame, MusashiBootMemory *memory, Forma
     cpu->npc = pc == GAME_CTOR_CALL ? GAME_CTOR : cpu->pc+4u;
     cpu->delay_slot = pc == GAME_CTOR_CALL;
     cpu->branch_pc = cpu->delay_slot ? pc : 0u;
-    entry->next = issue == 7u ? 0u : cpu->pc;
+    entry->next = issue == 7u && !entry->follow_constructor ? 0u : cpu->pc;
     return 1;
 }
