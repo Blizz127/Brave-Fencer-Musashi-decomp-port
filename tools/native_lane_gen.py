@@ -1057,6 +1057,8 @@ FOREST_FLOOR_EXTENTS = {
     0x80136334: {"sc01_0077": (644, 0x354456DF35EC82D4)},
     0x801365B8: {"sc01_0077": (620, 0xEE10B1998D349329)},
     0x80136824: {"sc01_0077": (624, 0x441BAD6497EB45EC)},
+    0x8014E5B4: {"sc01_0077": (236, 0x657C3615E0C9AA5A)},
+    0x8014E83C: dict.fromkeys(("sc01_0077", "main_0012"), (248, 0x2B785897CD72D1DF)),
 }
 
 
@@ -1115,8 +1117,25 @@ def overlay_extent_source_only(entry, src, info, extents):
     return False
 
 
+# A scan of 96 slots must observe actor changes between successive guest loads.
+# Earlier independent sources can be supplied to the generator without member data.
+FOREST_ACTOR_EARLIER_SOURCES = {
+    0x8014E5B4: {
+        "467fd42cda68349c509b667ee5ddddc4eeeb72bbd9278ff4adb3c575e8a94016",
+        "50f6317326671bb5620ea61a6921b4ae2e9e3222a282366c9cbf26463102e7a2",
+    },
+    0x8014E83C: {
+        "0429456444e876365fe1c70afb5d7755eb2c2c90522c99a4982d57132af9f907",
+        "10e4d54b8f6f354d30cf1d10b67852647cd97d1dbc352c28e5b55b3ba7d89056",
+    },
+}
+
+
 def forest_floor_source_only(entry, src, info):
-    return overlay_extent_source_only(entry, src, info, FOREST_FLOOR_EXTENTS)
+    if overlay_extent_source_only(entry, src, info, FOREST_FLOOR_EXTENTS):
+        return True
+    earlier = FOREST_ACTOR_EARLIER_SOURCES.get(entry["vram"])
+    return earlier is not None and hashlib.sha256(src.read_bytes()).hexdigest() in earlier
 
 
 def scene_player_motion_source_only(entry, src, info):

@@ -42,8 +42,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 21 source update covers 245 functions across seven scene overlays,
-totaling 19,928 bytes of matching executable code. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 22 source update covers 247 functions across seven scene overlays,
+totaling 20,412 bytes of matching executable code. Four mine routines scan floor probes and pass their position to the map lookup.
 In the opening scene, one
 routine calls the handler selected by the player state byte. Another sets the
 facing direction and counts frames. A separate scene event uses that timer
@@ -148,6 +148,18 @@ checks clipping, contact coordinates, normal direction and the box midpoint.
 The player still interprets the collision path, including its divide traps,
 resident normalizer and matrix services.
 Run `python3 -m pytest -q tests/test_forest_contact_selection.py tests/test_forest_linked_box.py`.
+
+Two forest actor searches scan 96 slots for collision flags and store the first
+accepted actor's four-byte game address. One also copies an additional result
+field. The host test exercises slot order, field overlap and the last slot.
+Run `python3 -m pytest -q tests/test_forest_actor_contact.py`.
+
+The player runs these searches on the guest CPU in the supported forest scene.
+A timed test made slot 95 eligible during the loop. An optional whole-function
+provider skipped that collision. The generator now holds both searches out of
+custom overlay tables, including the matching MAIN/0012 provider. A custom
+MAIN/0012 run can stop at the search entry where the public guest decoder
+does not cover that member.
 
 Run the middle-state component test with a C compiler installed.
 
