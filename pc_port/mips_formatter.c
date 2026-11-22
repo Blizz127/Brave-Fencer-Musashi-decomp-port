@@ -10554,6 +10554,28 @@ static void remember_resident_range(const FormatterRange *table, const Formatter
 static int formatter_admitted(const FormatterCpu *cpu, uint32_t *out);
 
 
+/* The full player issues this service through its normal CPU and clock.
+ * Authenticate its six instructions from the mounted program on each fetch. */
+enum { STARTUP_EXCHANGE = 0x80043060u, STARTUP_EXCHANGE_SIZE = 24u };
+
+static int startup_exchange_pc(uint32_t pc) {
+    return (uint32_t)(pc - STARTUP_EXCHANGE) < STARTUP_EXCHANGE_SIZE;
+}
+
+static int startup_exchange_word(MusashiBootMemory *memory, const FormatterCpu *cpu, uint32_t *out) {
+    static const uint8_t expected[32] = {
+        0x11, 0xd3, 0x27, 0xed, 0xbd, 0x4d, 0x62, 0xf2,
+        0x1e, 0x0b, 0x6f, 0x7e, 0x2d, 0x12, 0xa8, 0x34,
+        0xd4, 0x24, 0x33, 0x78, 0x83, 0x73, 0x20, 0x11,
+        0xb7, 0xfe, 0xde, 0xce, 0x44, 0xfc, 0x02, 0x37
+    };
+    uint8_t digest[32];
+    const uint8_t *span = musashi_boot_ram_span(memory, STARTUP_EXCHANGE, STARTUP_EXCHANGE_SIZE);
+    return span && intrinsic_span(cpu, STARTUP_EXCHANGE, STARTUP_EXCHANGE_SIZE) &&
+           musashi_sha256_digest(span, STARTUP_EXCHANGE_SIZE, digest) &&
+           memcmp(digest, expected, sizeof digest) == 0 && musashi_boot_read32(memory, cpu->pc, out);
+}
+
 /* These two existing resident entries consume only the owner's live image.
  * Their interface does not supply trusted instruction words. */
 static int registration_code_pc(uint32_t pc) {
@@ -10649,6 +10671,8 @@ static int formatter_fetch(MusashiBootMemory *memory, const FormatterCpu *cpu, u
     if (reset_calls_guest_fill(cpu)) return reset_fill_word(memory, cpu->pc, out);
     if (registration_code_pc(cpu->pc))
         return registration_code_word(memory, cpu->pc, out);
+    if (startup_exchange_pc(cpu->pc))
+        return startup_exchange_word(memory, cpu, out);
     if (cpu->pc >= CODE_IMAGE_BASE && cpu->pc < CODE_IMAGE_END)
         resident = atomic_load_explicit(&g_resident_ranges[resident_range_slot(cpu->pc)],
                                         memory_order_relaxed);
@@ -13654,6 +13678,7 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         g_entry_hook(g_entry_hook_user, cpu->pc, cpu->r);
     }
     if (!cpu->dma_registration && !cpu->irq_image && !cpu->cd_parent_image && !registration_code_pc(cpu->pc) &&
+        !startup_exchange_pc(cpu->pc) &&
         !main12_owns_fetch(cpu) && !main12_service_pc(cpu) && !main12_copy_pc(cpu) && !reset_calls_guest_fill(cpu) &&
         (g_lane_count || g_lane_ovl_count)) {
         int lane = lane_try(memory, cpu);
@@ -15196,7 +15221,7 @@ static MusashiResetGraphPrefixStatus run_startup_cpu_loop(
             formatter_return(cpu);
             continue;
         }
-        if (cpu->pc == 0x80043060u) {
+        if (!entry_stop && cpu->pc == STARTUP_EXCHANGE) {
             int32_t previous;
             if (!musashi_boot_call_80043060(memory, (int32_t)cpu->r[4], &previous))
                 return MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT;
