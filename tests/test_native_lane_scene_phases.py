@@ -163,6 +163,37 @@ def test_mine_model_actions_stay_with_their_member(tmp_path, pc, size):
     assert not lane.mine_member_source_only(dict(row, region="other"), copy, dict(member="other"))
 
 
+@pytest.mark.parametrize("pc,size", [(0x8012C354, 228), (0x8012C658, 204), (0x8012C890, 596)])
+def test_tower_pool_sources_respect_member_selection(tmp_path, monkeypatch, pc, size):
+    (tmp_path / "ir").mkdir()
+    source = ROOT / f"src/overlays/sc02_0005/{pc:08x}.c"
+    row = dict(name=f"func_{pc:08X}", vram=pc, size=size, source=str(source), region="sc02_0005")
+    assert lane.build_one(row, tmp_path, {}, {}, "clang")["rule"] == "timing"
+    copy = tmp_path / "actor.c"
+    copy.write_bytes(source.read_bytes())
+    foreign = dict(row, region="sc99_0001", source=str(copy))
+    assert lane.build_one(foreign, tmp_path, {}, {}, "clang")["rule"] == "timing"
+    copy.write_text(f"int func_{pc:08X}(int value) {{ return value; }}\n")
+    info = dict(member="sc02_0005", vram=pc, start=0, code=[(pc, pc + size)], data=bytes(size))
+    assert lane.build_one(foreign, tmp_path, {}, {}, "clang", info)["rule"] == "timing"
+    if not all(shutil.which(tool) for tool in ("clang", "nm")):
+        pytest.skip("clang and nm required for the independent-source control")
+    # The same original extent can belong to an independent source and member.
+    other = dict(info, member="sc99_0001")
+    assert lane.build_one(foreign, tmp_path, {}, {}, "clang", other)["admitted"]
+    original_digests = {
+        0x8012C354: 0x97279F4E59944E99,
+        0x8012C658: 0x82CC6855598B7852,
+        0x8012C890: 0xF467CE302666990C,
+    }
+    monkeypatch.setattr(lane, "member_digest", lambda info, address, extent: original_digests[address])
+    selected = lane.build_one(foreign, tmp_path, {}, {}, "clang", other)
+    if pc == 0x8012C890:
+        assert selected["rule"] == "timing"
+    else:
+        assert selected["admitted"]
+
+
 def test_mine_slot_guard_preserves_other_regional_initializers():
     for region in ("main_0012", "sc01_0000", "sc02_0031", "sc02_0035"):
         source = ROOT / f"src/overlays/{region}/8012c890.c"

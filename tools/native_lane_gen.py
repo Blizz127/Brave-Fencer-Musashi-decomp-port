@@ -1582,6 +1582,16 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
         if vram == 0x80159968 and hashlib.sha256(src.read_bytes()).hexdigest() == (
                 "bcac09920911836169ac8b046074783fa94dde9ffcf4df65542f7bfbfedb00bc"):
             raise Reject("timing", "forest phase requires its guest callback and return timing")
+        if vram in (0x8012C354, 0x8012C658, 0x8012C890):
+            # The template and slot search have identical instructions in other rooms.
+            # Only the Tower slot initializer can be identified by its code alone.
+            tower = ROOT / "src/overlays/sc02_0005" / f"{vram:08x}.c"
+            tower_initializer = (vram == 0x8012C890 and size == 596 and info and
+                                 all(k in info for k in ("data", "start", "vram")) and
+                                 member_digest(info, vram, size) == 0xF467CE302666990C)
+            if (tower_initializer or member == "sc02_0005" or entry.get("region") == "sc02_0005" or
+                    (tower.is_file() and (src.resolve() == tower or src.read_bytes() == tower.read_bytes()))):
+                raise Reject("timing", "tower actor allocation requires its room state and guest call timing")
         if overlay_extent_source_only(entry, src, info, SCENE_PHASE_EXTENTS):
             raise Reject("timing", "scene operation requires instruction-level guest state and event timing")
         if forest_action_source_only(entry, src, info):
