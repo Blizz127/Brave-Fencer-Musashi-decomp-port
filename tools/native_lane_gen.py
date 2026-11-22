@@ -1436,15 +1436,50 @@ def forest_animation_source_only(entry, src, info):
     return False
 
 
+def check_sound_record_clear(entry, src, info):
+    pc = entry["vram"]
+    if pc != 0x8002CC4C:
+        return
+    member = info.get("member") if info else None
+    region = entry.get("region") or member or "main"
+    # The record routine or an independent row can cross adjacent code sections.
+    code_end = pc
+    if info and all(key in info for key in ("vram", "start", "data")) and pc >= info["vram"]:
+        offset = pc - info["vram"] + info["start"]
+        if 0 <= offset < len(info["data"]):
+            for lo, hi in sorted(info.get("code") or ()):
+                if lo > code_end:
+                    break
+                code_end = max(code_end, hi)
+            code_end = min(code_end, pc + len(info["data"]) - offset)
+    has_source = src.is_file()
+    # Both counts and interrupt timing are observable during this particular loop.
+    # The original extent is fixed even if a custom registry reports another size.
+    if (region == "main" or member == "main" or
+            (pc + 104 <= code_end and member_digest(info, pc, 104) == 0xd34ed2926778bca1) or
+            (has_source and (src.resolve() == ROOT / "src/main/8002cc4c.c" or
+                             hashlib.sha256(src.read_bytes()).hexdigest() in {
+                                 "dab9b0a30d64d82146786921e5c9e152f0315a26469b72cfbadfdb2aa8559948",
+                                 "433e0d6a8b1b3de89c0006011e131912a25594df092bedbc6e37022ae453d23a",
+                             }))):
+        raise Reject("timing", "sound record clearing requires per-store memory and event timing")
+    if not has_source:
+        raise Reject("source", "sound record candidate source is missing")
+    # A declared foreign row must not become an unqualified resident registration.
+    if region != member or not pc < pc + entry["size"] <= code_end:
+        raise Reject("overlay", "sound record candidate requires its own mapped member code")
+
+
 def build_one(entry, out, symbols, hooks, clang, info=None):
     vram, size, src = entry["vram"], entry["size"], ROOT / entry["source"]
     name = entry["name"]
-    member = info["member"] if info else None
+    member = info.get("member") if info else None
     tag = f"{member}_{vram:08x}" if member else f"{vram:08x}"
     work = out / "ir"
     try:
         if sdk_overlay(entry.get("region"), vram, size) or sdk_overlay(member, vram, size):
             raise Reject("deny", "SDK library code in this overlay member")
+        check_sound_record_clear(entry, src, info)
         # The matching menu-item C has no player timing/interrupt qualification.
         # Different members can independently implement a function at this PC.
         if (vram == 0x8017ceb8 or name.lower() == "func_8017ceb8") and (

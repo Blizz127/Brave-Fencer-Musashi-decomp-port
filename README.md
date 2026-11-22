@@ -505,8 +505,8 @@ from unpublished port sources (windows-port `c427ee546`); this recipe does
 not build it. The packaged menu and save instructions above describe the historical binaries.
 
 The public build uses a curated main-executable registry at
-`provenance/native-main.json`. It records 258 owner-authored C sources totaling
-24,292 matched bytes. The registry includes three motion routines used by the
+`provenance/native-main.json`. It records 259 owner-authored C sources totaling
+24,396 matched bytes. The registry includes three motion routines used by the
 no-disc smoke test. The existing native-lane allowlist and compiler checks
 decide which routines the player can run as host code. Other paths use the
 interpreter. See [EXCLUDED.md](EXCLUDED.md) for the source inclusion criteria.
@@ -521,6 +521,11 @@ calls 14 services. An original-disc run captured each call and return through
 the return to the game caller. A Linux host test checks service order and
 shared storage using generated inputs. The player uses the guest CPU on this
 path. Its host calling interfaces and audible output still need verification.
+
+The 104-byte sound record clear matches the USA executable. It clears one flag
+per record and rereads the current group’s count after each store. A standalone
+host test covers overlapping count and handle tables in game RAM. The player
+keeps this routine on the guest CPU for instruction and interrupt timing.
 
 The model draw dispatcher now forwards the draw request, ordering-table context
 and mode through both branches. Its 756-byte primitive-group handler and the

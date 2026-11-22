@@ -2558,6 +2558,17 @@
       "extent": "function",
       "optimization": "-O2",
       "origin": "Independently reconstructed from the verified USA game sound startup extent and original startup observations. External services are opaque in the host test."
+    },
+    {
+      "name": "func_8002CC4C",
+      "vram": 2147667020,
+      "size": 104,
+      "region": "main",
+      "source": "src/main/8002cc4c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA game executable and owner-authored type declarations. The record flags and count reloads were checked against original startup observations."
     }
   ]
 }
