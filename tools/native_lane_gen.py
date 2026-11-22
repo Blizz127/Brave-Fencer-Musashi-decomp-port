@@ -1017,6 +1017,7 @@ SC01_PLAYER_MOTION_EXTENTS = {
 # guest loads, exception handling and timing before player dispatch.
 FOREST_FLOOR_EXTENTS = {
     0x80134510: {
+        "sc03_0001": (232, 0xC9860184D2447326),
         "sc02_0039": (232, 0x595D4E3722DE9DFB),
         "sc01_0077": (232, 0xCB033B4706965762),
         "main_0012": (232, 0xD45CC4EC505088D6),

@@ -5781,6 +5781,19 @@
       "origin": "Independently reconstructed from the USA SC03.CD member 0001 type-4 payload and the public village actor caller declaration.",
       "source_sha256": "546c2765e7b9ea56db139e384fa919ada6e07adb4db11fe24c778a2659ee48c1",
       "span_sha256": "62ecc0734c7cfa11429862f4d39eff1af1ab59457aa65da092ec57cc3891c3f5"
+    },
+    {
+      "name": "func_80134510",
+      "region": "sc03_0001",
+      "vram": 2148746512,
+      "size": 232,
+      "source": "src/overlays/sc03_0001/80134510.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Reconstructed from the USA SC03.CD member 0001 type-4 payload, the project\u2019s first-party floor-query work and its public floor declarations.",
+      "source_sha256": "31bc143b9f058fbb4adf606e2879c197429185a3b4db66faa304dc86ee041cc8",
+      "span_sha256": "bea3d5d5f043df120a0d1d94884f189b743bda16a7c48df61fa98b6154cfb7de"
     }
   ]
 }
