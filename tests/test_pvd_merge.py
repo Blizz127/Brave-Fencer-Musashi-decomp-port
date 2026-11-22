@@ -18,6 +18,7 @@ def _compile_probe(root, generated, probe_source):
         "-ffunction-sections", "-fdata-sections",
         "-Wl,--gc-sections",
         "-I", str(ROOT / "include"),
+        "-I", str(ROOT / "pc_port"),
         "-I", str(ROOT / "pc_port/include"),
         "-I", str(generated),
         str(probe_source),
