@@ -57,8 +57,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 22 source update covers 316 regional function matches across seven scene overlays,
-totaling 43,384 bytes. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 22 source update covers 317 regional function matches across seven scene overlays,
+totaling 43,780 bytes. Four mine routines scan floor probes and pass their position to the map lookup.
 The mine collision code intersects the probe with a face and tests its side planes.
 A mine actor scheduler updates eligible actors and copies their positions to attached objects.
 Two earlier passes select actors for updates. A separate routine counts down a signed timer and adjusts the actor’s scale.
@@ -181,6 +181,8 @@ The host tests use generated attachment tables and callback responses. The produ
 
 Two mine frame services select callbacks from a record index and a pending function address. The pending service reads its address twice when enabled.
 Host tests check the selected values and record argument. The frame still uses the guest CPU for callback execution.
+
+The mine checks 30 actor slots and runs their active type handlers before synchronizing linked positions. Depending on the target kind it also updates wide coordinates, a status bit, or a nested object. The source tests exercise overlapping records and callback changes, while the production scene still executes the original instructions.
 
 The same scene descriptors also contain a two-phase callback. Its setup starts
 a second fade, resets its level and advances the actor phase. The next phase
