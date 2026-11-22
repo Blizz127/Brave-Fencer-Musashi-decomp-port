@@ -1381,12 +1381,20 @@ def mine_member_source_only(entry, src, info):
     return src.resolve() == mine or (mine.is_file() and src.read_bytes() == mine.read_bytes())
 
 
+# This forest member rotates the local vector through guest matrix services.
+SC01_FOREST_MOTION_EXTENTS = {0x80147DC0: (132, 0x03C49C0F21FBAF45)}
+
+
 def scene_player_motion_source_only(entry, src, info):
     pc = entry["vram"]
-    extent = SC01_PLAYER_MOTION_EXTENTS.get(pc)
-    if extent is None:
-        return False
-    regions = ("sc01_0000", "sc01_0077") if pc == 0x801473EC else ("sc01_0000",)
+    if pc in SC01_FOREST_MOTION_EXTENTS:
+        extent = SC01_FOREST_MOTION_EXTENTS[pc]
+        regions = ("sc01_0077",)
+    else:
+        extent = SC01_PLAYER_MOTION_EXTENTS.get(pc)
+        if extent is None:
+            return False
+        regions = ("sc01_0000", "sc01_0077") if pc == 0x801473EC else ("sc01_0000",)
     if entry.get("region") in regions or (info and info["member"] in regions):
         return True
     if info and entry["size"] == extent[0] and member_digest(info, pc, extent[0]) == extent[1]:

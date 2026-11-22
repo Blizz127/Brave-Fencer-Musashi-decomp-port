@@ -67,3 +67,34 @@ def test_forest_player_velocity(tmp_path):
     copied = tmp_path / "copy.c"
     copied.write_bytes(source.read_bytes())
     assert lane.build_one(dict(row, region="other", source=str(copied)), tmp_path, {}, {}, "clang").get("rule") == "memory"
+
+
+def test_forest_model_velocity(tmp_path, monkeypatch):
+    pc = 0x80147DC0
+    registry = json.loads((ROOT / "provenance/scene-objects.json").read_text())
+    row = next(r for r in registry["matches"] if r["region"] == "sc01_0077" and r["vram"] == pc)
+    source = ROOT / row["source"]
+    subprocess.run([
+        "cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT / "include"),
+        str(ROOT / "tests/forest_model_velocity_probe.c"), str(source), "-o", str(tmp_path / "model"),
+    ], check=True)
+    subprocess.run([str(tmp_path / "model")], check=True)
+    (tmp_path / "ir").mkdir()
+
+    def rule(region, path, info=None):
+        return lane.build_one(dict(row, region=region, source=str(path)), tmp_path, {}, {}, "clang", info)
+
+    assert rule("sc01_0077", source).get("rule") == "memory"
+    copied = tmp_path / "copy.c"
+    copied.write_bytes(source.read_bytes())
+    assert rule("sc99_0001", copied).get("rule") == "memory"
+    copied.write_text("int func_80147DC0(int value) { return value; }\n")
+    size = row["size"]
+    data = bytes(size)
+    info = dict(member="sc01_0077", vram=pc, start=0, code=[(pc, pc + size)], data=data)
+    assert rule("sc99_0001", copied, info).get("rule") == "memory"
+    info["member"] = "sc99_0001"
+    monkeypatch.setitem(lane.SC01_FOREST_MOTION_EXTENTS, pc, (size, lane.fnv1a64(data)))
+    assert rule("sc99_0001", copied, info).get("rule") == "memory"
+    info["data"] = b"\1" + data[1:]
+    assert rule("sc99_0001", copied, info)["admitted"]

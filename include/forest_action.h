@@ -29,6 +29,7 @@ void func_800CCCC0(ForestActionPlayer *);
 s32 func_80147324(u16);
 s32 func_801473EC(ForestActionPlayer *);
 void func_80147A84(ForestActionPlayer *);
+void func_80147DC0(ForestActionPlayer *, s32 *);
 s32 func_801483E8(ForestActionPlayer *);
 s32 func_801488A8(ForestActionPlayer *);
 s32 func_801496D4(ForestActionPlayer *);

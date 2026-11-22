@@ -3468,6 +3468,16 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O0"
+    },
+    {
+      "name": "func_80147DC0",
+      "region": "sc01_0077",
+      "vram": 2148826560,
+      "size": 132,
+      "source": "src/overlays/sc01_0077/80147dc0.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
     }
   ]
 }
