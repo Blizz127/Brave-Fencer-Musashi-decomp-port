@@ -31,6 +31,17 @@
       "optimization": "-O2",
       "rodata_base": 2149073044,
       "source_sha256": "7e627a331bb593e31b1d8c9907c75dac4bf0999299f44b0dfddecb1d7966aa31"
+    },
+    {
+      "name": "func_8017DC48",
+      "region": "main_0012",
+      "vram": 2149047368,
+      "size": 104,
+      "source": "src/overlays/main_0012/8017dc48.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "source_sha256": "859cf7ba5afa3a4ede9ec090b62ac6366129c8cefa250d9923ba4ab998c7eebc"
     }
   ]
 }
