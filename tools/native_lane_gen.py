@@ -1148,6 +1148,16 @@ def forest_floor_source_only(entry, src, info):
     return earlier is not None and hashlib.sha256(src.read_bytes()).hexdigest() in earlier
 
 
+def mine_slot_update_source_only(entry, src, info):
+    if entry["vram"] != 0x80162B1C:
+        return False
+    # MAIN/0012 has a separately selected implementation at the same address and digest.
+    if entry.get("region") == "sc02_0039" or (info and info["member"] == "sc02_0039"):
+        return True
+    mine = ROOT / "src/overlays/sc02_0039/80162b1c.c"
+    return src.resolve() == mine or (mine.is_file() and src.read_bytes() == mine.read_bytes())
+
+
 def scene_player_motion_source_only(entry, src, info):
     pc = entry["vram"]
     extent = SC01_PLAYER_MOTION_EXTENTS.get(pc)
@@ -1190,6 +1200,8 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
             raise Reject("memory", "floor collision requires checked guest memory and instruction timing")
         if overlay_extent_source_only(entry, src, info, SCENE_PHASE_EXTENTS):
             raise Reject("timing", "scene phase requires verified guest calls and event timing")
+        if mine_slot_update_source_only(entry, src, info):
+            raise Reject("timing", "mine slot updates require guest callback and memory timing")
         if scene_player_motion_source_only(entry, src, info):
             raise Reject("memory", "SC01 player motion requires checked guest memory and instruction timing")
         if vram in DENY:

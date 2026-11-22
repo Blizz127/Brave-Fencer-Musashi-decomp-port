@@ -72,3 +72,18 @@ def test_phase_dispatch_rejects_host_function_table(pc, tmp_path):
     result = lane.build_one(row, tmp_path, {}, {}, "clang")
     assert result.get("rule") == "layout"
     assert result.get("detail") == "array of pointers"
+
+def test_mine_slot_dispatch_preserves_the_main_member(tmp_path):
+    pc = 0x80162B1C
+    mine = ROOT / "src/overlays/sc02_0039/80162b1c.c"
+    main = ROOT / "src/overlays/main_0012/80162b1c.c"
+    row = dict(region="sc02_0039", vram=pc, size=424)
+    copy = tmp_path / "copy.c"
+    copy.write_bytes(mine.read_bytes())
+    assert lane.mine_slot_update_source_only(row, main, None)
+    assert lane.mine_slot_update_source_only(dict(row, region="sc99_0001"), copy, None)
+    assert lane.mine_slot_update_source_only(dict(row, region="sc99_0001"), main,
+                                             dict(member="sc02_0039"))
+    assert not lane.mine_slot_update_source_only(dict(row, region="main_0012"), main,
+                                                 dict(member="main_0012"))
+    assert not lane.mine_slot_update_source_only(dict(row, region="sc99_0001"), main, None)
