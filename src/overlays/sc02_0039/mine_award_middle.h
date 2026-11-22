@@ -2,6 +2,7 @@
 #define BFM_MINE_AWARD_MIDDLE_H
 
 #include "mine_award_controller.h"
+#include "mine_pose_points.h"
 
 extern u8 *D_801151D4;
 extern const u8 D_800D5DA8[], D_800D5DB8[], D_800D5DC0[];
@@ -13,7 +14,6 @@ extern void func_8016BADC(u8 *actor, s32 lower, s32 upper);
 extern void func_80147324(s32 request);
 extern void *func_8013767C(u32 source);
 extern void func_80171A1C(u8 *actor);
-extern void func_801484B0(u8 *first, u8 *second);
 extern void func_80149350(u8 *actor, u8 *first, u8 *second);
 extern void func_80015954(const u8 *source, u8 *destination);
 extern s32 func_801399F0(void *handle);

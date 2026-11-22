@@ -1,17 +1,17 @@
 #include "mine_controller_target.h"
 #include "mine_target_draw.h"
+#include "mine_pose_points.h"
 
 extern u8 D_80126B58[];
 
 #if BFM_MINE_DIRECT_GUEST_ADDRESS
-extern void func_801484B0(int from, int to);
 extern s32 func_80148534(s32 from, s32 to);
 extern void func_80165FA4(char *controller, int from, int to);
 extern void func_80167DBC(void *controller, void *from, void *to);
 
 #define word_at(p, offset) (*(u32 *)((p) + (offset)))
 #define target_view(address) ((const u8 *)(address))
-#define first_points(a, b) func_801484B0((int)(a), (int)(b))
+#define first_points(a, b) func_801484B0((u8 *)(a), (u8 *)(b))
 #define second_points(a, b) func_80148534((s32)(a), (s32)(b))
 #define transform_points(c, a, b) func_80165FA4((char *)(c), (int)(a), (int)(b))
 #define first_draw func_80167DBC
