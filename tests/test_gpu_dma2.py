@@ -13,6 +13,7 @@ def compile_probe(tmp_path, owner_source):
         '-I', str(ROOT / 'pc_port/include'),
         str(ROOT / 'tests/gpu_dma2_probe.c'), str(owner_source),
         str(ROOT / 'pc_port/dma_controller.c'), str(ROOT / 'pc_port/gpu_controller.c'),
+        str(ROOT / 'pc_port/irq_controller.c'),
         '-o', str(binary),
     ], check=True, timeout=30)
     return subprocess.run([str(binary)], text=True, capture_output=True, timeout=15)

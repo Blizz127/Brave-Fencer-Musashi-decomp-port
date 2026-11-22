@@ -286,11 +286,52 @@ static void irq_gates(void) {
         if(mode==3) {
             assert(musashi_dma_controller_write32(&dma,0x1f8010f4,enables|0x04000000));
             assert(!(dma.interrupt&0x84000000u) && irq.status==8);
-            irq.status=0;assert(musashi_gpu_dma2_advance(owner,999));assert(!irq.status);
+            assert(musashi_irq_controller_write16(&irq,0x1f801070u,0xfff7u));
+            assert(musashi_gpu_dma2_advance(owner,999));assert(!irq.status);
         }
         close_owner();
     }
 }
+enum ConsecutiveIrq { SECOND_IRQ_REASSERTS, SECOND_IRQ_COALESCES };
+
+static void consecutive_irqs(enum ConsecutiveIrq expected) {
+    const uint32_t dicr = 0x1f8010f4u, enables = 0x00840000u, ack_channel = 0x04840000u;
+    setup(40);
+    put(0x180,0x01ffffffu);
+    put(0x184,0xe1000013u);
+    config(0x180,0);
+    assert(musashi_dma_controller_write32(&dma,dicr,enables));
+    assert(musashi_gpu_dma2_write32(owner,CHCR,START));
+    assert(musashi_gpu_dma2_advance(owner,43));
+    assert(state().transfers==1 && irq.status==8 && dma.interrupt==0x84840000u);
+
+    /* The next list has four one-word nodes and an empty terminal node. */
+    for (uint32_t i=0; i<4; ++i) {
+        uint32_t node=0x240u+i*8u;
+        put(node,0x01000000u|(node+8u));
+        put(node+4u,0xe1000100u+i);
+    }
+    put(0x260,0x00ffffffu);
+    assert(musashi_gpu_dma2_advance(owner,44));
+    config(0x240,0);
+    assert(musashi_gpu_dma2_write32(owner,CHCR,START));
+    assert(musashi_gpu_dma2_advance(owner,53));
+    assert(state().due==54 && state().chcr==START && state().transfers==1);
+    if (expected==SECOND_IRQ_REASSERTS)
+        assert(musashi_dma_controller_write32(&dma,dicr,ack_channel));
+    assert(musashi_irq_controller_write16(&irq,0x1f801070u,0xfff7u));
+    assert(!irq.status && dma.interrupt==(expected==SECOND_IRQ_REASSERTS ? enables : 0x84840000u));
+    assert(musashi_gpu_dma2_advance(owner,54));
+    assert(state().starts==2 && state().transfers==2 && state().chcr==0x401u);
+    assert(gpu.accepted_gp0_words==5 && gpu.draw_mode==0x103u);
+    assert(dma.interrupt==0x84840000u && irq.status==(expected==SECOND_IRQ_REASSERTS ? 8u : 0u));
+    assert(musashi_dma_controller_write32(&dma,dicr,ack_channel));
+    assert(musashi_irq_controller_write16(&irq,0x1f801070u,0xfff7u));
+    assert(musashi_gpu_dma2_advance(owner,54) && musashi_gpu_dma2_advance(owner,90));
+    assert(state().transfers==2 && dma.interrupt==enables && !irq.status);
+    close_owner();
+}
+
 static void nonzero_environment(void) {
     static const uint32_t commands[]={0xe2001357,0xe3040102,0xe403bd3f,
                                      0xe53ff7ff,0xe6000003,0xe100060a};
@@ -357,5 +398,7 @@ static void image_block(void) {
 }
 int main(void) {
     split_fill();
+    consecutive_irqs(SECOND_IRQ_REASSERTS);
+    consecutive_irqs(SECOND_IRQ_COALESCES);
     simple();partial();packet_and_lengths();malformed();access_refusals();ownership();irq_gates();nonzero_environment();overlap_and_unsupported_word();gpu_reentry_commit();image_block();puts("GPU_DMA2_OWNED_PASS fixture_renderer=synthetic");return 0;
 }
