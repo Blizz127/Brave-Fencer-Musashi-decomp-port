@@ -11,3 +11,8 @@ func_800D065C = 0x800D065C;
 D_800B9A10 = 0x800B9A10;
 func_8005E480 = 0x8005E480; // type:func size:0xA8
 func_8005E528 = 0x8005E528; // type:func size:0x274
+
+// Caller-specific names for reconstruction of the SC02/0039 screen effect.
+bfm_screen_observe_15f04 = 0x80015f04;
+bfm_screen_observe_15d4c = 0x80015d4c;
+bfm_screen_observe_3aa24 = 0x8013aa24;
