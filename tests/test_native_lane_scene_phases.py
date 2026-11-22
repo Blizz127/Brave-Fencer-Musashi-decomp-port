@@ -857,3 +857,22 @@ def test_body_action_three_preserves_the_forest_timer(tmp_path, monkeypatch):
     tower = ROOT / "src/overlays/sc02_0005/8012bee8.c"
     row.update(source=str(tower), region="sc02_0005")
     assert lane.build_one(row, tmp_path, {}, {}, "clang", info)["rule"] == "timing"
+
+
+@pytest.mark.parametrize("pc,size", [
+    (0x80129010, 204), (0x8012A908, 128), (0x8012A988, 292),
+    (0x8017849C, 364), (0x8017869C, 168), (0x801787D4, 108),
+])
+def test_forest_actor_scheduler_regional_alias(tmp_path, pc, size):
+    (tmp_path / "ir").mkdir()
+    name = f"{pc:08x}.c"
+    forest = ROOT / "src/overlays/sc01_0077" / name
+    main = ROOT / "src/overlays/main_0012" / name
+    assert forest.read_bytes() == main.read_bytes()
+    for source, region, member in ((main, "sc01_0077", None),
+                                    (main, "main_0012", "sc01_0077"),
+                                    (forest, "other", "other")):
+        row = dict(vram=pc, name=f"func_{pc:08X}", size=size, source=str(source), region=region)
+        info = dict(member=member, vram=pc, start=0, data=bytes(size), code=[(pc, pc + size)]) if member else None
+        result = lane.build_one(row, tmp_path, {}, {}, "clang", info)
+        assert result.get("rule") == "timing"

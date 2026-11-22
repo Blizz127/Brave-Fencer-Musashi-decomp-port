@@ -1870,6 +1870,10 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
             raise Reject("timing", "mine collision actor state requires the original callback frame and timing")
         if vram == 0x80129CF8 and mine_member_source_only(entry, src, info):
             raise Reject("timing", "mine camera requires guest callback and view publication timing")
+        if vram in (0x80129010, 0x8012A908, 0x8012A988, 0x8017849C, 0x8017869C, 0x801787D4) and (
+                entry.get("region") == "sc01_0077" or member == "sc01_0077" or
+                src.resolve() == ROOT / f"src/overlays/sc01_0077/{vram:08x}.c"):
+            raise Reject("timing", "forest actor and effect updates require their room scheduler")
         if mine_slot_update_source_only(entry, src, info):
             raise Reject("timing", "mine slot updates require guest callback and memory timing")
         if scene_player_motion_source_only(entry, src, info):
