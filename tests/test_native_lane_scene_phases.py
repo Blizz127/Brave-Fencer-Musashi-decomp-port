@@ -73,7 +73,10 @@ def test_phase_dispatch_rejects_host_function_table(pc, tmp_path):
     assert result.get("rule") == "layout"
     assert result.get("detail") == "array of pointers"
 
-@pytest.mark.parametrize("pc, size", [(0x80162B1C, 424), (0x8017849C, 364)])
+@pytest.mark.parametrize("pc, size", [
+    (0x8012A908, 128), (0x80162B1C, 424), (0x8017849C, 364),
+    (0x8017869C, 168), (0x801787D4, 108),
+])
 def test_mine_slot_dispatch_preserves_the_main_member(tmp_path, pc, size):
     mine = ROOT / f"src/overlays/sc02_0039/{pc:08x}.c"
     main = ROOT / f"src/overlays/main_0012/{pc:08x}.c"

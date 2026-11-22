@@ -42,10 +42,11 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 22 source update covers 265 functions across seven scene overlays,
-totaling 29,568 bytes of matching executable code. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 22 source update covers 268 functions across seven scene overlays,
+totaling 29,972 bytes of matching executable code. Four mine routines scan floor probes and pass their position to the map lookup.
 The mine collision code intersects the probe with a face and tests its side planes.
 A mine actor scheduler updates eligible actors and copies their positions to attached objects.
+Two earlier passes select actors for updates. A separate routine counts down a signed timer and adjusts the actor’s scale.
 A separate mine routine saves the positions of 20 slots and updates each active slot’s target after its handler returns.
 The mine model classifier selects translated, rotated or scaled contact coordinates.
 In the opening scene, one

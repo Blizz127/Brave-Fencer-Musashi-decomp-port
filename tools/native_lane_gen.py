@@ -1155,7 +1155,7 @@ def forest_floor_source_only(entry, src, info):
 
 def mine_slot_update_source_only(entry, src, info):
     pc = entry["vram"]
-    if pc not in (0x80162B1C, 0x8017849C):
+    if pc not in (0x8012A908, 0x80162B1C, 0x8017849C, 0x8017869C, 0x801787D4):
         return False
     # MAIN/0012 has a separately selected implementation at the same address and digest.
     if entry.get("region") == "sc02_0039" or (info and info["member"] == "sc02_0039"):

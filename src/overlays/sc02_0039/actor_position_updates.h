@@ -18,7 +18,8 @@ void func_8013E370(void);
 enum {
     BFM_ACTOR_UPDATE_BAD_TABLE = 1,
     BFM_ACTOR_UPDATE_BAD_HANDLER,
-    BFM_ACTOR_UPDATE_BAD_CHILD
+    BFM_ACTOR_UPDATE_BAD_CHILD,
+    BFM_ACTOR_UPDATE_BAD_ACTOR
 };
 
 int bfm_actor_update_handler_key(u32 table, u16 type, u32 *key);
