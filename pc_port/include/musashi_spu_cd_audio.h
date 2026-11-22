@@ -111,6 +111,11 @@ int musashi_spu_cd_audio_read16(void *userdata,
 int musashi_spu_cd_audio_write16(void *userdata,
                                  uint32_t address, uint16_t value);
 
+/* Copy RAM-to-SPU DMA words in little-endian order through the configured
+ * transfer port. The complete block is validated before advancing the cursor. */
+int musashi_spu_cd_audio_dma_write(MusashiSpuCdAudio *audio,
+                                   const uint8_t *source, size_t bytes);
+
 /* Submits copied stereo signed-16 PCM at an ordered source sample index. */
 int musashi_spu_cd_audio_submit_cd_pcm(MusashiSpuCdAudio *audio,
                                        uint64_t first_sample,

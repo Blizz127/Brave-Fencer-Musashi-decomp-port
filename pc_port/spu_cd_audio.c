@@ -498,6 +498,25 @@ int musashi_spu_cd_audio_read16(void *userdata,
     }
 }
 
+int musashi_spu_cd_audio_dma_write(MusashiSpuCdAudio *audio,
+                                   const uint8_t *source, size_t bytes) {
+    size_t offset;
+    uint32_t cursor;
+    if (!source || !bytes || bytes % 4u || !owner_thread_ok(audio) ||
+        !audio->transfer_address_valid || audio->transfer_control != 4 ||
+        bytes / 2u > UINT64_MAX - audio->manual_halfwords)
+        return 0;
+    cursor = audio->transfer_cursor;
+    for (offset = 0; offset < bytes; offset += 2u) {
+        uint16_t value = (uint16_t)(source[offset] | (uint16_t)source[offset + 1] << 8);
+        ram_halfword(audio, cursor, value);
+        cursor = (cursor + 2u) & 0x7ffffu;
+    }
+    audio->transfer_cursor = cursor;
+    audio->manual_halfwords += bytes / 2u;
+    return 1;
+}
+
 int musashi_spu_cd_audio_write16(void *userdata,
                                  uint32_t address, uint16_t value) {
     MusashiSpuCdAudio *audio = userdata;

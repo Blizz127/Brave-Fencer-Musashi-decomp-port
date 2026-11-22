@@ -388,7 +388,34 @@ static void test_pending_pcm_across_large_skip(void) {
     musashi_spu_cd_audio_destroy(audio);
 }
 
+static void test_dma_transfer_block(void) {
+    Sink sink = {.token = 1, .ready = 1, .playing = 1};
+    MusashiSpuCdAudio *audio = new_audio(&sink);
+    const uint8_t bytes[12] = {2, 13, 5, 7, 17, 11, 31, 23, 19, 3, 29, 37};
+    uint8_t copy[12];
+    MusashiSpuCdAudioSnapshot result;
+
+    assert(!musashi_spu_cd_audio_dma_write(audio, bytes, sizeof(bytes)));
+    assert(musashi_spu_cd_audio_write16(audio, 0x1f801da6u, 0xffffu));
+    assert(!musashi_spu_cd_audio_dma_write(audio, bytes, sizeof(bytes)));
+    assert(musashi_spu_cd_audio_write16(audio, 0x1f801dacu, 4u));
+    assert(!musashi_spu_cd_audio_dma_write(audio, NULL, sizeof(bytes)));
+    assert(!musashi_spu_cd_audio_dma_write(audio, bytes, 0));
+    assert(!musashi_spu_cd_audio_dma_write(audio, bytes, 2));
+    result = snapshot(audio);
+    assert(result.transfer_cursor == 0x7fff8u && result.manual_halfwords == 0);
+    assert(!musashi_spu_cd_audio_copy_ram(audio, 0, copy, 4));
+    assert(musashi_spu_cd_audio_dma_write(audio, bytes, sizeof(bytes)));
+    result = snapshot(audio);
+    assert(result.transfer_cursor == 4 && result.manual_halfwords == 6);
+    assert(musashi_spu_cd_audio_copy_ram(audio, 0x7fff8u, copy, 8));
+    assert(musashi_spu_cd_audio_copy_ram(audio, 0, copy + 8, 4));
+    assert(!memcmp(copy, bytes, sizeof(bytes)));
+    assert(musashi_spu_cd_audio_destroy(audio));
+}
+
 int main(void) {
+    test_dma_transfer_block();
     test_mute_phase_and_mixer();
     test_gate_signed_channels_and_refusal();
     test_clock_queue_thread_and_overflow_refusals();

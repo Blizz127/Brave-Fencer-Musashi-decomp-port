@@ -925,28 +925,21 @@ static int cd_write32(void *userdata, uint32_t address, uint32_t value) {
     } else if (address == 0x1f8010c4u) {
         boot->spu_dma_bcr=value;
     } else if (address == 0x1f8010c8u) {
-        boot->spu_dma_chcr=value;
         if ((value & 0x01000000u) && (value & 1u)) {
             uint32_t madr = 0x80000000u | (boot->spu_dma_madr & 0x1ffffcu);
-            uint32_t bcr = boot->spu_dma_bcr;
-            uint32_t blocks = bcr >> 16;
-            uint32_t block_size = bcr & 0xffffu;
-            uint32_t total_words = blocks ? (blocks * block_size) : block_size;
-            uint8_t *src = musashi_boot_ram_span(&boot->memory, madr, total_words * 4u);
-            if (src && boot->spu) {
-                uint32_t w;
-                for (w = 0; w < total_words; ++w) {
-                    uint16_t lo = (uint16_t)(src[w*4] | (src[w*4 + 1] << 8));
-                    uint16_t hi = (uint16_t)(src[w*4 + 2] | (src[w*4 + 3] << 8));
-                    musashi_spu_cd_audio_write16(boot->spu, 0x1f801da8u, lo);
-                    musashi_spu_cd_audio_write16(boot->spu, 0x1f801da8u, hi);
-                }
-                fprintf(stderr, "native_boot: SPU_DMA transferred words=%u madr=%08x\n", total_words, madr);
-            } else {
-                fprintf(stderr, "native_boot: SPU_DMA FAILED src=%p madr=%08x words=%u\n", (void*)src, madr, total_words);
-            }
-            boot->spu_dma_chcr &= ~0x01000000u;
+            uint32_t blocks = boot->spu_dma_bcr >> 16;
+            uint32_t block_size = boot->spu_dma_bcr & 0xffffu;
+            uint32_t words = blocks ? blocks * block_size : block_size;
+            const uint8_t *source;
+            if (words > MUSASHI_RAM_SIZE / 4u)
+                return 0;
+            source = musashi_boot_ram_span(&boot->memory, madr, words * 4u);
+            if (!musashi_spu_cd_audio_dma_write(boot->spu, source, words * 4u))
+                return 0;
+            fprintf(stderr, "native_boot: SPU_DMA transferred words=%u madr=%08x\n", words, madr);
+            value &= ~0x01000000u;
         }
+        boot->spu_dma_chcr = value;
     } else if (!musashi_cd_dma3_write32(boot->cd_dma,address,value)) {
         MusashiCdDma3State state;
         if (musashi_cd_dma3_get_state(boot->cd_dma,&state))
