@@ -13,6 +13,7 @@ typedef struct MusashiIrqPolicy {
     int timer_initialized[4];
 } MusashiIrqPolicy;
 void musashi_irq_policy_init(MusashiIrqPolicy *);
+void musashi_irq_policy_init_game_entry(MusashiIrqPolicy *);
 int musashi_irq_policy_change_pad(void *, int32_t value);
 int musashi_irq_policy_exchange_pad(void *, int32_t value, int32_t *old_value);
 int musashi_irq_policy_change_timer(void *, int32_t channel, int32_t value);

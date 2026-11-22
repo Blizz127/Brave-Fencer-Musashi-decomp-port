@@ -4274,7 +4274,7 @@ int main(int argc, char **argv) {
             return 2;
         }
     }
-    musashi_irq_policy_init(&boot.irq_policy);
+    musashi_irq_policy_init_game_entry(&boot.irq_policy);
     boot.card_device = (MusashiBiosCardStartDevice){
         .userdata = &boot,
         .write_sio16 = card_write_sio16,

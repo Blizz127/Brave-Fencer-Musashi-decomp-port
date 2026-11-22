@@ -26,6 +26,8 @@ class IrqPolicyTests(unittest.TestCase):
                        check=True, stdin=subprocess.DEVNULL, timeout=30)
         cls.lib = C.CDLL(str(library))
         cls.lib.musashi_irq_policy_init.argtypes = [C.POINTER(Policy)]
+        cls.lib.musashi_irq_policy_init_game_entry.argtypes = [C.POINTER(Policy)]
+        cls.lib.musashi_irq_policy_init_game_entry.restype = None
         cls.lib.musashi_irq_policy_change_pad.argtypes = [C.POINTER(Policy), C.c_int32]
         cls.lib.musashi_irq_policy_exchange_pad.argtypes = [
             C.POINTER(Policy), C.c_int32, C.POINTER(C.c_int32)]
@@ -120,6 +122,22 @@ class IrqPolicyTests(unittest.TestCase):
         self.assertEqual(self.lib.musashi_irq_policy_exchange_timer(
             p, 1, 7, None), 0)
         self.assertEqual(bytes(p), before)
+
+    def test_selected_game_entry_returns_each_original_auto_ack_word(self):
+        policy = Policy()
+        C.memset(C.byref(policy), 0xa5, C.sizeof(policy))
+        self.lib.musashi_irq_policy_init_game_entry(policy)
+        self.assertEqual(self.lib.musashi_irq_policy_custom_vblank(policy), 0)
+
+        previous = C.c_int32(-1)
+        self.assertEqual(self.lib.musashi_irq_policy_exchange_pad(
+            policy, 0, C.byref(previous)), 1)
+        self.assertEqual(previous.value, 0)
+        for channel in (3, 0, 1, 2):
+            self.assertEqual(self.lib.musashi_irq_policy_exchange_timer(
+                policy, channel, 0, C.byref(previous)), 1)
+            self.assertEqual(previous.value, 1)
+        self.assertEqual(self.lib.musashi_irq_policy_custom_vblank(policy), 1)
 
     def test_checked_timer_exchange_preserves_full_signed32_old_value(self):
         p = Policy()

@@ -22,6 +22,17 @@ int musashi_irq_policy_change_pad(void *userdata, int32_t value) {
     return 1;
 }
 
+/* The selected US firmware hands control to the game with pad auto-ack
+ * disabled and all four timer auto-acks enabled. These are the observed
+ * words at executable entry, before the game's callback setup. */
+void musashi_irq_policy_init_game_entry(MusashiIrqPolicy *policy) {
+    unsigned i;
+    if (!policy) return;
+    musashi_irq_policy_change_pad(policy, 0);
+    for (i = 0; i < 4; ++i)
+        musashi_irq_policy_change_timer(policy, (int32_t)i, 1);
+}
+
 int musashi_irq_policy_exchange_pad(void *userdata, int32_t value,
                                     int32_t *old_value) {
     MusashiIrqPolicy *policy = userdata;
