@@ -9,10 +9,10 @@ and every `asm/overlays/*/*.s`); 37884 `jal`/`j` call sites into the Psy-Q range
 
 | Status | Entry points | Call sites |
 |---|---|---|
-| psycross | 34 (16.0%) | 11777 (31.1%) |
-| hle | 50 (23.6%) | 18095 (47.8%) |
-| stub-TBD | 128 (60.4%) | 8012 (21.1%) |
-| **covered (psycross + hle)** | **84 / 212 (39.6%)** | **29872 / 37884 (78.9%)** |
+| psycross | 19 (9.0%) | 9824 (25.9%) |
+| hle | 28 (13.2%) | 2108 (5.6%) |
+| stub-TBD | 165 (77.8%) | 25952 (68.5%) |
+| **covered (psycross + hle)** | **47 / 212 (22.2%)** | **11932 / 37884 (31.5%)** |
 
 Named: 136 / 212 entry points (vendor symbols, libgte instruction shape, or 29 inferred
 from call context: see `INFERRED` in tools/psyq_compat_status.py). The rest are listed
@@ -70,7 +70,7 @@ by address and Psy-Q object for later naming.
 | `0x80043830` | *unnamed* | libcd1 | SYS.o | 6 | 2 | stub-TBD | CD: guest code over the CD controller HLE |
 | `0x80043974` | CdMix | libcd1 |  | 2 | 1 | stub-TBD | CD: guest code over the CD controller HLE |
 | `0x80043994` | *unnamed* | libcd1 |  | 14 | 1 | stub-TBD | CD: guest code over the CD controller HLE |
-| `0x80043A18` | CdIntToPos | libcd1 |  | 11 | 1 | hle | pure: LBA -> BCD CdlLOC in guest RAM |
+| `0x80043A18` | CdIntToPos | libcd1 |  | 11 | 1 | stub-TBD | executes from the supplied disc |
 | `0x80043B1C` | CdPosToInt | libcd1 |  | 8 | 1 | hle | pure: BCD CdlLOC -> LBA |
 | `0x80045374` | CdSearchFile | libcd1 |  | 4 | 2 | hle | bfm_plat_disc_find_file -> guest CdlFILE {pos, size, name}; returns the pointer or 0 |
 | `0x8004657C` | CdRead2 | libcd1 |  | 1 | 1 | stub-TBD | CD: guest code over the CD controller HLE |
@@ -97,25 +97,25 @@ by address and Psy-Q object for later naming.
 | `0x8004838C` | CompMatrix | libgte3 |  | 4 | 3 | psycross | GTE bridge (gte_owner lease) |
 | `0x800484EC` | ApplyMatrixLV | libgte3 |  | 918 | 86 | psycross | GTE bridge; PsyCross's Psy-Q hi/lo split |
 | `0x8004864C` | ApplyRotMatrix | libgte3 |  | 245 | 82 | psycross | GTE bridge (gte_owner lease) |
-| `0x8004867C` | PushMatrix | libgte3 |  | 7 | 7 | psycross | GTE bridge; the retail guest-RAM stack (offset D_8006DC18, 20 slots at D_8006DC1C), not PsyCross's host stack; refuses when full (the retail error path saves $ra and printf()s) |
-| `0x8004871C` | PopMatrix | libgte3 |  | 7 | 7 | psycross | GTE bridge; the retail guest-RAM stack; refuses when empty (retail error path) |
+| `0x8004867C` | PushMatrix | libgte3 |  | 7 | 7 | stub-TBD | executes from the supplied disc |
+| `0x8004871C` | PopMatrix | libgte3 |  | 7 | 7 | stub-TBD | executes from the supplied disc |
 | `0x800487BC` | ReadRotMatrix | libgte3 |  | 7 | 7 | psycross | GTE bridge (gte_owner lease) |
 | `0x8004880C` | SetMulMatrix | libgte4 |  | 1 | 1 | stub-TBD | not in PsyCross; an HLE on the gteRegs bank via the bridge is possible |
 | `0x8004891C` | CompMatrixLV | libgte4 |  | 1 | 1 | psycross | GTE bridge (gte_owner lease) |
 | `0x80048B6C` | ApplyRotMatrixLV | libgte4 |  | 176 | 82 | psycross | GTE bridge (gte_owner lease) |
 | `0x80048CAC` | SetMulRotMatrix | libgte5 |  | 1 | 1 | stub-TBD | not in PsyCross; an HLE on the gteRegs bank via the bridge is possible |
-| `0x80048D9C` | MulMatrix | libgte5 |  | 90 | 88 | psycross | GTE bridge; sets the rotation matrix like Psy-Q |
-| `0x80048EAC` | MulMatrix2 | libgte5 |  | 1292 | 82 | psycross | GTE bridge; sets the rotation matrix like Psy-Q |
+| `0x80048D9C` | MulMatrix | libgte5 |  | 90 | 88 | stub-TBD | executes from the supplied disc |
+| `0x80048EAC` | MulMatrix2 | libgte5 |  | 1292 | 82 | stub-TBD | executes from the supplied disc |
 | `0x80048FBC` | ApplyMatrixSV | libgte5 |  | 2644 | 87 | psycross | GTE bridge (gte_owner lease); sets the rotation matrix like Psy-Q |
-| `0x8004901C` | ScaleMatrix | libgte5 |  | 17 | 8 | hle | exact retail arithmetic (m[2][2] writes its whole word) |
+| `0x8004901C` | ScaleMatrix | libgte5 |  | 17 | 8 | stub-TBD | executes from the supplied disc |
 | `0x8004914C` | SetRotMatrix | libgte6 |  | 1775 | 83 | psycross | GTE bridge (gte_owner lease) |
 | `0x8004917C` | SetLightMatrix | libgte6 |  | 1 | 1 | psycross | GTE bridge (gte_owner lease) |
 | `0x800491AC` | SetTransMatrix | libgte6 |  | 1691 | 83 | psycross | GTE bridge (gte_owner lease) |
 | `0x800491CC` | ReadGeomOffset | libgte6 |  | 7 | 7 | psycross | GTE bridge (gte_owner lease); reads C2_OFX/OFY |
-| `0x800491EC` | ReadGeomScreen | libgte6 |  | 94 | 80 | psycross | GTE bridge: cfc2 $26 |
-| `0x800491FC` | SetBackColor | libgte6 |  | 2 | 1 | psycross | GTE bridge: RBK/GBK/BBK = c << 4 |
-| `0x8004921C` | SetGeomOffset | libgte6 |  | 13 | 7 | psycross | GTE bridge (gte_owner lease); the hook site also records the projection |
-| `0x8004923C` | SetGeomScreen | libgte7 |  | 1 | 1 | psycross | GTE bridge (gte_owner lease); the hook site also records the projection |
+| `0x800491EC` | ReadGeomScreen | libgte6 |  | 94 | 80 | stub-TBD | executes from the supplied disc |
+| `0x800491FC` | SetBackColor | libgte6 |  | 2 | 1 | stub-TBD | executes from the supplied disc |
+| `0x8004921C` | SetGeomOffset | libgte6 |  | 13 | 7 | stub-TBD | executes from the supplied disc |
+| `0x8004923C` | SetGeomScreen | libgte7 |  | 1 | 1 | stub-TBD | executes from the supplied disc |
 | `0x800492FC` | Square12 | libgte24 |  | 81 | 81 | stub-TBD | not in PsyCross; an HLE on the gteRegs bank via the bridge is possible |
 | `0x80049324` | Square0 | libgte24 |  | 201 | 81 | stub-TBD | not in PsyCross; an HLE on the gteRegs bank via the bridge is possible |
 | `0x80049440` | *unnamed* | libgte24 |  | 3 | 1 | stub-TBD | not in PsyCross; an HLE on the gteRegs bank via the bridge is possible |
@@ -126,38 +126,38 @@ by address and Psy-Q object for later naming.
 | `0x8004961C` | RotTransPers4 | libgte10 |  | 11 | 8 | psycross | GTE bridge (gte_owner lease); args 5-10 from the guest stack; long * via temporaries |
 | `0x8004969C` | RotNclip4 | libgte11 |  | 4 | 4 | stub-TBD | not in PsyCross; an HLE on the gteRegs bank via the bridge is possible |
 | `0x8004974C` | *unnamed* | libgte11 |  | 8 | 8 | stub-TBD | not in PsyCross; an HLE on the gteRegs bank via the bridge is possible |
-| `0x8004978C` | RotMatrix | libgte25 | FGO_01.o | 175 | 82 | hle | exact retail arithmetic over the game's own sin/cos table in guest RAM |
-| `0x80049A1C` | RotMatrixYXZ | libgte25 |  | 2431 | 92 | hle | exact port of func_80049A1C over the guest table D_8006DF1C (PsyCross's differs by 1-2) |
+| `0x8004978C` | RotMatrix | libgte25 | FGO_01.o | 175 | 82 | stub-TBD | executes from the supplied disc |
+| `0x80049A1C` | RotMatrixYXZ | libgte25 |  | 2431 | 92 | stub-TBD | executes from the supplied disc |
 | `0x80049CAC` | *unnamed* | libgte25 | FGO_03.o | 1485 | 116 | stub-TBD | not in PsyCross; an HLE on the gteRegs bank via the bridge is possible |
-| `0x80049F3C` | RotMatrixX | libgte25 |  | 244 | 82 | hle | exact port of func_80049F3C over the guest table D_8006DF1C |
-| `0x8004A0DC` | RotMatrixY | libgte25 |  | 347 | 91 | hle | exact port of func_8004A0DC over the guest table D_8006DF1C |
-| `0x8004A27C` | RotMatrixZ | libgte25 |  | 254 | 88 | hle | exact port of func_8004A27C over the guest table D_8006DF1C |
-| `0x8004CFEC` | ratan2 | libgte16 |  | 4606 | 85 | hle | exact port of func_8004CFEC over the guest atan table D_80071F1C |
+| `0x80049F3C` | RotMatrixX | libgte25 |  | 244 | 82 | stub-TBD | executes from the supplied disc |
+| `0x8004A0DC` | RotMatrixY | libgte25 |  | 347 | 91 | stub-TBD | executes from the supplied disc |
+| `0x8004A27C` | RotMatrixZ | libgte25 |  | 254 | 88 | stub-TBD | executes from the supplied disc |
+| `0x8004CFEC` | ratan2 | libgte16 |  | 4606 | 85 | stub-TBD | executes from the supplied disc |
 | `0x8004D504` | ApplyTransposeMatrixLV | libgte17 |  | 810 | 82 | stub-TBD | not in PsyCross; an HLE on the gteRegs bank via the bridge is possible |
 | `0x8005080C` | GsSortBg | libgs7 |  | 80 | 80 | stub-TBD | GsBG cell-map walker with scaling and rotation: large |
 | `0x80051044` | GsSortFastBg | libgs7 |  | 80 | 80 | stub-TBD | GsBG cell-map walker (unscaled): moderate; next |
-| `0x80051DC8` | GsSortLine | libgs2 |  | 1120 | 80 | hle | E1 + LINE_F2 into GsOUT_PACKET_P, linked into the guest GsOT; drawn by DrawOTag |
-| `0x80051F34` | GsSortSprite | libgs2 |  | 80 | 80 | psycross | GTE bridge: SPRT, or RotMatrix (guest table) + ScaleMatrix + TransMatrix + RotTransPers4 -> POLY_FT4; linked into the guest GsOT |
-| `0x80052460` | GsSortFastSprite | libgs3 |  | 321 | 81 | hle | E1 + SPRT into GsOUT_PACKET_P, linked into the guest GsOT; drawn by DrawOTag |
+| `0x80051DC8` | GsSortLine | libgs2 |  | 1120 | 80 | stub-TBD | executes from the supplied disc |
+| `0x80051F34` | GsSortSprite | libgs2 |  | 80 | 80 | stub-TBD | executes from the supplied disc |
+| `0x80052460` | GsSortFastSprite | libgs3 |  | 321 | 81 | stub-TBD | executes from the supplied disc |
 | `0x800525DC` | *unnamed* | libgs8 | GS_001.o | 1 | 1 | stub-TBD | libgs internal (TMD object sort/preset, BG and clip setup): large or rarely called; guest code for now |
 | `0x800527C4` | GsInitGraph2 | libgs8 |  | 2 | 2 | stub-TBD | display/draw init over libgs globals and libgpu: low call count |
-| `0x80052D90` | GsInitCoordinate2 | libgs4 |  | 101 | 81 | hle | guest GsCOORDINATE2 fields |
-| `0x80052E38` | GsSetLsMatrix | libgs4 |  | 92 | 80 | psycross | GTE bridge: SetRotMatrix + SetTransMatrix |
+| `0x80052D90` | GsInitCoordinate2 | libgs4 |  | 101 | 81 | stub-TBD | executes from the supplied disc |
+| `0x80052E38` | GsSetLsMatrix | libgs4 |  | 92 | 80 | stub-TBD | executes from the supplied disc |
 | `0x80052F04` | *unnamed* | libgs4 |  | 2 | 1 | stub-TBD | libgs internal (TMD object sort/preset, BG and clip setup): large or rarely called; guest code for now |
 | `0x80053178` | *unnamed* | libgs4 | GS_107.o | 1 | 1 | stub-TBD | libgs internal (TMD object sort/preset, BG and clip setup): large or rarely called; guest code for now |
 | `0x80053218` | *unnamed* | libgs4 | GS_107.o | 4 | 2 | stub-TBD | libgs internal (TMD object sort/preset, BG and clip setup): large or rarely called; guest code for now |
-| `0x80053290` | GsMapModelingData | libgs4 |  | 10 | 4 | hle | relocates a TMD object table in guest RAM once |
-| `0x80053308` | GsSetProjection | libgs4 | GS_107.o | 81 | 81 | psycross | GTE bridge: SetGeomScreen |
+| `0x80053290` | GsMapModelingData | libgs4 |  | 10 | 4 | stub-TBD | executes from the supplied disc |
+| `0x80053308` | GsSetProjection | libgs4 | GS_107.o | 81 | 81 | stub-TBD | executes from the supplied disc |
 | `0x80053328` | *unnamed* | libgs4 | GS_107.o | 1 | 1 | stub-TBD | libgs internal (TMD object sort/preset, BG and clip setup): large or rarely called; guest code for now |
-| `0x800538EC` | GsSetLightMode | libgs5 | GS_108.o | 3 | 1 | hle | libgs global at 0x800C6DC8 |
+| `0x800538EC` | GsSetLightMode | libgs5 | GS_108.o | 3 | 1 | stub-TBD | executes from the supplied disc |
 | `0x80053978` | GsSetFogParam | libgs5 |  | 1 | 1 | stub-TBD | fog: 1 call site |
-| `0x80053AF8` | GsSetAmbient | libgs6 | GS_122.o | 2 | 1 | psycross | GTE bridge: RBK/GBK/BBK = (c >> 4) << 4 |
+| `0x80053AF8` | GsSetAmbient | libgs6 | GS_122.o | 2 | 1 | stub-TBD | executes from the supplied disc |
 | `0x80053D44` | *unnamed* | libgs6 | GS_122.o | 1 | 1 | stub-TBD | libgs internal (TMD object sort/preset, BG and clip setup): large or rarely called; guest code for now |
 | `0x80053EEC` | *unnamed* | libgs6 | GS_131.o | 2 | 2 | stub-TBD | libgs internal (TMD object sort/preset, BG and clip setup): large or rarely called; guest code for now |
 | `0x80053F6C` | *unnamed* | libgs6 | GS_131.o | 1 | 1 | stub-TBD | libgs internal (TMD object sort/preset, BG and clip setup): large or rarely called; guest code for now |
-| `0x80054514` | GsGetLw | libgs6 | GS_133.o | 100 | 81 | psycross | GTE bridge: the retail walk (chain in D_800C6D48, stamp D_800C7C70, dirty = flag 0) with ApplyMatrixLV + MulMatrix |
-| `0x800547D8` | GsGetLs | libgs6 | GS_134.o | 91 | 80 | psycross | GTE bridge: GsGetLw then GsWSMATRIX (x) Lw |
-| `0x80054AAC` | GsGetLws | libgs6 | GS_135.o | 1 | 1 | psycross | GTE bridge: Lw and GsWSMATRIX (x) Lw from one walk |
+| `0x80054514` | GsGetLw | libgs6 | GS_133.o | 100 | 81 | stub-TBD | executes from the supplied disc |
+| `0x800547D8` | GsGetLs | libgs6 | GS_134.o | 91 | 80 | stub-TBD | executes from the supplied disc |
+| `0x80054AAC` | GsGetLws | libgs6 | GS_135.o | 1 | 1 | stub-TBD | executes from the supplied disc |
 | `0x80054DCC` | GsSetRefView2L | libgs6 |  | 80 | 80 | stub-TBD | view matrix from GsRVIEW2 (ratan2, rsin/rcos, matrix products): large |
 | `0x800553D8` | GsLinkObject5 | libgs6 |  | 2 | 1 | stub-TBD | TMD object packet preset (GsDOBJ5): large; 2 call sites |
 | `0x800553F4` | GsPresetObject | libgs6 |  | 2 | 1 | stub-TBD | TMD object packet preset: large; 2 call sites |
@@ -182,8 +182,8 @@ by address and Psy-Q object for later naming.
 | `0x80058DFC` | SetPolyGT4 | libgpu |  | 1 | 1 | hle | packet/struct lives in guest RAM |
 | `0x80058E9C` | SetLineF2 | libgpu |  | 163 | 81 | hle | packet/struct lives in guest RAM |
 | `0x80058EB0` | SetLineG2 | libgpu |  | 82 | 81 | hle | packet/struct lives in guest RAM |
-| `0x80058EE4` | SetLineG3 | libgpu |  | 1 | 1 | hle | packet/struct lives in guest RAM; polyline terminator 0x55555555 |
-| `0x80058F24` | SetLineG4 | libgpu |  | 1 | 1 | hle | packet/struct lives in guest RAM; polyline terminator 0x55555555 |
+| `0x80058EE4` | SetLineG3 | libgpu |  | 1 | 1 | stub-TBD | executes from the supplied disc |
+| `0x80058F24` | SetLineG4 | libgpu |  | 1 | 1 | stub-TBD | executes from the supplied disc |
 | `0x80059234` | *unnamed* | libgpu2 | SYS.o | 7 | 2 | stub-TBD | libgpu internal |
 | `0x800594CC` | *unnamed* | libgpu2 |  | 1 | 1 | stub-TBD | libgpu internal |
 | `0x800595FC` | DrawSyncCallback | libgpu2 |  | 2 | 1 | stub-TBD | callback into guest code: needs the lane's guest-call thunk |
@@ -193,20 +193,20 @@ by address and Psy-Q object for later naming.
 | `0x800599B8` | LoadImage | libgpu2 | SYS.o | 345 | 84 | hle | guest RECT + pixels -> bfm_plat_renderer_upload_vram (texture replacement applies) |
 | `0x80059A1C` | StoreImage | libgpu2 |  | 87 | 81 | hle | bfm_plat_renderer_download_vram into guest RAM |
 | `0x80059A80` | MoveImage | libgpu2 |  | 367 | 81 | hle | download + upload through the renderer |
-| `0x80059BFC` | ClearOTagR | libgpu2 |  | 5 | 1 | hle | reverse OT in guest RAM, terminator 0x00FFFFFF |
+| `0x80059BFC` | ClearOTagR | libgpu2 |  | 5 | 1 | stub-TBD | executes from the supplied disc |
 | `0x80059CF4` | DrawOTag | libgpu2 | SYS.o | 5 | 2 | hle | walks the guest OT (24-bit links) and decodes GP0 packets to BfmPlatPrim; unknown codes skipped and counted |
 | `0x80059D68` | PutDrawEnv | libgpu2 | SYS.o | 1 | 1 | hle | guest DRAWENV -> BfmPlatDrawEnv; returns the guest pointer |
 | `0x80059FC0` | PutDispEnv | libgpu2 | SYS.o | 3 | 2 | hle | guest DISPENV -> BfmPlatDispEnv; returns the guest pointer |
 | `0x8005A600` | *unnamed* | libgpu2 | SYS.o | 442 | 86 | stub-TBD | libgpu internal |
 | `0x8005A658` | SetDrawEnv | libgpu2 |  | 160 | 80 | stub-TBD | builds a DR_ENV packet in guest RAM (TBD) |
-| `0x8005C2C8` | bzero | libc2_1 | BZERO.o | 2 | 2 | hle | guest pointers |
+| `0x8005C2C8` | bzero | libc2_1 | BZERO.o | 2 | 2 | stub-TBD | executes from the supplied disc |
 | `0x8005C2F8` | getchar | libc2_1 |  | 1 | 1 | stub-TBD | libc |
-| `0x8005C324` | memcpy | libc2_1 | MEMSET.o | 401 | 81 | hle | guest pointers |
-| `0x8005C358` | memset | libc2_1 | MEMSET.o | 2 | 1 | hle | guest pointers |
+| `0x8005C324` | memcpy | libc2_1 | MEMSET.o | 401 | 81 | stub-TBD | executes from the supplied disc |
+| `0x8005C358` | memset | libc2_1 | MEMSET.o | 2 | 1 | stub-TBD | executes from the supplied disc |
 | `0x8005C388` | putchar | libc2_1 | PUTCHAR.o | 1 | 1 | hle | to the platform log (line-buffered) |
-| `0x8005C49C` | rand | libc2_1 |  | 5819 | 100 | hle | Psy-Q LCG: next = next*1103515245 + 12345; (next>>16) & 0x7FFF; state is host-side (see notes) |
-| `0x8005C4CC` | srand | libc2_1 | STRCMP.o | 2 | 1 | hle | stores the seed in D_80078980 |
-| `0x8005C540` | strcpy | libc2_1 |  | 114 | 85 | hle | guest pointers; NULL dst/src returns 0 without copying; forward byte copy |
+| `0x8005C49C` | rand | libc2_1 |  | 5819 | 100 | stub-TBD | executes from the supplied disc |
+| `0x8005C4CC` | srand | libc2_1 | STRCMP.o | 2 | 1 | stub-TBD | executes from the supplied disc |
+| `0x8005C540` | strcpy | libc2_1 |  | 114 | 85 | stub-TBD | executes from the supplied disc |
 | `0x8005C604` | printf | libc2_1 | PRNT.o | 4 | 1 | stub-TBD | guest varargs + format in guest RAM (TBD) |
 | `0x8005CE18` | InitHeap | libapi1 |  | 1 | 1 | stub-TBD | BIOS calls: the BIOS HLE handles them |
 | `0x8005CF08` | *unnamed* | libapi1 |  | 1 | 1 | stub-TBD | BIOS calls: the BIOS HLE handles them |

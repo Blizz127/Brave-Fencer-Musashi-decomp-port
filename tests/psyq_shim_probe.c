@@ -1,9 +1,7 @@
 /* Differential check of PsyQ compat shims against the interpreted retail code.
  *
- * The port keeps the PsyQ layer as its own code (PsyCross or bfm_plat HLE),
- * never decompiled PsyQ. So each shim must be proven faithful to the
- * retail library instructions it replaces. For every shim listed below and
- * many inputs (random plus edge cases), each case:
+ * This probe compares the selected host wrappers and licensed guest functions
+ * using the same seeded inputs. For each case it
  *   1. restores the pinned retail EXE image and a seeded arena,
  *   2. runs the retail function on the interpreter only (device-less CPU),
  *   3. restores the same state and calls the shim's wrapper directly
@@ -12,8 +10,7 @@
  * the stack frame. VRAM is untouched by these entries (none issues a GPU
  * command), so RAM plus v0 is the whole observable effect.
  *
- * Outcomes per case: same, DIFFERENT, shim_refused (the wrapper returned 0,
- * so the lane would fall back to the retail code: faithful by construction),
+ * Outcomes per case: same, DIFFERENT, shim_refused (guest execution is needed),
  * not_comparable (the interpreter refused: device access, BIOS call).
  * Exit 0 when no comparable case differs; 77 without the EXE or the host
  * window. Prints one summary line per function.
@@ -64,41 +61,9 @@ static uint32_t arena_ptr(uint32_t align) {
 }
 
 /* ---- per-function inputs (k = case index; the first cases are edges) ---- */
-static void in_memcpy(unsigned k, uint32_t *a) {
-    static const uint32_t n_edge[] = {0, 1, 2, 3, 4, 5, 7, 8, 15, 16, 17, 31, 255, 256};
-    a[0] = arena_ptr(1);
-    a[2] = k < 14 ? n_edge[k] : rng() % 600u;
-    if (k % 5 == 1) a[1] = a[0] + 1u + rng() % 8u;          /* src after dst (overlap) */
-    else if (k % 5 == 2) a[1] = a[0] - 1u - rng() % 8u;     /* src before dst (overlap) */
-    else a[1] = arena_ptr(k % 3 ? 1 : 4);
-    if (k == 20) a[0] = 0;                                  /* NULL dst */
-    if (k == 21) a[1] = 0;                                  /* NULL src */
-    if (k == 22) a[2] = 0x80000000u;                        /* negative n */
-}
-static void in_memset(unsigned k, uint32_t *a) {
-    a[0] = arena_ptr(k % 2 ? 1 : 4);
-    a[1] = k < 4 ? (uint32_t[]){0, 0xff, 0x1234, 0xffffff80u}[k] : rng();
-    a[2] = k < 12 ? k : rng() % 600u;
-    if (k == 20) a[0] = 0;
-    if (k == 21) a[2] = 0xffffffffu;
-}
-static void in_bzero(unsigned k, uint32_t *a) {
-    a[0] = k == 20 ? 0 : arena_ptr(k % 2 ? 1 : 4);
-    a[1] = k < 12 ? k : k == 21 ? 0xffffffffu : rng() % 600u;
-}
-static void in_clearotagr(unsigned k, uint32_t *a) {
-    a[0] = arena_ptr(4);
-    a[1] = k < 6 ? k : rng() % 1200u;
-}
 static void in_catprim(unsigned k, uint32_t *a) {
     a[0] = arena_ptr(4);
     a[1] = k == 0 ? 0 : k == 1 ? 0x80ffffffu : arena_ptr(4);
-}
-static void in_cdinttopos(unsigned k, uint32_t *a) {
-    static const uint32_t edge[] = {0, 1, 74, 75, 149, 150, 4499, 4500, 269999, 270000,
-                                    0xffffffffu, 0xffffff6au, 0x7fffffffu, 0x80000000u};
-    a[0] = k < 14 ? edge[k] : (k % 2 ? rng() % 400000u : rng());
-    a[1] = arena_ptr(1);
 }
 static void in_cdpostoint(unsigned k, uint32_t *a) {
     uint32_t p = arena_ptr(1), b;
@@ -116,26 +81,12 @@ static void in_setdefdispenv(unsigned k, uint32_t *a) {
     a[0] = arena_ptr(k % 2 ? 2 : 4);
     for (i = 1; i < 5; ++i) a[i] = k < 2 ? (k ? 0xffffffffu : 0) : (k % 3 ? rng() % 1024u : rng());
 }
-static void in_gsinitcoordinate2(unsigned k, uint32_t *a) {
-    a[0] = k % 3 == 0 ? 0 : arena_ptr(4);
-    a[1] = arena_ptr(4);
-}
-static void in_gssetlightmode(unsigned k, uint32_t *a) {
-    a[0] = k < 6 ? k : rng();
-}
 
 #define SHIM(pc, n, argc, ret, in) {pc, #n, argc, ret, bfm_psyq_##n, in}
 static const Shim kShims[] = {
-    SHIM(0x8005C324u, memcpy, 3, 1, in_memcpy),
-    SHIM(0x8005C358u, memset, 3, 1, in_memset),
-    SHIM(0x8005C2C8u, bzero, 2, 1, in_bzero), /* void in C, but retail sets v0 */
-    SHIM(0x80059BFCu, ClearOTagR, 2, 1, in_clearotagr),
     SHIM(0x80058CE4u, CatPrim, 2, 0, in_catprim),
-    SHIM(0x80043A18u, CdIntToPos, 2, 1, in_cdinttopos),
     SHIM(0x80043B1Cu, CdPosToInt, 1, 1, in_cdpostoint),
     SHIM(0x80058B04u, SetDefDispEnv, 5, 1, in_setdefdispenv),
-    SHIM(0x80052D90u, GsInitCoordinate2, 2, 0, in_gsinitcoordinate2),
-    SHIM(0x800538ECu, GsSetLightMode, 1, 0, in_gssetlightmode),
 };
 
 static void seed(MusashiBootMemory *memory, const uint8_t *image, uint32_t salt) {

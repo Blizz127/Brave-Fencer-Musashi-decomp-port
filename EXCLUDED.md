@@ -20,13 +20,11 @@ Everything below was left out. When in doubt, a file was excluded.
 | `src/` with no origin recorded in the registry | 2,732 | House-style address-named files whose headers say they were "cross-checked against vendor/bfm-decomp". Their independence from the upstream code cannot be established from the record, so they are excluded as unclear origin. They are also reimplementations of Square's game code. |
 | `src/` files not in the registry (drafts, shared runtime shims) | 136 | Unregistered, origin unreviewed. |
 
-**Included from `src/`:** the owner-authored matched C that the release
-compiles natively: 252 of the 264 functions in `config/lane_own_code_allow.txt`
-(`src/main/`, registry origin empty, no upstream marker in the source, and
-text similarity against the upstream decompilation clear), plus the small
-runtime shims in `src/shared/`. Their public registry entries are in
-`provenance/native-main.json` (matching metadata only). The registry also
-records two independently re-derived motion routines in the no-disc smoke test.
+The initial import admitted 252 of the 264 allow-listed resident functions
+and the runtime shims in `src/shared/`. That review checked source markers,
+registry entries and similarity to the upstream decompilation. The later
+library identifications below changed the admitted set. The current resident
+matching metadata is in `provenance/native-main.json`.
 
 | Path | Files | Reason |
 |---|---:|---|
@@ -50,6 +48,31 @@ records two independently re-derived motion routines in the no-disc smoke test.
 code, no code) and `config/psyq_pending_replacement.txt` (a list of source
 paths) are included.
 
+These sound routines were identified as Sony library code after their C
+reconstructions entered the public source tree. The historical address
+layout placed them in gaps between library segments. The public tree
+excludes the reconstructions. The ordinary hybrid player can execute their
+instructions from the supplied disc.
+
+| Start address | Size | Library |
+|---|---:|---|
+| `8003C438` | 96 bytes | LIBSPU |
+| `8003D424` | 16 bytes | LIBSPU |
+| `8003E2E4` | 44 bytes | LIBSND |
+| `8003FA54` | 16 bytes | LIBSND |
+| `80041354` | 100 bytes | LIBSND |
+| `800413B8` | 72 bytes | LIBSND |
+| `80041400` | 72 bytes | LIBSND |
+| `80041448` | 156 bytes | LIBSND |
+
+In MAIN overlay member 0003, the LIBPRESS object occupies
+`800D2AA0` through `800D31FF`. Its fourteen recovered C routines are
+excluded. Other overlay members reuse these addresses for different code.
+
+Two resident routines at `8001282C` and `800128EC` have historical
+library attributions that remain unresolved. Their C sources are omitted
+from the public tree and the host dispatch selection.
+
 ### Historical host replacements
 
 A later provenance review identified nine complete files and two changes to
@@ -67,6 +90,16 @@ The following historical implementations are excluded from the corrected tree.
 
 The player uses the owner's verified program for these guest routines. They
 still require CPU interpretation and do not count toward native game coverage.
+
+Subsequent review also identified host replacements written after consultation
+of Sony library implementations. The affected graphics, matrix, CD, memory,
+string and other library operations now use the ordinary guest path on the
+supplied disc. See `docs/PSYQ-COMPAT.md` for the per-call status.
+
+The mod event bridge previously predicted HP and BP changes from two hooks
+whose author had consulted upstream game code. Those hooks have been removed.
+The frame-end observer reports HP and BP decreases using the values it reads
+from guest memory.
 
 ## 3. Retail game content and BIOS
 

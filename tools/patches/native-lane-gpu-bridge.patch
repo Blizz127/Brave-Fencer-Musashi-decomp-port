@@ -1,15 +1,13 @@
 diff -u -r a/CMakeLists.txt b/CMakeLists.txt
 --- a/CMakeLists.txt	2026-09-28 12:22:15.155495408 +0000
 +++ b/CMakeLists.txt	2026-09-28 12:27:07.880184815 +0000
-@@ -484,7 +484,7 @@
+@@ -484,5 +484,5 @@
          pc_port/platform/bfm_plat_image.c    pc_port/platform/bfm_plat_font.c
          pc_port/platform/bfm_plat_widescreen.c
          pc_port/platform/bfm_plat_disc_check.c pc_port/platform/bfm_plat_sha256.c
 -        pc_port/platform/bfm_plat_watch.c
 +        pc_port/platform/bfm_plat_watch.c    pc_port/platform/bfm_plat_gpu_bridge.c
-         pc_port/platform/psyq/bfm_psyq_compat.c
-         pc_port/platform/psyq/bfm_psyq_libgs.c
-         pc_port/platform/psyq/bfm_psyq_libgte.c)        # + psyq/psyq_psycross.c with PsyCross
+         pc_port/platform/psyq/bfm_psyq_compat.c)
 @@ -495,9 +495,11 @@
          target_sources(bfm_plat PRIVATE
              pc_port/platform/backends/renderer_psycross.c

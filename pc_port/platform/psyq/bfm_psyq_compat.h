@@ -79,8 +79,7 @@ size_t bfm_psyq_decode_packet(const uint32_t *words, size_t nwords, uint16_t *tp
  * that this thread owns the lease, CU2 is enabled and no cop2 operation is
  * in progress, and mark the owner busy; end() clears that mark and accounts
  * the work (commands issued). Without a bridge every GTE-state wrapper refuses,
- * so the interpreter runs the retail code. Stateless wrappers (ratan2,
- * RotMatrix{X,Y,Z,YXZ}) don't touch the bank and don't need the bridge. */
+ * so the interpreter runs the code supplied on the disc. */
 typedef struct BfmPsyqGteBridge {
     int (*begin)(void *user);                     /* 1 = may use gteRegs now */
     void (*end)(void *user, uint32_t commands);   /* commands = GTE ops issued */
@@ -92,16 +91,6 @@ void bfm_psyq_set_gte_bridge(const BfmPsyqGteBridge *bridge);
 int bfm_psyq_gte_begin(void);
 void bfm_psyq_gte_end(uint32_t commands);
 
-/* Stateless libgte helpers exact to the retail code (bfm_psyq_libgte.c),
- * on guest-layout MATRIX bytes. rotmatrix reads the game's own sin/cos table
- * in guest RAM (0 if it isn't mapped). */
-int bfm_psyq_rotmatrix(const int16_t angles[3], uint8_t *matrix32);
-void bfm_psyq_scalematrix(uint8_t *matrix32, const int32_t v[3]);
-void bfm_psyq_transmatrix(uint8_t *matrix32, const int32_t v[3]);
-
-/* libgs's OT link (func_80051EA0), for packet builders in other files:
- * slot = org + (pri - offset)*4; returns the address after the packet. */
-int bfm_psyq_gs_link(uint32_t pkt, uint32_t ot, uint32_t pri, uint8_t len, uint32_t *next);
 
 /* The stub every STUB entry uses: refuses. */
 int bfm_psyq_stub(uint32_t *r);

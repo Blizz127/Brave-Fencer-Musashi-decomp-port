@@ -599,9 +599,7 @@ if(MUSASHI_BUILD_PC_PORT)
             ${CMAKE_CURRENT_SOURCE_DIR}/pc_port/platform/bfm_plat_sha256.c)
     endif()
     add_library(bfm_plat STATIC ${BFM_PLAT_CORE_SOURCES}
-        pc_port/platform/psyq/bfm_psyq_compat.c
-        pc_port/platform/psyq/bfm_psyq_libgs.c
-        pc_port/platform/psyq/bfm_psyq_libgte.c)        # + psyq/psyq_psycross.c with PsyCross
+        pc_port/platform/psyq/bfm_psyq_compat.c)
     target_include_directories(bfm_plat PUBLIC pc_port/platform)
     target_link_libraries(bfm_plat PUBLIC ${CMAKE_DL_LIBS} m)
     if(WIN32)
@@ -839,7 +837,7 @@ if(MUSASHI_BUILD_PC_PORT)
     endif()
 
     # No Sony PsyQ code in the port: fail configuration when a decomp source
-    # in a PsyQ range (config/psyq_ranges.txt) is compiled into any target,
+    # in a main-executable or member-specific SDK range is compiled into any target,
     # except the listed bindings still pending PsyCross/HLE replacement.
     get_property(MUSASHI_PSYQ_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
     set(MUSASHI_PSYQ_SOURCES)
@@ -851,7 +849,7 @@ if(MUSASHI_BUILD_PC_PORT)
         get_target_property(MUSASHI_TARGET_SOURCES ${MUSASHI_TARGET} SOURCES)
         if(MUSASHI_TARGET_SOURCES)
             foreach(MUSASHI_SOURCE IN LISTS MUSASHI_TARGET_SOURCES)
-                if(MUSASHI_SOURCE MATCHES "src/main/")
+                if(MUSASHI_SOURCE MATCHES "src/(main|overlays)/")
                     list(APPEND MUSASHI_PSYQ_SOURCES ${MUSASHI_SOURCE})
                 endif()
             endforeach()

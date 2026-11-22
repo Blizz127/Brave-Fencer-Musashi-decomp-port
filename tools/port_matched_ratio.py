@@ -39,6 +39,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+from psyq_manifest import sdk_overlay
+
 DEVICE = {"VSync", "DrawSync", "DrawOTag", "LoadImage", "StoreImage", "MoveImage",
           "PutDrawEnv", "PutDispEnv", "SetDispMask", "CdSearchFile", "putchar"}
 BIOS = {0xA0, 0xB0, 0xC0}
@@ -118,23 +121,6 @@ def load_members(config_dir):
             if tp:
                 MEMBER_FILES[name] = (tp.group(1), vram, start)
     return members
-
-
-# Sony SDK code linked into overlay members (not game code). The PsyQ
-# manifest covers the main EXE only. Port rule: platform code, proven
-# faithful by differential; never decompiled PsyQ.
-SDK_OVERLAY_RANGES = [
-    # libpress DecDCTvlcSize / DecDCTvlc: handwritten SDK assembly (trapping
-    # add/addi, bgez $zero), the intro movie player's VLC decoder.
-    ("main_0003", 0x800D3204, 0x800D3574, "libpress"),
-]
-
-
-def sdk_overlay(region, pc):
-    for r, lo, hi, lib in SDK_OVERLAY_RANGES:
-        if r == region and lo <= pc < hi:
-            return lib
-    return None
 
 
 MEMBER_FILES = {}  # region -> (target_path relative to the repo root, vram, start)
@@ -309,8 +295,9 @@ def main(argv=None):
     matches = json.loads(Path(a.registry).read_text())["matches"]
     psyq = load_psyq(a.psyq_def)
     hooked_psyq = {int(x, 16) for x in report.get("psyq_hooked", [])}
-    lane_fn = {f["vram"]: f for f in report["functions"]}
-    admitted = {pc for pc, f in lane_fn.items() if f.get("admitted")}
+    # Overlay members can use the same PC for unrelated functions.
+    lane_fn = {(entry.get("member") or "main", entry["vram"]): entry
+               for entry in report["functions"]}
 
     def psyq_active(pc):
         p = psyq.get(pc)
@@ -366,9 +353,10 @@ def main(argv=None):
         pc, m = f["pc"], f["reg"]
         exact = m is not None and m["vram"] == pc
         rec = m["recovery"] if exact else None
+        lane_entry = lane_fn.get((m["region"] if m else "main", pc), {})
         if is_bios(pc):
             cls, why = "port_shim", "bios_hle"
-        elif pc in admitted:
+        elif lane_entry.get("admitted"):
             cls, why = "matched_c", "native lane"
         elif psyq_active(pc):
             cls, why = "port_shim", "psyq_" + psyq[pc]["status"].lower()
@@ -378,10 +366,10 @@ def main(argv=None):
         else:
             cls = "interpreted"
             if rec == "c":
-                if m["region"] != "main":
-                    why = "matched_c_unused: overlay (no lane for overlays yet)"
-                elif pc in lane_fn:
-                    why = "matched_c_unused: lane rule " + lane_fn[pc]["rule"]
+                if lane_entry:
+                    why = "matched_c_unused: lane rule " + lane_entry["rule"]
+                elif m["region"] != "main":
+                    why = "matched_c_unused: no overlay lane entry"
                 elif pc in psyq:
                     why = "matched_c_unused: psyq entry " + psyq[pc]["status"].lower()
                 elif psyq_ranges is not None and psyq_manifest.psyq_segment(pc, psyq_ranges):
@@ -524,7 +512,7 @@ def main(argv=None):
         # Game code whose matched C could replace what runs now (interpreted
         # retail or host code); the batches of game-code switches draw on this.
         "game_switch_candidates": sorted(
-            (dict(row(f), lane_detail=lane_fn.get(f["pc"], {}).get("detail"))
+            (dict(row(f), lane_detail=lane_fn.get((f["reg"]["region"], f["pc"]), {}).get("detail"))
              for f in funcs.values() if f.get("domain") == "game" and f["reg"] is not None
              and f["reg"]["vram"] == f["pc"] and f["reg"]["recovery"] == "c"
              and (f["why"].startswith("matched_c_unused") or f["why"] == "host_skipped")),

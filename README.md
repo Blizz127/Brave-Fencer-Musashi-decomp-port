@@ -14,8 +14,9 @@ constructor paths reached that call in 14 cycles from the return.
 
 ## Player downloads and source builds
 
-**November 21, 2026. Player downloads are under review.**
-The source build is available for development and testing.
+**November 22, 2026. Player downloads are under review.**
+Historical player binaries also contain routines removed during the SDK
+source review. This correction is available as source for development and testing.
 We downloaded every historical player package from the public releases and
 checked its published size and SHA-256. All 22 distinct Linux and Windows
 executables contain a 36-byte game dispatch table. Nineteen also contain a
@@ -443,8 +444,8 @@ from unpublished port sources (windows-port `c427ee546`); this recipe does
 not build it. The packaged menu and save instructions above describe the historical binaries.
 
 The public build uses a curated main-executable registry at
-`provenance/native-main.json`. It records 261 owner-authored C sources totaling
-23,880 matched bytes. The registry includes three motion routines used by the
+`provenance/native-main.json`. It records 256 owner-authored C sources totaling
+23,364 matched bytes. The registry includes three motion routines used by the
 no-disc smoke test. The existing native-lane allowlist and compiler checks
 decide which routines the player can run as host code. Other paths use the
 interpreter. See [EXCLUDED.md](EXCLUDED.md) for the source inclusion criteria.

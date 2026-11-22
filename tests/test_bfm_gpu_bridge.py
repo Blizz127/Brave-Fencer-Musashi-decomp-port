@@ -19,8 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PLAT = ROOT / "pc_port/platform"
 CFLAGS = ["-std=c99", "-Wall", "-Wextra", "-Werror", "-pedantic", "-O0", "-g"]
 SOURCES = sorted(str(p) for p in PLAT.glob("bfm_plat*.c")) + [
-    str(PLAT / "psyq/bfm_psyq_compat.c"), str(PLAT / "psyq/bfm_psyq_libgs.c"),
-    str(PLAT / "psyq/bfm_psyq_libgte.c"), str(PLAT / "backends/gl/bfm_gl_core.c"),
+    str(PLAT / "psyq/bfm_psyq_compat.c"), str(PLAT / "backends/gl/bfm_gl_core.c"),
     str(ROOT / "tests/bfm_gpu_bridge_probe.c")]
 
 

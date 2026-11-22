@@ -143,7 +143,7 @@ typedef struct BfmPlatKnownSite {
 size_t bfm_plat_known_sites(const BfmPlatKnownSite **out);
 /* Registers every known site (resets the fills' edge state). */
 int bfm_plat_hooks_register_known(void);
-/* Events with no evidence-backed site yet (battle, item get). */
+/* Events without an established observation point. */
 size_t bfm_plat_unsited_events(const BfmEvent **out);
 
 /* Registers the `events` console command (list events + counts + sites). */

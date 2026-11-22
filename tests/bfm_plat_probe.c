@@ -5,7 +5,6 @@
 #include "bfm_plat_font.h"
 #include "psyq/bfm_psyq_compat.h"
 
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -971,29 +970,29 @@ static int group_hook_fills(void) {
     CHECK(bfm_plat_mods_event_count(BFM_EVENT_FRAME_END) == 1);
     CHECK(bfm_plat_mods_event_count(BFM_EVENT_FRAME_BEGIN) == 2);
 
-    /* damage code site: overlay membership, payload, derived suppression */
+    /* HP and BP events carry the two values actually observed in guest RAM. */
     bfm_plat_mods_subscribe(BFM_EVENT_DAMAGE, stat_rec, NULL);
+    bfm_plat_mods_subscribe(BFM_EVENT_BP_USE, stat_rec, NULL);
     bfm_plat_mods_subscribe(BFM_EVENT_ITEM_GET, stat_rec, NULL);
     bfm_plat_mods_subscribe(BFM_EVENT_ITEM_USE, ev_item_use, NULL);
     put16(BFM_GUEST_HP_MAX, 250); put16(BFM_GUEST_HP, 100);
+    put16(BFM_GUEST_BP_MAX, 150); put16(BFM_GUEST_BP, 96);
     bfm_plat_watch_resync();
-    regs[5] = 30;
-    bfm_plat_hooks_set_overlay("SC03_053");               /* not a member */
-    CHECK(bfm_plat_hooks_at(0x8014BC80) == 0);
     bfm_plat_hooks_set_overlay("sc02_0031");
-    CHECK(bfm_plat_hooks_at(0x8014BC80) == 1);
+    regs[5] = 79;
+    CHECK(bfm_plat_hooks_at(0x8014BC80) == 0 && bfm_plat_hooks_at(0x8014BD60) == 0);
+    bfm_plat_frame_hook_end();
+    CHECK(stat_n[BFM_EVENT_DAMAGE] == 0 && stat_n[BFM_EVENT_BP_USE] == 0);
+    put16(BFM_GUEST_HP, 83); put16(BFM_GUEST_BP, 71);
+    bfm_plat_frame_hook_end();
     CHECK(stat_n[BFM_EVENT_DAMAGE] == 1 && last_stat[BFM_EVENT_DAMAGE].previous == 100 &&
-          last_stat[BFM_EVENT_DAMAGE].value == 70 && last_stat[BFM_EVENT_DAMAGE].max == 250 &&
-          last_stat[BFM_EVENT_DAMAGE].flags == 0);
-    put16(BFM_GUEST_HP, 70);                              /* the helper's store */
-    bfm_plat_frame_hook_end();                            /* poll: derived suppressed */
-    CHECK(stat_n[BFM_EVENT_DAMAGE] == 1);
-    put16(BFM_GUEST_HP, 60);                              /* a drop with no code site */
+          last_stat[BFM_EVENT_DAMAGE].value == 83 && last_stat[BFM_EVENT_DAMAGE].max == 250 &&
+          last_stat[BFM_EVENT_DAMAGE].flags == BFM_EVENT_FLAG_DERIVED);
+    CHECK(stat_n[BFM_EVENT_BP_USE] == 1 && last_stat[BFM_EVENT_BP_USE].previous == 96 &&
+          last_stat[BFM_EVENT_BP_USE].value == 71 && last_stat[BFM_EVENT_BP_USE].max == 150 &&
+          last_stat[BFM_EVENT_BP_USE].flags == BFM_EVENT_FLAG_DERIVED);
     bfm_plat_frame_hook_end();
-    CHECK(stat_n[BFM_EVENT_DAMAGE] == 2 && last_stat[BFM_EVENT_DAMAGE].flags == BFM_EVENT_FLAG_DERIVED);
-    regs[5] = 500;                                        /* lethal: clamps at 0 */
-    CHECK(bfm_plat_hooks_at(0x8014BC80) == 1 && last_stat[BFM_EVENT_DAMAGE].value == 0);
-    bfm_plat_frame_hook_end();
+    CHECK(stat_n[BFM_EVENT_DAMAGE] == 1 && stat_n[BFM_EVENT_BP_USE] == 1);
 
     /* inventory: code-site add, derived add, use */
     regs[4] = BFM_GUEST_INV_VAR0 + 3; regs[5] = 106;
@@ -1460,8 +1459,6 @@ static int call(const char *name, uint32_t a0, uint32_t a1, uint32_t a2, uint32_
     exit(1);
 }
 
-int bfm_psyq_strcmp(uint32_t *r);   /* not a table entry (no game call sites) */
-
 static int group_psyq(int argc, char **argv) {
     const BfmPsyqEntry *t;
     size_t n = bfm_psyq_table(&t), i, hle = 0;
@@ -1493,21 +1490,14 @@ static int group_psyq(int argc, char **argv) {
     CHECK(call("GetTPage", 0, 0, 0, 512) && R[2] == (1u << 11));
     CHECK(call("GetClut", 320, 480, 0, 0) && R[2] == ((480u << 6) | (320u >> 4)));
 
-    /* ClearOTagR + AddPrim + SetPolyFT4 + CatPrim */
-    CHECK(call("ClearOTagR", 0x80010000, 4, 0, 0) && R[2] == 0x80010000);
-    /* retail relinks ot[0] to the static terminator prim at 0x80072844 */
-    CHECK(r32(0x80010000) == 0x00072844 && r32(0x8001000C) == 0x00010008);
+    /* A synthetic existing link makes AddPrim's previous target observable. */
+    g32(0x8001000C, 0x00023000);
     CHECK(call("SetPolyFT4", 0x80020000, 0, 0, 0));
     CHECK(ram[0x20003] == 9 && ram[0x20007] == 0x2C);
     CHECK(call("SetSemiTrans", 0x80020000, 1, 0, 0) && ram[0x20007] == 0x2E);
     CHECK(call("SetSemiTrans", 0x80020000, 0, 0, 0) && ram[0x20007] == 0x2C);
     CHECK(call("AddPrim", 0x8001000C, 0x80020000, 0, 0));
-    CHECK(r32(0x8001000C) == 0x00020000 && r32(0x80020000) == 0x09010008);
-    CHECK(call("SetLineG3", 0x80021000, 0, 0, 0) && r32(0x80021000 + 28) == 0x55555555);
-    CHECK(ram[0x21003] == 7 && ram[0x21007] == 0x58);
-    /* LineG4: len 9, code 0x5C, terminator at +0x24 */
-    CHECK(call("SetLineG4", 0x80021100, 0, 0, 0) && ram[0x21103] == 9 && ram[0x21107] == 0x5C &&
-          r32(0x80021100 + 0x24) == 0x55555555);
+    CHECK(r32(0x8001000C) == 0x00020000 && r32(0x80020000) == 0x09023000);
     CHECK(call("CatPrim", 0x80021000, 0x80022000, 0, 0) && (r32(0x80021000) & 0xFFFFFF) == 0x022000);
 
     /* SetDefDispEnv: 5th argument on the guest stack */
@@ -1621,16 +1611,11 @@ static int group_psyq(int argc, char **argv) {
         CHECK(tp == (0x4000 | 0x0040));
     }
 
-    /* libcd */
-    CHECK(call("CdIntToPos", 16, 0x80060000, 0, 0) && ram[0x60000] == 0x00 && ram[0x60001] == 0x02 && ram[0x60002] == 0x16);
+    /* The synthetic 00:02:16 MSF address corresponds to sector 16. */
+    ram[0x60000] = 0x00;
+    ram[0x60001] = 0x02;
+    ram[0x60002] = 0x16;
     CHECK(call("CdPosToInt", 0x80060000, 0, 0, 0) && R[2] == 16);
-    CHECK(call("CdIntToPos", 4500 * 3 + 75 * 7 + 3 - 150, 0x80060000, 0, 0) && ram[0x60000] == 0x03 && ram[0x60001] == 0x07 && ram[0x60002] == 0x03);
-    /* signed like the retail code: i + 150 = -50 -> s 0, frame -50 -> ((-5) << 4) + 0 */
-    CHECK(call("CdIntToPos", (uint32_t)-200, 0x80060000, 0, 0) && ram[0x60000] == 0x00 &&
-          ram[0x60001] == 0x00 && ram[0x60002] == 0xB0);
-    /* i + 150 = -4577: s = -61 (trunc), frame -2 -> 0xFE; minute -1 -> 0xFF; second -1 -> 0xFF */
-    CHECK(call("CdIntToPos", (uint32_t)-4727, 0x80060000, 0, 0) && ram[0x60000] == 0xFF &&
-          ram[0x60001] == 0xFF && ram[0x60002] == 0xFE);
     if (argc >= 1) {
         CHECK(bfm_plat_disc_open("image", argv[0]) == BFM_PLAT_OK);
         memcpy(ram + 0x61000, "\\DATA\\HELLO.TXT;1", 18);
@@ -1640,36 +1625,6 @@ static int group_psyq(int argc, char **argv) {
         CHECK(call("CdSearchFile", 0x80062000, 0x80061000, 0, 0) && R[2] == 0);
     }
 
-    /* libc2: rand on the guest seed, string/memory helpers */
-    g32(0x80078980, 1);
-    CHECK(call("rand", 0, 0, 0, 0) && R[2] == ((1u * 0x41C64E6Du + 0x3039u) >> 16 & 0x7FFF));
-    CHECK(r32(0x80078980) == 1u * 0x41C64E6Du + 0x3039u);
-    memcpy(ram + 0x63000, "musashi", 8);
-    CHECK(call("strcpy", 0x80063100, 0x80063000, 0, 0) && strcmp((char *)ram + 0x63100, "musashi") == 0);
-    /* retail strcpy: NULL dst or src returns 0 and copies nothing */
-    ram[0x63400] = 'q';
-    CHECK(call("strcpy", 0x80063400, 0, 0, 0) && R[2] == 0 && ram[0x63400] == 'q');
-    CHECK(call("strcpy", 0, 0x80063000, 0, 0) && R[2] == 0);
-    /* srand stores the seed (the entry at 8005C4CC, once misnamed strcmp) */
-    CHECK(call("srand", 0x1234, 0, 0, 0) && r32(0x80078980) == 0x1234);
-    /* strcmp (8005C4DC) is not called by game code, so not in the table:
-     * the wrapper directly, with the retail NULL rules */
-    {
-        R[4] = 0x80063100; R[5] = 0x80063000;
-        CHECK(bfm_psyq_strcmp(R) && R[2] == 0);
-        ram[0x63105] = 'z';
-        CHECK(bfm_psyq_strcmp(R) && R[2] == (uint32_t)('z' - 'h'));
-        R[4] = 0; R[5] = 0;
-        CHECK(bfm_psyq_strcmp(R) && R[2] == 0);
-        R[4] = 0; R[5] = 0x80063000;
-        CHECK(bfm_psyq_strcmp(R) && R[2] == (uint32_t)-1);
-        R[4] = 0x80063000; R[5] = 0;
-        CHECK(bfm_psyq_strcmp(R) && R[2] == 1);
-    }
-    CHECK(call("memset", 0x80063200, 0xAB, 16, 0) && ram[0x6320F] == 0xAB && ram[0x63210] == 0);
-    CHECK(call("memcpy", 0x80063300, 0x80063200, 16, 0) && ram[0x6330F] == 0xAB);
-    CHECK(call("bzero", 0x80063300, 8, 0, 0) && ram[0x63307] == 0 && ram[0x63308] == 0xAB);
-    CHECK(!call("memcpy", 0x80063300, 0x801FFFF0, 64, 0));    /* past the end of RAM */
     CHECK(call("putchar", 'h', 0, 0, 0) && call("putchar", 'i', 0, 0, 0) && call("putchar", '\n', 0, 0, 0));
 
     /* VSync */
@@ -1678,185 +1633,25 @@ static int group_psyq(int argc, char **argv) {
     CHECK(call("VSync", 0xFFFFFFFF, 0, 0, 0) && R[2] == 3);
     CHECK(call("VSync", 1, 0, 0, 0) && R[2] == 0);
 
-    /* no RAM bound: HLE refuses without touching anything */
+    /* The rejected call increments the refusal count once. */
+    bfm_psyq_stats(&ps);
+    uint64_t before_refusal = ps.refused;
     bfm_psyq_set_ram(NULL, 0);
     CHECK(!call("AddPrim", 0x8001000C, 0x80020000, 0, 0));
     bfm_psyq_stats(&ps);
-    CHECK(ps.refused >= 2);
+    CHECK(ps.refused == before_refusal + 1);
     return 0;
 }
 
 
-/* ------------------------------------------------------------------ libgs */
-static int group_libgs(void) {
-    BfmPlatOutput o;
-    BfmPlatRendererStats st;
-    const uint32_t PKT = 0x80100000, OT = 0x80090000, ORG = 0x80091000;
-    uint32_t w;
+#include "psyq_guest_only_checks.h"
+
+static int group_guest_services(void)
+{
     reset_all();
-    memset(ram, 0, sizeof ram);
-    bfm_psyq_reset();
-    bfm_psyq_set_ram(ram, sizeof ram);
-    memset(&o, 0, sizeof o);
-    CHECK(bfm_plat_renderer_open("null", &o, NULL) == BFM_PLAT_OK);
-    g32(0x800A5E60, PKT);                                  /* GsOUT_PACKET_P */
-    put16(0x800A6548, 10); put16(0x800A654A, 20);          /* draw offset */
-    g32(OT + 0, 16); g32(OT + 4, ORG); g32(OT + 8, 0);     /* GsOT: length, org, offset/point */
-    CHECK(call("ClearOTagR", ORG, 16, 0, 0));
-
-    /* GsSortLine: attribute bit 30 = semi-transparent, bits 28-29 = rate 1 */
-    g32(0x80092000, 0x50000000);
-    put16(0x80092004, 1); put16(0x80092006, 2); put16(0x80092008, 30); put16(0x8009200A, 40);
-    ram[0x9200C] = 0x11; ram[0x9200D] = 0x22; ram[0x9200E] = 0x33;
-    CHECK(call("GsSortLine", 0x80092000, OT, 5, 0));
-    CHECK(r32(PKT + 4) == (0xE1000200u | 0x20u));
-    CHECK(r32(PKT + 8) == 0x42332211u);
-    CHECK(r32(PKT + 12) == ((22u << 16) | 11u) && r32(PKT + 16) == ((60u << 16) | 40u));
-    CHECK(r32(PKT) == (0x04000000u | ((ORG + 4 * 4) & 0xFFFFFF)));   /* old slot 5 -> slot 4 */
-    CHECK(r32(ORG + 5 * 4) == (PKT & 0xFFFFFF));
-    CHECK(r32(0x800A5E60) == PKT + 20);
-
-    /* GsSortFastSprite: brightness-off (bit 6) + semi (bit 30), tpage 5, clut (320, 480) */
-    {
-        uint32_t sp = 0x80092100, p2 = PKT + 20;
-        g32(sp, 0x40000040);
-        put16(sp + 4, 100); put16(sp + 6, 50); put16(sp + 8, 16); put16(sp + 10, 32);
-        put16(sp + 12, 5); ram[(sp & 0x1FFFFF) + 14] = 8; ram[(sp & 0x1FFFFF) + 15] = 16;
-        put16(sp + 16, 320); put16(sp + 18, 480);
-        ram[(sp & 0x1FFFFF) + 20] = 0x80; ram[(sp & 0x1FFFFF) + 21] = 0x81; ram[(sp & 0x1FFFFF) + 22] = 0x82;
-        CHECK(call("GsSortFastSprite", sp, OT, 5, 0));
-        CHECK(r32(p2 + 4) == (0xE1000200u | 5u));
-        CHECK(r32(p2 + 8) == (0x64000000u | 0x02000000u | 0x01000000u | 0x828180u));
-        CHECK(r32(p2 + 12) == ((70u << 16) | 110u));
-        CHECK(r32(p2 + 16) == (8u | (16u << 8) | (20u << 16) | (480u << 22)));
-        CHECK(r32(p2 + 20) == ((32u << 16) | 16u));
-        CHECK(r32(p2) == (0x05000000u | (PKT & 0xFFFFFF)));        /* chained in front of the line */
-        CHECK(r32(ORG + 5 * 4) == (p2 & 0xFFFFFF) && r32(0x800A5E60) == p2 + 24);
-        /* zero width or the display-off bit: nothing emitted */
-        put16(sp + 8, 0);
-        CHECK(call("GsSortFastSprite", sp, OT, 6, 0) && r32(0x800A5E60) == p2 + 24);
-        put16(sp + 8, 16); g32(sp, 0x80000000);
-        CHECK(call("GsSortFastSprite", sp, OT, 6, 0) && r32(0x800A5E60) == p2 + 24);
-    }
-
-    /* DrawOTag over the GsOT: the sprite then the line, one packet each */
-    bfm_psyq_reset();
-    CHECK(call("DrawOTag", ORG + 15 * 4, 0, 0, 0));
-    bfm_plat_renderer_stats(&st);
-    CHECK(st.prims_by_kind[BFM_PRIM_SPRITE] == 1 && st.prims_by_kind[BFM_PRIM_LINE_F] == 1);
-    {
-        BfmPsyqStats ps;
-        bfm_psyq_stats(&ps);
-        CHECK(ps.ot_packets == 2 && ps.unknown_commands == 0);
-    }
-
-    /* GsInitCoordinate2 */
-    for (w = 0; w < 8; w++) g32(0x800AE620 + 4 * w, 0x1000 * (w + 1));
-    g32(0x80093100, 0xFFFFFFFF);
-    CHECK(call("GsInitCoordinate2", 0x80093000, 0x80093100, 0, 0));
-    CHECK(r32(0x80093100) == 0 && r32(0x80093104) == 0x1000 && r32(0x80093120) == 0x8000);
-    CHECK(r32(0x80093148) == 0x80093000 && r32(0x8009304C) == 0x80093100);
-    CHECK(call("GsInitCoordinate2", 0, 0x80093200, 0, 0) && r32(0x80093248) == 0);
-
-    /* GsMapModelingData: 2 objects, offsets relative to the object table */
-    g32(0x80094000, 0x41); g32(0x80094004, 0); g32(0x80094008, 2);
-    g32(0x8009400C, 0x40); g32(0x80094014, 0x80); g32(0x8009401C, 0xC0);
-    g32(0x80094028, 0x100); g32(0x80094030, 0x140); g32(0x80094038, 0x180);
-    CHECK(call("GsMapModelingData", 0x80094004, 0, 0, 0));
-    CHECK(r32(0x80094004) == 1 && r32(0x8009400C) == 0x8009404C && r32(0x8009401C) == 0x800940CC);
-    CHECK(r32(0x80094028) == 0x8009410C && r32(0x80094038) == 0x8009418C);
-    CHECK(call("GsMapModelingData", 0x80094004, 0, 0, 0) && r32(0x8009400C) == 0x8009404C);   /* once */
-
-    /* GsSetLightMode */
-    CHECK(call("GsSetLightMode", 2, 0, 0, 0) && r32(0x800C6DC8) == 2);
-    CHECK(call("GsSetLightMode", 7, 0, 0, 0) && r32(0x800C6DC8) == 2);
-    return 0;
-}
-
-
-/* ------------------------------------------------------------ libgte HLE */
-static void fill_sincos_table(void) {
-    /* synthetic table (not the retail data): round(4096 * sin/cos) */
-    unsigned i;
-    for (i = 0; i < 4096; i++) {
-        double a = 6.283185307179586 * (double)i / 4096.0;
-        int16_t sn = (int16_t)lround(4096.0 * sin(a)), cs = (int16_t)lround(4096.0 * cos(a));
-        put32g(0x8006DF1C + 4 * i, (uint32_t)(uint16_t)sn | ((uint32_t)(uint16_t)cs << 16));
-    }
-}
-
-static void fill_atan_table(void) {
-    /* synthetic (not the retail data): round(atan(i / 1024) * 2048 / pi) */
-    unsigned i;
-    for (i = 0; i < 1026; i++)
-        put16(0x80071F1C + 2 * i, (uint16_t)(int16_t)lround(atan((double)i / 1024.0) * 2048.0 / 3.141592653589793));
-}
-
-static int group_libgte(void) {
-    static const int16_t angles[][3] = {{0, 0, 0}, {0, 0, 1024}, {512, -300, 77}, {-4000, 4095, -1},
-                                        {1234, 2345, 3456}, {-2048, -1024, 2048}};
-    unsigned k, i;
-    reset_all();
-    memset(ram, 0, sizeof ram);
-    bfm_psyq_set_ram(ram, sizeof ram);
-    fill_sincos_table();
-    for (k = 0; k < sizeof angles / sizeof angles[0]; k++) {
-        put16(0x80001000, (uint16_t)angles[k][0]); put16(0x80001002, (uint16_t)angles[k][1]);
-        put16(0x80001004, (uint16_t)angles[k][2]);
-        for (i = 0; i < 32; i++) ram[0x1100 + i] = 0xEE;          /* t and pad must survive */
-        CHECK(call("RotMatrix", 0x80001000, 0x80001100, 0, 0) && R[2] == 0x80001100);
-        printf("rot %d %d %d:", angles[k][0], angles[k][1], angles[k][2]);
-        for (i = 0; i < 9; i++) printf(" %d", (int)(int16_t)(ram[0x1100 + 2 * i] | (ram[0x1101 + 2 * i] << 8)));
-        printf("\n");
-        CHECK(ram[0x1112] == 0xEE && r32(0x80001114) == 0xEEEEEEEE);
-        CHECK(call("RotMatrixYXZ", 0x80001000, 0x80001100, 0, 0) && R[2] == 0x80001100);
-        printf("rotyxz %d %d %d:", angles[k][0], angles[k][1], angles[k][2]);
-        for (i = 0; i < 9; i++) printf(" %d", (int)(int16_t)(ram[0x1100 + 2 * i] | (ram[0x1101 + 2 * i] << 8)));
-        printf("\n");
-        CHECK(ram[0x1112] == 0xEE && r32(0x80001114) == 0xEEEEEEEE);
-    }
-    /* RotMatrixX/Y/Z multiply m in place (rows combined from the originals) */
-    fill_atan_table();
-    {
-        static const int32_t axis_angles[] = {0, 1024, -300, 4095, -4097, 77};
-        unsigned a, ax;
-        for (ax = 0; ax < 3; ax++)
-            for (a = 0; a < sizeof axis_angles / sizeof axis_angles[0]; a++) {
-                static const char *names[3] = {"RotMatrixX", "RotMatrixY", "RotMatrixZ"};
-                for (i = 0; i < 9; i++) put16(0x80002200 + 2 * i, (uint16_t)(int16_t)(1100 * (int)i - 4000));
-                CHECK(call(names[ax], (uint32_t)axis_angles[a], 0x80002200, 0, 0) && R[2] == 0x80002200);
-                printf("%s %d:", names[ax], axis_angles[a]);
-                for (i = 0; i < 9; i++) printf(" %d", (int)(int16_t)(ram[0x2200 + 2 * i] | (ram[0x2201 + 2 * i] << 8)));
-                printf("\n");
-            }
-    }
-    {   /* ratan2(y, x) */
-        static const int32_t yx[][2] = {{1, 1}, {0, 5}, {5, 0}, {0, 0}, {-3, 7}, {3, -7}, {-3, -7},
-                                        {100, 37}, {37, 100}, {0x3000000, 0x2000001},
-                                        {0x2000001, 0x3000000}, {-1, -1000000}, {1000000, 1}};
-        for (k = 0; k < sizeof yx / sizeof yx[0]; k++) {
-            CHECK(call("ratan2", (uint32_t)yx[k][0], (uint32_t)yx[k][1], 0, 0));
-            printf("ratan2 %d %d: %d\n", yx[k][0], yx[k][1], (int)(int32_t)R[2]);
-        }
-        CHECK(!call("ratan2", 0x80000000u, 1, 0, 0));   /* INT_MIN: retail code decides */
-    }
-    /* ScaleMatrix: column scaling; m[2][2] writes its whole word */
-    for (i = 0; i < 9; i++) put16(0x80002000 + 2 * i, (uint16_t)(int16_t)(1000 * (int)i - 3000));
-    put16(0x80002012, 0x7777);
-    g32(0x80002100, 2048); g32(0x80002104, 8192); g32(0x80002108, (uint32_t)-4096);
-    CHECK(call("ScaleMatrix", 0x80002000, 0x80002100, 0, 0) && R[2] == 0x80002000);
-    printf("scale:");
-    for (i = 0; i < 9; i++) printf(" %d", (int)(int16_t)(ram[0x2000 + 2 * i] | (ram[0x2001 + 2 * i] << 8)));
-    printf(" word %08x\n", (unsigned)r32(0x80002010));
-    /* TransMatrix */
-    {   /* TransMatrix is only called inside libgs: test the helper */
-        static const int32_t v[3] = {5, -6, 7};
-        bfm_psyq_transmatrix(ram + 0x2000, v);
-        CHECK(r32(0x80002014) == 5 && (int32_t)r32(0x80002018) == -6 && r32(0x8000201C) == 7);
-    }
-    /* no table mapped: refuse */
-    bfm_psyq_set_ram(NULL, 0);
-    CHECK(!call("RotMatrix", 0x80001000, 0x80001100, 0, 0));
+    memset(ram, 0xA5, sizeof(ram));
+    bfm_psyq_set_ram(ram, sizeof(ram));
+    check_guest_only_services(ram, sizeof(ram));
     return 0;
 }
 
@@ -1980,8 +1775,7 @@ int main(int argc, char **argv) {
     else if (strcmp(g, "sha256") == 0) r = group_sha256();
     else if (strcmp(g, "disc_check") == 0) r = group_disc_check(argc - 2, argv + 2);
     else if (strcmp(g, "disc_init") == 0) r = group_disc_init(argc - 2, argv + 2);
-    else if (strcmp(g, "libgs") == 0) r = group_libgs();
-    else if (strcmp(g, "libgte") == 0) r = group_libgte();
+    else if (strcmp(g, "guest_services") == 0) r = group_guest_services();
     else if (strcmp(g, "psyq") == 0) r = group_psyq(argc - 2, argv + 2);
     else if (strcmp(g, "watch") == 0) r = group_watch(argc - 2, argv + 2);
     else if (strcmp(g, "cheat_pack") == 0) r = group_cheat_pack(argc - 2, argv + 2);

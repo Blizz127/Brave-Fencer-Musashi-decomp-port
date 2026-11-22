@@ -18,8 +18,7 @@ CFLAGS = ["-std=c99", "-Wall", "-Wextra", "-Werror", "-O0", "-g"]
 
 def sources():
     return (sorted(str(p) for p in PLAT.glob("bfm_plat*.c")) +
-            [str(PLAT / "psyq" / n) for n in
-             ("bfm_psyq_compat.c", "bfm_psyq_libgs.c", "bfm_psyq_libgte.c")])
+            [str(PLAT / "psyq/bfm_psyq_compat.c")])
 
 
 @unittest.skipUnless(shutil.which("cc"), "cc unavailable")

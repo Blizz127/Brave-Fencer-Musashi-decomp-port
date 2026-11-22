@@ -256,8 +256,8 @@ All functions return `BFM_PLAT_OK` (0) or a negative `BfmPlatResult`.
 | 12 | `item_get` | `BfmEventItem {item, count, kind, flags}` | code site (inventory add) and derived (inventory slots, toy-shop figures) |
 | 13/14 | `save` / `load` | `BfmEventSave {slot}` | code site on the memory-card state machine (medium) |
 | 15 | `projection` | `BfmEventProjection {h, ofx, ofy}` | the game's GTE projection setters |
-| 16 | `damage` | `BfmEventStat {value, previous, max, flags}` | code site (lethal HP subtract) and derived (any HP drop) |
-| 17 | `bp_use` | `BfmEventStat` | code site and derived |
+| 16 | `damage` | `BfmEventStat {value, previous, max, flags}` | frame-end watch on a decrease in HP |
+| 17 | `bp_use` | `BfmEventStat` | frame-end watch on a decrease in BP |
 | 18 | `money` | `BfmEventStat` | derived |
 | 19 | `item_use` | `BfmEventItem` | code site (item effect handler) |
 

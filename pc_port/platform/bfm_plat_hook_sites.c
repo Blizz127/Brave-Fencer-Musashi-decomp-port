@@ -130,54 +130,6 @@ static int fill_geom_offset(void *u, BfmEvent e, BfmPlatEventPayload *p) {
     return 0;
 }
 
-/* These overlays use the two gauge update entry points below. */
-static const char gauge_overlays[] =
-    "MAIN_012,SC01_000,SC01_001,SC01_004,SC01_005,SC01_006,SC01_008,"
-    "SC01_009,SC01_074,SC01_077,SC01_080,SC01_084,SC02_000,SC02_003,"
-    "SC02_004,SC02_005,SC02_011,SC02_015,SC02_016,SC02_017,SC02_021,"
-    "SC02_026,SC02_027,SC02_028,SC02_031,SC02_035,SC02_037,SC02_039,"
-    "SC02_041,SC03_001,SC03_002,SC03_003,SC03_006,SC03_007,SC03_010,"
-    "SC03_011,SC03_012,SC03_013,SC03_014,SC03_015,SC03_023,SC03_024,"
-    "SC03_028,SC03_029,SC03_030,SC03_031,SC03_089,SC03_090,SC03_091,"
-    "SC03_092,SC03_093,SC03_094,SC03_095,SC03_096,SC03_097,SC03_098,"
-    "SC03_099,SC03_100,SC03_101,SC03_102,SC03_103,SC03_104,SC03_105,"
-    "SC03_107,SC03_108,SC03_109,SC03_110,SC03_111,SC03_112,SC03_113,"
-    "SC03_114,SC03_115,SC03_116,SC03_117,SC03_118,SC03_119,SC03_121,"
-    "SC03_124,SC03_125,SC03_126,SC04_000,SC04_002,SC04_003,SC04_004,"
-    "SC04_005,SC04_006,SC04_007,SC04_008,SC04_009,SC04_010,SC04_011,"
-    "SC04_012,SC04_015,SC04_016,SC04_018,SC04_019,SC04_020,SC04_021,"
-    "SC05_000,SC05_001,SC05_002,SC05_003,SC05_004,SC05_005,SC05_006,"
-    "SC05_007,SC05_008,SC05_009,SC05_010,SC05_011,SC05_017,SC05_018,"
-    "SC05_019,SC06_000,SC06_006,SC06_008,SC06_010,SC06_011,SC06_013,"
-    "SC06_014,SC06_015,SC06_016,SC06_018,SC06_020,SC06_022,SC06_024,"
-    "SC06_025,SC06_027,SC06_029,SC06_030,SC06_032,SC06_033,SC07_000,"
-    "SC07_001,SC07_002,SC07_006,SC07_007,SC07_008,SC07_009,SC07_010,"
-    "SC07_011";
-
-static int read_s16(uint32_t a, int32_t *out) {
-    uint32_t v;
-    int r = read_u16(a, &v);
-    if (r == BFM_PLAT_OK) *out = (int16_t)(uint16_t)v;
-    return r;
-}
-
-/* The event reports the value predicted at function entry. */
-static int fill_damage(void *u, BfmEvent e, BfmPlatEventPayload *p) {
-    uint32_t a1, max = 0;   /* The limit is optional when the guest read fails. */
-    int32_t hp;
-    (void)u;
-    if (bfm_plat_guest_reg(BFM_GUEST_REG_A1, &a1) != BFM_PLAT_OK ||
-        read_s16(e == BFM_EVENT_DAMAGE ? BFM_GUEST_HP : BFM_GUEST_BP, &hp) != BFM_PLAT_OK)
-        return 1;
-    read_u16(e == BFM_EVENT_DAMAGE ? BFM_GUEST_HP_MAX : BFM_GUEST_BP_MAX, &max);
-    p->stat.previous = (uint16_t)hp;
-    p->stat.value = (int32_t)a1 > (uint16_t)hp ? 0 : (uint16_t)hp - (int32_t)a1;
-    p->stat.max = (int32_t)max;
-    p->stat.flags = 0;
-    bfm_plat_events_mark_code_site(e);
-    return 0;
-}
-
 /* A nonzero item assignment reports one acquisition. */
 static int fill_item_add(void *u, BfmEvent e, BfmPlatEventPayload *p) {
     uint32_t a0, a1;
@@ -239,15 +191,6 @@ static const BfmPlatKnownSite known[] = {
      "The projection hook reads horizontal and vertical offsets from the signed low "
      "halves of a0 and a1. See tests/projection_source_probe.c.",
      "high: projection offset registers", fill_geom_offset},
-    {0x8014BC80u, gauge_overlays, BFM_EVENT_DAMAGE, "func_8014BC80",
-     "In the listed overlays this hook reads the current HP and limit in guest memory, "
-     "then uses a1 to compute the reported change.",
-     "high: covers the listed overlay routine; other HP changes can be detected by the "
-     "frame observer", fill_damage},
-    {0x8014BD60u, gauge_overlays, BFM_EVENT_BP_USE, "func_8014BD60",
-     "In the listed overlays the BP hook reads the current BP and limit and applies the "
-     "delta in a1 to the event payload.",
-     "high", fill_damage},
     {0x800D0F0Cu, NULL, BFM_EVENT_ITEM_GET, "func_800D0F0C",
      "The item assignment entry takes the item in the low byte of a1. Zero clears a slot "
      "and suppresses the item event. See src/overlays/main_0010/800d0f0c.c.",

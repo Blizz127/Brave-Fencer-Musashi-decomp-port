@@ -51,6 +51,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+from psyq_manifest import sdk_overlay
+
 RAM_LO, RAM_HI = 0x80010000, 0x80200000
 HOST_TARGET = "x86_64-unknown-linux-gnu"
 # The lane objects' triple (--host-target). Every check runs on HOST_TARGET's
@@ -1259,6 +1262,8 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
     tag = f"{member}_{vram:08x}" if member else f"{vram:08x}"
     work = out / "ir"
     try:
+        if sdk_overlay(entry.get("region"), vram, size) or sdk_overlay(member, vram, size):
+            raise Reject("deny", "SDK library code in this overlay member")
         # The matching menu-item C has no player timing/interrupt qualification.
         # Different members can independently implement a function at this PC.
         if (vram == 0x8017ceb8 or name.lower() == "func_8017ceb8") and (
@@ -1640,6 +1645,9 @@ def candidates(only=None, excluded=None, registry=None):
     for m in registry:
         if m["region"] != "main" or m.get("recovery") != "c":
             continue
+        # Historical source attribution for these resident routines is unresolved.
+        if m["vram"] in (0x8001282C, 0x800128EC):
+            continue
         if psyq_manifest.psyq_segment(m["vram"], psyq):
             if excluded is not None:
                 excluded.append(m["vram"])
@@ -1662,6 +1670,7 @@ def overlay_candidates(members, only=None, registry=None):
     if registry is None:
         registry = load_matches()
     return [m for m in registry if m["region"] in members and m.get("recovery") == "c"
+            and not sdk_overlay(m["region"], m["vram"], m.get("size", 1))
             and (ROOT / m["source"]).exists() and (not only or m["vram"] in only)]
 
 

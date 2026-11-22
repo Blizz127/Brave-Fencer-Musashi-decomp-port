@@ -116,6 +116,25 @@ class PortMatchedRatio(unittest.TestCase):
         self.assertIn("exact", r["instructions_basis"])
         self.assertIn("matched C", summary)
 
+    def test_lane_admission_belongs_to_the_resident_member(self):
+        d = Path(self.tmp.name)
+        pc = 0x800D2AA0
+        (d / "c").write_text(f"{pc:08x} 1 j 00000000 interp\n")
+        (d / "rep.json").write_text(json.dumps({"functions": [
+            {"vram": pc, "member": "main_0010", "admitted": True},
+        ]}))
+        for region, recovery, domain, cls in (
+            ("main_0003", None, "psyq", "interpreted"),
+            ("main_0010", "c", "game", "matched_c"),
+        ):
+            with self.subTest(region=region):
+                row = {"name": "example", "region": region, "vram": pc,
+                       "size": 8, "recovery": recovery}
+                (d / "reg.json").write_text(json.dumps({"matches": [row]}))
+                result, _ = self.run_tool(d)
+                self.assertEqual(result["by_domain"][domain][cls]["functions"], 1)
+                self.assertEqual(result["classes"][cls]["instructions"], 2)
+
     def test_estimate_is_labelled(self):
         r, summary = self.run_tool(self.tmp.name)
         self.assertIn("ESTIMATE", r["instructions_basis"])

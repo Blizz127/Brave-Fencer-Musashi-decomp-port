@@ -241,8 +241,6 @@ def read_png_rgb(path):
 KNOWN_SITES = {
     ("8004923c", "-", "projection"): ("func_8004923C", "high"),
     ("8004921c", "-", "projection"): ("func_8004921C", "high"),
-    ("8014bc80", "list", "damage"): ("func_8014BC80", "high"),
-    ("8014bd60", "list", "bp_use"): ("func_8014BD60", "high"),
     ("800d0f0c", "-", "item_get"): ("func_800D0F0C", "high"),
     ("800d128c", "-", "item_use"): ("func_800D128C", "high"),
     ("800189a8", "-", "frame_begin"): ("func_800189A8", "high"),
@@ -270,6 +268,28 @@ HOOK_SPANS = {
     0x80128158: (32, "26d61e063488a45fdf5ccbfc1ab5dd268fe11267325c371d4892c40d6b71f74d"),
 }
 
+# Owner-disc copies of the original gauge entry routines.
+GAUGE_REFERENCE_SCENES = (
+    "MAIN_012 SC01_000 SC01_001 SC01_004 SC01_005 SC01_006 SC01_008 SC01_009 "
+    "SC01_074 SC01_077 SC01_080 SC01_084 SC02_000 SC02_003 SC02_004 SC02_005 "
+    "SC02_011 SC02_015 SC02_016 SC02_017 SC02_021 SC02_026 SC02_027 SC02_028 "
+    "SC02_031 SC02_035 SC02_037 SC02_039 SC02_041 SC03_001 SC03_002 SC03_003 "
+    "SC03_006 SC03_007 SC03_010 SC03_011 SC03_012 SC03_013 SC03_014 SC03_015 "
+    "SC03_023 SC03_024 SC03_028 SC03_029 SC03_030 SC03_031 SC03_089 SC03_090 "
+    "SC03_091 SC03_092 SC03_093 SC03_094 SC03_095 SC03_096 SC03_097 SC03_098 "
+    "SC03_099 SC03_100 SC03_101 SC03_102 SC03_103 SC03_104 SC03_105 SC03_107 "
+    "SC03_108 SC03_109 SC03_110 SC03_111 SC03_112 SC03_113 SC03_114 SC03_115 "
+    "SC03_116 SC03_117 SC03_118 SC03_119 SC03_121 SC03_124 SC03_125 SC03_126 "
+    "SC04_000 SC04_002 SC04_003 SC04_004 SC04_005 SC04_006 SC04_007 SC04_008 "
+    "SC04_009 SC04_010 SC04_011 SC04_012 SC04_015 SC04_016 SC04_018 SC04_019 "
+    "SC04_020 SC04_021 SC05_000 SC05_001 SC05_002 SC05_003 SC05_004 SC05_005 "
+    "SC05_006 SC05_007 SC05_008 SC05_009 SC05_010 SC05_011 SC05_017 SC05_018 "
+    "SC05_019 SC06_000 SC06_006 SC06_008 SC06_010 SC06_011 SC06_013 SC06_014 "
+    "SC06_015 SC06_016 SC06_018 SC06_020 SC06_022 SC06_024 SC06_025 SC06_027 "
+    "SC06_029 SC06_030 SC06_032 SC06_033 SC07_000 SC07_001 SC07_002 SC07_006 "
+    "SC07_007 SC07_008 SC07_009 SC07_010 SC07_011 "
+).split()
+
 GAUGE_LABELS_SHA256 = "1c89f9552aba16331d6ca422f4393a368980c65b1be3401414c2974ac38be4ad"
 GAUGE_IMAGES_SHA256 = "58443fec46f38e43b3431993aa51dff790c2377279b6d152955e1569e53e0e4a"
 
@@ -289,8 +309,7 @@ class BfmPlatTests(unittest.TestCase):
         cls.addClassCleanup(temp.cleanup)
         cls.tmp = Path(temp.name)
         cls.probe = cls.tmp / "bfm_plat_probe"
-        sources = sorted(str(p) for p in PLAT.glob("bfm_plat*.c")) + [str(PLAT / "psyq/bfm_psyq_compat.c"), str(PLAT / "psyq/bfm_psyq_libgs.c"),
-                                                                    str(PLAT / "psyq/bfm_psyq_libgte.c")]
+        sources = sorted(str(p) for p in PLAT.glob("bfm_plat*.c")) + [str(PLAT / "psyq/bfm_psyq_compat.c")]
         subprocess.run(["cc", *CFLAGS, "-I", str(PLAT), *sources,
                         str(ROOT / "tests/bfm_plat_probe.c"), "-o",
                         str(cls.probe), "-ldl", "-lm"],
@@ -521,24 +540,8 @@ class BfmPlatTests(unittest.TestCase):
                     if line.startswith("evidence ")]
         self.assertEqual(len(evidence), len(KNOWN_SITES))
         self.assertTrue(all(len(fields) == 3 and fields[2].strip() for fields in evidence))
-        scopes = self.gauge_scopes(out)
-        self.assertEqual(set(scopes), {"damage", "bp_use"})
-        self.assertEqual(scopes["damage"], scopes["bp_use"])
-        labels = scopes["damage"]
-        self.assertEqual(len(labels), 141)
-        self.assertEqual(len(set(labels)), len(labels))
-        manifest = "".join(label + "\n" for label in sorted(labels))
-        self.assertEqual(hashlib.sha256(manifest.encode("ascii")).hexdigest(), GAUGE_LABELS_SHA256)
-        self.assertEqual({int(pc, 16) for pc, _, _ in sites}, set(HOOK_SPANS))
-
-    @staticmethod
-    def gauge_scopes(catalog):
-        scopes = {}
-        for line in catalog.splitlines():
-            if line.startswith("scope "):
-                _, event, members = line.split()
-                scopes[event] = members.split(",")
-        return scopes
+        registered_addresses = {int(pc, 16) for pc, _, _ in sites}
+        self.assertEqual(registered_addresses, set(HOOK_SPANS) - {0x8014BC80, 0x8014BD60})
 
     def test_hook_addresses_in_owned_executable_and_inventory(self):
         extracted = ROOT / "extracted"
@@ -613,8 +616,7 @@ class BfmPlatTests(unittest.TestCase):
         subprocess.run(["cc", "-std=gnu99", "-O1", "-c", *lua_c], cwd=objdir, check=True,
                        stdin=subprocess.DEVNULL, timeout=300)
         probe = self.tmp / "bfm_plat_lua_probe"
-        sources = sorted(str(p) for p in PLAT.glob("bfm_plat*.c")) + [str(PLAT / "psyq/bfm_psyq_compat.c"), str(PLAT / "psyq/bfm_psyq_libgs.c"),
-                                                                    str(PLAT / "psyq/bfm_psyq_libgte.c")]
+        sources = sorted(str(p) for p in PLAT.glob("bfm_plat*.c")) + [str(PLAT / "psyq/bfm_psyq_compat.c")]
         subprocess.run(["cc", *CFLAGS, "-DBFM_PLAT_WITH_LUA", "-I", str(PLAT), "-I", str(lua_src),
                         *sources, str(PLAT / "backends/script_lua.c"),
                         str(ROOT / "tests/bfm_plat_probe.c"), *sorted(map(str, objdir.glob("*.o"))),
@@ -757,7 +759,10 @@ bfm.on("frame_end", function() if seen.late == nil then
         overlays = ROOT / "extracted/overlays"
         if not (overlays / "main/0012.bin").is_file():
             self.skipTest("requires MAIN.CD and the decoded USA scene overlays")
-        labels = sorted(self.gauge_scopes(self.run_probe("sites"))["damage"])
+        labels = sorted(GAUGE_REFERENCE_SCENES)
+        self.assertEqual(len(labels), len(set(labels)))
+        manifest = "".join(label + "\n" for label in labels)
+        self.assertEqual(hashlib.sha256(manifest.encode("ascii")).hexdigest(), GAUGE_LABELS_SHA256)
         manifest = hashlib.sha256()
         for label in labels:
             if label == "MAIN_012":
@@ -817,121 +822,8 @@ bfm.on("frame_end", function() if seen.late == nil then
         out = self.run_probe("psyq", d / "g.iso")
         self.assertIn("ot packets 3 prims 7 unknown 1 (0x90)", out)
 
-    def test_libgte_hle_matches_retail_arithmetic(self):
-        import math
-
-        def s32(x):
-            x &= 0xFFFFFFFF
-            return x - (1 << 32) if x & 0x80000000 else x
-
-        def s16(x):
-            x &= 0xFFFF
-            return x - 0x10000 if x & 0x8000 else x
-
-        def mul12(a, b):
-            return s32(a * b) >> 12
-
-        table = [(int(round(4096 * math.sin(2 * math.pi * i / 4096))),
-                  int(round(4096 * math.cos(2 * math.pi * i / 4096)))) for i in range(4096)]
-
-        def sincos(a):
-            if a >= 0:
-                sn, cs = table[a & 0xFFF]
-                return sn, cs
-            sn, cs = table[(-a) & 0xFFF]
-            return -sn, cs
-
-        def rotmatrix(x, y, z):
-            sx, cx = sincos(x)
-            sy, cy = sincos(y)
-            sz, cz = sincos(z)
-            m = [0] * 9
-            m[2] = sy
-            m[5] = s32(-(cy * sx)) >> 12
-            m[8] = mul12(cy, cx)
-            m[0] = mul12(cz, cy)
-            m[1] = s32(-(sz * cy)) >> 12
-            t = mul12(cz, -sy)
-            m[3] = mul12(sz, cx) - mul12(t, sx)
-            m[6] = mul12(sz, sx) + mul12(t, cx)
-            t = mul12(sz, -sy)
-            m[4] = mul12(cz, cx) + mul12(t, sx)
-            m[7] = mul12(cz, sx) - mul12(t, cx)
-            return [s16(v) for v in m]
-
-        def rotmatrix_yxz(x, y, z):   # retail func_80049A1C
-            sx, cx = sincos(x)
-            sy, cy = sincos(y)
-            sz, cz = sincos(z)
-            m = [0] * 9
-            m[5] = -sx
-            m[2] = mul12(sy, cx)
-            m[8] = mul12(cy, cx)
-            m[3] = mul12(sz, cx)
-            m[4] = mul12(cz, cx)
-            t = mul12(sy, sx)
-            m[0] = mul12(cy, cz) + mul12(t, sz)
-            m[1] = -mul12(cy, sz) + mul12(t, cz)
-            t = mul12(cy, sx)
-            m[7] = mul12(sy, sz) + mul12(t, cz)
-            m[6] = -mul12(sy, cz) + mul12(t, sz)
-            return [s16(v) for v in m]
-
-        def rot_axis(m, ang, rp, rq, neg):   # retail RotMatrixX/Y/Z
-            s, c = sincos(ang)
-            t = -s if neg else s
-            m = list(m)
-            p = m[rp * 3:rp * 3 + 3]
-            q = m[rq * 3:rq * 3 + 3]
-            for j in range(3):
-                m[rp * 3 + j] = s16(s32(c * p[j] - t * q[j]) >> 12)
-                m[rq * 3 + j] = s16(s32(t * p[j] + c * q[j]) >> 12)
-            return m
-
-        atan = [int(math.floor(math.atan(i / 1024) * 2048 / math.pi + 0.5)) for i in range(1026)]
-
-        def ratan2(y, x):   # retail func_8004CFEC
-            nx, ny = x < 0, y < 0
-            x, y = abs(x), abs(y)
-            if x == 0 and y == 0:
-                return 0
-            def div(a, b):
-                return int(a / b)   # truncation, positive operands
-            if y < x:
-                idx = div(y, x >> 10) if y & 0x7FE00000 else div(y << 10, x)
-                v = atan[idx]
-            else:
-                idx = div(x, y >> 10) if x & 0x7FE00000 else div(x << 10, y)
-                v = 0x400 - atan[idx]
-            if nx:
-                v = 0x800 - v
-            if ny:
-                v = -v
-            return v
-
-        out = self.run_probe("libgte")
-        base = [1100 * i - 4000 for i in range(9)]
-        for name, rp, rq, neg in (("RotMatrixX", 1, 2, False), ("RotMatrixY", 0, 2, True),
-                                  ("RotMatrixZ", 0, 1, False)):
-            for ang in (0, 1024, -300, 4095, -4097, 77):
-                want = " ".join(map(str, rot_axis(base, ang, rp, rq, neg)))
-                self.assertIn("%s %d: %s" % (name, ang, want), out)
-        for y, x in ((1, 1), (0, 5), (5, 0), (0, 0), (-3, 7), (3, -7), (-3, -7), (100, 37), (37, 100),
-                     (0x3000000, 0x2000001), (0x2000001, 0x3000000), (-1, -1000000), (1000000, 1)):
-            self.assertIn("ratan2 %d %d: %d" % (y, x, ratan2(y, x)), out)
-        for ang in ((0, 0, 0), (0, 0, 1024), (512, -300, 77), (-4000, 4095, -1),
-                    (1234, 2345, 3456), (-2048, -1024, 2048)):
-            want = " ".join(str(v) for v in rotmatrix(*ang))
-            self.assertIn("rot %d %d %d: %s" % (ang[0], ang[1], ang[2], want), out)
-            want = " ".join(str(v) for v in rotmatrix_yxz(*ang))
-            self.assertIn("rotyxz %d %d %d: %s" % (ang[0], ang[1], ang[2], want), out)
-        m = [1000 * i - 3000 for i in range(9)]
-        v = (2048, 8192, -4096)
-        scaled = [s16(mul12(m[k], v[k % 3])) for k in range(9)]
-        self.assertIn("scale: " + " ".join(map(str, scaled)) + " word %08x" % (mul12(m[8], v[2]) & 0xFFFFFFFF), out)
-
-    def test_libgs_packet_builders(self):
-        self.run_probe("libgs")
+    def test_guest_only_services_leave_ram_and_registers_unchanged(self):
+        self.run_probe("guest_services")
 
     def test_psyq_generated_table_is_current(self):
         import json
@@ -987,7 +879,7 @@ bfm.on("frame_end", function() if seen.late == nil then
         self.assertEqual([d[0] for d in defs], [e["addr"] for e in data["entries"]])
         self.assertEqual(sorted(int(d[0], 16) for d in defs), [int(d[0], 16) for d in defs])
         impl = "".join((PLAT / "psyq" / f).read_text() for f in
-                       ("bfm_psyq_compat.c", "bfm_psyq_libgs.c", "bfm_psyq_libgte.c", "psyq_psycross.c"))
+                       ("bfm_psyq_compat.c", "psyq_psycross.c"))
         counts = {"PSYCROSS": 0, "HLE": 0, "STUB": 0}
         sites = {"PSYCROSS": 0, "HLE": 0, "STUB": 0}
         by_addr = {e["addr"]: e for e in data["entries"]}
@@ -1051,10 +943,6 @@ bfm.on("frame_end", function() if seen.late == nil then
         # register the PsyCross renderer backend, which needs SDL/GL)
         cc(["gcc", "-c", "-std=c99", "-Wall", "-Wextra", "-Werror", "-DBFM_PLAT_WITH_PSYCROSS",
             "-I", str(PLAT), str(PLAT / "psyq/bfm_psyq_compat.c")], "compat.o")
-        cc(["gcc", "-c", "-std=c99", "-Wall", "-Wextra", "-Werror", "-I", str(PLAT),
-            str(PLAT / "psyq/bfm_psyq_libgs.c")], "libgs.o")
-        cc(["gcc", "-c", "-std=c99", "-Wall", "-Wextra", "-Werror", "-I", str(PLAT),
-            str(PLAT / "psyq/bfm_psyq_libgte.c")], "libgte_hle.o")
         platform = sorted(str(p) for p in PLAT.glob("bfm_plat*.c"))
         probe = d / "gte_probe"
         subprocess.run(["gcc", "-std=c99", "-Wall", "-Wextra", "-Werror",
@@ -1064,9 +952,6 @@ bfm.on("frame_end", function() if seen.late == nil then
         out = subprocess.run([str(probe)], capture_output=True, text=True, timeout=60)
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
         self.assertIn("rtps sx 185 sy 132 otz 250", out.stdout)
-        self.assertIn("lw1 5 100 0 m01 -4096", out.stdout)
-        for i, (x, y) in enumerate(((264, 172), (264, 188), (256, 172), (256, 188))):
-            self.assertIn("corner %d: %d %d" % (i, x, y), out.stdout)
         self.assertIn("ok gte", out.stdout)
 
     def test_overlay_font(self):

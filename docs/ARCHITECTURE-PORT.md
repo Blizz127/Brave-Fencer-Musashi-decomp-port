@@ -216,12 +216,13 @@ a shared guest address in several different overlays.
 | `room_exit` | `0x80011B7C` | The low half of the first argument is mode 8 while a location overlay is selected. Other modes use this same function. Additional room traces are needed to establish how specific mode 8 is to exits. |
 | `save`, `load` | `0x8002B0B4` | The card state at `0x800760AC` enters 13 for a write or 17 or 32 for a read. The second argument supplies the slot. A retry can produce another event. These hooks report a request inside the state machine. |
 | `projection` | `0x8004923C`, `0x8004921C` | One entry supplies the unsigned 16-bit projection distance. The other supplies both signed 16-bit screen offsets. |
-| `damage`, `bp_use` | `0x8014BC80`, `0x8014BD60` | The shared handlers take the amount in the second argument. The host reads the existing gauge to predict the change. Other writers can trigger the gauge watch at frame end. |
 | `item_get` | `0x800D0F0C` | A nonzero item byte in the second argument identifies one inventory acquisition. Clearing a slot suppresses the event. |
 | `item_use` | `0x800D128C` | The low byte of the first argument identifies the item whose effect is about to run. |
 
-The gauge entries have 141 identified overlay copies. They occur in MAIN
-member 12 and 140 scene code members. Battle start and battle end still have
+The frame-end memory observer emits `damage` and `bp_use` when it reads a
+lower HP or BP value. The payload contains the previously observed value, the
+new value and the current maximum. The original gauge routines have 141
+identified overlay copies, in MAIN member 12 and 140 scene code members. Battle start and battle end still have
 no established entry. The general player-active field and the save-slot
 display do not establish combat boundaries.
 
@@ -1046,17 +1047,8 @@ static const MusashiNativeLaneEntry psyq_entries[] = {
 - `bfm_psyq_call(pc, r)` is a lookup-and-call for routers that don't
   instantiate the table.
 
-**Status: see the counts in [PSYQ-COMPAT.md](PSYQ-COMPAT.md).**
-- **HLE (38):** the libgpu packet helpers (GetTPage, GetClut, AddPrim,
-  CatPrim, SetSemiTrans, SetPoly*/SetLine*), ClearOTagR, SetDefDispEnv,
-  LoadImage/StoreImage/MoveImage, PutDrawEnv/PutDispEnv, DrawOTag,
-  DrawSync, SetDispMask; VSync; CdIntToPos/CdPosToInt/CdSearchFile; rand,
-  memcpy, memset, bzero, strcpy, strcmp, putchar.
-- **PsyCross:** ratan2, plus the libgte functions behind the GTE bridge
-  (below).
-- **Stub-TBD (173):** the sound driver, libgs, GTE-state libgte, the
-  remaining libcd, libapi/libpad/libmcrd/apicard (the device and BIOS HLE
-  run their guest code), callbacks, and printf.
+The [compatibility table](PSYQ-COMPAT.md) lists each address, its current host
+implementation or guest status, and the observed call count.
 
 **Semantics differences to know about:**
 - **Pointer arguments** are guest addresses. The layer converts them. For
@@ -1090,71 +1082,30 @@ static const MusashiNativeLaneEntry psyq_entries[] = {
     those store PGXP float bits as `sxy` for PsyCross's float-vertex
     renderer. Instead the wrappers run RTPS/RTPT on the bank and read SXY,
     IR0, SZ3 and FLAG back as integers.
-  - `PushMatrix`/`PopMatrix` stay STUB, because PsyCross keeps that stack
-    host-side while the retail one lives in guest RAM.
-  - `tests/bfm_psyq_gte_probe.c` links PsyCross's real GTE core (MIT, from
-    the local checkout) and checks the setters, `ReadGeomOffset`/
-    `ReadRotMatrix`, `RotTransPers` against the projection maths (sx 185,
-    sy 132, otz 250), `RotTransPers3`/`4` with guest-stack arguments, and
-    the matrix functions and the bridge.
-- **rand** updates the guest's own seed word (`0x80078980`), so native and
-  interpreted callers share one sequence.
+- The matrix stack operations execute through the ordinary guest path.
+- The GTE probe exercises the supported host projection and matrix calls
+  with an explicit bridge. Random-number and string services execute the
+  program on the supplied disc.
 - **VSync:** mode > 1 waits n fields through `bfm_plat_timing_vsync`, 0
   waits one, 1 returns 0 (there's no hsync counter on the host), and < 0
   returns the platform's field counter.
 - **Callbacks** (DrawSyncCallback, VSyncCallback, DMACallback…) call guest
   code through the port's IRQ HLE and `musashi_native_guest_call`.
 
-**libgs** (`psyq/bfm_psyq_libgs.c`, and the GTE ones in `psyq_psycross.c`).
-libgs's 2D sort calls build GPU packets in the packet area whose pointer is
-at GsOUT_PACKET_P (`0x800A5E60`), add the draw-buffer offset (`0x800A6548`/
-`0x800A654A`), and link the packets into a guest GsOT. The HLE does exactly
-that, so the packets render in OT order at DrawOTag, through the HLE packet
-decoder or the interpreter's GPU path, interleaved correctly with every
-other primitive in the OT. The field arithmetic follows the game's
-decompiled C of each entry.
-- **HLE:**
-  - GsSortLine (E1 + LINE_F2, 882 call sites) and GsSortFastSprite (E1 +
-    SPRT, 253 sites), each linked with libgs's OT link: slot =
-    `org + (pri − offset)·4`, where the retail code reads offset and point
-    as one word
-  - GsInitCoordinate2, GsMapModelingData (in-place TMD relocation, once),
-    GsSetLightMode
-- **Through the GTE bridge:** GsSetLsMatrix, GsSetProjection, GsSetAmbient,
-  and SetBackColor (now named by its `sll 4 + ctc2 13..15` shape).
-- **Coordinates and sprites (GTE bridge):**
-  - GsGetLw/GsGetLs/GsGetLws follow the retail walk exactly: the chain
-    goes into the guest array `D_800C6D48`, the cache stamp is the frame
-    counter `D_800C7C70`, flag 0 marks a node dirty, and a stale root
-    restarts above the deepest dirty node (or reuses the input's cache when
-    none is dirty). They compose with ApplyMatrixLV + MulMatrix.
-  - GsSortSprite takes either the plain SPRT path, or, when scaled or
-    rotated, RotMatrix (the game's own sin/cos table), ScaleMatrix and
-    TransMatrix to (x, y, H), then RotTransPers4 into a POLY_FT4 with
-    flip-aware UVs.
-  - PushMatrix/PopMatrix use the retail guest-RAM stack (offset
-    `D_8006DC18`, 20 slots at `D_8006DC1C`).
-  - RotMatrix and ScaleMatrix are HLE with the retail arithmetic term by
-    term. ApplyMatrixLV, MulMatrix and MulMatrix2 are named from their libgs
-    use.
-  - PsyCross's MulMatrix/MulMatrix2 overwrite the destination's translation
-    with an uninitialised temporary, while the retail ones store only the
-    rotation (pad = sign of m[2][2]). The wrappers restore `t`; the GsGetLw
-    test caught this.
-- **Still stub, with reasons in the report:**
+The ordinary player uses the supplied program for coordinate-tree, sprite,
+matrix construction, lighting and projection services listed in the table.
+
+Additional guest services include the following.
   - GsSortFastBg / GsSortBg: GsBG cell-map walkers, the second with
     scaling and rotation
-  - GsGetLw / GsGetLs / GsGetLws: the coordinate-hierarchy walk with
-    libgs's flag cache, which must match exactly or cached matrices go
-    stale
+  - GsGetLw, GsGetLs and GsGetLws.
   - GsSetRefView2L
   - the TMD object preset and sort routines (GsLinkObject5, GsPresetObject,
     OBJT/OBJT2/PRESET2): large per-primitive GTE transform and lighting
     code, with 2 call sites each
   - GsInitGraph and the clip/offset setters: libgs globals, 1–4 call sites
-  - GsSwapDispBuff, GsDrawOt and GsClearOt are not called by the game; it
-    runs its own double buffer through libgpu (PutDrawEnv/PutDispEnv,
-    ClearOTagR, DrawOTag, which are HLE).
+- Display, ordering-table and image services have individual entries in the
+  compatibility table.
 
 **Next:**
 - name the 96 unnamed entries (their Psy-Q objects are listed in the
@@ -1182,9 +1133,7 @@ add_library(bfm_plat STATIC
     pc_port/platform/bfm_plat_image.c    pc_port/platform/bfm_plat_font.c
     pc_port/platform/bfm_plat_widescreen.c   pc_port/platform/bfm_plat_watch.c
     pc_port/platform/bfm_plat_disc_check.c   pc_port/platform/bfm_plat_sha256.c
-    pc_port/platform/psyq/bfm_psyq_compat.c
-    pc_port/platform/psyq/bfm_psyq_libgs.c
-    pc_port/platform/psyq/bfm_psyq_libgte.c)        # + psyq/psyq_psycross.c with PsyCross
+    pc_port/platform/psyq/bfm_psyq_compat.c)
 target_include_directories(bfm_plat PUBLIC pc_port/platform)
 target_link_libraries(bfm_plat PUBLIC ${CMAKE_DL_LIBS} m)
 

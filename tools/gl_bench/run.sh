@@ -11,7 +11,6 @@ out=${TMPDIR:-/tmp}/bfm_gl_bench
 plat=$root/pc_port/platform
 cc -std=c99 -O2 -Wall -Wextra -Werror -pedantic -D_POSIX_C_SOURCE=200809L \
     -I"$plat" -I"$deps/include" "$plat"/bfm_plat*.c "$plat/psyq/bfm_psyq_compat.c" \
-    "$plat/psyq/bfm_psyq_libgs.c" "$plat/psyq/bfm_psyq_libgte.c" \
     "$plat/backends/gl/bfm_gl_core.c" "$plat/backends/gl/bfm_gl_exec.c" \
     "$root/tools/gl_bench/bfm_gl_bench.c" -o "$out" -ldl -lm
 LD_LIBRARY_PATH="$deps/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \

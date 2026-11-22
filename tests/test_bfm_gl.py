@@ -27,8 +27,7 @@ CFLAGS = ["-std=c99", "-Wall", "-Wextra", "-Werror", "-pedantic", "-O0", "-g"]
 DEPS = Path(os.environ.get("BFM_HOST_DEPS", Path.home() / "opt/host-port-deps/usr"))
 DEPS_LIB = DEPS / "lib/x86_64-linux-gnu"
 PLATFORM_SOURCES = sorted(str(p) for p in PLAT.glob("bfm_plat*.c")) + [
-    str(PLAT / "psyq/bfm_psyq_compat.c"), str(PLAT / "psyq/bfm_psyq_libgs.c"),
-    str(PLAT / "psyq/bfm_psyq_libgte.c")]
+    str(PLAT / "psyq/bfm_psyq_compat.c")]
 CORE = [str(PLAT / "backends/gl/bfm_gl_core.c")]
 EXEC = [str(PLAT / "backends/gl/bfm_gl_exec.c")]
 
