@@ -10,9 +10,13 @@ typedef struct {
 /* Fields touched when a Steam Knight attachment consumes a pending hit. */
 typedef struct {
     u16 active;
-    u8 pad002[26];
+    u16 state;
+    u8 pad004[6];
+    s16 position_y;
+    u8 pad00c[16];
     s32 timer;
-    u8 pad020[56];
+    u32 model_address;
+    u8 pad024[52];
     u32 display_record;
     u16 flags;
     u16 hit_kind;
@@ -38,7 +42,8 @@ typedef struct {
     s32 field_dc;
     u8 pad0e0[8];
     u32 phase_flags;
-    u8 pad0ec[18];
+    u8 pad0ec[16];
+    u16 field_fc;
     u16 break_count;
     s16 break_delay;
     u8 pad102[2];
