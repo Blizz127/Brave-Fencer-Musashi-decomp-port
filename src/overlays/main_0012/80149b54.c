@@ -2,7 +2,7 @@
 /* True when flag 0x400 is clear, func_8014BEF8 accepts the object, and bit 0x10 of its 0xAC halfword is set. */
 #include "psx_types.h"
 
-extern s32 func_8014BEF8(u8 *obj);
+extern s32 func_8014BEF8(void *obj);
 
 s32 func_80149B54(u8 *obj)
 {

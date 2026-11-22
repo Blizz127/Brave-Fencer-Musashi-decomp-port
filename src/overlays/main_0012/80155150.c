@@ -16,7 +16,7 @@ typedef struct {
 
 extern void func_8001D130(u32 *parts, s32 idx);
 extern void func_8001D150(u32 *parts, s32 idx);
-extern s32 func_8014BEF8(Obj80155150 *obj);
+extern s32 func_8014BEF8(void *obj);
 
 #define PARTS(o) ((u32 *)((Model80155150 *)(o)->model20)->parts24)
 

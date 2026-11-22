@@ -33,7 +33,7 @@ typedef struct {
 } Obj;
 
 extern u8 D_801202A0[];
-extern s32 func_8014BEF8(Obj *o);
+extern s32 func_8014BEF8(void *obj);
 extern void func_8012F14C(u8 *m, SV *in, V8 *out);
 extern s32 func_80135260(s32 a, s32 b, V8 *p, V8 *q);
 extern void func_8014A1B0(Obj *o, Slot *p);
