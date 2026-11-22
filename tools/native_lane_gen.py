@@ -1580,6 +1580,8 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
             raise Reject("timing", "mine state dispatch requires current callback tables and timer ordering")
         if vram == 0x8012956C and mine_member_source_only(entry, src, info):
             raise Reject("timing", "mine backdrop submission requires current scratch, graphics services and timing")
+        if vram in (0x8016E918, 0x8016EAC0, 0x8016EB3C, 0x8016EBA8) and mine_member_source_only(entry, src, info):
+            raise Reject("timing", "mine display movement requires its guest drawing and phase ordering")
         if forest_ground_attachment_source_only(entry, src, info):
             raise Reject("timing", "ground attachment requires checked guest callbacks, return values and timing")
         if vram in (0x8017DDB0, 0x8017DE00, 0x8017E25C, 0x8017E2F4, 0x8017E428, 0x8017E500) and mine_member_source_only(entry, src, info):

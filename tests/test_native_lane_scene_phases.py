@@ -139,6 +139,7 @@ def test_mine_slot_dispatch_preserves_the_main_member(tmp_path, pc, size):
     (0x8017DDB0, 80), (0x8017DE00, 132), (0x8017E25C, 152),
     (0x801627E8, 76), (0x8016E95C, 144), (0x801754A8, 148),
     (0x8012956C, 904),
+    (0x8016E918, 68), (0x8016EAC0, 124), (0x8016EB3C, 108), (0x8016EBA8, 100),
     (0x8017E2F4, 308), (0x8017E428, 216), (0x8017E500, 320),
 ])
 def test_mine_model_actions_stay_with_their_member(tmp_path, pc, size):
@@ -182,6 +183,14 @@ def test_mine_backdrop_guard_preserves_main_source():
         source = ROOT / f"src/overlays/main_0012/{pc:08x}.c"
         row = dict(vram=pc, region="main_0012")
         assert not lane.mine_member_source_only(row, source, dict(member="main_0012"))
+
+
+def test_mine_hud_motion_guard_preserves_other_regions():
+    for pc, region in ((0x8016E918, "main_0012"), (0x8016EAC0, "sc02_0031"),
+                       (0x8016EB3C, "sc02_0031"), (0x8016EBA8, "sc02_0031")):
+        source = ROOT / f"src/overlays/{region}/{pc:08x}.c"
+        row = dict(vram=pc, region=region)
+        assert not lane.mine_member_source_only(row, source, dict(member=region))
 
 
 def test_mine_descriptor_guard_preserves_main_lookup():
