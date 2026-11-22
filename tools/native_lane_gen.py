@@ -1085,6 +1085,7 @@ TOWER_POOL_PRIOR_SOURCE = "37f8c8016ea1b697c77467c8ee51f6fe1f89930cfacf04a68d81b
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 FOREST_ATTACHMENT_EXTENTS = {
+    0x80178438: (100, 0x1DD5EA346417021E),
     0x80184554: (64, 0xA9B66A3131FED9BC),
     0x80184594: (88, 0x705927075E43A722),
     0x801845EC: (176, 0x8D184634D85DA494),

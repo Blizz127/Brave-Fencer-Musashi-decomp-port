@@ -924,3 +924,18 @@ def test_forest_attack_timing_matches_the_complete_member(tmp_path, monkeypatch,
     monkeypatch.setattr(lane, "member_digest",
                         lambda member, addr, length: digest if length == size else None)
     assert lane.overlay_extent_source_only(row, source, info, lane.SCENE_PHASE_EXTENTS)
+
+
+def test_forest_diagnostic_distinguishes_other_scene_at_same_pc(tmp_path, monkeypatch):
+    pc = 0x80178438
+    size, digest = lane.FOREST_ATTACHMENT_EXTENTS[pc]
+    assert size == 100
+    source = tmp_path / "other.c"
+    source.write_text("void other(void) {}\n")
+    row = dict(vram=pc, size=size-4, region="sc02_0031")
+    info = dict(member="sc02_0031", vram=pc, start=0, data=bytes(size))
+    monkeypatch.setattr(lane, "member_digest", lambda member, addr, length: digest ^ 1)
+    assert not lane.overlay_extent_source_only(row, source, info, lane.SCENE_PHASE_EXTENTS)
+    monkeypatch.setattr(lane, "member_digest",
+                        lambda member, addr, length: digest if length == size else None)
+    assert lane.overlay_extent_source_only(row, source, info, lane.SCENE_PHASE_EXTENTS)
