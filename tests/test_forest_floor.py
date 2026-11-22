@@ -83,6 +83,7 @@ def test_actor_slope_coordinates(tmp_path):
     subprocess.run([
         "cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-I", ROOT / "include",
         ROOT / "tests/forest_actor_slope_probe.c", ROOT / "src/overlays/main_0012/801638a0.c",
+        ROOT / "src/overlays/main_0012/8016380c.c",
         ROOT / "src/main/80015978.c", ROOT / "src/main/80015954.c", "-o", binary,
     ], check=True)
     subprocess.run([binary], check=True)
