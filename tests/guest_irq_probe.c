@@ -119,17 +119,24 @@ int main(int argc,char **argv) {
         put(&m->memory,0x8006cbc0u,0x1f8010f4u);
         put(&m->memory,0x8006bb00u,0x80042ce8u); put(&m->memory,0x8006bb0cu,0x80042e08u);
     }
-    int fade = !strcmp(m->mode, "title-fade") || !strcmp(m->mode, "title-fade-code");
+    int equal = !strcmp(m->mode, "fade-equal");
+    int wrap = !strcmp(m->mode, "fade-wrap");
+    int limit = equal || !strcmp(m->mode, "fade-limit") || !strcmp(m->mode, "fade-limit-level-code") ||
+        !strcmp(m->mode, "fade-limit-mode-code");
+    int fade = limit || wrap || !strcmp(m->mode, "title-fade") || !strcmp(m->mode, "title-fade-code");
     int active=fade || !strcmp(m->mode,"active") || !strcmp(m->mode,"soundless") ||
         !strcmp(m->mode,"voice-range") || !strcmp(m->mode,"sound-code");
     if (fade) {
-        /* An invented downward level transition. The guest computes the next
-         * halfword and owns both writes before the SPU voice pass. */
-        assert(musashi_boot_write16(&m->memory, 0x800a4ee0u, 0x3180u));
+        uint16_t start = limit ? 0x23aau : 0x3180u;
+        if (equal) start = 0x2489u;
+        if (wrap) start = 0x80u;
+        assert(musashi_boot_write16(&m->memory, 0x800a4ee0u, start));
         assert(musashi_boot_write16(&m->memory, 0x800a4ee2u, 0x0108u));
-        assert(musashi_boot_write16(&m->memory, 0x800a4ee4u, 0x2381u));
+        assert(musashi_boot_write16(&m->memory, 0x800a4ee4u, wrap ? 0u : 0x2381u));
         m->memory.bytes[0xa4ee6u] = 5u;
         m->memory.bytes[0xa4f16u] = 0u;
+        if (!strcmp(m->mode, "fade-limit-level-code")) m->memory.bytes[0x2ceb0u] ^= 1u;
+        if (!strcmp(m->mode, "fade-limit-mode-code")) m->memory.bytes[0x2ceb8u] ^= 1u;
         if (!strcmp(m->mode, "title-fade-code")) m->memory.bytes[0x2ce40u] ^= 1u;
     }
     int card_only=!strcmp(m->mode,"card") || !strcmp(m->mode,"card-code");
@@ -180,7 +187,7 @@ int main(int argc,char **argv) {
        assert(musashi_dma_controller_complete(&m->dma,2));
        assert(m->dma.interrupt==0x84840000u);
     }
-    int success=!strcmp(m->mode,"title-fade") || !strcmp(m->mode,"vblank") || dma || !strcmp(m->mode,"card") || !strcmp(m->mode,"active");
+    int success=equal || wrap || !strcmp(m->mode,"fade-limit") || !strcmp(m->mode,"title-fade") || !strcmp(m->mode,"vblank") || dma || !strcmp(m->mode,"card") || !strcmp(m->mode,"active");
     if (!strcmp(m->mode,"wrongslot")) {
         m->irq.status=2u;
         assert(musashi_irq_controller_write16(&m->irq,0x1f801074u,2u));
@@ -205,8 +212,17 @@ int main(int argc,char **argv) {
     if (fade) {
         uint16_t level;
         assert(musashi_boot_read16(&m->memory, 0x800a4ee0u, &level));
-        assert(level == (success ? 0x3078u : 0x3180u));
-        assert(m->memory.bytes[0xa4f16u] == (unsigned)success);
+        if (limit) {
+            assert(level == (!strcmp(m->mode,"fade-limit-level-code") ? 0x22a2u : 0x2381u));
+            assert(m->memory.bytes[0xa4ee6u] == (success ? 4u : 5u));
+            assert(m->memory.bytes[0xa4f16u] == 1u);
+        } else if (wrap) {
+            assert(level == 0xff78u && m->memory.bytes[0xa4ee6u] == 5u);
+            assert(m->memory.bytes[0xa4f16u] == 1u);
+        } else {
+            assert(level == (success ? 0x3078u : 0x3180u));
+            assert(m->memory.bytes[0xa4f16u] == (unsigned)success);
+        }
     }
     if(success) {
         assert(s->last_result==MUSASHI_IRQ_CONTEXT_RETURN_DELEGATED && state.sequence==1 &&
@@ -222,12 +238,14 @@ int main(int argc,char **argv) {
         else if(!strcmp(m->mode,"voice-range")) assert(m->post==m->before+1 && m->stop.pc==0x80031454u);
         else if(!strcmp(m->mode,"slotswap")) assert(m->post==m->before+1 && m->stop.pc==0x80042d30u);
         else if(!strcmp(m->mode,"card-code")) assert(m->post==m->before+1 && m->stop.pc==0x80062990u);
+        else if(limit) assert(m->post==m->before+1 && m->stop.pc==
+            (!strcmp(m->mode,"fade-limit-level-code") ? 0x8002ceb0u : 0x8002ceb8u));
         else if(!strcmp(m->mode,"title-fade-code")) assert(m->post==m->before+1 && m->stop.pc==0x8002ce40u);
         else if(!strcmp(m->mode,"soundless")||!strcmp(m->mode,"sound-code")) assert(m->post==m->before+1 && m->stop.pc==0x8003d2d8u);
         else if(!strcmp(m->mode,"wrongslot"))assert(m->post==m->before && steps>0 && m->stop.pc==0x800428d4u);
         else assert(m->post==m->before && steps==0);
     }
-    if(m->spu)assert(m->envelopes==((!strcmp(m->mode,"sound-code") || !strcmp(m->mode,"title-fade-code"))?0u:24u) && musashi_spu_cd_audio_destroy(m->spu));
+    if(m->spu)assert(m->envelopes==((!strcmp(m->mode,"sound-code") || !strcmp(m->mode,"title-fade-code") || (limit && !success))?0u:24u) && musashi_spu_cd_audio_destroy(m->spu));
     printf("%s complete=%d steps=%u cycles=%u stop=%08x tick_delta=%u I_STAT=%04x DICR=%08x sticky=%d voice_reads=%u\n",
         m->mode,success,m->stop.instructions,m->cycles,m->stop.pc,m->post-m->before,m->irq.status,m->dma.interrupt,s->faulted,m->envelopes);
     assert(musashi_psycross_irq_scheduler_uninstall(s));assert(musashi_cpu_status_close(s->cpu_status));

@@ -16553,6 +16553,22 @@ static int irq_data_access(const FormatterCpu *cpu, uint32_t w) {
                 return address==accesses[i].address && op==accesses[i].op;
         return 0;
     }
+    /* The guest clamps its level to the threshold before leaving fade mode. */
+    if (region == IRQ_SOUND_TICK && (cpu->pc == 0x8002ceb0u || cpu->pc == 0x8002ceb8u)) {
+        uint16_t level, target;
+        if (cpu->r[31] != 0x80010984u || cpu->r[29] != 0x8006ca94u ||
+            !cpu->irq_image || !cpu->irq_image->memory) return 0;
+        MusashiBootMemory *ram = cpu->irq_image->memory;
+        const uint8_t *mode = musashi_boot_ram_span(ram, 0x800a4ee6u, 1);
+        uint32_t value = cpu->r[(w >> 16) & 31u];
+        if (!mode || *mode != 5u || !musashi_boot_read16(ram, 0x800a4ee0u, &level) ||
+            !musashi_boot_read16(ram, 0x800a4ee4u, &target)) return 0;
+        if (cpu->pc == 0x8002ceb0u)
+            return op == 41u && address == 0x800a4ee0u && level <= target &&
+                (uint16_t)value == target;
+        return op == 40u && address == 0x800a4ee6u && level == target &&
+            (uint8_t)value == 4u;
+    }
     /* The installed periodic sound callback reads and advances a group
      * of guest halfwords. The guest computes the value written to the level. */
     if (region == IRQ_SOUND_TICK && cpu->pc >= 0x8002ce38u && cpu->pc <= 0x8002ce70u) {
