@@ -164,8 +164,10 @@ player continues to execute this routine on the guest CPU.
 
 The forest collision routine selects a linked box or a grid. A moving
 endpoint can trigger up to six grid queries. After a hit it transforms the
-contact back to the endpoint. The standard player executes this routine on
-the guest CPU.
+contact back to the endpoint. The host tests resolve each box or grid through
+a 32-bit game address, including a box link changed by a previous contact
+and a grid mapping withdrawn between retries. The standard player executes
+this routine on the guest CPU.
 
 The grid query computes the movement vector, visits short and long faces in
 cell order, and records the selected material. The standard player executes

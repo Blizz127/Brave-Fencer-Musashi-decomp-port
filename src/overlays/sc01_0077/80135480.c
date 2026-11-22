@@ -1,13 +1,6 @@
 /* Select the local contact representation and translate both segment endpoints. */
 #include "forest_floor.h"
 
-#ifdef __mips__
-typedef u32 FloorAddress;
-#else
-#include <stdint.h>
-typedef uintptr_t FloorAddress;
-#endif
-
 typedef struct { s32 x, y, z, pad; } LongVector;
 
 /* External LIBGTE matrix services. The public ApplyTransposeMatrixLV entry is a stub. */
@@ -61,13 +54,19 @@ s32 func_80135480(FloorContactRecord *record, u32 flags, FloorPoint *near_point,
             s32 sx = record->scale_x;
             s32 sy = record->scale_y;
             u16 sz = (u16)record->scale_z;
-            box = (FloorBox *)(FloorAddress)((flags & 0x0fffffff) | 0x80000000);
+#if defined(__mips__) && !defined(__LP64__)
+            box = (FloorBox *)((flags & 0x0fffffff) | 0x80000000);
+#endif
             scale.rotation.pairs[0] = sx;
             scale.rotation.pairs[1] = 0;
             scale.rotation.pairs[2] = sy;
             scale.rotation.pairs[3] = 0;
             scale.rotation.coefficients[8] = sz;
             func_8004914C(&scale);
+#if !defined(__mips__) || defined(__LP64__)
+            /* Installing the matrix precedes the first guest read from the box. */
+            box = forest_require_model((flags & 0x0fffffffu) | 0x80000000u, 1);
+#endif
             v.x = box->xlo;
             v.y = box->ylo;
             v.z = box->zlo;

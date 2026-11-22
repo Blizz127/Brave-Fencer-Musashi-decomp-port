@@ -1,11 +1,16 @@
 /* Select the collision model, test its faces and transform the first contact. */
 #include "forest_floor.h"
-#ifdef __mips__
-typedef u32 CollisionAddress;
+#define PACKED_ADDRESS(tag) (((u32)(tag) & 0x0fffffffu) | 0x80000000u)
+#if defined(__mips__) && !defined(__LP64__)
+#define DIRECT_MODEL 1
+#define FIRST_MODEL(tag) ((void *)PACKED_ADDRESS(tag))
+#define NEXT_BOX(box) ((void *)((FloorBox *)(box))->next)
 typedef FloorPoint SegmentPoint;
 #else
-#include <stdint.h>
-typedef uintptr_t CollisionAddress;
+#define DIRECT_MODEL 0
+/* Leave an external model unresolved until the query actually needs it. */
+#define FIRST_MODEL(tag) ((void *)0)
+#define NEXT_BOX(box) forest_next_box((FloorBox *)(box))
 /* Halfword stores can overlap the next coordinate read through another point. */
 typedef volatile FloorPoint SegmentPoint;
 #endif
@@ -33,12 +38,12 @@ s32 func_80135888(FloorContactRecord *record, s32 packed, FloorPoint *start, Flo
         return 0;
     case 1:
         matrix = &record->rotation;
-        model = (void *)(CollisionAddress)(((u32)packed & 0x0fffffffu) | 0x80000000u);
+        model = FIRST_MODEL(packed);
         rotate = 0;
         break;
     case 2:
         matrix = &record->rotation;
-        model = (void *)(CollisionAddress)(((u32)packed & 0x0fffffffu) | 0x80000000u);
+        model = FIRST_MODEL(packed);
         rotate = 1;
         break;
     case 3:
@@ -53,15 +58,18 @@ s32 func_80135888(FloorContactRecord *record, s32 packed, FloorPoint *start, Flo
         break;
     }
     if (packed < 0) {
+#if !DIRECT_MODEL
+        if (!model) model = forest_require_model(PACKED_ADDRESS(packed), 1);
+#endif
         if (func_80135EB0(model, 0)) goto hit;
-        model = (void *)(CollisionAddress)((FloorBox *)model)->next;
+        model = NEXT_BOX(model);
         while (model) {
             if (func_80135EB0(model, 0)) {
 hit:
                 func_80136A94(rotate, record, end, matrix);
                 return 1;
             }
-            model = (void *)(CollisionAddress)((FloorBox *)model)->next;
+            model = NEXT_BOX(model);
         }
     } else {
         far_point = D_801870B0;
@@ -70,7 +78,14 @@ hit:
         movement->x = far_point->x - near_point->x;
         movement->y = far_point->y - near_point->y;
         movement->z = far_point->z - near_point->z;
-        if (func_80134A74(0, (s16)near_point->x, (s16)near_point->z, model)) goto hit;
+        {
+            s16 x = (s16)near_point->x;
+            s16 z = (s16)near_point->z;
+#if !DIRECT_MODEL
+            if (!model) model = forest_require_model(PACKED_ADDRESS(packed), 0);
+#endif
+            if (func_80134A74(0, x, z, model)) goto hit;
+        }
     }
     return 0;
 }

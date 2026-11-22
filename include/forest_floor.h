@@ -105,6 +105,21 @@ void *bfm_forest_contact_model(u32 address, s32 is_box);
 _Noreturn
 #endif
 void bfm_forest_model_invalid_handle(u32 address);
+
+static inline void *forest_require_model(u32 address, s32 is_box)
+{
+    void *model;
+    if (address == 0) bfm_forest_model_invalid_handle(address);
+    model = bfm_forest_contact_model(address, is_box);
+    if (model == 0) bfm_forest_model_invalid_handle(address);
+    return model;
+}
+
+static inline FloorBox *forest_next_box(FloorBox *box)
+{
+    u32 address = box->next;
+    return address ? (FloorBox *)forest_require_model(address, 1) : (FloorBox *)0;
+}
 #endif
 
 extern FloorPoint D_80126720;

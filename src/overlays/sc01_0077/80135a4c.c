@@ -1,11 +1,29 @@
 /* Test the selected forest model and translate a resolved contact to the endpoint. */
 #include "forest_floor.h"
-#ifdef __mips__
-#define CONTACT_MODEL(address, is_box) ((void *)(address))
+#define FIRST_MODEL_ADDRESS(packed) (((u32)(packed) & 0x0fffffffu) | 0x80000000u)
+#if defined(__mips__) && !defined(__LP64__)
+#define DIRECT_CONTACT_MODEL 1
+#define FIRST_MODEL(packed) ((void *)FIRST_MODEL_ADDRESS(packed))
+#define NEXT_BOX(box) ((void *)((FloorBox *)(box))->next)
+#define CONTACT_GRID(local, packed) func_80133AB0(0, (s16)D_801870AC->x, (s16)D_801870AC->z, (local))
 typedef FloorPoint ContactPoint;
 #else
-#define CONTACT_MODEL(address, is_box) bfm_forest_contact_model((address), (is_box))
+#define DIRECT_CONTACT_MODEL 0
+/* The game computes an address here. Resolve it only when a provider needs it. */
+#define FIRST_MODEL(packed) ((void *)0)
+#define NEXT_BOX(box) forest_next_box(box)
 typedef volatile FloorPoint ContactPoint;
+
+static s32 contact_grid_query(void *local, s32 packed)
+{
+    s16 x = (s16)D_801870AC->x;
+    s16 z = (s16)D_801870AC->z;
+    FloorGrid *grid = local;
+    if (grid == 0)
+        grid = forest_require_model(FIRST_MODEL_ADDRESS(packed), 0);
+    return func_80133AB0(0, x, z, grid);
+}
+#define CONTACT_GRID(local, packed) contact_grid_query((local), (packed))
 #endif
 
 s32 func_80135A4C(FloorContactRecord *record, s32 packed, FloorPoint *start, FloorPoint *end)
@@ -31,12 +49,12 @@ s32 func_80135A4C(FloorContactRecord *record, s32 packed, FloorPoint *start, Flo
         return 0;
     case 1:
         matrix = &record->rotation;
-        model = CONTACT_MODEL(((u32)packed & 0x0fffffffu) | 0x80000000u, packed < 0);
+        model = FIRST_MODEL(packed);
         rotate = 0;
         break;
     case 2:
         matrix = &record->rotation;
-        model = CONTACT_MODEL(((u32)packed & 0x0fffffffu) | 0x80000000u, packed < 0);
+        model = FIRST_MODEL(packed);
         rotate = 1;
         break;
     case 3:
@@ -52,15 +70,19 @@ s32 func_80135A4C(FloorContactRecord *record, s32 packed, FloorPoint *start, Flo
     }
     accumulated = 0;
     if (packed < 0) {
+#if !DIRECT_CONTACT_MODEL
+        if (model == 0)
+            model = forest_require_model(FIRST_MODEL_ADDRESS(packed), 1);
+#endif
         if (func_80135EB0(model, -32768)) goto hit;
-        model = CONTACT_MODEL(((FloorBox *)model)->next, 1);
+        model = NEXT_BOX(model);
         while (model) {
             if (func_80135EB0(model, -32768)) {
 hit:
                 func_80136A94(rotate, record, end, matrix);
                 return 1;
             }
-            model = CONTACT_MODEL(((FloorBox *)model)->next, 1);
+            model = NEXT_BOX(model);
         }
     } else {
         attempt = 0;
@@ -71,8 +93,7 @@ hit:
         stationary = (s16)start->x == (s16)end->x &&
                      (s16)start->y == (s16)end->y &&
                      (s16)start->z == (s16)end->z;
-        while ((result = func_80133AB0(0, (s16)D_801870AC->x,
-                                     (s16)D_801870AC->z, model)) != 0) {
+        while ((result = CONTACT_GRID(model, packed)) != 0) {
             accumulated |= result;
             if (stationary) break;
             /* Moving endpoints may be adjusted up to six times. */

@@ -5,24 +5,14 @@
 #if defined(__mips__) && !defined(__LP64__)
 #define DIRECT_FOREST_PROBE 1
 #define PROBE_RECORD(address) ((FloorContactRecord *)(address))
-#define PROBE_BOX(address) ((FloorBox *)(address))
-#define FIRST_BOX(tag) PROBE_BOX(((tag) & 0x0fffffffu) | 0x80000000u)
+#define NEXT_BOX(box) ((FloorBox *)(box)->next)
+#define FIRST_BOX(tag) ((FloorBox *)(((tag) & 0x0fffffffu) | 0x80000000u))
 #else
 #define DIRECT_FOREST_PROBE 0
 extern void *bfm_forest_contact_pointer(u32 address, u32 width);
-static void *require_model(u32 address, s32 is_box)
-{
-    void *model;
-    if (address == 0)
-        bfm_forest_model_invalid_handle(address);
-    model = bfm_forest_contact_model(address, is_box);
-    if (model == 0)
-        bfm_forest_model_invalid_handle(address);
-    return model;
-}
 #define PROBE_RECORD(address) ((FloorContactRecord *)bfm_forest_contact_pointer((address), sizeof(FloorContactRecord)))
-#define PROBE_BOX(address) ((address) ? (FloorBox *)require_model((address), 1) : (FloorBox *)0)
-#define FIRST_BOX(tag) ((s32)(tag) < 0 ? PROBE_BOX(((tag) & 0x0fffffffu) | 0x80000000u) : (FloorBox *)0)
+#define NEXT_BOX(box) forest_next_box(box)
+#define FIRST_BOX(tag) ((s32)(tag) < 0 ? (FloorBox *)forest_require_model(((tag) & 0x0fffffffu) | 0x80000000u, 1) : (FloorBox *)0)
 #endif
 
 s32 func_80135D20(u32 record, u32 geometry, FloorPoint *probe)
@@ -81,20 +71,20 @@ s32 func_80135D20(u32 record, u32 geometry, FloorPoint *probe)
     if ((s32)geometry < 0) {
         if (func_80135EB0(box, 0))
             goto hit;
-        box = PROBE_BOX(box->next);
+        box = NEXT_BOX(box);
         while (box != 0) {
             if (func_80135EB0(box, 0)) {
 hit:
                 func_80136A94(rotate, model, probe, matrix);
                 return 1;
             }
-            box = PROBE_BOX(box->next);
+            box = NEXT_BOX(box);
         }
     } else {
 #if DIRECT_FOREST_PROBE
         FloorGrid *grid = (FloorGrid *)geometry;
 #else
-        FloorGrid *grid = require_model(geometry, 0);
+        FloorGrid *grid = forest_require_model(geometry, 0);
 #endif
         if (func_801345F8(grid))
             goto hit;
