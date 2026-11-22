@@ -61,8 +61,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 22 source update covers 349 regional function matches across eight scene overlays,
-totaling 49,696 bytes. The Steam Knight damage routine subtracts the incoming hit from the actor’s HP and selects its reaction. The contact routine records the hit type, damage, and position on eligible actors. A surviving attachment can queue its reaction ID in a four-entry list. Hit feedback can allocate the first free effect slot from a pool of 30. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 22 source update covers 352 regional function matches across eight scene overlays,
+totaling 49,920 bytes. The Steam Knight damage routine subtracts the incoming hit from the actor’s HP and selects its reaction. The contact routine records the hit type, damage, and position on eligible actors. A surviving attachment can queue its reaction ID in a four-entry list. Hit feedback can allocate the first free effect slot from a pool of 30. Four mine routines scan floor probes and pass their position to the map lookup.
 The mine collision code intersects the probe with a face and tests its side planes.
 A mine actor dispatches its setup or update callback according to its current state. Its setup creates the parent model or links a child to its collision box. Its update controls model visibility, damps the angle, and checks up to five segments across the box. The parent rotor changes its model angle and sound volume as the player approaches.
 A mine rotor runs its state action and synchronizes its model. Its initializer allocates the primary model and optional accessory, then issues four child spawn requests.
@@ -221,6 +221,12 @@ When a forest bridge log settles, it spawns effect 37. The effect starts a
 to release its actor. The standard player executes these three routines on the
 guest CPU. Run the host component test with
 `python3 -m pytest -q tests/test_forest_settle_effect.py`.
+
+The forest tutorial requests the Gunshot soldier when its countdown expires.
+The game records the request even if no actor slot is available. The standard
+player executes the three matched script routines on the guest CPU. Run the
+host component test with
+`python3 -m pytest -q tests/test_forest_tutorial_soldier.py`.
 
 Four linked SC01/0077 floor-collision routines lower a point to the first
 intersecting face in a grid cell and return its slope class. The component test

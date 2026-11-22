@@ -328,3 +328,13 @@ def test_forest_settle_effects_stay_interpreted(tmp_path, pc, size):
     for region, info in (("sc01_0077", None), ("other", dict(member="sc01_0077"))):
         result = lane.build_one(dict(row, region=region), tmp_path, {}, {}, "clang", info)
         assert result.get("rule") == "timing"
+
+
+@pytest.mark.parametrize("pc,size", [(0x8017E1D4, 60), (0x8017E460, 84), (0x8017F240, 80)])
+def test_forest_tutorial_soldier_stay_interpreted(tmp_path, pc, size):
+    source = ROOT / "src" / "overlays" / "sc01_0077" / f"{pc:08x}.c"
+    row = dict(name=f"func_{pc:08X}", vram=pc, size=size, source=str(source))
+    (tmp_path / "ir").mkdir()
+    for region, info in (("sc01_0077", None), ("other", dict(member="sc01_0077"))):
+        result = lane.build_one(dict(row, region=region), tmp_path, {}, {}, "clang", info)
+        assert result.get("rule") == "timing"
