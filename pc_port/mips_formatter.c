@@ -8138,6 +8138,7 @@ typedef struct FormatterCpu {
     const MusashiGuestIrqImage *irq_image;
     const MusashiGuestIrqImage *cd_parent_image;
     const MusashiDmaCallbackRegistrationDevice *irq_dma;
+    const MusashiGuestIrqDraw *irq_draw;
     const MusashiExecutionClock *clock;
     const MusashiCdRegisterDevice *cd_register_device;
     const DmaRegistrationFrame *dma_registration;
@@ -8195,6 +8196,12 @@ static int read8(MusashiBootMemory *memory, uint32_t address, uint8_t *value) {
         return 0;
     *value = *span;
     return 1;
+}
+
+static int irq_draw_bound(const MusashiGuestIrqImage *image, const MusashiGuestIrqDraw *draw) {
+    const MusashiGuestIrqDrawHost *host=image ? image->draw_host : NULL;
+    return draw && host && draw->host==host && host->image==image && host->generation==draw->generation &&
+        image->owns_draw && image->owns_draw(image->draw_machine,draw);
 }
 
 static int callback_read16(const FormatterCpu *cpu, uint32_t address, uint16_t *value) {
@@ -8637,6 +8644,8 @@ static int cpu_read32(MusashiBootMemory *memory, const FormatterCpu *cpu,
                        uint32_t address, uint32_t *value) {
     const uint8_t *p = cpu_ram_span(memory, cpu, address, 4);
     uint32_t accepted;
+    if (cpu->irq_draw && (address==0x1f8010a8u || address==0x1f801814u || address==0x1f801110u) &&
+        !irq_draw_bound(cpu->irq_image,cpu->irq_draw)) return 0;
     if (cpu->irq_image && address == 0x1f8010f4u)
         return value && cpu->irq_dma && cpu->irq_dma->read32 &&
             cpu->irq_dma->read32(cpu->irq_dma->userdata, address, value);
@@ -8696,7 +8705,9 @@ static int cpu_read32(MusashiBootMemory *memory, const FormatterCpu *cpu,
         uint16_t count;
         /* The reference's word and halfword COUNT reads return the same
          * 16-bit counter value. Retail 800423C0 consumes it with LW. */
-        if (!callback_read16(cpu, address, &count)) return 0;
+        if (cpu->irq_draw) {
+            if (!cpu->irq_draw->timer_read16(cpu->irq_draw->timer,address,&count)) return 0;
+        } else if (!callback_read16(cpu, address, &count)) return 0;
         *value = count;
         return 1;
     }
@@ -16306,7 +16317,8 @@ typedef enum {
     IRQ_CARD_INDEX, IRQ_CARD_RUN, IRQ_CARD_PUSH, IRQ_CARD_INFO, IRQ_CARD_LOAD,
     IRQ_CARD_CLEAR_RESULT, IRQ_CARD_RESET_EVENTS, IRQ_CARD_POLL_EVENTS, IRQ_CARD_FLAGS,
     IRQ_CARD_TEST_EVENT, IRQ_CARD_INFO_BIOS, IRQ_CARD_LOAD_BIOS,
-    IRQ_CARD_READ, IRQ_CARD_SEEK_BIOS, IRQ_CARD_READ_BIOS, IRQ_OUTSIDE
+    IRQ_CARD_READ, IRQ_CARD_SEEK_BIOS, IRQ_CARD_READ_BIOS,
+    IRQ_DRAW_COMPLETE, IRQ_DRAW_MASK, IRQ_DRAW_FRAME, IRQ_DRAW_TIME, IRQ_OUTSIDE
 } IrqRegion;
 typedef struct { uint32_t start; size_t offset, length; } IrqCodeRegion;
 #define IRQ_REGION(address, field) {address, offsetof(MusashiGuestIrqImage, field), sizeof(((MusashiGuestIrqImage *)0)->field)}
@@ -16338,7 +16350,11 @@ static const IrqCodeRegion irq_code[] = {
     IRQ_REGION(0x80062268u, card_load_bios),
     IRQ_REGION(0x800604c4u, card_read_worker),
     IRQ_REGION(0x80061f58u, card_seek_bios),
-    IRQ_REGION(0x8005cf28u, card_read_bios)
+    IRQ_REGION(0x8005cf28u, card_read_bios),
+    IRQ_REGION(0x8005ba90u, draw_complete),
+    IRQ_REGION(0x800426fcu, draw_irq_mask),
+    IRQ_REGION(0x8001099cu, draw_frame),
+    IRQ_REGION(0x8004239cu, draw_frame_time)
 };
 #undef IRQ_REGION
 
@@ -16528,6 +16544,120 @@ static int irq_vblank_call(uint32_t call, uint32_t sp, IrqRegion target) {
     return 0;
 }
 
+/* The observed empty-queue DMA2 completion executes four ordinary guest
+ * routines. Each data operation names its own bus endpoint, including the
+ * saved words of the actual interrupt stack. The operation itself stays in
+ * the checked CPU and advances the same machine clock. */
+static int irq_draw_pc(IrqRegion region, uint32_t pc) {
+    switch (region) {
+    case IRQ_DRAW_COMPLETE:
+        return pc <= 0x8005badcu || pc >= 0x8005bcc8u;
+    case IRQ_DRAW_TIME:
+        return pc <= 0x800423d8u || (pc >= 0x800423ecu && pc <= 0x800423f4u) ||
+            pc >= 0x800424ccu;
+    case IRQ_DRAW_MASK: case IRQ_DRAW_FRAME:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+typedef struct { uint32_t pc, address; unsigned width; int write; } IrqDrawAccess;
+static int irq_draw_data(uint32_t pc, unsigned op, uint32_t address) {
+    static const IrqDrawAccess access[] = {
+        {0x8005ba94u,0x80072868u,4,0}, {0x8005ba9cu,0x8006cab8u,4,1},
+        {0x8005baa0u,0x8006cab4u,4,1}, {0x8005baa4u,0x1f8010a8u,4,0},
+        {0x80042700u,0x8006cb8cu,4,0}, {0x80042708u,0x1f801074u,2,0},
+        {0x8004270cu,0x1f801074u,2,1}, {0x8005bac4u,0x8007288cu,4,0},
+        {0x8005baccu,0x80072890u,4,0}, {0x8005bad4u,0x80072898u,4,1},
+        {0x8005bcccu,0x80072898u,4,0}, {0x8005bcdcu,0x8007288cu,4,0},
+        {0x8005bce4u,0x80072890u,4,0}, {0x8005bcf8u,0x80072868u,4,0},
+        {0x8005bd00u,0x1f8010a8u,4,0}, {0x8005bd1cu,0x80072790u,4,0},
+        {0x8005bd30u,0x80072794u,4,0}, {0x8005bd40u,0x80072790u,4,1},
+        {0x800109a0u,0x8006ca9cu,4,1}, {0x800109a4u,0x8006ca98u,4,1},
+        {0x800109a8u,0x8006ca94u,4,1}, {0x800423a0u,0x8006ba94u,4,0},
+        {0x800423a8u,0x8006ba98u,4,0}, {0x800423b0u,0x8006ca7cu,4,1},
+        {0x800423b4u,0x8006ca78u,4,1}, {0x800423b8u,0x8006ca74u,4,1},
+        {0x800423bcu,0x1f801814u,4,0}, {0x800423c0u,0x1f801110u,4,0},
+        {0x800423c8u,0x8006ba9cu,4,0}, {0x800424ccu,0x8006ca7cu,4,0},
+        {0x800424d0u,0x8006ca78u,4,0}, {0x800424d4u,0x8006ca74u,4,0},
+        {0x800109ccu,0x800b9a02u,2,0}, {0x800109e8u,0x800ae814u,4,1},
+        {0x800109f0u,0x8006ca9cu,4,0}, {0x800109f4u,0x8006ca98u,4,0},
+        {0x800109f8u,0x8006ca94u,4,0}, {0x8005bd50u,0x8007288cu,4,0},
+        {0x8005bd58u,0x80072890u,4,0}, {0x8005bd68u,0x8006cab8u,4,0},
+        {0x8005bd6cu,0x8006cab4u,4,0}
+    };
+    unsigned width = (op == 35u || op == 43u) ? 4u :
+        (op == 33u || op == 37u || op == 41u) ? 2u : 0u;
+    int write = op == 41u || op == 43u;
+    for (unsigned i = 0; i < sizeof(access)/sizeof(access[0]); ++i)
+        if (access[i].pc == pc) return access[i].address == address &&
+            access[i].width == width && access[i].write == write;
+    return 0;
+}
+
+static int irq_draw_image(const MusashiGuestIrqImage *image, MusashiBootMemory *memory) {
+    for (unsigned i=IRQ_DRAW_COMPLETE; i<=IRQ_DRAW_TIME; ++i) {
+        const IrqCodeRegion *region=&irq_code[i];
+        const uint8_t *live=musashi_boot_ram_span(memory,region->start,region->length);
+        if (!live || memcmp(live,(const uint8_t *)image+region->offset,region->length)) return 0;
+    }
+    return 1;
+}
+
+static int irq_draw_queue(MusashiBootMemory *memory) {
+    uint32_t head, tail;
+    uint16_t frame_slot;
+    return musashi_boot_read16(memory,0x800b9a02u,&frame_slot) && frame_slot==1 &&
+        musashi_boot_read32(memory,0x8007288cu,&head) &&
+        musashi_boot_read32(memory,0x80072890u,&tail) && head==tail &&
+        cd_irq_ram_word(memory,0x80072790u,1) &&
+        cd_irq_ram_word(memory,0x80072794u,0x8001099cu) &&
+        cd_irq_ram_word(memory,0x80072868u,0x1f8010a8u) &&
+        cd_irq_ram_word(memory,0x8006ba94u,0x1f801814u) &&
+        cd_irq_ram_word(memory,0x8006ba98u,0x1f801110u);
+}
+
+int musashi_boot_bind_irq_draw(MusashiGuestIrqImage *image, MusashiGuestIrqDrawHost *host,
+    void *machine, int (*owns)(void *, const MusashiGuestIrqDraw *)) {
+    if (!image || image->identity!=image || !image->memory || image->draw_host ||
+        !host || !machine || !owns || (host->image && host->image!=image) ||
+        host->generation==UINT64_MAX) return 0;
+    host->image=image;
+    ++host->generation;
+    image->draw_host=host;
+    image->draw_machine=machine;
+    image->owns_draw=owns;
+    return 1;
+}
+
+static int irq_draw_owner(const MusashiGuestIrqDraw *draw, const MusashiGuestIrqImage *image,
+    MusashiBootMemory *memory, const MusashiDmaController *dma, const MusashiExecutionClock *clock) {
+    return irq_draw_bound(image,draw) && draw->memory==memory &&
+        dma && draw->dma==dma && draw->channel &&
+        dma->gpu_owner==draw->channel && dma->gpu_channel_control==0x401u && draw->clock==clock &&
+        draw->gpu && draw->gpu->read32 && draw->timer && draw->timer_read16 &&
+        cd_irq_ram_word(memory,0x8006cbccu,0x8005ba90u) &&
+        irq_draw_queue(memory) && irq_draw_image(image,memory);
+}
+
+/* Follow the actual DMA status read, write-one-to-clear and registered slot
+ * load. A second enabled channel can hold the same callback address. */
+static unsigned irq_draw_selection(unsigned selected, uint32_t pc, unsigned op,
+    uint32_t address, uint32_t value) {
+    switch (pc) {
+    case 0x80042e88u:
+        return op==35u && address==0x1f8010f4u && (value&0x84840000u)==0x84840000u;
+    case 0x80042e94u:
+        return selected==1 && op==43u && address==0x1f8010f4u &&
+            (value&0x7f840000u)==0x04840000u ? 2u : 0u;
+    case 0x80042e98u:
+        return selected==2 && op==35u && address==0x8006cbccu && value==0x8005ba90u ? 3u : 0u;
+    default:
+        return selected;
+    }
+}
+
 static int irq_data_access(const FormatterCpu *cpu, uint32_t w) {
     unsigned op = w >> 26;
     if (op < 32) return 1;
@@ -16586,6 +16716,8 @@ static int irq_data_access(const FormatterCpu *cpu, uint32_t w) {
                     (op != 40u || (uint8_t)cpu->r[(w >> 16) & 31u] == 1u);
         }
     }
+    if (region >= IRQ_DRAW_COMPLETE && region <= IRQ_DRAW_TIME)
+        return cpu->irq_draw && irq_draw_data(cpu->pc,op,address);
     if (region >= IRQ_GAME_VBLANK && region < IRQ_OUTSIDE)
         return irq_vblank_data(region,op,address);
     int write = op == 41u || op == 43u;
@@ -16834,6 +16966,7 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
     IrqGuestReturn stack[8];
     unsigned depth = 0;
     uint32_t selected_slot = 0, selected_vblank_slot = 0;
+    unsigned draw_selection = 0;
     uint32_t reg_address;
     if (!stop) return 0;
     *stop = (MusashiGuestIrqStop){0};
@@ -16868,6 +17001,13 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
         uint32_t w, origin = cpu.pc, target = 0, live;
         IrqRegion region = irq_region(origin);
         stop->pc = origin;
+        if (region >= IRQ_DRAW_COMPLETE && region <= IRQ_DRAW_TIME) {
+            if (!cpu.irq_draw || !irq_draw_pc(region,origin) || !dma ||
+                dma->gpu_owner!=cpu.irq_draw->channel) return 0;
+            /* The entry jump and its delay slot each advance devices. Recheck
+             * the live registration and machine ownership before the callee. */
+            if (origin==0x8005ba90u && !irq_draw_owner(cpu.irq_draw,image,memory,dma,clock)) return 0;
+        }
         if (!irq_live_word(image,memory,origin,&w) || !irq_data_access(&cpu,w)) return 0;
         unsigned op = w >> 26, fn = w & 63u;
         if (origin == 0x800428c4u) {
@@ -16878,6 +17018,10 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
             if (op != 35u) return 0;
             selected_vblank_slot = cpu.r[(w >> 21) & 31u] + (uint32_t)(int32_t)(int16_t)w;
         }
+        int draw_observe = origin==0x80042e88u || origin==0x80042e94u || origin==0x80042e98u;
+        uint32_t draw_address = draw_observe ? cpu.r[(w>>21)&31u]+(uint32_t)(int32_t)(int16_t)w : 0;
+        unsigned draw_reg = (w>>16)&31u;
+        int draw_return = 0;
         int jump = op == 2u || op == 3u || (!op && (fn == 8u || fn == 9u));
         int cd_call = 0, card_bios = 0, read_entry = 0, read_return = 0;
         if (origin == 0x8006005cu && (op != 35u || !irq_card_case(image, &cpu, w, &selected_card_case)))
@@ -16894,6 +17038,7 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
                         target!=0x80062958u || cpu.r[29]!=0x8006ca9cu) return 0;
                     read_return=1;
                 }
+                draw_return = region==IRQ_DRAW_COMPLETE;
                 --depth;
             } else if (card && ((region == IRQ_CARD_TEST_EVENT && target == 0xb0u) ||
                                ((region == IRQ_CARD_INFO_BIOS || region == IRQ_CARD_LOAD_BIOS) && target == 0xa0u) ||
@@ -16912,6 +17057,16 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
             } else if (op == 2u && region == dest && region >= IRQ_GAME_VBLANK &&
                        region < IRQ_OUTSIDE) {
                 /* A fixed in-function jump does not create an ABI return frame. */
+            } else if (origin==0x80042ea8u && !op && fn==9u) {
+                const MusashiGuestIrqDraw *draw=services ? services->draw : NULL;
+                if (draw_selection!=3 || target!=0x8005ba90u || dest!=IRQ_DRAW_COMPLETE ||
+                    region!=IRQ_DMA || depth!=2 || stack[0].callee!=IRQ_DISPATCH ||
+                    stack[1].callee!=IRQ_DMA || selected_slot!=0x8006bb0cu ||
+                    cpu.r[29]!=installed[1]-0x58u || !irq_draw_owner(draw,image,memory,dma,clock)) return 0;
+                cpu.irq_draw=draw;
+                cpu.gpu_io_device=draw->gpu;
+                draw_selection=0;
+                stack[depth++]=(IrqGuestReturn){origin+8u,cpu.r[29],dest};
             } else if (origin==0x800428d4u && !op && fn==9u && target==0x80045290u) {
                 if (depth!=1 || stack[0].callee!=IRQ_DISPATCH || region!=IRQ_DISPATCH ||
                     selected_slot!=0x8006bb08u || cpu.r[29]!=installed[1]-0x28u ||
@@ -16945,7 +17100,14 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
                         !irq_metadata_call(read_phase,origin,dest)) return 0;
                     card_child=1;
                 }
-                int valid = read_entry || card_child || vblank_child || (depth >= 3 && op == 3u && irq_vblank_call(origin,cpu.r[29],dest)) ||
+                int draw_child = cpu.irq_draw && (
+                    (depth==3 && region==IRQ_DRAW_COMPLETE && cpu.r[29]==installed[1]-0x70u &&
+                     ((op==3u && dest==IRQ_DRAW_MASK && (origin==0x8005bab8u || origin==0x8005bcd0u)) ||
+                      (!op && fn==9u && dest==IRQ_DRAW_FRAME && origin==0x8005bd44u &&
+                       cd_irq_ram_word(memory,0x80072794u,target)))) ||
+                    (depth==4 && region==IRQ_DRAW_FRAME && cpu.r[29]==installed[1]-0x90u &&
+                     op==3u && dest==IRQ_DRAW_TIME && origin==0x800109bcu));
+                int valid = read_entry || draw_child || card_child || vblank_child || (depth >= 3 && op == 3u && irq_vblank_call(origin,cpu.r[29],dest)) ||
                     (origin == 0x80042788u && depth == 0 && op == 3u && dest == IRQ_DISPATCH) ||
                     (origin == 0x800428d4u && depth == 1 && !op && fn == 9u &&
                      (dest == IRQ_VBLANK || (dest == IRQ_DMA && dma &&
@@ -16958,6 +17120,7 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
             }
         }
         if (!formatter_step(memory,&cpu)) return 0;
+        if (draw_observe) draw_selection=irq_draw_selection(draw_selection,origin,op,draw_address,cpu.r[draw_reg]);
         ++stop->instructions;
         if (jump) {
             stop->pc = cpu.pc;
@@ -16966,6 +17129,10 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
                 !irq_data_access(&cpu,w) || !formatter_step(memory,&cpu)) return 0;
             ++stop->instructions;
             if (cpu.pc != target || cpu.npc != target+4u || cpu.delay_slot) return 0;
+            if (draw_return) {
+                cpu.irq_draw=NULL;
+                cpu.gpu_io_device=NULL;
+            }
             if (cd_call) {
                 if (cpu.r[31]!=origin+8u || !cd_irq_ram_word(memory,selected_slot,target))
                     return 0;

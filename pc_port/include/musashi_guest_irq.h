@@ -12,6 +12,15 @@ typedef struct MusashiGuestCdCodeSpan {
     uint16_t offset, size;
 } MusashiGuestCdCodeSpan;
 
+struct MusashiGuestIrqDraw;
+struct MusashiGuestIrqImage;
+/* Stable host-owned registration, initially zeroed. Remapping clears the
+ * image binding. Rebinding the host earns a new generation for its offers. */
+typedef struct MusashiGuestIrqDrawHost {
+    const struct MusashiGuestIrqImage *image;
+    uint64_t generation;
+} MusashiGuestIrqDrawHost;
+
 typedef struct MusashiGuestIrqImage {
     const struct MusashiGuestIrqImage *identity;
     MusashiBootMemory *memory;
@@ -34,6 +43,11 @@ typedef struct MusashiGuestIrqImage {
     unsigned cd_span_count;
     /* Cleared when a fresh mapping begins, including a rejected mapping. */
     struct MusashiMain12Owner *main12_owner;
+    uint8_t draw_complete[0x2ec], draw_irq_mask[0x1c];
+    uint8_t draw_frame[0x6c], draw_frame_time[0x148];
+    const MusashiGuestIrqDrawHost *draw_host;
+    void *draw_machine;
+    int (*owns_draw)(void *, const struct MusashiGuestIrqDraw *);
 } MusashiGuestIrqImage;
 
 typedef struct MusashiGuestIrqStop {
@@ -58,10 +72,25 @@ typedef struct MusashiGuestIrqCard {
     const MusashiEventDevice *events;
     const MusashiBiosEvents *registered_events;
 } MusashiGuestIrqCard;
+/* Borrowed for this interrupt on the same RAM, execution clock and channel-2 lease. */
+typedef struct MusashiGuestIrqDraw {
+    MusashiBootMemory *memory;
+    const MusashiDmaController *dma;
+    const struct MusashiGpuDma2 *channel;
+    const MusashiExecutionClock *clock;
+    const MusashiGpuIoDevice *gpu;
+    void *timer;
+    int (*timer_read16)(void *, uint32_t, uint16_t *);
+    uint64_t generation;
+    const MusashiGuestIrqDrawHost *host;
+} MusashiGuestIrqDraw;
+int musashi_boot_bind_irq_draw(MusashiGuestIrqImage *, MusashiGuestIrqDrawHost *,
+    void *machine, int (*owns)(void *, const MusashiGuestIrqDraw *));
 typedef struct MusashiGuestIrqServices {
     const MusashiCdSpuDevice *spu;
     const struct MusashiGuestIrqCd *cd;
     const MusashiGuestIrqCard *card;
+    const MusashiGuestIrqDraw *draw;
 } MusashiGuestIrqServices;
 
 int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *,

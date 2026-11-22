@@ -40,7 +40,8 @@ class GuestIrqTests(unittest.TestCase):
             port = ROOT / 'pc_port'
             sources = ('mips_formatter', 'boot_memory', 'irq_controller', 'dma_controller', 'cpu_status',
                        'irq_scheduler', 'spu_cd_audio', 'startup_bindings', 'event_bindings',
-                       'bios_events', 'bios_exception', 'bios_kernel', 'callback_bindings')
+                       'bios_events', 'bios_exception', 'bios_kernel', 'callback_bindings',
+                       'gpu_controller', 'gpu_dma2', 'scanline_timer')
             card = ('player_card', 'card_vector', 'card_service', 'card_image', 'card_host_storage')
             subprocess.run(['cc', '-std=c11', '-O1', '-ffunction-sections', '-fdata-sections',
                             '-DMUSASHI_LINKED_BIOS_EXCEPTION=1', '-DMUSASHI_NATIVE_MEMSET_BINDING=1',
@@ -58,7 +59,11 @@ class GuestIrqTests(unittest.TestCase):
             runtime_env.pop('MUSASHI_CODE_IMAGE_MUTANT', None)
             for mode in ('vblank', 'dma', 'both', 'code', 'record', 'wrongslot', 'callback', 'copy', 'owner',
                          'card', 'active', 'soundless', 'card-code', 'sound-code', 'slotswap', 'voice-range', 'title-fade', 'title-fade-code',
-                         'fade-limit', 'fade-equal', 'fade-wrap', 'fade-limit-level-code', 'fade-limit-mode-code'):
+                         'fade-limit', 'fade-equal', 'fade-wrap', 'fade-limit-level-code', 'fade-limit-mode-code',
+                         'draw-complete', 'draw-timer', 'draw-lease', 'draw-owner', 'draw-clock',
+                         'draw-image', 'draw-queue', 'draw-binding', 'draw-frame-slot',
+                         'draw-foreign-gpu', 'draw-foreign-timer', 'draw-stale', 'draw-unbound',
+                         'draw-replacement'):
                 with self.subTest(mode=mode):
                     subprocess.run([exe, path, mode], env=runtime_env, check=True, timeout=10)
             for mode in ('complete', 'owner', 'handle', 'handler', 'event', 'file'):

@@ -17,7 +17,10 @@ void (*vsync_callback)(void);
 SDL_mutex *g_intrMutex;
 int VSyncCallback(void (*callback)(void)) { vsync_callback = callback; return 0; }
 
+#include "guest_irq_draw_completion.h"
+
 typedef struct Machine {
+    DrawFixture draw;
     MusashiBootMemory memory;
     MusashiGuestIrqImage image;
     MusashiPsyCrossIrqScheduler scheduler;
@@ -39,7 +42,9 @@ typedef struct Machine {
 
 static uint64_t thread(void *p) { (void)p; return (uint64_t)SDL_ThreadID(); }
 static int advance(void *p,uint32_t n) {
-    Machine *m=p; m->cycles+=n; return !m->spu || musashi_spu_cd_audio_advance(m->spu,m->cycles);
+    Machine *m=p; m->cycles+=n;
+    if (m->draw.channel && !draw_advance(&m->draw,n)) return 0;
+    return !m->spu || musashi_spu_cd_audio_advance(m->spu,m->cycles);
 }
 static int audio_ready(void *p) { return p!=NULL; }
 static int audio_status(void *p,size_t *queued,int *playing) {
@@ -84,7 +89,8 @@ static int guest(void *p,MusashiBootMemory *memory,uint32_t context,const uint32
     if (!strcmp(m->mode,"owner")) memory=&other;
     MusashiGuestIrqImage clone;
     if (!strcmp(m->mode,"copy")) { clone=m->image;image=&clone; }
-    MusashiGuestIrqServices services={.spu=m->spu ? &m->spu_bus : NULL,.card=m->card};
+    MusashiGuestIrqServices services={.spu=m->spu ? &m->spu_bus : NULL,.card=m->card,
+        .draw=m->draw.channel ? &m->draw.service : NULL};
     return musashi_boot_execute_guest_irq_with_services(image,memory,context,saved,io,
         &m->clock,&m->dma,&services,&m->stop);
 }
@@ -100,8 +106,42 @@ int main(int argc,char **argv) {
     Machine *m=calloc(1,sizeof(*m)); assert(m);
     uint8_t *exe=malloc(0x65000u); assert(exe);
     FILE *f=fopen(argv[1],"rb"); assert(f && fread(exe,1,0x65000u,f)==0x65000u && fgetc(f)==EOF); fclose(f);
-    assert(musashi_boot_map_irq_exe(&m->image,&m->memory,exe,0x65000u)); free(exe);
+    assert(musashi_boot_map_irq_exe(&m->image,&m->memory,exe,0x65000u));
     m->mode=argv[2];
+    int draw=!strncmp(m->mode,"draw-",5);
+    int swap_gpu=!strcmp(m->mode,"draw-foreign-gpu");
+    int swap_timer=!strcmp(m->mode,"draw-foreign-timer");
+    int stale=!strcmp(m->mode,"draw-stale"), unbound=!strcmp(m->mode,"draw-unbound");
+    int replacement=!strcmp(m->mode,"draw-replacement");
+    MusashiGuestIrqDrawHost replacement_host={0};
+    Machine *other=NULL;
+    uint64_t old_generation=0;
+    if (draw) {
+        assert(musashi_boot_bind_irq_draw(&m->image,&m->draw.host,&m->draw,draw_owns));
+        assert(!musashi_boot_bind_irq_draw(&m->image,&m->draw.host,&m->draw,draw_owns));
+        if (stale || unbound || replacement) {
+            old_generation=m->draw.host.generation;
+            assert(musashi_boot_map_irq_exe(&m->image,&m->memory,exe,0x65000u));
+            assert(!m->image.draw_host && !m->image.owns_draw);
+            if (stale) {
+                assert(musashi_boot_bind_irq_draw(&m->image,&m->draw.host,&m->draw,draw_owns));
+                assert(m->draw.host.generation!=old_generation);
+            } else if (replacement) {
+                assert(musashi_boot_bind_irq_draw(&m->image,&replacement_host,&m->draw,draw_owns));
+                assert(replacement_host.generation==old_generation);
+            }
+        }
+        if (swap_gpu || swap_timer) {
+            other=calloc(1,sizeof(*other)); assert(other);
+            assert(musashi_boot_map_irq_exe(&other->image,&other->memory,exe,0x65000u));
+            assert(!musashi_boot_bind_irq_draw(&other->image,&m->draw.host,&m->draw,draw_owns));
+            assert(musashi_boot_bind_irq_draw(&other->image,&other->draw.host,&other->draw,draw_owns));
+            musashi_dma_controller_init(&other->dma,&other->irq);
+            other->clock=(MusashiExecutionClock){other,advance};
+            draw_begin(&other->draw,&other->memory,&other->dma,&other->clock,thread,"draw-complete");
+        }
+    }
+    free(exe);
     int card_request = !strncmp(m->mode, "request-", 8);
     if (card_request && argc != 4) return 2;
     /* Optional private replay supplies data state only. Code stays in the
@@ -179,7 +219,13 @@ int main(int argc,char **argv) {
         free(m);
         return 0;
     }
-    int vblank=strcmp(m->mode,"dma")!=0, dma=!strcmp(m->mode,"dma")||!strcmp(m->mode,"both");
+    if (draw) {
+        draw_begin(&m->draw,&m->memory,&m->dma,&m->clock,thread,m->mode);
+        if (swap_gpu) m->draw.service.gpu=&other->draw.gpu_io;
+        if (swap_timer) m->draw.service.timer=&other->draw;
+        if (stale) m->draw.service.generation=old_generation;
+    }
+    int vblank=!draw && strcmp(m->mode,"dma")!=0, dma=!strcmp(m->mode,"dma")||!strcmp(m->mode,"both");
     assert(musashi_irq_controller_write16(&m->irq,0x1f801074u,9));
     if(vblank)assert(musashi_irq_controller_raise_vblank(&m->irq));
     if(dma) {
@@ -188,6 +234,7 @@ int main(int argc,char **argv) {
        assert(m->dma.interrupt==0x84840000u);
     }
     int success=equal || wrap || !strcmp(m->mode,"fade-limit") || !strcmp(m->mode,"title-fade") || !strcmp(m->mode,"vblank") || dma || !strcmp(m->mode,"card") || !strcmp(m->mode,"active");
+    if (draw) success=!strcmp(m->mode,"draw-complete") || !strcmp(m->mode,"draw-timer");
     if (!strcmp(m->mode,"wrongslot")) {
         m->irq.status=2u;
         assert(musashi_irq_controller_write16(&m->irq,0x1f801074u,2u));
@@ -234,7 +281,8 @@ int main(int argc,char **argv) {
         assert(state.active && state.faulted && s->faulted && !s->return_consumed);
         unsigned steps=m->stop.instructions;
         assert(!musashi_psycross_irq_scheduler_dispatch_pending(s,m->outer) && steps==m->stop.instructions && m->calls==1);
-        if(!strcmp(m->mode,"code")||!strcmp(m->mode,"callback"))assert(m->post==m->before+1);
+        if(draw) assert(m->post==m->before);
+        else if(!strcmp(m->mode,"code")||!strcmp(m->mode,"callback"))assert(m->post==m->before+1);
         else if(!strcmp(m->mode,"voice-range")) assert(m->post==m->before+1 && m->stop.pc==0x80031454u);
         else if(!strcmp(m->mode,"slotswap")) assert(m->post==m->before+1 && m->stop.pc==0x80042d30u);
         else if(!strcmp(m->mode,"card-code")) assert(m->post==m->before+1 && m->stop.pc==0x80062990u);
@@ -244,6 +292,13 @@ int main(int argc,char **argv) {
         else if(!strcmp(m->mode,"soundless")||!strcmp(m->mode,"sound-code")) assert(m->post==m->before+1 && m->stop.pc==0x8003d2d8u);
         else if(!strcmp(m->mode,"wrongslot"))assert(m->post==m->before && steps>0 && m->stop.pc==0x800428d4u);
         else assert(m->post==m->before && steps==0);
+    }
+    if (draw) draw_check(&m->draw,&m->memory,m->stop.pc,m->mode,success);
+    if (other) {
+        assert(!other->draw.chcr_reads && !other->draw.status_reads && !other->draw.timer_reads);
+        assert(other->irq.status==8u && other->dma.interrupt==0x84840000u);
+        assert(musashi_gpu_dma2_close(other->draw.channel));
+        free(other);
     }
     if(m->spu)assert(m->envelopes==((!strcmp(m->mode,"sound-code") || !strcmp(m->mode,"title-fade-code") || (limit && !success))?0u:24u) && musashi_spu_cd_audio_destroy(m->spu));
     printf("%s complete=%d steps=%u cycles=%u stop=%08x tick_delta=%u I_STAT=%04x DICR=%08x sticky=%d voice_reads=%u\n",

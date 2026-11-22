@@ -146,6 +146,7 @@ typedef struct NativeBoot {
      * (HOST_FAULT) instead of silently touching the host state that follows. */
     uint8_t ram_mirror_guard[0x800000u - MUSASHI_RAM_SIZE - 4096u];
     MusashiGuestIrqImage irq_image;
+    MusashiGuestIrqDrawHost irq_draw_host;
     MusashiGuestIrqStop irq_guest_stop;
     uint8_t list_tail_before[448];
     int list_tail_captured;
@@ -2501,6 +2502,16 @@ static void console_bytes(void *userdata, const uint8_t *bytes, int32_t length) 
     }
 }
 
+/* Called through the verifier registered by this machine's image loader.
+ * The offered timer and GPU router must belong to this exact execution epoch. */
+static int source_irq_owns_draw(void *machine, const MusashiGuestIrqDraw *draw) {
+    NativeBoot *boot=machine;
+    return draw->memory==&boot->memory && draw->dma==&boot->dma &&
+        draw->channel==boot->gpu_dma && draw->clock==&boot->execution_clock &&
+        draw->gpu==&boot->gpu_io && draw->gpu->userdata==boot && draw->gpu->read32==gpu_io_read32 &&
+        draw->timer==&boot->timer1 && draw->timer_read16==musashi_scanline_timer_read16;
+}
+
 static int source_irq_dispatch(void *userdata, MusashiBootMemory *memory, uint32_t context,
     const uint32_t *installed, const void *interrupted, const MusashiIrqDispatchDevice *io) {
     NativeBoot *boot = userdata;
@@ -2512,7 +2523,13 @@ static int source_irq_dispatch(void *userdata, MusashiBootMemory *memory, uint32
     const MusashiGuestIrqCard card = {
         memory, boot->startup_devices.cd, boot->startup_devices.event, &boot->bios.events
     };
-    MusashiGuestIrqServices services = {.card=&card, .spu=boot->spu ? &boot->cd_spu : NULL,
+    const MusashiGuestIrqDraw draw = {
+        .memory=memory, .dma=&boot->dma, .channel=boot->gpu_dma,
+        .clock=&boot->execution_clock, .gpu=&boot->gpu_io,
+        .timer=&boot->timer1, .timer_read16=musashi_scanline_timer_read16,
+        .generation=boot->irq_draw_host.generation, .host=&boot->irq_draw_host
+    };
+    MusashiGuestIrqServices services = {.draw=&draw, .card=&card, .spu=boot->spu ? &boot->cd_spu : NULL,
         .cd=boot->irq.cd_clock == &boot->execution_clock ? &cd : NULL};
     int result = musashi_boot_execute_guest_irq_with_services(&boot->irq_image, memory, context,
         installed, io, &boot->execution_clock, &boot->dma, &services, &boot->irq_guest_stop);
@@ -3343,6 +3360,8 @@ static int load_exe(NativeBoot *boot, const char *path) {
     fclose(file);
     accepted = !io_error && size == expected_size && extra == EOF &&
         musashi_boot_map_irq_exe(&boot->irq_image,&boot->memory,exe,size);
+    if (accepted) accepted=musashi_boot_bind_irq_draw(&boot->irq_image,
+        &boot->irq_draw_host,boot,source_irq_owns_draw);
     free(exe);
     return accepted;
 }
