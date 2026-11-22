@@ -13364,7 +13364,8 @@ typedef struct GameMainEntry {
     int (*checkpoint)(void *, const void *);
     void *worker;
     uint8_t call[8], game[32], constructor[112], resume[28];
-    unsigned follow_constructor;
+    unsigned follow_constructor, follow_graphics;
+    uint8_t post_exchange[20], graphics[16];
 } GameMainEntry;
 
 typedef struct LaneRunFrame {
@@ -13846,6 +13847,7 @@ static int lane_try(MusashiBootMemory *memory, FormatterCpu *cpu) {
 }
 
 #include "game_main_entry.h"
+#include "game_graphics_entry.h"
 
 static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     uint32_t instruction, opcode, rs, rt, rd, immediate, old_npc;
@@ -13885,6 +13887,11 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         int lane = lane_try(memory, cpu);
         if (lane > 0) return 1;
         if (lane < 0) return formatter_refuse0(__LINE__, cpu->pc);
+    }
+    if (game_graphics_pc(cpu->pc) && g_lane_run_frames && g_lane_run_frames->main_entry.next) {
+        const int issue = game_graphics_issue(g_lane_run_frames,memory,cpu);
+        if (issue > 0) return 1;
+        if (issue < 0) return formatter_refuse0(__LINE__,cpu->pc);
     }
     if ((uint32_t)(cpu->pc-GAME_MAIN_ENTRY) < 60u && g_lane_run_frames &&
         g_lane_run_frames->main_entry.next) {
@@ -14803,6 +14810,8 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         game_main_crt_retired(g_lane_run_frames,memory,cpu,issued_pc);
     else if ((uint32_t)(issued_pc-GAME_CTOR) < GAME_CTOR_END-GAME_CTOR)
         game_main_constructor_retired(g_lane_run_frames,memory,cpu,issued_pc);
+    else if (startup_exchange_pc(issued_pc))
+        game_exchange_retired(g_lane_run_frames,memory,cpu,issued_pc);
     return 1;
 
 gte_transfer_refused:
@@ -15206,7 +15215,7 @@ static MusashiResetGraphPrefixStatus run_startup_cpu(
     frame.prev = g_lane_run_frames;
     if (frame.prev) frame.prev->main_entry.next = 0;
     frame.main_entry.next = 0;
-    frame.main_entry.follow_constructor = 0;
+    frame.main_entry.follow_constructor = frame.main_entry.follow_graphics = 0;
     frame.cpu = cpu;
     frame.sink = sink;
     frame.userdata = userdata;

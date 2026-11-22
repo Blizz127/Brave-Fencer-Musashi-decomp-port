@@ -10,7 +10,9 @@ call through all eight game instructions. It checks the saved registers and
 the 20 elapsed source cycles at constructor entry. The constructor runs on
 the guest CPU. After its observed return, the game sets up two pointers and
 calls the startup exchange in seven more host instructions. Both original
-constructor paths reached that call in 14 cycles from the return.
+constructor paths reached that call in 14 cycles from the return. The startup
+exchange itself still runs on the guest CPU. Nine compiled game instructions
+then store the startup setting and enter the first graphics library call.
 
 ## Player downloads and source builds
 

@@ -4,7 +4,9 @@ enum { CRT_GAME_CALL = 0x80010094u, GAME_MAIN_ENTRY = 0x80010178u,
        GAME_CTOR_CALL = 0x80010190u, GAME_CTOR = 0x800100a0u,
        GAME_CTOR_RETURN = 0x80010108u, GAME_CTOR_END = GAME_CTOR_RETURN+8u,
        GAME_MAIN_RESUME = GAME_CTOR_CALL+8u, GAME_EXCHANGE_CALL = 0x800101acu,
-       GAME_EXCHANGE = 0x80043060u };
+       GAME_EXCHANGE = 0x80043060u, POST_EXCHANGE = GAME_EXCHANGE_CALL+8u,
+       GRAPHICS_CALL = 0x800101c0u, GRAPHICS_ENTRY = 0x800141f0u,
+       GRAPHICS_LIBRARY_CALL = GRAPHICS_ENTRY+8u, GRAPHICS_LIBRARY = 0x80059234u };
 
 static int game_main_owner(LaneRunFrame *frame, MusashiBootMemory *memory,
                            const FormatterCpu *cpu)
@@ -63,6 +65,17 @@ static void game_main_capture(LaneRunFrame *frame, MusashiBootMemory *memory, Fo
     memcpy(entry->constructor,ram+(GAME_CTOR-CODE_IMAGE_BASE),sizeof entry->constructor);
     memcpy(entry->resume,ram+(GAME_MAIN_RESUME-CODE_IMAGE_BASE),sizeof entry->resume);
     entry->follow_constructor = 1;
+    if (!intrinsic_span(cpu,POST_EXCHANGE,sizeof entry->post_exchange) ||
+        !intrinsic_span(cpu,GRAPHICS_ENTRY,sizeof entry->graphics)) return;
+    for (unsigned off=0; off<sizeof entry->post_exchange; off+=4u)
+        if (lane_find(POST_EXCHANGE+off)) return;
+    for (unsigned off=0; off<sizeof entry->graphics; off+=4u)
+        if (lane_find(GRAPHICS_ENTRY+off)) return;
+    for (unsigned off=0; off<STARTUP_EXCHANGE_SIZE; off+=4u)
+        if (lane_find(GAME_EXCHANGE+off)) return;
+    memcpy(entry->post_exchange,ram+(POST_EXCHANGE-CODE_IMAGE_BASE),sizeof entry->post_exchange);
+    memcpy(entry->graphics,ram+(GRAPHICS_ENTRY-CODE_IMAGE_BASE),sizeof entry->graphics);
+    entry->follow_graphics = 1;
 }
 
 static void game_main_crt_retired(LaneRunFrame *frame, MusashiBootMemory *memory,
@@ -164,7 +177,7 @@ static int game_main_resumed_issue(LaneRunFrame *frame, MusashiBootMemory *memor
     cpu->npc = pc == GAME_EXCHANGE_CALL ? GAME_EXCHANGE : cpu->pc+4u;
     cpu->delay_slot = pc == GAME_EXCHANGE_CALL;
     cpu->branch_pc = cpu->delay_slot ? pc : 0u;
-    entry->next = cpu->pc == GAME_EXCHANGE ? 0u : cpu->pc;
+    entry->next = cpu->pc == GAME_EXCHANGE && !entry->follow_graphics ? 0u : cpu->pc;
     return 1;
 }
 
