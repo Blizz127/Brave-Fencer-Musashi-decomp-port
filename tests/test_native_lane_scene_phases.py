@@ -12,6 +12,10 @@ import native_lane_gen as lane
 
 
 PHASES = (
+    ("sc02_0005", 0x80186600, 348),
+    ("sc02_0005", 0x80186DE8, 300),
+    ("sc02_0005", 0x801877FC, 196),
+    ("sc02_0005", 0x80182998, 244),
     ("sc01_0077", 0x8015616C, 516),
     ("sc02_0005", 0x80184C20, 132),
     ("sc02_0005", 0x80186F58, 8),
@@ -239,6 +243,30 @@ def test_tower_animation_refresh_preserves_independent_room_sources(tmp_path, mo
     # Other rooms can contain the entire original instruction sequence at this address.
     monkeypatch.setattr(lane, "member_digest", lambda info, addr, length: 0x9B8B24BBE8A97807)
     assert lane.build_one(foreign, tmp_path, {}, {}, "clang", dict(info, member="sc02_0035"))["admitted"]
+
+
+def test_tower_actor_state_setter_keeps_other_rooms_selectable(tmp_path, monkeypatch):
+    pc, size = 0x8012AD44, 12
+    (tmp_path / "ir").mkdir()
+    source = ROOT / f"src/overlays/sc02_0005/{pc:08x}.c"
+    row = dict(name=f"func_{pc:08X}", vram=pc, size=size, region="sc02_0005", source=str(source))
+    assert lane.build_one(row, tmp_path, {}, {}, "clang")["rule"] == "timing"
+    copy = tmp_path / "setter.c"
+    copy.write_bytes(source.read_bytes())
+    other = dict(row, region="main_0012", source=str(copy))
+    assert lane.build_one(other, tmp_path, {}, {}, "clang")["rule"] == "timing"
+    copy.write_text(f"int func_{pc:08X}(int value) {{ return value; }}\n")
+    info = dict(member="sc02_0005", vram=pc, start=0, code=[(pc, pc + size)], data=bytes(size))
+    assert lane.build_one(other, tmp_path, {}, {}, "clang", info)["rule"] == "timing"
+    if not all(shutil.which(tool) for tool in ("clang", "nm")):
+        pytest.skip("clang and nm required for the independent-source control")
+    # Both rooms can also have the exact original instruction extent.
+    original_digest = 0x20E59D13D569A35B
+    monkeypatch.setattr(lane, "member_digest", lambda info, address, length: original_digest)
+    for member in ("main_0012", "sc02_0035"):
+        # A different room owns its separately supplied source at the same address.
+        assert lane.build_one(dict(other, region=member), tmp_path, {}, {},
+                              "clang", dict(info, member=member))["admitted"]
 
 
 def test_mine_slot_guard_preserves_other_regional_initializers():
