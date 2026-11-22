@@ -12,6 +12,7 @@ import native_lane_gen as lane
 
 
 PHASES = (
+    ("sc02_0039", 0x8017EA20, 532),
     ("sc02_0039", 0x8017EF5C, 244),
     ("sc02_0039", 0x8017EED8, 132),
     ("sc02_0039", 0x8017F050, 96),
@@ -191,6 +192,23 @@ def test_mine_child_model_complete_body(tmp_path, monkeypatch, pc, size):
         assert lane.overlay_extent_source_only(entry, source, info, lane.SCENE_PHASE_EXTENTS)
         for data in (None, span[:-1], span[:-1] + bytes([span[-1] ^ 1])):
             assert not lane.overlay_extent_source_only(entry, source, dict(info, data=data), lane.SCENE_PHASE_EXTENTS)
+
+
+def test_mine_child_setup_uses_complete_body(tmp_path, monkeypatch):
+    pc = 0x8017EA20
+    size = 532
+    source = tmp_path / "independent.c"
+    source.write_text("int independent(void) { return 7; }\n")
+    span = bytes(i % 256 for i in range(size))
+    info = dict(member="unknown", vram=pc, start=0, data=span)
+    extents = lane.SCENE_PHASE_EXTENTS
+    monkeypatch.setitem(extents[pc], "sc02_0039", (size, lane.fnv1a64(span)))
+    changed = span[:-1] + bytes([span[-1] ^ 1])
+    for declared in (4, size - 4, size + 4):
+        entry = dict(vram=pc, size=declared, region="unknown")
+        assert lane.overlay_extent_source_only(entry, source, info, extents)
+        for invalid in (None, span[:-1], changed):
+            assert not lane.overlay_extent_source_only(entry, source, dict(info, data=invalid), extents)
 
 
 @pytest.mark.parametrize("member,pc,size", PHASES)
