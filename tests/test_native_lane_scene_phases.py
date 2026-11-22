@@ -12,6 +12,8 @@ import native_lane_gen as lane
 
 
 PHASES = (
+    ("sc02_0005", 0x80183FCC, 284),
+    ("sc02_0005", 0x801840E8, 116),
     ("sc02_0005", 0x801831A4, 92),
     ("sc02_0005", 0x80183200, 24),
     ("sc02_0005", 0x80183218, 688),
@@ -201,6 +203,26 @@ def test_tower_pool_sources_respect_member_selection(tmp_path, monkeypatch, pc, 
         assert selected["rule"] == "timing"
     else:
         assert selected["admitted"]
+
+
+def test_tower_animation_refresh_preserves_independent_room_sources(tmp_path, monkeypatch):
+    pc, size = 0x8013240C, 428
+    source = ROOT / "src/overlays/sc02_0005/8013240c.c"
+    row = dict(name="func_8013240C", vram=pc, size=size, region="sc02_0005", source=str(source))
+    (tmp_path / "ir").mkdir()
+    assert lane.build_one(row, tmp_path, {}, {}, "clang")["rule"] == "timing"
+    copied = tmp_path / "refresh.c"
+    copied.write_bytes(source.read_bytes())
+    foreign = dict(row, region="sc02_0035", source=str(copied))
+    assert lane.build_one(foreign, tmp_path, {}, {}, "clang")["rule"] == "timing"
+    copied.write_text("int func_8013240C(int value) { return value; }\n")
+    info = dict(member="sc02_0005", vram=pc, start=0, code=[(pc, pc + size)], data=bytes(size))
+    assert lane.build_one(foreign, tmp_path, {}, {}, "clang", info)["rule"] == "timing"
+    if not all(shutil.which(tool) for tool in ("clang", "nm")):
+        pytest.skip("clang and nm required for the independent-source control")
+    # Other rooms can contain the entire original instruction sequence at this address.
+    monkeypatch.setattr(lane, "member_digest", lambda info, addr, length: 0x9B8B24BBE8A97807)
+    assert lane.build_one(foreign, tmp_path, {}, {}, "clang", dict(info, member="sc02_0035"))["admitted"]
 
 
 def test_mine_slot_guard_preserves_other_regional_initializers():

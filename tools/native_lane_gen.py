@@ -1081,6 +1081,10 @@ FOREST_FLOOR_EXTENTS = {
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    # Animation refresh has the same instructions in all 138 scene images.
+    0x8013240C: {"sc02_0005": None},
+    0x80183FCC: {"sc02_0005": (284, 0x61085F35D31E12B2)},
+    0x801840E8: {"sc02_0005": (116, 0x8BB69B208B13546C)},
     0x801831A4: {"sc02_0005": (92, 0x50D106B3DA5CA92D)},
     0x80183200: {"sc02_0005": (24, 0xB788597D0686DA02)},
     0x80183218: {"sc02_0005": (688, 0x495EED1701B033B3)},
@@ -1197,7 +1201,8 @@ def overlay_extent_source_only(entry, src, info, extents):
         return False
     if entry.get("region") in variants or (info and info["member"] in variants):
         return True
-    if info and (entry["size"], member_digest(info, pc, entry["size"])) in variants.values():
+    # A member with a shared original body is identified only by its room or source.
+    if info and any(variants.values()) and (entry["size"], member_digest(info, pc, entry["size"])) in variants.values():
         return True
     # The first published forest grid query used unsigned formal coordinates.
     if pc == 0x80134A74 and hashlib.sha256(src.read_bytes()).hexdigest() == (
