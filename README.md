@@ -734,6 +734,11 @@ Guest records use four-byte callback addresses. The Linux x64 host needs a
 separate representation for its eight-byte callback pointers, and the player
 retains guest execution for this routine. Audio output has not been compared.
 
+The 156-byte disc audio callback in `provenance/game-track-rows.json` counts
+the first ten playback notifications. On later absolute-time reports, a
+packed-decimal track number different from the requested track moves playback
+from phase 12 to phase 13. The public player runs this callback on the guest CPU.
+
 Eight sound routines in `provenance/sound-events.json` share the four-byte event
 and 84-byte channel layouts. A comparison against the USA executable exercised
 640 generated inputs and all 256 event selectors. Channel state, return values

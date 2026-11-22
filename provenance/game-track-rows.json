@@ -28,6 +28,19 @@
       "extent": "function",
       "optimization": "-O2",
       "origin": "Independently reconstructed from the USA game executable in November 2026. Both game procedures call external sound services."
+    },
+    {
+      "name": "func_80036130",
+      "region": "main",
+      "vram": 2147705136,
+      "size": 156,
+      "source": "src/main/80036130.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA executable disc-audio report callback, using the public global declarations.",
+      "source_sha256": "f2f3c7fa99a6a4f37e1dbce2555fe21398592732164938cd1c833716c77cb4a8",
+      "span_sha256": "6e572294a4267cd7b195e6cd0813a4ffa5691f2a037af27e83b8e2defbbfe3d8"
     }
   ]
 }
