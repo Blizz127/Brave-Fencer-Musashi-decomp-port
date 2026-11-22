@@ -1684,6 +1684,8 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
             raise Reject("timing", "mine actor movement needs the original actor and guest call timing")
         if vram in (0x8012C1B8, 0x80131FDC, 0x8013221C) and mine_member_source_only(entry, src, info):
             raise Reject("timing", "mine door setup requires the room callback table, model pool and original call timing")
+        if vram == 0x80178608 and mine_member_source_only(entry, src, info):
+            raise Reject("timing", "mine field reset requires the room actor pool, placement walker and guest call timing")
         if forest_ground_attachment_source_only(entry, src, info):
             raise Reject("timing", "ground attachment requires checked guest callbacks, return values and timing")
         if vram in (0x8017DDB0, 0x8017DE00, 0x8017E25C, 0x8017E2F4, 0x8017E428, 0x8017E500) and mine_member_source_only(entry, src, info):
