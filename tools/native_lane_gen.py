@@ -1085,6 +1085,11 @@ TOWER_POOL_PRIOR_SOURCE = "37f8c8016ea1b697c77467c8ee51f6fe1f89930cfacf04a68d81b
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    # Tower resource instructions are shared by all scene members.
+    0x8012913C: {"sc02_0005": None},
+    0x801291C0: {"sc02_0005": None},
+    0x801292C8: {"sc02_0005": None},
+    0x8012C1B8: {"sc02_0005": None},
     0x80186F9C: {"sc02_0005": (212, 0xBAB48872018582AD)},
     0x8018675C: {"sc02_0005": (288, 0x5A8CADA4006224D0)},
     0x8018687C: {"sc02_0005": (176, 0x489F6184399FBA88)},
@@ -1238,6 +1243,8 @@ SCENE_PHASE_EXTENTS = {
 
 # Earlier copies of the Tower callers retain their timing hold.
 TOWER_EARLIER_CALLERS = {
+    0x80183FCC: "d291052de8b96a64ce9299721645518e27e25d54ff747396369df812ace2f9b8",
+    0x8018BA38: "e32056cefd34e8e4c45e272c30e5979b9360b9d1fa2326f2e47fbf37a84144e8",
     0x80182918: "0f0ca5a402ac5b07d0d07835239b1e3dca84e7901c339ed3c38289178eb0899b",
     0x80184EC0: "ae9b370a04dc19aa21be83b44411900ec71005d2af1be8616c13b659998b1fba",
     0x8018968C: "d5900e57b02f7d861c5c700cc8c6a0ec3142a87c5bb4b2133b810873f834dc3f",
@@ -1665,7 +1672,10 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
                                  member_digest(info, vram, size) == 0xF467CE302666990C)
             earlier_pool = (vram == 0x8012C658 and
                             hashlib.sha256(src.read_bytes()).hexdigest() == TOWER_POOL_PRIOR_SOURCE)
-            if (tower_initializer or earlier_pool or member == "sc02_0005" or
+            earlier_template = (vram == 0x8012C354 and
+                                hashlib.sha256(src.read_bytes()).hexdigest() ==
+                                "43c4547365f3a1489458707ef6d693612ca115cb1e50b1c9a425743aac66ade9")
+            if (tower_initializer or earlier_pool or earlier_template or member == "sc02_0005" or
                     entry.get("region") == "sc02_0005" or
                     (tower.is_file() and (src.resolve() == tower or src.read_bytes() == tower.read_bytes()))):
                 raise Reject("timing", "tower actor allocation requires its room state and guest call timing")

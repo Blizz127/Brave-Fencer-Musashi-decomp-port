@@ -14,6 +14,7 @@ def test_actor_template_initialization(tmp_path, compiler):
     subprocess.run([
         compiler, "-std=c11", "-O2", "-fstrict-aliasing", "-Wall", "-Wextra", "-Werror",
         "-fsanitize=undefined", "-fno-sanitize-recover=all", "-I", root / "include",
+        "-I", root / "src/overlays/sc02_0005",
         root / "src/overlays/sc02_0005/8012c354.c",
         root / "tests/actor_template_init_probe.c", "-o", executable,
     ], check=True)

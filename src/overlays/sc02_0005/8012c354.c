@@ -1,8 +1,7 @@
 /* Set the actor's template address, health, flags and optional model. */
-#include "psx_types.h"
+#include "steam_knight_resource.h"
 
 extern u8 D_80078EAE;
-extern void *func_8001CFDC(s32 first, s32 limit);
 extern void func_8012CAE4(u8 *actor);
 extern void func_8001C214(void *model, s32 resource);
 

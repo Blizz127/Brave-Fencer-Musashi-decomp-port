@@ -2,7 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-#include "psx_types.h"
+#include "steam_knight_resource.h"
 
 s32 func_8012C354(u8 *actor, u8 *record);
 u8 D_80078EAE;
@@ -59,13 +59,13 @@ u32 bfm_actor_template_address(const void *ptr)
     return guest(offset);
 }
 
-void *func_8001CFDC(s32 first, s32 limit)
+struct Record *func_8001CFDC(int first, int limit)
 {
     assert(first == 38 && limit == 133);
     assert(allocations++ == 0 && encodes == 1);
     assert(memcmp(arena, before_allocate, ARENA_SIZE) == 0);
     if (test->change_resource) put_word(arena+test->record+4, 0x8a32c179u);
-    return test->allocation == ALLOC_FAIL ? NULL : arena+test->model;
+    return test->allocation == ALLOC_FAIL ? NULL : (struct Record *)(arena + test->model);
 }
 
 void func_8012CAE4(u8 *actor)

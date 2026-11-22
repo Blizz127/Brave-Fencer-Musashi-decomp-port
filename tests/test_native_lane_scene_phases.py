@@ -12,6 +12,10 @@ import native_lane_gen as lane
 
 
 PHASES = (
+    ("sc02_0005", 0x8012913C, 132),
+    ("sc02_0005", 0x801291C0, 96),
+    ("sc02_0005", 0x801292C8, 84),
+    ("sc02_0005", 0x8012C1B8, 36),
     ("sc02_0005", 0x80186F9C, 212),
     ("sc02_0005", 0x8018675C, 288),
     ("sc02_0005", 0x8018687C, 176),
@@ -308,6 +312,24 @@ def test_previous_tower_allocator_source_stays_with_its_room(tmp_path, monkeypat
     if not all(shutil.which(tool) for tool in ("clang", "nm")):
         pytest.skip("clang and nm required for the independent-source control")
     assert lane.build_one(row, tmp_path, {}, {}, "clang", info)["admitted"]
+
+
+@pytest.mark.parametrize("pc,size", ((0x8012913C, 132), (0x801291C0, 96), (0x801292C8, 84), (0x8012C1B8, 36)))
+def test_tower_resources_preserve_shared_room_owners(pc, size, tmp_path):
+    source = ROOT / "src/overlays/sc02_0005" / f"{pc:08x}.c"
+    other = ROOT / "src/overlays/sc02_0035" / source.name
+    copied = tmp_path / "renamed.c"
+    copied.write_bytes(source.read_bytes())
+    variants = lane.SCENE_PHASE_EXTENTS
+    assert variants[pc]["sc02_0005"] is None
+    row = dict(vram=pc, size=size, region="sc02_0035")
+    physical = dict(member="sc02_0035", vram=pc, start=0, data=bytes(size))
+    hold = lane.overlay_extent_source_only
+    assert not hold(row, other, physical, variants)
+    assert hold(row, source, physical, variants)
+    assert hold(row, copied, physical, variants)
+    assert hold(dict(row, region="sc02_0005"), other, physical, variants)
+    assert hold(row, other, dict(physical, member="sc02_0005"), variants)
 
 
 def test_mine_slot_guard_preserves_other_regional_initializers():

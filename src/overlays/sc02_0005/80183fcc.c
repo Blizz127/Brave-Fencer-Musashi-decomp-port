@@ -13,13 +13,13 @@ extern void func_800233CC(void *shape, int length);
 extern u8 D_801F12E8[], D_801D3230[];
 extern void func_8001C924(u8 *model, void *list);
 extern void func_80132784(SteamKnightPart *actor, SteamKnightPart *parent, int mode);
-extern u8 *func_8001D074(int type, int amount);
+#include "steam_knight_resource.h"
 extern void func_8001CD9C(u8 *model, void *shape);
 #define BIND_LIST(actor) func_8001C924((u8 *)(actor)->model_address, D_801F12E8)
 #define INSTALL_SHAPE(actor) (*(u8 **)((actor)->model_address + 0x20) = D_801D3230)
 #define ATTACH(actor) func_80132784((actor), (SteamKnightPart *)(actor)->body_address, 21)
 typedef u8 *CoreModel;
-#define NEW_MODEL() func_8001D074(126, 256)
+#define NEW_MODEL() ((u8 *)func_8001D074(126, 256))
 #define MODEL_ADDRESS(model) ((u32)(model))
 #define BIND_SHAPE(model) func_8001CD9C((model), &D_801E44A0)
 #define SET_MODEL_FLAGS(model) do { *(u16 *)((model) + 0x2c) = 0xc010; *(u32 *)((model) + 4) |= 0xd0000000u; } while (0)
