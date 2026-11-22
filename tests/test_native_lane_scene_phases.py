@@ -119,8 +119,11 @@ def test_mine_slot_dispatch_preserves_the_main_member(tmp_path, pc, size):
 
 
 
-@pytest.mark.parametrize("pc,size", [(0x8017E25C, 152), (0x8017E2F4, 308), (0x8017E500, 320)])
-def test_mine_model_update_stays_with_its_member(tmp_path, pc, size):
+@pytest.mark.parametrize("pc,size", [
+    (0x8017DDB0, 80), (0x8017DE00, 132), (0x8017E25C, 152),
+    (0x8017E2F4, 308), (0x8017E428, 216), (0x8017E500, 320),
+])
+def test_mine_model_actions_stay_with_their_member(tmp_path, pc, size):
     source = ROOT / f"src/overlays/sc02_0039/{pc:08x}.c"
     (tmp_path / "ir").mkdir()
     row = dict(name=f"func_{pc:08X}", region="sc02_0039", vram=pc, size=size, source=str(source))
