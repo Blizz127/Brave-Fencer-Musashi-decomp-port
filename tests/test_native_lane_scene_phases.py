@@ -119,6 +119,20 @@ def test_mine_slot_dispatch_preserves_the_main_member(tmp_path, pc, size):
 
 
 
+def test_mine_collision_actor_selection_stays_with_its_member(tmp_path):
+    pc = 0x8017DFE8
+    (tmp_path / "ir").mkdir()
+    source = tmp_path / "actor.c"
+    row = dict(name="func_8017DFE8", vram=pc, size=60, region="sc02_0039", source=str(source))
+    source.write_bytes((ROOT / "src/overlays/sc02_0039/8017dfe8.c").read_bytes())
+    assert lane.build_one(dict(row, region="main_0012"), tmp_path, {}, {}, "clang").get("rule") == "timing"
+    source.write_text("int func_8017DFE8(int x) { return x + 1; }\n")
+    assert lane.build_one(row, tmp_path, {}, {}, "clang").get("rule") == "timing"
+    assert lane.build_one(dict(row, region="other"), tmp_path, {}, {}, "clang",
+                          dict(member="sc02_0039")).get("rule") == "timing"
+    assert not lane.mine_member_source_only(dict(row, region="other"), source, dict(member="other"))
+
+
 def test_mine_camera_preserves_the_independent_main_provider(tmp_path):
     pc = 0x80129CF8
     (tmp_path / "ir").mkdir()
