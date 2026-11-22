@@ -1306,6 +1306,53 @@ def forest_event_source_only(entry, src, info):
     return known is not None and hashlib.sha256(src.read_bytes()).hexdigest() in known
 
 
+# The forest controller reads two guest callback tables. The position update
+# and its orientation child also occur at the same extent in other members.
+FOREST_GROUND_ATTACHMENT_EXTENTS = {
+    0x801627E8: {"sc01_0077": (76, 0x11DB10D2EBC2E904)},
+    0x80162834: {"sc01_0077": (60, 0xB5C00E87976B8C6E)},
+    0x801628F4: dict.fromkeys(
+        ("main_0012", "sc01_0077", "sc01_0005", "sc02_0035", "sc03_0001"),
+        (116, 0xE8BEA49CBBDD2CBA)),
+    0x80162968: dict.fromkeys(("main_0012", "sc01_0077"), (344, 0x78B2BD88E99ADACF)),
+}
+
+# Custom registries can supply the current or historical C separately.
+FOREST_GROUND_ATTACHMENT_SOURCES = {
+    0x801627E8: {
+        "98cdc6ab80618064f5aee85ed3c51397caf4ad6ac58e8e940ea827dcd94ce635",
+        "e628a398039451e58e609dffbb8ed0d5e6c680e9b1ea965b8db9a1edaec1c7df",
+    },
+    0x80162834: {
+        "296a381a792d38f110fca48b6baf0774afa678af8dcae46887bf527abcf222a1",
+        "dd17c1749955005676b34d2fa3fc6a37afcab23feb7e28f856b8e6c9518eab08",
+    },
+    0x801628F4: {
+        "13fc104531ec53d04a85f3bbcc5b767f891095ab7fea7a7fd8469d28a91cff5c",
+        "3341b8592c8feb1fb3a05067ac4d4f2955e0c99fe65dbfd48f675075e11a3ca9",
+        "55393555d67c12a6fa7f5c04d1983d220a6ec7207868cd2fda9971e1bd07c7b0",
+        "d1ddb83357fd957f63e6b07631ed8109d8c9918408e8b7cd316afb06fab162a0",
+    },
+    0x80162968: {
+        "21d4f010c80bb023286b071be2742638cee720e1dfe4793a551635a31b453b1f",
+        "3d358588c6fc0138dd30c7581078f5c3fc8455526e07ec0f5c47dca1e283f025",
+        "aa45cfe58d61f388fdf7cf0f50f9d2fa95eaaa1e5908ea28679fa00df1f225b3",
+    },
+}
+
+
+def forest_ground_attachment_source_only(entry, src, info):
+    pc = entry["vram"]
+    variants = FOREST_GROUND_ATTACHMENT_EXTENTS.get(pc)
+    if not variants:
+        return False
+    # The verified game extent is independent of a supplied registry's size.
+    size, _ = next(iter(variants.values()))
+    if overlay_extent_source_only(dict(entry, size=size), src, info, FOREST_GROUND_ATTACHMENT_EXTENTS):
+        return True
+    return hashlib.sha256(src.read_bytes()).hexdigest() in FOREST_GROUND_ATTACHMENT_SOURCES[pc]
+
+
 def mine_slot_update_source_only(entry, src, info):
     pc = entry["vram"]
     if pc not in (0x8012A908, 0x80162B1C, 0x8017849C, 0x8017869C, 0x801787D4):
@@ -1429,6 +1476,8 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
             raise Reject("timing", "forest action requires ordered guest services and state updates")
         if forest_event_source_only(entry, src, info):
             raise Reject("timing", "actor event submission requires guest memory and event timing")
+        if forest_ground_attachment_source_only(entry, src, info):
+            raise Reject("timing", "ground attachment requires checked guest callbacks, return values and timing")
         if mine_slot_update_source_only(entry, src, info):
             raise Reject("timing", "mine slot updates require guest callback and memory timing")
         if scene_player_motion_source_only(entry, src, info):

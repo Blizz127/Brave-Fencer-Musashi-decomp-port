@@ -57,8 +57,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 22 source update covers 311 regional function matches across seven scene overlays,
-totaling 42,948 bytes. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 22 source update covers 314 regional function matches across seven scene overlays,
+totaling 43,200 bytes. Four mine routines scan floor probes and pass their position to the map lookup.
 The mine collision code intersects the probe with a face and tests its side planes.
 A mine actor scheduler updates eligible actors and copies their positions to attached objects.
 Two earlier passes select actors for updates. A separate routine counts down a signed timer and adjusts the actor’s scale.
@@ -166,6 +166,9 @@ The original clipping call remains external.
 
 The mine controller checks two independent visibility flags and the active target before updating and drawing paired points.
 Host tests cover service order and the target indicator. The scene continues to use the guest CPU for this controller.
+
+The forest attachment controller selects a callback, copies the ground position and updates a model flag.
+Host tests cover both callback tables, signed coordinates and overlapping records. The player still runs this update and its orientation routine on the guest CPU.
 
 The mine updates its three visual actors, checking the current focus again after each callback, then advances two fade slots.
 Host tests follow the regional screen effect from the fade dispatcher. Both scheduler routines still use the guest CPU during gameplay.

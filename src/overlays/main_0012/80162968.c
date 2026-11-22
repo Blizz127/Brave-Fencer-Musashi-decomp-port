@@ -31,7 +31,7 @@ typedef struct {
     /* 0x1C */ s16 scaleZ;
 } Dst80162968;
 
-typedef struct {
+typedef struct ForestGroundOrientation {
     u8 pad00[0x04];
     /* 0x04 */ u32 src;
     /* 0x08 */ u32 dst;

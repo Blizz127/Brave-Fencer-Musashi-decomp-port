@@ -1,19 +1,16 @@
-/* Owner re-derivation from retail assembly (clean input set). */
-/* Sets or clears the top bit of the target word from a flag, copies three halfword fields from the owner record, then calls func_80162968. */
-#include "psx_types.h"
+#include "../../../include/forest_ground_attachment.h"
 
-extern void func_80162968(void *obj);
+void func_801628F4(ForestGroundAttachment *attachment)
+{
+    u8 *source = BFM_GROUND_ATTACHMENT_SOURCE(attachment->source);
+    u8 *target = BFM_GROUND_ATTACHMENT_TARGET(attachment->target);
 
-void func_801628F4(u8 *obj) {
-    u8 *src = *(u8 **)(obj + 4);
-    u8 *dst = *(u8 **)(obj + 8);
-    if (*(s16 *)(src + 0x7E) != 0) {
-        *(u32 *)(dst + 4) |= 0x80000000;
-    } else {
-        *(u32 *)(dst + 4) &= 0x7FFFFFFF;
-    }
-    *(s32 *)(obj + 0x20) = *(s16 *)(src + 0x78);
-    *(s32 *)(obj + 0x24) = *(s16 *)(src + 0x7A);
-    *(s32 *)(obj + 0x28) = *(s16 *)(src + 0x7C);
-    func_80162968(obj);
+    if (BFM_GROUND_ATTACHMENT_HALF(source, 0x7e))
+        BFM_GROUND_ATTACHMENT_WRITE(target, 4, BFM_GROUND_ATTACHMENT_READ(target, 4) | 0x80000000u);
+    else
+        BFM_GROUND_ATTACHMENT_WRITE(target, 4, BFM_GROUND_ATTACHMENT_READ(target, 4) & 0x7fffffffu);
+    attachment->x = BFM_GROUND_ATTACHMENT_HALF(source, 0x78);
+    attachment->y = BFM_GROUND_ATTACHMENT_HALF(source, 0x7a);
+    attachment->z = BFM_GROUND_ATTACHMENT_HALF(source, 0x7c);
+    BFM_GROUND_ATTACHMENT_ORIENT(attachment);
 }
