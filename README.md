@@ -564,6 +564,11 @@ state machine matches the original instructions and jump table. A Linux host
 test covers seeks, retries, transfers and error recovery with synthetic drive
 responses. The ordinary player still executes the routine on the guest CPU.
 
+Two track-row procedures reproduce 349 instructions from the USA executable.
+A host test exercises ten-row batches, sound-service errors and buffer bounds.
+Run `python3 -m pytest tests/test_game_track_rows.py` for the synthetic checks.
+The standalone test supplies the sound-data windows and audio-service results.
+
 The 664-byte track-start routine opens a sound bank and advances its pending
 request. Host tests cover bank reuse, failure returns and changes made by sound
 services between calls. The player still runs this routine on the guest CPU.

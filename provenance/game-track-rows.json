@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "targets": {
+    "main": {
+      "kind": "executable",
+      "identity": "provenance/exe_identity.json"
+    }
+  },
+  "matches": [
+    {
+      "name": "func_80030730",
+      "region": "main",
+      "vram": 2147682096,
+      "size": 740,
+      "source": "src/main/80030730.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA game executable in November 2026. Both game procedures call external sound services."
+    },
+    {
+      "name": "func_80030A14",
+      "region": "main",
+      "vram": 2147682836,
+      "size": 656,
+      "source": "src/main/80030a14.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA game executable in November 2026. Both game procedures call external sound services."
+    }
+  ]
+}
