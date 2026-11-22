@@ -1073,6 +1073,8 @@ FOREST_FLOOR_EXTENTS = {
 # These scene phase callbacks call back into guest code. Several of their
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    # The mine script reads duration after two observable guest stores.
+    0x8013CA14: {"sc02_0039": (168, 0x135546466EC2D107)},
     # The per-frame update runs the same guest calls with a member-specific object.
     0x801287B8: {
         "main_0012": (248, 0x7003DEEF5601FA29),
