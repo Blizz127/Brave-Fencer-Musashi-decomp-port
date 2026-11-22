@@ -44,9 +44,9 @@ static MusashiMdecController decoder;
 static MusashiBootMemory ram;
 static MusashiDmaController dma;
 
-uint32_t first_pixel(uint32_t mode, int cr, int cb, int y) {
+uint32_t first_pixel(uint32_t mode, int cr, int cb, int y, unsigned quant) {
     musashi_mdec_init(&decoder, &ram, &dma);
-    memset(decoder.quant, 8, sizeof(decoder.quant));
+    memset(decoder.quant, quant, sizeof(decoder.quant));
     for (unsigned i = 0; i < 8; ++i) decoder.scale[i] = 0x5a82;
     assert(musashi_mdec_write32(&decoder, 0x1f801820u, mode | 6u));
     int coefficients[6] = {cr, cb, y, y, y, y};
@@ -65,9 +65,14 @@ uint32_t first_pixel(uint32_t mode, int cr, int cb, int y) {
     subprocess.run(['cc', '-std=c11', '-shared', '-fPIC', '-O2', '-I', str(include),
                     str(probe), str(ROOT / 'pc_port/mdec_controller.c'),
                     str(ROOT / 'pc_port/dma_controller.c'), '-o', str(library)], check=True)
-    pixel = ctypes.CDLL(str(library)).first_pixel
-    pixel.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_int, ctypes.c_int]
-    pixel.restype = ctypes.c_uint32
+    render = ctypes.CDLL(str(library)).first_pixel
+    render.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                       ctypes.c_uint]
+    render.restype = ctypes.c_uint32
+
+    def pixel(mode, cr, cb, y, quant=8):
+        return render(mode, cr, cb, y, quant)
+
     rounded_up = set()
     saturated = set()
     for y in range(-136, 137):
@@ -88,3 +93,10 @@ uint32_t first_pixel(uint32_t mode, int cr, int cb, int y) {
                                    (0x02000000, 0x8000), (0x06000000, 0xc210)]:
             assert pixel(0x38000000 | flags, cr, cb, y) == expected ^ output_mask
     assert rounded_up == saturated == {0, 1, 2}
+
+    # Measured on SCPH-5501 using DC-only inputs and a uniform quantizer of 4.
+    # The positive and negative excursions cross the converter's signed nine-bit range.
+    for cr, cb, y, blue in [(-256, -256, -128, 255), (255, -256, -128, 255),
+                            (-256, 255, 127, 0), (255, 255, 127, 0)]:
+        assert pixel(0x30000000, cr, cb, y, 4) >> 16 == blue
+        assert pixel(0x38000000, cr, cb, y, 4) >> 10 == blue >> 3

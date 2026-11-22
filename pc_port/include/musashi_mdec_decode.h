@@ -47,6 +47,11 @@ static unsigned mdec_rgb5(int component) {
     unsigned rounded = (unsigned)(component + 4) >> 3;
     return rounded > 31u ? 31u : rounded;
 }
+/* The converter keeps nine signed bits before saturating the output. */
+static int mdec_color_component(int component) {
+    int signed9 = (int)((unsigned)(component + 256) & 511u) - 256;
+    return mdec_clip(signed9, -128, 127) + 128;
+}
 static int mdec_decode_frame(MusashiMdecController *d) {
     unsigned cursor=0,depth=(d->command>>27)&3u,bytes=depth==3?512:768;
     int blocks[6][64]; unsigned i,x,y;
@@ -64,7 +69,7 @@ static int mdec_decode_frame(MusashiMdecController *d) {
                         lum+mdec_floor(-352*(int64_t)cb-731*(int64_t)cr,1024),
                         lum+mdec_floor(1815*(int64_t)cb,1024)};
             uint8_t *out=d->output+d->output_size+(y*16+x)*(depth==3?2:3);
-            for(i=0;i<3;i++)rgb[i]=mdec_clip(rgb[i],-128,127)+128;
+            for(i=0;i<3;i++)rgb[i]=mdec_color_component(rgb[i]);
             if(depth==3) {
                 unsigned pixel=mdec_rgb5(rgb[0])|(mdec_rgb5(rgb[1])<<5)|(mdec_rgb5(rgb[2])<<10);
                 if(d->command&0x04000000u)pixel^=0x4210u;
