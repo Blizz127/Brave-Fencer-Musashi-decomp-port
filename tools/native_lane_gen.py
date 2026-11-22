@@ -1231,6 +1231,63 @@ def forest_action_source_only(entry, src, info):
     return (member if member is not None else entry.get("region")) != "main_0012"
 
 
+# Actor event tests call the game flag service, then fill one of two shared slot
+# banks. Dispatch needs the real guest stack, memory ordering and event timing.
+FOREST_EVENT_EXTENTS = {
+    0x80146750: dict.fromkeys(("main_0012", "sc01_0077", "sc01_0005"), (188, 0x43E37B45848E8CD0)),
+    0x8014680C: dict.fromkeys(("main_0012", "sc01_0077", "sc01_0000"), (188, 0xB522F1058C2D9B5F)),
+    0x801498E0: dict.fromkeys(("sc01_0077", "main_0012", "sc01_0005"), (116, 0xF1ECAE0BE88F0991)),
+    0x80149AA8: dict.fromkeys(
+        ("sc01_0077", "main_0012", "sc02_0035", "sc03_0001", "sc01_0005", "sc02_0031"),
+        (44, 0x9855CACC76C548AD)),
+    0x80149B54: dict.fromkeys(
+        ("sc01_0077", "main_0012", "sc02_0035", "sc03_0001", "sc01_0005"),
+        (88, 0x4B524B4DAA9C4848)),
+    0x8014BEF8: dict.fromkeys(("sc01_0077", "main_0012"), (32, 0x6C7CD17EBBB3736A)),
+}
+
+
+# A supplied registry may reference a detached source with no member image or
+# installed canonical C. Pin the typed sources and their earlier forms.
+FOREST_EVENT_SOURCE_HASHES = {
+    0x80146750: {
+        "b99fbdf613593481a6fcc96bdeef1901edf6f0cfdd0063ff0d10136683a108e9",
+        "b1411633fbec3d5518fe4bfc76f4dd5b2342371a3cc52a4c849cb0d870855c5d",
+        "aba3bc1dd37589893b46ddf9ce195e106a960d23662f1e87998e3aa31e4e624e",
+    },
+    0x8014680C: {
+        "bc1c6c8ee755b2c08d6188c24e81e0604c04e3e847a662d30e331a38bff0e68d",
+        "081dd7635189bc386153916b89f2b73c6a6432943e99736ce3b0ec3ca2dce393",
+        "b58b9e8e7cdecee41ca426e630a926060b795db13a7084932a964478faf3ecc3",
+    },
+    0x801498E0: {
+        "6ea31a4287a152c69cb86aaa1b8485b43f5a605e6104fb592233497cdb0e20cf",
+        "7f022c3cb05db879d3ce8fa0aafb48e2b06cbee5632bcdd56db8fe7a2da8a50b",
+        "03c287fabb5fb626a804fd6162e8e35d44baad7ffbab56394171464d99dce3a1",
+    },
+    0x80149AA8: {
+        "a1d83d6898fa0b250683a1234803711dd77eadbc79f70eccbea2e037ee9b8ed9",
+        "cb2bc6a23da2797780eac48fb1026a0bb0da0473efb05208ef5b90d0a1d36b9f",
+        "d7f73b4ec55e1944d574102781944abc2c8ed731b4eb9fa65f9e24dc7195126f",
+    },
+    0x80149B54: {
+        "2c3d37cccc087f8aa4009064ef5e40effa48d0e21ee5101ce11eed1ed2c3472f",
+        "5d280b95fefddc0aa22df0bb5e872980ec772fcdd85c0c915089c40c7d37e174",
+    },
+    0x8014BEF8: {
+        "8ea00334968e3a108b4e030c106a7d79a3e7c8a7619b1857111f2ae660968689",
+        "83f23176510941418825a3f94c6e0ea739fdb2995c08ff4c6083839799395ff7",
+    },
+}
+
+
+def forest_event_source_only(entry, src, info):
+    if overlay_extent_source_only(entry, src, info, FOREST_EVENT_EXTENTS):
+        return True
+    known = FOREST_EVENT_SOURCE_HASHES.get(entry["vram"])
+    return known is not None and hashlib.sha256(src.read_bytes()).hexdigest() in known
+
+
 def mine_slot_update_source_only(entry, src, info):
     pc = entry["vram"]
     if pc not in (0x8012A908, 0x80162B1C, 0x8017849C, 0x8017869C, 0x801787D4):
@@ -1292,6 +1349,8 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
             raise Reject("timing", "scene operation requires instruction-level guest state and event timing")
         if forest_action_source_only(entry, src, info):
             raise Reject("timing", "forest action requires ordered guest services and state updates")
+        if forest_event_source_only(entry, src, info):
+            raise Reject("timing", "actor event submission requires guest memory and event timing")
         if mine_slot_update_source_only(entry, src, info):
             raise Reject("timing", "mine slot updates require guest callback and memory timing")
         if scene_player_motion_source_only(entry, src, info):

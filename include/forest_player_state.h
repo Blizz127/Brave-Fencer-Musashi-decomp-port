@@ -20,7 +20,9 @@ typedef struct {
     u8 state, phase;
     u8 pad4e[0xa8 - 0x4e];
     u8 field_a8;
-    u8 pada9[0xb4 - 0xa9];
+    u8 pada9;
+    u16 field_aa, field_ac;
+    u8 padae[0xb4 - 0xae];
     u32 animation;
     u16 animation_flags;
     u8 padba[0xd0 - 0xba];
