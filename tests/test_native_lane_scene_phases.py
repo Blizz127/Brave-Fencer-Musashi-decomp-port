@@ -359,3 +359,13 @@ def test_forest_ability_callback_stays_guest_timed(tmp_path):
     for region, info in (("sc01_0077", None), ("sc02_0031", {"member": "sc01_0077"})):
         result = lane.build_one(dict(row, region=region), tmp_path, {}, {}, "clang", info)
         assert result.get("rule") == "timing"
+
+
+@pytest.mark.parametrize("vram,size", [(0x8017E868, 60), (0x8017E9C0, 108)])
+def test_forest_bridge_player_callback_timing(tmp_path, vram, size):
+    source = ROOT / f"src/overlays/sc01_0077/{vram:08x}.c"
+    row = dict(name=f"func_{vram:08X}", vram=vram, size=size, source=str(source))
+    (tmp_path / "ir").mkdir()
+    for region, info in (("sc01_0077", None), ("sc02_0031", {"member": "sc01_0077"})):
+        result = lane.build_one(dict(row, region=region), tmp_path, {}, {}, "clang", info)
+        assert result.get("rule") == "timing"
