@@ -119,6 +119,24 @@ def test_mine_slot_dispatch_preserves_the_main_member(tmp_path, pc, size):
 
 
 
+def test_mine_constructor_preserves_forest_dispatch(tmp_path):
+    pc = 0x8017DE84
+    source = ROOT / "src/overlays/sc02_0039/8017de84.c"
+    forest = ROOT / "src/overlays/sc01_0077/8017de84.c"
+    (tmp_path / "ir").mkdir()
+    row = dict(name="func_8017DE84", region="sc02_0039", vram=pc, size=356, source=str(source))
+    assert lane.build_one(row, tmp_path, {}, {}, "clang").get("rule") == "timing"
+    copy = tmp_path / "constructor.c"
+    copy.write_bytes(source.read_bytes())
+    assert lane.build_one(dict(row, region="other", source=str(copy)),
+                          tmp_path, {}, {}, "clang").get("rule") == "timing"
+    copy.write_text("int func_8017DE84(int value) { return value; }\n")
+    assert lane.build_one(dict(row, region="other", source=str(copy)), tmp_path, {}, {}, "clang",
+                          dict(member="sc02_0039")).get("rule") == "timing"
+    forest_row = dict(row, region="sc01_0077", size=60, source=str(forest))
+    assert not lane.mine_member_source_only(forest_row, forest, dict(member="sc01_0077"))
+
+
 def test_mine_collision_actor_selection_stays_with_its_member(tmp_path):
     pc = 0x8017DFE8
     (tmp_path / "ir").mkdir()
