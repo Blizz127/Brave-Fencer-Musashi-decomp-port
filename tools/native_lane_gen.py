@@ -1384,7 +1384,11 @@ def mine_member_source_only(entry, src, info):
 
 
 # This forest member rotates the local vector through guest matrix services.
-SC01_FOREST_MOTION_EXTENTS = {0x80147DC0: (132, 0x03C49C0F21FBAF45)}
+SC01_FOREST_MOTION_EXTENTS = {
+    0x80147DC0: (132, 0x03C49C0F21FBAF45),
+    0x80148634: (20, 0xDBD44BBDA70887AC),
+    0x8016F14C: (96, 0x90B512EA84F799EB),
+}
 
 
 def scene_player_motion_source_only(entry, src, info):

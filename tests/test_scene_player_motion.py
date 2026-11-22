@@ -98,3 +98,24 @@ def test_forest_model_velocity(tmp_path, monkeypatch):
     assert rule("sc99_0001", copied, info).get("rule") == "memory"
     info["data"] = b"\1" + data[1:]
     assert rule("sc99_0001", copied, info)["admitted"]
+
+
+def test_forest_scene_callback(tmp_path):
+    registry = json.loads((ROOT / "provenance/scene-objects.json").read_text())
+    rows = [r for r in registry["matches"] if r["region"] == "sc01_0077"
+            and r["vram"] in (0x80148634, 0x8016F14C)]
+    assert len(rows) == 2
+    subprocess.run([
+        "cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT / "include"),
+        str(ROOT / "tests/forest_scene_callback_probe.c"),
+        *(str(ROOT / row["source"]) for row in rows), "-o", str(tmp_path / "callback"),
+    ], check=True)
+    subprocess.run([str(tmp_path / "callback")], check=True)
+    (tmp_path / "ir").mkdir()
+    for row in rows:
+        source = ROOT / row["source"]
+        assert lane.build_one(dict(row, source=str(source)), tmp_path, {}, {}, "clang").get("rule") == "memory"
+        copy = tmp_path / "other.c"
+        copy.write_bytes(source.read_bytes())
+        assert lane.build_one(dict(row, region="other", source=str(copy)),
+                              tmp_path, {}, {}, "clang").get("rule") == "memory"

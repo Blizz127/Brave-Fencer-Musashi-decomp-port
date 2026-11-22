@@ -24,7 +24,8 @@ typedef struct {
     u8 field_a8;
     u8 pada9;
     u16 field_aa, field_ac;
-    u8 padae[0xb4 - 0xae];
+    u16 field_ae;
+    u8 padb0[4];
     u32 animation;
     u16 animation_flags;
     u16 animation_duration;
@@ -39,7 +40,9 @@ typedef struct {
     u16 field_16e;
     u8 pad170[0x1a8 - 0x170];
     u8 field_1a8;
-    u8 pad1a9[0x234 - 0x1a9];
+    u8 pad1a9[0x1f8 - 0x1a9];
+    u32 scene_callback;
+    u8 pad1fc[0x234 - 0x1fc];
     u32 step, counter, field_23c;
 } ForestPlayerState;
 
@@ -69,6 +72,8 @@ s32 bfm_forest_player_call_result(u32 game_address, ForestPlayerState *actor);
     bfm_forest_player_call(bfm_forest_player_table_word(0x##table##u, (index)), (actor))
 #endif
 
+s32 func_80148634(void *actor);
+void func_8016F14C(ForestPlayerState *actor);
 void func_80150B28(ForestPlayerState *actor);
 void func_80158638(ForestPlayerState *actor);
 void func_8015126C(ForestPlayerState *actor);
