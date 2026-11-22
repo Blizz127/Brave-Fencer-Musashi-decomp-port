@@ -1085,6 +1085,7 @@ TOWER_POOL_PRIOR_SOURCE = "37f8c8016ea1b697c77467c8ee51f6fe1f89930cfacf04a68d81b
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    0x8017E640: {"sc02_0039": (280, 0x5776B1218AB5E953)},
     # The five lower camera routines share their instructions with other room members.
     0x8017E26C: {"sc02_0005": (220, 0x474D323D3770728D)},
     0x80129FF4: {"sc02_0005": None},
@@ -1331,6 +1332,10 @@ def overlay_extent_source_only(entry, src, info, extents):
     if pc == 0x8012CEB0 and hashlib.sha256(src.read_bytes()).hexdigest() == (
             "ef3dc9b0d0cb3acf3b6355373d1c8b5c159910ad42cdf4af9af10ad7beafbae0"):
         return True
+    # The original mine emitter remains identifiable when its declared size is inaccurate.
+    if (pc == 0x8017E640 and info and info.get("data") is not None and
+            member_digest(info, pc, 280) == 0x5776B1218AB5E953):
+        return True
     previous = TOWER_EARLIER_CALLERS.get(pc)
     if previous and hashlib.sha256(src.read_bytes()).hexdigest() in previous:
         return True
@@ -1529,10 +1534,20 @@ def mine_slot_update_source_only(entry, src, info):
     return mine_member_source_only(entry, src, info)
 
 
+# These two mine callers previously declared the spawned actor type locally.
+MINE_SPAWN_EARLIER_SOURCES = {
+    0x8017DE00: "52960ac86d06c2f3eb74c4038e487dfefec11a4e5e3818c5962e15a78b25ded3",
+    0x8017DE84: "511580a1fff1d456aa1c3f69b4038ca170ac3873c0388f80c4bd343e4a3bafd4",
+}
+
+
 def mine_member_source_only(entry, src, info):
     pc = entry["vram"]
     # MAIN/0012 has a separately selected implementation at the same address and digest.
     if entry.get("region") == "sc02_0039" or (info and info["member"] == "sc02_0039"):
+        return True
+    earlier = MINE_SPAWN_EARLIER_SOURCES.get(pc)
+    if earlier and hashlib.sha256(src.read_bytes()).hexdigest() == earlier:
         return True
     mine = ROOT / f"src/overlays/sc02_0039/{pc:08x}.c"
     return src.resolve() == mine or (mine.is_file() and src.read_bytes() == mine.read_bytes())

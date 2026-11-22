@@ -5100,6 +5100,16 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2"
+    },
+    {
+      "name": "func_8017E640",
+      "vram": 2149049920,
+      "size": 280,
+      "region": "sc02_0039",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "source": "src/overlays/sc02_0039/8017e640.c"
     }
   ]
 }

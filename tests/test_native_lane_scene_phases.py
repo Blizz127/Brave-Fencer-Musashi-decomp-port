@@ -12,6 +12,7 @@ import native_lane_gen as lane
 
 
 PHASES = (
+    ("sc02_0039", 0x8017E640, 280),
     ("sc02_0005", 0x8017E26C, 220),
     ("sc02_0005", 0x80129FF4, 36),
     ("sc02_0005", 0x8012A018, 48),
@@ -544,6 +545,25 @@ def test_mine_rotor_update_stays_with_its_member(tmp_path):
     assert lane.build_one(dict(row, region="other", source=str(copy)), tmp_path, {}, {}, "clang",
                           dict(member="sc02_0039")).get("rule") == "timing"
     assert not lane.mine_member_source_only(dict(row, region="other"), copy, dict(member="other"))
+
+
+@pytest.mark.parametrize("pc,size,previous", [
+    (0x8017DE00, 132, "52960ac86d06c2f3eb74c4038e487dfefec11a4e5e3818c5962e15a78b25ded3"),
+    (0x8017DE84, 356, "511580a1fff1d456aa1c3f69b4038ca170ac3873c0388f80c4bd343e4a3bafd4"),
+])
+def test_mine_spawn_earlier_source_identity(tmp_path, monkeypatch, pc, size, previous):
+    source = tmp_path / "earlier.c"
+    source.write_text(f"int func_{pc:08X}(int value) {{ return value + 1; }}\n")
+    row = dict(name=f"func_{pc:08X}", region="other", vram=pc, size=size, source=str(source))
+    assert lane.MINE_SPAWN_EARLIER_SOURCES[pc] == previous
+    assert not lane.mine_member_source_only(row, source, None)
+    monkeypatch.setitem(lane.MINE_SPAWN_EARLIER_SOURCES, pc, hashlib.sha256(source.read_bytes()).hexdigest())
+    assert lane.mine_member_source_only(row, source, None)
+    assert lane.mine_member_source_only(row, source, dict(member="sc01_0077"))
+    other = 0x8017DE84 if pc == 0x8017DE00 else 0x8017DE00
+    assert not lane.mine_member_source_only(dict(row, vram=other), source, None)
+    source.write_text(f"int func_{pc:08X}(int value) {{ return value - 1; }}\n")
+    assert not lane.mine_member_source_only(row, source, None)
 
 
 def test_mine_constructor_preserves_forest_dispatch(tmp_path):

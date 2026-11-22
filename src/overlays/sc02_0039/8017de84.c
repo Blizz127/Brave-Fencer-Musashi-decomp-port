@@ -1,6 +1,7 @@
 /* Initialize a mine collision actor or its linked child model. */
 #include "mine_collision_actor_setup.h"
 #if BFM_MINE_DIRECT_GUEST_ADDRESS
+#include "mine_actor_spawn.h"
 #include "model_surface_probe.h"
 
 typedef struct {
@@ -51,16 +52,6 @@ typedef struct {
     void *unk78;
 } LinkModel;
 typedef struct {
-    u16 id;
-    u8 p2[4];
-    u16 f6;
-    u8 p8[2];
-    u16 fA;
-    u8 pC[2];
-    u16 fE;
-    u8 p10[0xfc];
-} SpawnActor;
-typedef struct {
     u8 pad0[2];
     u16 cnt;
     u8 pad4[0x30];
@@ -72,7 +63,6 @@ extern SceneSurfaceBox D_8019B57C;
 extern void *func_8012C1B8(void);
 extern s32 func_8012CAE4(u8 *actor);
 extern void func_8001C810(ListModel *model, s32 *list);
-extern s32 func_8012C658(s16 kind, s16 variant, SpawnActor *parent);
 extern void func_8001C2C4(ChildModel *model);
 extern void func_8001C1E4(LinkModel *model, u8 *parent_model);
 extern void func_8012AD50(StateActor *actor);
@@ -90,12 +80,12 @@ void func_8017DE84(Obj8014A2E4 *entity)
     case 0:
         func_8001C810((ListModel *)actor->model, D_8019CDBC);
         ((Model *)actor->model)->flags |= 0x8040;
-        func_8012C658(0x199, 2, (SpawnActor *)actor);
+        func_8012C658(0x199, 2, actor);
         break;
     case 1:
         func_8001C810((ListModel *)actor->model, D_8019D81C);
         ((Model *)actor->model)->flags |= 0x8040;
-        func_8012C658(0x199, 3, (SpawnActor *)actor);
+        func_8012C658(0x199, 3, actor);
         break;
     case 2:
     case 3:

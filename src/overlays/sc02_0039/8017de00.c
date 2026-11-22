@@ -2,22 +2,12 @@
 #include "mine_rotor_spawn.h"
 
 #if BFM_MINE_DIRECT_GUEST_ADDRESS
+#include "mine_actor_spawn.h"
 
-typedef struct {
-    u16 id;
-    u8 p2[4];
-    u16 f6;
-    u8 p8[2];
-    u16 fA;
-    u8 pC[2];
-    u16 fE;
-    u8 p10[0xfc];
-} SpawnActor;
 typedef struct {
     u8 body[0x70];
     s16 option;
 } MineRotor;
-extern s32 func_8012C658(s16 kind, s16 options, SpawnActor *parent);
 extern u16 D_8019B538[][4];
 
 void func_8017DE00(Obj8014A2E4 *entity)
@@ -27,7 +17,7 @@ void func_8017DE00(Obj8014A2E4 *entity)
     for (i = 0; i < 4; i++) {
         s32 offset = i << 10;
         s16 options = D_8019B538[rotor->option][i] + offset;
-        func_8012C658(0x199, options, (SpawnActor *)rotor);
+        func_8012C658(0x199, options, rotor);
     }
 }
 #else
