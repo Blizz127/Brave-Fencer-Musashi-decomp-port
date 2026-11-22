@@ -5662,6 +5662,26 @@
       "extent": "function",
       "optimization": "-O2",
       "source": "src/overlays/sc03_0116/80181550.c"
+    },
+    {
+      "name": "func_80180994",
+      "vram": 2149058964,
+      "size": 60,
+      "region": "sc03_0116",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "source": "src/overlays/sc03_0116/80180994.c"
+    },
+    {
+      "name": "func_801809D0",
+      "vram": 2149059024,
+      "size": 68,
+      "region": "sc03_0116",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "source": "src/overlays/sc03_0116/801809d0.c"
     }
   ]
 }
