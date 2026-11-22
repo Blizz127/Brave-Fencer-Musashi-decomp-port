@@ -1081,6 +1081,11 @@ FOREST_FLOOR_EXTENTS = {
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    0x801838A8: {"sc02_0005": (612, 0xBA2AE3DE730FC591)},
+    0x80182810: {"sc02_0005": (200, 0xFA682CDB42DAA946)},
+    0x801828D8: {"sc02_0005": (64, 0x7A4AAAC2D2825EAD)},
+    0x8018791C: {"sc02_0005": (192, 0xBA3FB1822A4EF291)},
+    0x80182918: {"sc02_0005": (128, 0x257219EAD0533937)},
     0x8018968C: {"sc02_0005": (616, 0x39BE58F0D86E1FB1)},
     0x80189AF4: {"sc02_0005": (60, 0x60B2BAB4787BE779)},
     0x8018B300: {"sc02_0005": (68, 0x5FA309D7618F30DC)},
@@ -1213,8 +1218,9 @@ SCENE_PHASE_EXTENTS = {
 }
 
 
-# Source copies predating the typed Tower model call retain their timing hold.
-TOWER_EARLIER_MODEL_CALLERS = {
+# Earlier copies of the Tower callers retain their timing hold.
+TOWER_EARLIER_CALLERS = {
+    0x80182918: "0f0ca5a402ac5b07d0d07835239b1e3dca84e7901c339ed3c38289178eb0899b",
     0x80184EC0: "ae9b370a04dc19aa21be83b44411900ec71005d2af1be8616c13b659998b1fba",
     0x8018968C: "d5900e57b02f7d861c5c700cc8c6a0ec3142a87c5bb4b2133b810873f834dc3f",
 }
@@ -1230,7 +1236,7 @@ def overlay_extent_source_only(entry, src, info, extents):
     # A member with a shared original body is identified only by its room or source.
     if info and any(variants.values()) and (entry["size"], member_digest(info, pc, entry["size"])) in variants.values():
         return True
-    previous = TOWER_EARLIER_MODEL_CALLERS.get(pc)
+    previous = TOWER_EARLIER_CALLERS.get(pc)
     if previous is not None and hashlib.sha256(src.read_bytes()).hexdigest() == previous:
         return True
     # The first published forest grid query used unsigned formal coordinates.
