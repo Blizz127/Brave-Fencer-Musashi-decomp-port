@@ -1206,6 +1206,33 @@ class GpuControllerTests(unittest.TestCase):
         self.assertEqual({(x, y) for x, y, _ in stored}, expected)
         self.assertEqual(self.write(0xE1000000), 1)
 
+    def test_opaque_flat_line_covers_shallow_and_steep_ties_in_both_directions(self):
+        # Synthetic segments translated to (12, 12). Each entry lists the
+        # minor displacement at successive samples along the major axis.
+        cases = [
+            ((8, 3), [(x, y) for x, y in enumerate([0, 1, 1, 1, 2, 2, 2, 3, 3])]),
+            ((3, -8), [(x, -y) for y, x in enumerate([0, 0, 1, 1, 1, 2, 2, 3, 3])]),
+        ]
+        for (dx, dy), samples in cases:
+            start, end = (12, 12), (12 + dx, 12 + dy)
+            expected = {(12 + x, 12 + y) for x, y in samples}
+            for a, b in ((start, end), (end, start)):
+                with self.subTest(a=a, b=b):
+                    writes, _ = self._geometry_probe(area=(0, 0, 31, 31))
+                    for word in (0x40929292, a[0] | (a[1] << 16), b[0] | (b[1] << 16)):
+                        self.assertEqual(self.write(word), 1)
+                    self.assertEqual(set(writes), expected)
+
+    def test_opaque_flat_line_clips_after_selecting_samples(self):
+        # The visible part of (12,12)--(20,15) includes one minor-axis tie.
+        # Recompute from the original endpoints even when both are clipped.
+        for a, b in (((12, 12), (20, 15)), ((20, 15), (12, 12))):
+            with self.subTest(a=a, b=b):
+                writes, _ = self._geometry_probe(area=(14, 13, 18, 14))
+                for word in (0x40929292, a[0] | (a[1] << 16), b[0] | (b[1] << 16)):
+                    self.assertEqual(self.write(word), 1)
+                self.assertEqual(set(writes), {(14, 13), (15, 13), (16, 14), (17, 14), (18, 14)})
+
     def test_gp0_line_clipped_to_drawing_area(self):
         # E3/E4 = (0,0)-(4,4): the (0,2)-(10,2) line keeps x 0..4 only.
         stored = []

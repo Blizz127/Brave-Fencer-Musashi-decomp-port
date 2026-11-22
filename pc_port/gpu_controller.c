@@ -1329,12 +1329,27 @@ static int fill_rect(MusashiGpuController *controller,
 }
 
 static int draw_line(MusashiGpuController *controller,
-                     int x0, int y0, int x1, int y1, uint16_t color) {
+                     int x0, int y0, int x1, int y1, uint16_t color,
+                     int opaque_flat_segment) {
+    /* The opaque two-point command covers the same samples in either
+     * direction. Its half-step bias is measured from the left endpoint. */
+    if (opaque_flat_segment && x0 > x1) {
+        int last_x = x0, last_y = y0;
+        x0 = x1;
+        y0 = y1;
+        x1 = last_x;
+        y1 = last_y;
+    }
     int dx = x1 >= x0 ? (x1 - x0) : (x0 - x1);
     int dy = y1 >= y0 ? (y1 - y0) : (y0 - y1);
     int sx = x0 < x1 ? 1 : -1;
     int sy = y0 < y1 ? 1 : -1;
     int err = dx - dy, e2;
+    if (opaque_flat_segment && dx > dy) {
+        /* Shift the initial minor-axis accumulator from (dx-1)/2 to
+         * (dx+dy-1)/2. Both divisions truncate in positive coordinates. */
+        err -= (dx + dy - 1) / 2 - (dx - 1) / 2;
+    }
     int left = x0 < x1 ? x0 : x1, right = x0 < x1 ? x1 : x0;
     int top = y0 < y1 ? y0 : y1, bottom = y0 < y1 ? y1 : y0;
     /* The GPU skips a line whose extent is 1024+ horizontally or 512+
@@ -1393,14 +1408,14 @@ static int prim_commit(MusashiGpuController *controller) {
         int ly0 = signed11(controller->prim_data[1], 16) + oy;
         int lx1 = signed11(controller->prim_data[2], 0) + ox;
         int ly1 = signed11(controller->prim_data[2], 16) + oy;
-        return draw_line(controller, lx0, ly0, lx1, ly1, color);
+        return draw_line(controller, lx0, ly0, lx1, ly1, color, opcode == 0x40u);
     }
     if (opcode >= 0x50u && opcode <= 0x57u) {
         int lx0 = signed11(controller->prim_data[1], 0) + ox;
         int ly0 = signed11(controller->prim_data[1], 16) + oy;
         int lx1 = signed11(controller->prim_data[3], 0) + ox;
         int ly1 = signed11(controller->prim_data[3], 16) + oy;
-        return draw_line(controller, lx0, ly0, lx1, ly1, color);
+        return draw_line(controller, lx0, ly0, lx1, ly1, color, 0);
     }
 
     if (opcode >= 0x60u && opcode <= 0x7fu && !(opcode & 4u)) {
@@ -1664,7 +1679,7 @@ static int poly_word(MusashiGpuController *controller, uint32_t word) {
             controller->semi_textured = 0;
             controller->semi_mode = (uint8_t)((controller->draw_mode >> 5) & 3u);
             if (!draw_line(controller, controller->poly_x, controller->poly_y, x, y,
-                           color15(controller->poly_prev_color)))
+                           color15(controller->poly_prev_color), 0))
                 return 0;
         }
         controller->poly_x = x;
