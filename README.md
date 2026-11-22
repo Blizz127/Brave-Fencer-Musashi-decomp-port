@@ -61,10 +61,10 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 22 source update covers 327 regional function matches across seven scene overlays,
-totaling 46,512 bytes. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 22 source update covers 328 regional function matches across seven scene overlays,
+totaling 46,820 bytes. Four mine routines scan floor probes and pass their position to the map lookup.
 The mine collision code intersects the probe with a face and tests its side planes.
-A mine actor dispatches its setup or update callback according to its current state. Its setup creates the parent model or links a child to its collision box. Its update controls model visibility, damps the angle, and checks up to five segments across the box.
+A mine actor dispatches its setup or update callback according to its current state. Its setup creates the parent model or links a child to its collision box. Its update controls model visibility, damps the angle, and checks up to five segments across the box. The parent rotor changes its model angle and sound volume as the player approaches.
 A mine rotor runs its state action and synchronizes its model. Its initializer allocates the primary model and optional accessory, then issues four child spawn requests.
 The mine camera update selects a camera, updates seven view components and publishes its guest address.
 A host test supplies the rendering callbacks and checks the matrix copy.
