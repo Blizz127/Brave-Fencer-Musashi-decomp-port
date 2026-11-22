@@ -1,7 +1,7 @@
 /* Advance the mine's signed value and duration script once per scene update. */
 #include "mine_step_script.h"
 
-#ifdef __mips__
+#if BFM_MINE_DIRECT_GUEST_ADDRESS
 typedef struct {
     s8 value;
     u8 time;
@@ -15,7 +15,7 @@ void func_8013CA14(void)
     if (*script != 0) {
         if (D_8019FA35 == 0) {
             u8 index = D_8019FA34;
-#ifdef __mips__
+#if BFM_MINE_DIRECT_GUEST_ADDRESS
             s32 value = ((MineScriptStep *)D_8019FA30)[index].value;
 #else
             u32 entry = D_8019FA30 + (u32)index * 2;
@@ -26,7 +26,7 @@ void func_8013CA14(void)
 
             D_801269D4 = value;
             D_801269C8 = value;
-#ifdef __mips__
+#if BFM_MINE_DIRECT_GUEST_ADDRESS
             duration = ((MineScriptStep *)D_8019FA30)[index].time;
 #else
             duration = bfm_mine_script_read(entry + 1);

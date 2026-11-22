@@ -4,7 +4,7 @@
 extern u32 D_8017F694;
 extern SceneProbeVector D_80126720;
 
-#ifdef __mips__
+#if BFM_MINE_DIRECT_GUEST_ADDRESS
 #define contact_point(address) ((SceneProbeVector *)(address))
 #define model_axis(record, axis) (*(u32 *)((record)->matrix + 20 + 4 * (axis)))
 #else
@@ -26,7 +26,7 @@ void func_80136A94(s32 rotate, SceneSurfaceRecord *record, SceneProbeVector *out
         SceneProbeVector *point = contact_point(D_8017F694);
         SceneProbeVector *normal;
 
-#ifndef __mips__
+#if !BFM_MINE_DIRECT_GUEST_ADDRESS
         if (point == 0)
             return;
 #endif
@@ -42,7 +42,7 @@ void func_80136A94(s32 rotate, SceneSurfaceRecord *record, SceneProbeVector *out
         SceneProbeVector *point = contact_point(D_8017F694);
         SceneProbeVector *auxiliary;
 
-#ifndef __mips__
+#if !BFM_MINE_DIRECT_GUEST_ADDRESS
         if (point == 0)
             return;
 #endif

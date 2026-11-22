@@ -6,7 +6,7 @@
 s32 func_80135480(SceneSurfaceRecord *model, u32 flags, SceneProbeVector *near_point,
                   SceneProbeVector *far_point);
 
-#ifndef __mips__
+#if !BFM_MINE_DIRECT_GUEST_ADDRESS
 void bfm_surface_zero_scale(unsigned axis);
 #endif
 

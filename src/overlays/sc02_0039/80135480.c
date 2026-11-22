@@ -17,7 +17,7 @@ typedef union {
     u8 bytes[32];
 } ClassifierMatrix;
 
-#ifdef __mips__
+#if BFM_MINE_DIRECT_GUEST_ADDRESS
 #define scale_at(record, index) (*(s16 *)((record)->prefix + 24 + 2 * (index)))
 #define axis_at(record, index) (*(u32 *)((record)->matrix + 20 + 4 * (index)))
 #define word_at(dst, index, value) (*(u32 *)((dst) + 4 * (index)) = (value))
@@ -79,7 +79,7 @@ s32 func_80135480(SceneSurfaceRecord *model, u32 flags, SceneProbeVector *near_p
     SceneSurfaceBox *box;
     s16 result;
     s32 mode;
-#ifndef __mips__
+#if !BFM_MINE_DIRECT_GUEST_ADDRESS
     SceneProbeVector *near_output;
     SceneProbeVector *far_output;
     if (!model || !aligned_for(near_point, _Alignof(SceneProbeVector))
@@ -111,14 +111,14 @@ s32 func_80135480(SceneSurfaceRecord *model, u32 flags, SceneProbeVector *near_p
         switch (mode) {
         case 0x60000000: {
             s32 inverse_y, inverse_z;
-#ifndef __mips__
+#if !BFM_MINE_DIRECT_GUEST_ADDRESS
             if (scale_at(model, 0) == 0) {
                 bfm_surface_zero_scale(0);
                 return 0;
             }
 #endif
             word_at(D_8019F9CC, 0, 0x1000000 / scale_at(model, 0));
-#ifndef __mips__
+#if !BFM_MINE_DIRECT_GUEST_ADDRESS
             if (scale_at(model, 1) == 0) {
                 bfm_surface_zero_scale(1);
                 return 0;
@@ -144,7 +144,7 @@ s32 func_80135480(SceneSurfaceRecord *model, u32 flags, SceneProbeVector *near_p
             s32 sx = scale_at(model, 0);
             s32 sy = scale_at(model, 1);
             u16 sz = (u16)scale_at(model, 2);
-#ifdef __mips__
+#if BFM_MINE_DIRECT_GUEST_ADDRESS
             box = (SceneSurfaceBox *)((flags & 0x0fffffffu) | 0x80000000u);
 #else
             box = bfm_model_probe_box((flags & 0x0fffffffu) | 0x80000000u);
@@ -181,7 +181,7 @@ s32 func_80135480(SceneSurfaceRecord *model, u32 flags, SceneProbeVector *near_p
             result = 2;
             break;
         }
-#ifndef __mips__
+#if !BFM_MINE_DIRECT_GUEST_ADDRESS
         near_output = bfm_model_probe_point(D_8017F68C);
         far_output = bfm_model_probe_point(D_8017F690);
         if (!aligned_for(near_output, _Alignof(SceneProbeVector))
@@ -196,7 +196,7 @@ s32 func_80135480(SceneSurfaceRecord *model, u32 flags, SceneProbeVector *near_p
         far_output->z = signed_half(end.z);
         return result;
     }
-#ifndef __mips__
+#if !BFM_MINE_DIRECT_GUEST_ADDRESS
     near_output = bfm_model_probe_point(D_8017F68C);
     far_output = bfm_model_probe_point(D_8017F690);
     if (!aligned_for(near_output, _Alignof(SceneProbeVector))

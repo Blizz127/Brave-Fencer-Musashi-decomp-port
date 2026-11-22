@@ -1,7 +1,7 @@
 /* Check a segment against a mine collision box and publish the selected contact. */
 #include "scene_box.h"
 
-#if defined(__mips__)
+#if BFM_MINE_DIRECT_GUEST_ADDRESS
 extern u16 D_801152AA;
 #define POINT(ptr) (ptr)
 #else
@@ -15,14 +15,14 @@ extern s32 func_80047E98(SceneProbeVector *input, SceneProbeVector *output);
 
 s32 func_80135EB0(SceneSurfaceBox *box, s32 flags)
 {
-#ifdef __mips__
+#if BFM_MINE_DIRECT_GUEST_ADDRESS
     register s32 mode __asm__("$19") = flags;
 #else
     s32 mode = flags;
 #endif
     u32 side, height, far_side, far_height;
 
-#ifndef __mips__
+#if !BFM_MINE_DIRECT_GUEST_ADDRESS
     if (box == 0 || (uintptr_t)box % _Alignof(SceneSurfaceBox))
         bfm_model_box_invalid_bounds();
 #endif
@@ -42,7 +42,7 @@ s32 func_80135EB0(SceneSurfaceBox *box, s32 flags)
         POINT(box_point(D_8017F694))->x = x;
         center_x = (box->bounds[0] + box->bounds[1]) >> 1;
         D_801152AA = 0;
-#ifdef __mips__
+#if BFM_MINE_DIRECT_GUEST_ADDRESS
         /* The separate linker label for y occupies the second halfword of the normal. */
         __asm__ volatile ("" : : "m" (D_801152AA), "r" (x));
 #endif

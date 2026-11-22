@@ -1,7 +1,7 @@
 /* Probe model geometry beneath the room object and transform the first contact. */
 #include "model_surface_probe.h"
 
-#ifdef __mips__
+#if BFM_MINE_DIRECT_GUEST_ADDRESS
 #define resolve_record(address) ((SceneSurfaceRecord *)(address))
 #define resolve_box(address) ((SceneSurfaceBox *)(address))
 #define initial_box(tag) resolve_box(((tag) & 0x0fffffffu) | 0x80000000u)
@@ -19,7 +19,7 @@ extern void func_80136A94(s32 rotate, SceneSurfaceRecord *model, SceneProbeVecto
 
 s32 func_80135D20(u32 record_address, u32 tag, SceneProbeVector *probe)
 {
-#ifndef __mips__
+#if !BFM_MINE_DIRECT_GUEST_ADDRESS
     SceneSurfaceRecord *model = resolve_record(record_address);
 #else
 #define model resolve_record(record_address)
@@ -30,7 +30,7 @@ s32 func_80135D20(u32 record_address, u32 tag, SceneProbeVector *probe)
     SceneSurfaceBox *box;
     s32 rotate;
     void *matrix;
-#ifdef __mips__
+#if BFM_MINE_DIRECT_GUEST_ADDRESS
     (void)workspace;
 #else
     if (model == 0)
@@ -62,13 +62,13 @@ s32 func_80135D20(u32 record_address, u32 tag, SceneProbeVector *probe)
         box = &D_8019F9EC;
         rotate = 1;
         break;
-#ifndef __mips__
+#if !BFM_MINE_DIRECT_GUEST_ADDRESS
     default:
         return 0;
 #endif
     }
     if ((s32)tag < 0) {
-#ifndef __mips__
+#if !BFM_MINE_DIRECT_GUEST_ADDRESS
         if (box == 0)
             return 0;
 #endif
@@ -84,7 +84,7 @@ hit:
             box = resolve_box(box->next);
         }
     } else {
-#ifdef __mips__
+#if BFM_MINE_DIRECT_GUEST_ADDRESS
         FloorCellMap *grid = (FloorCellMap *)tag;
 #else
         FloorCellMap *grid = bfm_model_probe_grid(tag);

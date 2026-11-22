@@ -6,7 +6,7 @@
 extern u32 D_8017F68C, D_8017F690, D_8017F694, D_8017F698;
 extern SceneProbeVector D_80126720;
 
-#ifdef __mips__
+#if BFM_MINE_DIRECT_GUEST_ADDRESS
 #define box_point(address) ((SceneProbeVector *)(address))
 #else
 #include <stdint.h>

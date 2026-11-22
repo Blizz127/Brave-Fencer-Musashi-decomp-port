@@ -1,6 +1,7 @@
 #ifndef BFM_MODEL_SURFACE_PROBE_H
 #define BFM_MODEL_SURFACE_PROBE_H
 
+#include "mine_guest_abi.h"
 #include "../main_0012/floor_cell_map.h"
 
 typedef struct {
@@ -17,7 +18,7 @@ typedef struct {
     u8 matrix[32];
 } SceneSurfaceRecord;
 
-#ifndef __mips__
+#if !BFM_MINE_DIRECT_GUEST_ADDRESS
 SceneSurfaceRecord *bfm_model_probe_record(u32 address);
 SceneSurfaceBox *bfm_model_probe_box(u32 address);
 FloorCellMap *bfm_model_probe_grid(u32 address);

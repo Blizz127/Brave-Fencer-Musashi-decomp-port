@@ -2,7 +2,7 @@
 #include "scene_box.h"
 
 /* The segment, box and scratch points can overlap by one halfword. */
-#if defined(__mips__) && defined(__GNUC__) && __GNUC__ == 2
+#if BFM_MINE_DIRECT_GUEST_ADDRESS && defined(__GNUC__) && __GNUC__ == 2
 #define AXIS_ACCESS
 #else
 #define AXIS_ACCESS volatile
@@ -19,7 +19,7 @@ s32 func_80136334(SceneSurfaceBox *box, s32 flags, s16 face_z)
     s32 denominator, distance, delta;
     u16 mode = (u16)flags;
     (void)workspace;
-#ifndef __mips__
+#if !BFM_MINE_DIRECT_GUEST_ADDRESS
     if (box == 0 || (uintptr_t)box % _Alignof(SceneSurfaceBox))
         bfm_model_box_invalid_bounds();
 #endif
@@ -35,7 +35,7 @@ s32 func_80136334(SceneSurfaceBox *box, s32 flags, s16 face_z)
     movement = box_point(D_8017F698);
     near_point = box_point(D_8017F68C);
     hit = box_point(D_8017F694);
-#ifndef __mips__
+#if !BFM_MINE_DIRECT_GUEST_ADDRESS
     if (denominator == 0)
         bfm_model_box_divide_by_zero();
 #endif
