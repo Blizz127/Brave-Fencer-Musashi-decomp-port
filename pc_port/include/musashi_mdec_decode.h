@@ -41,6 +41,12 @@ static int mdec_block(MusashiMdecController *d,unsigned *cursor,int *b,const uin
     }
     mdec_idct(b,d->scale); return 1;
 }
+/* Convert a clipped, biased component to the nearest RGB555 level. At the
+ * upper endpoint the rounded value stays at the brightest five-bit level. */
+static unsigned mdec_rgb5(int component) {
+    unsigned rounded = (unsigned)(component + 4) >> 3;
+    return rounded > 31u ? 31u : rounded;
+}
 static int mdec_decode_frame(MusashiMdecController *d) {
     unsigned cursor=0,depth=(d->command>>27)&3u,bytes=depth==3?512:768;
     int blocks[6][64]; unsigned i,x,y;
@@ -58,15 +64,15 @@ static int mdec_decode_frame(MusashiMdecController *d) {
                         lum+mdec_floor(-352*(int64_t)cb-731*(int64_t)cr,1024),
                         lum+mdec_floor(1815*(int64_t)cb,1024)};
             uint8_t *out=d->output+d->output_size+(y*16+x)*(depth==3?2:3);
-            for(i=0;i<3;i++) {
-                rgb[i]=mdec_clip(rgb[i],-128,127)&255;
-                if(!(d->command&0x04000000u))rgb[i]^=128;
-            }
+            for(i=0;i<3;i++)rgb[i]=mdec_clip(rgb[i],-128,127)+128;
             if(depth==3) {
-                unsigned pixel=(rgb[0]>>3)|((rgb[1]>>3)<<5)|((rgb[2]>>3)<<10)|
-                    ((d->command&0x02000000u)?0x8000u:0u);
+                unsigned pixel=mdec_rgb5(rgb[0])|(mdec_rgb5(rgb[1])<<5)|(mdec_rgb5(rgb[2])<<10);
+                if(d->command&0x04000000u)pixel^=0x4210u;
+                if(d->command&0x02000000u)pixel|=0x8000u;
                 out[0]=(uint8_t)pixel;out[1]=(uint8_t)(pixel>>8);
-            } else for(i=0;i<3;i++)out[i]=(uint8_t)rgb[i];
+            } else {
+                for(i=0;i<3;i++)out[i]=(uint8_t)(rgb[i]^((d->command&0x04000000u)?128:0));
+            }
         }
         d->output_size+=bytes;
     }
