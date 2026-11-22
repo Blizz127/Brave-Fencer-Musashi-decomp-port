@@ -53,8 +53,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The November 22 source update covers 305 regional function matches across seven scene overlays,
-totaling 40,664 bytes. Four mine routines scan floor probes and pass their position to the map lookup.
+The November 22 source update covers 307 regional function matches across seven scene overlays,
+totaling 42,240 bytes. Four mine routines scan floor probes and pass their position to the map lookup.
 The mine collision code intersects the probe with a face and tests its side planes.
 A mine actor scheduler updates eligible actors and copies their positions to attached objects.
 Two earlier passes select actors for updates. A separate routine counts down a signed timer and adjusts the actor’s scale.
@@ -279,6 +279,14 @@ allocator, including the full-pool case. The issuer returns one for an accepted
 request even when the pool is full. The standard player uses guest code here.
 Run `python3 -m pytest -q tests/test_forest_actor_event.py tests/test_event_pool.py`
 to check the linked game logic using synthetic actors and event slots.
+
+The forest player reads animation frames and commands from a word stream. Two
+new matches recover its command interpreter and the helper that counts frames
+before a script cursor. Two offline replays selected a new animation using the
+captured player's original active slot. The original and compiled routines read
+the same commands, called the flag-clear service and wrote the same frame
+address into the model. The comparison used checked host versions of the
+animation setters. The standard player executes both routines on the guest CPU.
 
 Two forest collision functions scan up to 96 actor slots twice. A contact can
 push the actor sideways or snap its coordinates to a surface. The actor's

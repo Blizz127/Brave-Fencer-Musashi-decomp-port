@@ -10,7 +10,8 @@ typedef union {
 
 typedef struct {
     u16 kind, action;
-    u8 pad04[0x24 - 4];
+    u8 pad04[0x20 - 4];
+    u32 model;
     ForestPlayerWord field_24;
     u8 pad28[4];
     ForestPlayerWord field_2c;
@@ -25,14 +26,19 @@ typedef struct {
     u8 padae[0xb4 - 0xae];
     u32 animation;
     u16 animation_flags;
-    u8 padba[0xd0 - 0xba];
+    u16 animation_duration;
+    u8 animation_cursor, animation_step;
+    u8 padbe[0xd0 - 0xbe];
     u32 sequence;
     u16 sequence_flags;
-    u8 padd6[0xdd - 0xd6];
+    u8 padd6[0xdc - 0xd6];
+    u8 animation_frame;
     u8 mode;
     u8 padde[0x16e - 0xde];
     u16 field_16e;
-    u8 pad170[0x234 - 0x170];
+    u8 pad170[0x1a8 - 0x170];
+    u8 field_1a8;
+    u8 pad1a9[0x234 - 0x1a9];
     u32 step, counter, field_23c;
 } ForestPlayerState;
 

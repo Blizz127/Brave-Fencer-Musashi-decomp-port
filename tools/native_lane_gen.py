@@ -1317,6 +1317,55 @@ def scene_player_motion_source_only(entry, src, info):
     return src.resolve() == source or (source.is_file() and src.read_bytes() == source.read_bytes())
 
 
+# The two immediate halfwords locate a member's command switch table. The
+# rest of each function agrees across all 107 members containing the routine.
+FOREST_ANIMATION_EXTENTS = {
+    0x8015444C: (1452, 0xA8, 0xB0, "1aeab53fb987f6287a82cdea2cbad93c788b21cd4d10eb075d43ea2988629754"),
+    0x801549F8: (124, 0x18, 0x1C, "229f52f5ab5ebb7e65c3c045897b853d133cc2e34210650ba08d0499d3867717"),
+}
+# Historical MAIN source versions and an earlier forest placeholder can
+# also be supplied by path without region metadata. These are Git blob IDs.
+FOREST_ANIMATION_PRIOR_BLOBS = {
+    "30defaf674ad689c6e7744432f24c442a2bbd69f",
+    "7dfd371371c4b63382f77d879c77d6afc9d161f0",
+    "40949f5d9dfe36e5e955816462f939b1a768427b",
+}
+
+
+def forest_animation_source_only(entry, src, info):
+    pc = entry["vram"]
+    extent = FOREST_ANIMATION_EXTENTS.get(pc)
+    if extent is None:
+        return False
+    # Both named members contain this command family. The calling stack,
+    # recursion and external services still need a timed player implementation.
+    known = ("sc01_0077", "main_0012")
+    if entry.get("region") in known or (info and info["member"] in known):
+        return True
+    canonical = ROOT / f"src/overlays/sc01_0077/{pc:08x}.c"
+    if src.resolve() == canonical:
+        return True
+    if pc == 0x8015444C and src.resolve() in (
+            ROOT / "src/overlays/main_0012/8015444c.c",
+            ROOT / "src/overlays/sc01_0005/8015444c.c"):
+        return True
+    if info and all(key in info for key in ("vram", "start", "data")):
+        size, high, low, digest = extent
+        start = pc - info["vram"] + info["start"]
+        if 0 <= start and start + size <= len(info["data"]):
+            body = bytearray(info["data"][start:start + size])
+            body[high:high + 2] = body[low:low + 2] = b"\0\0"
+            if hashlib.sha256(body).hexdigest() == digest:
+                return True
+    contents = src.read_bytes()
+    if canonical.is_file() and contents == canonical.read_bytes():
+        return True
+    if pc == 0x8015444C:
+        header = f"blob {len(contents)}\0".encode("ascii")
+        return hashlib.sha1(header + contents).hexdigest() in FOREST_ANIMATION_PRIOR_BLOBS
+    return False
+
+
 def build_one(entry, out, symbols, hooks, clang, info=None):
     vram, size, src = entry["vram"], entry["size"], ROOT / entry["source"]
     name = entry["name"]
@@ -1353,6 +1402,8 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
         if wrapped_angle and (size != 12 or hashlib.sha256(src.read_bytes()).hexdigest() !=
                 "7e1d58c1eca9742e5c025641f349f594066b5cadd3b4eb1c4a64f8706bb7ace2"):
             raise Reject("source", "wrapped-angle step requires the verified clean source")
+        if forest_animation_source_only(entry, src, info):
+            raise Reject("timing", "animation commands require checked scripts, recursive calls and timed services")
         if forest_floor_source_only(entry, src, info):
             raise Reject("memory", "floor collision requires checked guest memory and instruction timing")
         # Older forest source calls the guest phase address directly.

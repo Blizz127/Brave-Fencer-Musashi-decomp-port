@@ -1,4 +1,5 @@
 """The countdown and fade callbacks still need the guest bus and event timing."""
+import hashlib
 from pathlib import Path
 import shutil
 import sys
@@ -138,3 +139,36 @@ def test_forest_action_uses_its_member_and_source(pc, tmp_path, monkeypatch):
     assert lane.forest_action_source_only(named_main, copy, dict(member="sc99_0001"))
     verified_main = lane.forest_action_source_only(other, copy, dict(member="main_0012"))
     assert verified_main == (pc != 0x801612B8)
+
+
+@pytest.mark.parametrize("pc", (0x8015444C, 0x801549F8))
+def test_animation_commands_hold_relocated_code_and_source_copies(pc, tmp_path, monkeypatch):
+    size, high, low, _ = lane.FOREST_ANIMATION_EXTENTS[pc]
+    row = dict(vram=pc, size=8, region="another_member")
+    source = tmp_path / "scalar.c"
+    source.write_text(f"int func_{pc:08X}(int value) {{ return value + 1; }}\n")
+    assert not lane.forest_animation_source_only(row, source, None)
+    assert lane.forest_animation_source_only(dict(row, region="sc01_0077"), source, None)
+    assert lane.forest_animation_source_only(dict(row, region="main_0012"), source, None)
+
+    original = bytearray((n * 11) & 255 for n in range(size))
+    original[high:high + 2] = original[low:low + 2] = b"\0\0"
+    digest = hashlib.sha256(original).hexdigest()
+    monkeypatch.setitem(lane.FOREST_ANIMATION_EXTENTS, pc, (size, high, low, digest))
+    relocated = bytearray(original)
+    relocated[high:high + 2] = b"\x01\x02"
+    relocated[low:low + 2] = b"\x03\x04"
+    info = dict(member="another_member", vram=pc - 8, start=0, data=bytes(8) + relocated)
+    assert lane.forest_animation_source_only(row, source, info)
+    relocated[high + 2] ^= 1
+    assert not lane.forest_animation_source_only(row, source, dict(info, data=bytes(8) + relocated))
+
+    if pc == 0x8015444C:
+        blob = source.read_bytes()
+        digest = hashlib.sha1(f"blob {len(blob)}\0".encode("ascii") + blob).hexdigest()
+        monkeypatch.setattr(lane, "FOREST_ANIMATION_PRIOR_BLOBS", {digest})
+        assert lane.forest_animation_source_only(row, source, None)
+        source.write_text(source.read_text() + "\n")
+        assert not lane.forest_animation_source_only(row, source, None)
+    source.write_bytes((ROOT / f"src/overlays/sc01_0077/{pc:08x}.c").read_bytes())
+    assert lane.forest_animation_source_only(row, source, None)
