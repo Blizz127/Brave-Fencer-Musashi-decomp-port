@@ -1337,6 +1337,15 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
         # The distance caller uses a real guest stack frame and two distinct return PCs.
         if member is None and vram == 0x80013328:
             raise Reject("timing", "distance requires the nested guest call frames and event timing")
+        # The resident flag read has an interruptible load and return delay slot.
+        # Member aliases of the same code must use the same CPU fallback.
+        if vram == 0x80029178 and (
+                member is None or entry.get("region") == "main" or
+                (size == 40 and member_digest(info, vram, size) == 0xe209fbd89c4aa62b) or
+                src.resolve() == ROOT / "src/main/80029178.c" or
+                hashlib.sha256(src.read_bytes()).hexdigest() ==
+                "2fd11caf58aeb355272b2a004fb88769a8df9fc93eda9e54149f6f7388fd606d"):
+            raise Reject("timing", "resident flag read requires guest load and interrupt timing")
         wrapped_angle = member is None and vram == 0x80012AB0
         if wrapped_angle and (size != 12 or hashlib.sha256(src.read_bytes()).hexdigest() !=
                 "7e1d58c1eca9742e5c025641f349f594066b5cadd3b4eb1c4a64f8706bb7ace2"):
