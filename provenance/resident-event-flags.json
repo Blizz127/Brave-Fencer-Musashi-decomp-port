@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "targets": {
+    "main": {
+      "kind": "executable",
+      "identity": "provenance/exe_identity.json"
+    }
+  },
+  "matches": [
+    {
+      "name": "func_80029124",
+      "region": "main",
+      "vram": 2147651876,
+      "size": 84,
+      "source": "src/main/80029124.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    }
+  ]
+}

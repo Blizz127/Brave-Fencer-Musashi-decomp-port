@@ -1,10 +1,7 @@
-# SC03 member 0053 — vendor counterpart vendor/bfm-decomp/src/md_SC03_053 (Druthulu/BFM-decomp;
-# vendor md_SC03_ numbering is 0-based, the same as extracted/overlays/sc03/NNNN.bin).
-#
-# CONTAINER: PAC chunk chain; the code payload (type-0x101 chunk + 0x800) starts at file offset 0x800 and loads at
-# 0x801EF468, so file offset 0 maps to 0x801EEC68 (the registry base). The payload's
-# first word is data; code is [0x801EF49C, 0x801EFA3C) (0x5A0 bytes), taken from the
-# vendor's function starts and the last jr $ra before the first data symbol it references.
+# SC03 member 53 contains an uncompressed type-0x101 PAC module. Its payload
+# starts at member offset 0x800 and loads at 0x801EF468. The town room calls
+# the first function at 0x801EF46C and references the module's entry points
+# in its callback table. Code ends after the return delay slot at 0x801EFA38.
 name: sc03_0053
 sha1: f480eedc73fc2932512b16070a40ff0af657be3c
 
@@ -38,7 +35,7 @@ segments:
     subsegments:
       - [0x0, data, sc03_0053_container]
       - [0x800, data, sc03_0053_hdr]
-      - [0x834, asm, sc03_0053]
+      - [0x804, asm, sc03_0053]
       - [0xDD4, data, sc03_0053_tail]
 
   - [0x2800]

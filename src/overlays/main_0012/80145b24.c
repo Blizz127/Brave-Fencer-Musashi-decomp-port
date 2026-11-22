@@ -1,5 +1,5 @@
 /* func_80145B24 [80145B24,80145BF8) - owner re-derivation from retail assembly (clean input set). */
-#include "psx_types.h"
+#include "event_flags.h"
 
 /* callers read v0: no (both callers ignore it; retail sets none); void.
  * func_80165A50 is passed &D_80126B58 here (retail loads a0 before the call); its owner prototype is
@@ -8,7 +8,6 @@ extern s32 func_80029504(void); /* its result is the s compared with 0x6A4 (call
 extern s32 func_800291DC(s32);
 extern void func_800291C8(s32, s16);
 extern void func_80162120(void);
-extern void func_80029124(s32 a, s32 b);
 extern void func_80165A50(char *o);
 extern void func_80029514(s32 v);
 extern u8 D_800AF630[];

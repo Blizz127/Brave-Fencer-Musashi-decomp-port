@@ -1,6 +1,6 @@
 /* Owner re-derivation from retail assembly (clean input set). */
 /* When the object's readiness query returns 1: finishes the object, sets its state field (offset 2) to 5, raises event 0x9C and resets the shared message state; returns 1 then, else 0. */
-#include "psx_types.h"
+#include "event_flags.h"
 
 typedef struct {
     u16 f0;
@@ -9,7 +9,6 @@ typedef struct {
 
 extern s32 func_80178970(Obj *o);
 extern void func_80178D18(Obj *o);
-extern void func_80029124(s32 a, s32 b);
 extern void func_80175414(void);
 
 s32 func_80182618(Obj *o)

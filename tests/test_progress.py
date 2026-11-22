@@ -367,13 +367,14 @@ class UniqueQualifyingCoverageTests(unittest.TestCase):
                  if k.startswith("main_") and "0013" <= k[-4:] <= "0047")
         self.assertEqual(md, 100180)
         sc_md = sum(v for k, v in progress.IDENTIFIED_REGION_BYTES.items() if k.startswith("sc"))
-        self.assertEqual(sc_md, 216372)
+        self.assertEqual(progress.IDENTIFIED_REGION_BYTES["sc03_0053"], 0xDD4 - 0x804)
+        self.assertEqual(sc_md, 216420)
         self.assertEqual(
             progress.IDENTIFIED_CODE_BYTES,
             411648 + 1516 + 768 + 2436 + 18084 + 9600 + 17932 + 17284 + 385024 + md + sc_md,
         )
-        self.assertEqual(progress.IDENTIFIED_CODE_BYTES, 1180844)
-        self.assertEqual(progress.COVERAGE_THRESHOLD_BYTES, 354254)
+        self.assertEqual(progress.IDENTIFIED_CODE_BYTES, 1180892)
+        self.assertEqual(progress.COVERAGE_THRESHOLD_BYTES, 354268)
         self.assertEqual(
             progress.COVERAGE_THRESHOLD_BYTES,
             (progress.IDENTIFIED_CODE_BYTES * 3 + 9) // 10,
@@ -490,7 +491,7 @@ class UniqueQualifyingCoverageTests(unittest.TestCase):
             entry("skip", 200, recovery="c", extent="partial"),
         ])
         self.assertEqual(summary["unique_qualifying_bytes"], 40)
-        self.assertEqual(summary["identified_bytes"], 1180844)
+        self.assertEqual(summary["identified_bytes"], 1180892)
         self.assertFalse(summary["meets_coverage_threshold"])
 
     def test_c_only_subset_excludes_assembly(self) -> None:
@@ -557,9 +558,9 @@ class UniqueQualifyingCoverageTests(unittest.TestCase):
             with contextlib.redirect_stdout(output):
                 self.assertEqual(progress.main(["--registry", str(path)]), 0)
             text = output.getvalue()
-            self.assertIn("56 / 1,180,844", text)
+            self.assertIn("56 / 1,180,892", text)
             self.assertIn("Portable C-only subset", text)
-            self.assertIn("40 / 1,180,844", text)
+            self.assertIn("40 / 1,180,892", text)
 
     def test_cli_prints_unique_qualifying_coverage_not_a_raw_percentage_of_all_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -572,9 +573,9 @@ class UniqueQualifyingCoverageTests(unittest.TestCase):
             with contextlib.redirect_stdout(output):
                 self.assertEqual(progress.main(["--registry", str(path)]), 0)
             text = output.getvalue()
-            self.assertIn("40 / 1,180,844", text)
-            self.assertIn("354,254", text)
-            self.assertNotIn("440 / 1,180,844", text)
+            self.assertIn("40 / 1,180,892", text)
+            self.assertIn("354,268", text)
+            self.assertNotIn("440 / 1,180,892", text)
 
     def test_default_report_identifies_regions_with_unknown_denominators(self) -> None:
         self.assertTrue(set(progress.SCENE_OVERLAY_REGION_BYTES).isdisjoint(progress.IDENTIFIED_REGION_BYTES))

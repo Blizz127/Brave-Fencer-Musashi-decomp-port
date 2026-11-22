@@ -1,0 +1,163 @@
+{
+  "schema": 1,
+  "targets": {
+    "sc03_0053": {
+      "kind": "blob",
+      "file": "extracted/overlays/sc03/0053.bin",
+      "base": 2149510248,
+      "sha256": "7653c48b25d38298ddb97fd54108a64eb149643bf70d674d2d6bd79d24ce1d70"
+    }
+  },
+  "matches": [
+    {
+      "name": "func_801EF46C",
+      "region": "sc03_0053",
+      "vram": 2149512300,
+      "size": 48,
+      "source": "src/overlays/sc03_0053/801ef46c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_801EF49C",
+      "region": "sc03_0053",
+      "vram": 2149512348,
+      "size": 196,
+      "source": "src/overlays/sc03_0053/801ef49c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_801EF560",
+      "region": "sc03_0053",
+      "vram": 2149512544,
+      "size": 12,
+      "source": "src/overlays/sc03_0053/801ef560.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_801EF56C",
+      "region": "sc03_0053",
+      "vram": 2149512556,
+      "size": 32,
+      "source": "src/overlays/sc03_0053/801ef56c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_801EF58C",
+      "region": "sc03_0053",
+      "vram": 2149512588,
+      "size": 88,
+      "source": "src/overlays/sc03_0053/801ef58c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_801EF5E4",
+      "region": "sc03_0053",
+      "vram": 2149512676,
+      "size": 64,
+      "source": "src/overlays/sc03_0053/801ef5e4.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_801EF624",
+      "region": "sc03_0053",
+      "vram": 2149512740,
+      "size": 140,
+      "source": "src/overlays/sc03_0053/801ef624.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_801EF6B0",
+      "region": "sc03_0053",
+      "vram": 2149512880,
+      "size": 132,
+      "source": "src/overlays/sc03_0053/801ef6b0.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_801EF734",
+      "region": "sc03_0053",
+      "vram": 2149513012,
+      "size": 176,
+      "source": "src/overlays/sc03_0053/801ef734.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_801EF7E4",
+      "region": "sc03_0053",
+      "vram": 2149513188,
+      "size": 288,
+      "source": "src/overlays/sc03_0053/801ef7e4.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_801EF904",
+      "region": "sc03_0053",
+      "vram": 2149513476,
+      "size": 88,
+      "source": "src/overlays/sc03_0053/801ef904.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_801EF95C",
+      "region": "sc03_0053",
+      "vram": 2149513564,
+      "size": 80,
+      "source": "src/overlays/sc03_0053/801ef95c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_801EF9AC",
+      "region": "sc03_0053",
+      "vram": 2149513644,
+      "size": 48,
+      "source": "src/overlays/sc03_0053/801ef9ac.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_801EF9DC",
+      "region": "sc03_0053",
+      "vram": 2149513692,
+      "size": 48,
+      "source": "src/overlays/sc03_0053/801ef9dc.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_801EFA0C",
+      "region": "sc03_0053",
+      "vram": 2149513740,
+      "size": 48,
+      "source": "src/overlays/sc03_0053/801efa0c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    }
+  ]
+}

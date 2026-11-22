@@ -519,6 +519,31 @@ python3 tools/verify_registry.py --registry provenance/scene-objects.json --jobs
 python3 tools/check_no_retail_data.py --registry provenance/scene-objects.json --jobs 1
 ```
 
+### Verify the Mayor’s porch routines
+
+All 15 functions in the town’s porch actor module match the USA disc, covering
+1,488 bytes. They set up village actors, handle dialogue choices, update quest
+flags and deliver three cues to a running actor. The resident flag setter
+returns the complete updated flag byte. The module references the dialogue and
+event records on the supplied disc.
+
+In a separate private hybrid build, an ordinary File 2 playthrough reached the
+Mayor, accepted the dog quest, received the Twinpeak Mountain directions and
+returned to player control. The porch actor’s entry routine ran once as compiled
+host code and made six calls back into the game. The public player has yet to
+reach this encounter in an observed run. This checkpoint adds matching source.
+
+After extracting SC03 as described above and generating the executable identity,
+run both checks for each registry. The porch registry contains 15 functions and
+the resident event-flag registry contains one.
+
+```sh
+python3 tools/verify_registry.py --registry provenance/village-porch.json --jobs 1
+python3 tools/check_no_retail_data.py --registry provenance/village-porch.json --jobs 1
+python3 tools/verify_registry.py --registry provenance/resident-event-flags.json --jobs 1
+python3 tools/check_no_retail_data.py --registry provenance/resident-event-flags.json --jobs 1
+```
+
 ### Verify the inventory operations
 
 Five resident functions find an empty slot, add and date an item, find the first

@@ -1,7 +1,6 @@
 /* Owner re-derivation from retail assembly (clean input set). */
-#include "psx_types.h"
+#include "event_flags.h"
 
-extern void func_80029124(s32 a0, s32 a1);
 extern void func_800291C8(s32 a0, s32 a1);
 extern void func_80016714(void *p, s32 n);
 extern void *D_801B6458[];

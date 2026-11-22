@@ -1,8 +1,6 @@
 /* Owner re-derivation from retail assembly (clean input set). */
 /* Same body as the main_0012 twin at this address. */
-#include "psx_types.h"
-
-extern void func_80029124(u32 bit, u8 set);
+#include "event_flags.h"
 
 void func_8016F398(void) {
     func_80029124(0x125, 0);

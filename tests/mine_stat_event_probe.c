@@ -1,4 +1,5 @@
 #include "mine_stat_event.h"
+#include "event_flags.h"
 #include <assert.h>
 #include <string.h>
 
@@ -13,7 +14,13 @@ static int amounts[4];
 
 static void record(char name) { assert(n + 1 < sizeof calls); calls[n++] = name; calls[n] = 0; }
 void func_80147060(u8 *p) { assert(p == actor && D_80126938 == 1); record('L'); }
-void func_80029124(s32 f,s32 bit) { assert(bit == 1); flag_id = f; record('F'); }
+u32 func_80029124(u32 f, u32 set)
+{
+    assert(set == 1);
+    flag_id = f;
+    record('F');
+    return 1u << (f & 7u);
+}
 u8 func_80029178(s32 f) { assert(f == 0x11d); record('?'); return flag; }
 void func_80029514(s32 v) { progression = v; record('P'); }
 void func_8014BCEC(void *p,s32 v) { assert(p == actor && v == 25); record('+'); }

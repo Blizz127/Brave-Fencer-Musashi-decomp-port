@@ -83,7 +83,7 @@ IDENTIFIED_REGION_BYTES = {
     "main_0047": 2984,
     # SC03/SC04/SC05/SC07 md scene modules (uncompressed): code ranges from each
     # config/overlay_<region>.yaml.
-    "sc03_0053": 1440,
+    "sc03_0053": 1488,
     "sc03_0054": 3056,
     "sc03_0056": 200,
     "sc03_0073": 2580,

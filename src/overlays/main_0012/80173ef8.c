@@ -1,10 +1,9 @@
 /* Owner re-derivation from retail assembly (clean input set). */
 /* When the +0xB8 flag is set, latches D_80126938 and dispatches on the D_80126B3A mode: each mode plays its sound/effect set (ids 0x8A..0x8E); unknown modes run the default pair. Then clears the 0x145EE8 request and runs the common step. */
-#include "psx_types.h"
+#include "event_flags.h"
 
 extern s16 D_80126938;
 extern s16 D_80126B3A;
-extern void func_80029124(s32 a, s32 b);
 extern u8 func_80029178(s32 a);
 extern void func_80029514(s32 v);
 extern s32 func_8002A088(s32 a);

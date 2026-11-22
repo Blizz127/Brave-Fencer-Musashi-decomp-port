@@ -1,4 +1,5 @@
 #include "player_direction.h"
+#include "event_flags.h"
 #include "../src/overlays/sc02_0039/camera.h"
 
 #include <assert.h>
@@ -10,7 +11,6 @@ extern void func_8017DEFC(u8 *player);
 extern void func_8017DF5C(u8 *player);
 extern void func_8017DFD8(u8 *player);
 extern s32 func_80029178(u32 bit);
-extern void func_80029124(u32 bit, u8 set);
 
 static void unexpected_state(u8 *unused)
 {
@@ -183,8 +183,21 @@ static void check_route(int bypass, int simultaneous_flags)
     assert(flag_reads == (simultaneous_flags ? 8u : 10u));
 }
 
+static void check_flag_byte_result(void)
+{
+    D_800AE648[1] = 0xa1;
+    D_800AE648[2] = 0x59;
+    assert(func_80029124(11, 0xff) == 0xa9u);
+    assert(func_80029124(11, 1) == 0xa9u);
+    assert(func_80029124(15, 0x100) == 0x29u);
+    assert(func_80029124(11, 0) == 0x21u);
+    assert(D_800AE648[1] == 0x21 && D_800AE648[2] == 0x59);
+    D_800AE648[1] = D_800AE648[2] = 0;
+}
+
 int main(void)
 {
+    check_flag_byte_result();
     check_route(0, 0);
     check_route(0, 1);
     check_route(1, 0);

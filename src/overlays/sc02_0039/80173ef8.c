@@ -2,10 +2,10 @@
  * Selectors 0x78..0x7c update persistent flags and progression, then award
  * Body, Mind, Lumina and Fusion in that order. */
 #include "mine_stat_event.h"
+#include "event_flags.h"
 
 extern s16 D_80126938;
 extern s16 D_80126B3A;
-extern void func_80029124(s32 a, s32 b);
 extern u8 func_80029178(s32 a);
 extern void func_80029514(s32 v);
 extern s32 func_8002A088(s32 a);
