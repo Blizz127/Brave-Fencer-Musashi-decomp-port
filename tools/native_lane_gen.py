@@ -1103,6 +1103,7 @@ FOREST_ATTACHMENT_EXTENTS = {
 }
 
 SCENE_PHASE_EXTENTS = {
+    0x8017EF5C: {"sc02_0039": (244, 0xFB88AECF43A44DD4)},
     0x8017EED8: {"sc02_0039": (132, 0x66C452168AE36CAB)},
     0x8017F050: {"sc02_0039": (96, 0x68F457D535D820EA)},
     **{pc: {"sc01_0077": extent} for pc, extent in FOREST_ATTACHMENT_EXTENTS.items()},
@@ -1370,7 +1371,7 @@ def overlay_extent_source_only(entry, src, info, extents):
         if any(member_digest(info, pc, size) == digest for size, digest in variants.values()):
             return True
     # A member with a shared original body is identified only by its room or source.
-    if pc == 0x8017EED8:
+    if pc in (0x8017EED8, 0x8017EF5C):
         size, fingerprint = variants["sc02_0039"]
         if info and info.get("data") is not None and "vram" in info and "start" in info:
             if member_digest(info, pc, size) == fingerprint:
