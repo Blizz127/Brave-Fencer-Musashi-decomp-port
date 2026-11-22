@@ -167,6 +167,7 @@ def test_mine_slot_dispatch_preserves_the_main_member(tmp_path, pc, size):
     (0x80134310, 76), (0x8013435C, 104),
     (0x80147060, 12), (0x8014706C, 12), (0x8014C118, 80), (0x80171A1C, 24),
     (0x80171A34, 16), (0x80171CC4, 88), (0x80174684, 32),
+    (0x80179B74, 444), (0x8017A094, 48),
     (0x8016E918, 68), (0x8016EAC0, 124), (0x8016EB3C, 108), (0x8016EBA8, 100),
     (0x8017E2F4, 308), (0x8017E428, 216), (0x8017E500, 320),
 ])
@@ -321,6 +322,14 @@ def test_mine_award_services_preserve_existing_overlays():
         source = ROOT / f"src/overlays/{region}/{pc:08x}.c"
         assert source.is_file()
         assert not lane.mine_member_source_only(dict(vram=pc, region=region), source, dict(member=region))
+
+
+def test_mine_script_queue_preserves_other_wrapper():
+    pc = 0x8017A094
+    region = "sc02_0031"
+    source = ROOT / f"src/overlays/{region}/{pc:08x}.c"
+    assert source.is_file()
+    assert not lane.mine_member_source_only(dict(vram=pc, region=region), source, dict(member=region))
 
 
 def test_mine_descriptor_guard_preserves_main_lookup():

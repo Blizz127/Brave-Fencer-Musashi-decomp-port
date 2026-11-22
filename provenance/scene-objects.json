@@ -4431,6 +4431,27 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2"
+    },
+    {
+      "name": "func_80179B74",
+      "region": "sc02_0039",
+      "vram": 2149030772,
+      "size": 444,
+      "source": "src/overlays/sc02_0039/80179b74.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "rodata_base": 2149185512
+    },
+    {
+      "name": "func_8017A094",
+      "region": "sc02_0039",
+      "vram": 2149032084,
+      "size": 48,
+      "source": "src/overlays/sc02_0039/8017a094.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
     }
   ]
 }
