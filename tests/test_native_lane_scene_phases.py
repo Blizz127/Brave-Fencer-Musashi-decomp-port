@@ -12,6 +12,12 @@ import native_lane_gen as lane
 
 
 PHASES = (
+    ("sc02_0005", 0x8017E26C, 220),
+    ("sc02_0005", 0x80129FF4, 36),
+    ("sc02_0005", 0x8012A018, 48),
+    ("sc02_0005", 0x8012A048, 76),
+    ("sc02_0005", 0x8012A094, 76),
+    ("sc02_0005", 0x8012A100, 16),
     ("sc02_0039", 0x8012CC88, 420),
     ("sc02_0039", 0x8012CEB0, 248),
     ("sc02_0005", 0x8017FCFC, 184),
@@ -342,7 +348,7 @@ def test_tower_resources_preserve_shared_room_owners(pc, size, tmp_path):
     assert hold(row, other, dict(physical, member="sc02_0005"), variants)
 
 
-@pytest.mark.parametrize("pc,size", ((0x8017FCFC, 184), (0x8017FF8C, 100), (0x8017FFF0, 112)))
+@pytest.mark.parametrize("pc,size", ((0x8017E26C, 220), (0x8017FCFC, 184), (0x8017FF8C, 100), (0x8017FFF0, 112)))
 def test_tower_intro_detached_source_and_verified_extent(tmp_path, monkeypatch, pc, size):
     original = ROOT / "src/overlays/sc02_0005" / f"{pc:08x}.c"
     copied = tmp_path / "renamed.c"
@@ -363,6 +369,22 @@ def test_tower_intro_detached_source_and_verified_extent(tmp_path, monkeypatch, 
 
 @pytest.mark.parametrize("pc", (0x801399F0, 0x80139914, 0x8013A8B0, 0x80147060))
 def test_tower_handover_preserves_independent_room_sources(tmp_path, monkeypatch, pc):
+    source = ROOT / "src/overlays/sc02_0005" / f"{pc:08x}.c"
+    copied = tmp_path / "caller.c"
+    copied.write_bytes(source.read_bytes())
+    monkeypatch.setattr(lane, "ROOT", tmp_path)
+    row = dict(vram=pc, region="main_0012", size=4)
+    guard = lane.overlay_extent_source_only
+    assert lane.SCENE_PHASE_EXTENTS[pc] == {"sc02_0005": None}
+    assert guard(row, copied, None, lane.SCENE_PHASE_EXTENTS)
+    copied.write_text("/* independently supplied implementation */\n")
+    assert not guard(row, copied, dict(member="main_0012"), lane.SCENE_PHASE_EXTENTS)
+    assert guard(row, copied, dict(member="sc02_0005"), lane.SCENE_PHASE_EXTENTS)
+    assert guard(dict(row, region="sc02_0005"), copied, None, lane.SCENE_PHASE_EXTENTS)
+
+
+@pytest.mark.parametrize("pc", (0x80129FF4, 0x8012A018, 0x8012A048, 0x8012A094, 0x8012A100))
+def test_tower_camera_preserves_independent_room_sources(tmp_path, monkeypatch, pc):
     source = ROOT / "src/overlays/sc02_0005" / f"{pc:08x}.c"
     copied = tmp_path / "caller.c"
     copied.write_bytes(source.read_bytes())

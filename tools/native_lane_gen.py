@@ -1085,6 +1085,13 @@ TOWER_POOL_PRIOR_SOURCE = "37f8c8016ea1b697c77467c8ee51f6fe1f89930cfacf04a68d81b
 # These scene routines need guest register, memory and event ordering. Some
 # complete extents also appear at the same PC in another room.
 SCENE_PHASE_EXTENTS = {
+    # The five lower camera routines share their instructions with other room members.
+    0x8017E26C: {"sc02_0005": (220, 0x474D323D3770728D)},
+    0x80129FF4: {"sc02_0005": None},
+    0x8012A018: {"sc02_0005": None},
+    0x8012A048: {"sc02_0005": None},
+    0x8012A094: {"sc02_0005": None},
+    0x8012A100: {"sc02_0005": None},
     0x8012CC88: {"sc02_0039": None},
     0x8012CEB0: {"sc02_0039": None},
     # The request and control instructions also occur in other room members.
@@ -1285,6 +1292,12 @@ TOWER_EARLIER_CALLERS = {
 
 # Detached copies of the Tower introduction sources also require guest timing.
 TOWER_INTRO_SOURCE_HASHES = {
+    0x8017E26C: "340937f93c7bf73860e0014d67ccacb4bb28e8ec4b51751f1b1e46ed6a691139",
+    0x80129FF4: "314a917660a0829bb2b25a8dc636bf5a8cbf25f31ad04ad5e6bf57b143bc0553",
+    0x8012A018: "f84ac1ab4216561965f662d0a6b757201ce62969c4c41ffcee41edcdad0b646d",
+    0x8012A048: "b90d36e2fd2c20c0d30bc7655ec2a0271c7763abe95aa4520b01c6cd70bae4b9",
+    0x8012A094: "c44a7c674de01826ddb3e3e289d6d714afb9cffafcf058d1096d3cad65fba5dd",
+    0x8012A100: "7e176dd0a1fd7d0bc4848a4615e1b422d3d989ddedf15e8f0e5125c27803cbef",
     0x8017FCFC: "8074d448279c642cdc7a210fd31f9da7639da72835ce81524179498f764468db",
     0x801399F0: "ad9fb12d1be8b8f0ddcd3c5205141adbf7a352bb5c8a615de8788dc33d4f22cc",
     0x80139914: "ff6407e5b0fed4e54dfa0735e74428e103bc1503c8405b4a813b82e3946e0bcd",
