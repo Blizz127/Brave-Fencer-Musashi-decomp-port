@@ -52,7 +52,7 @@ def test_mine_floor_sources_require_their_member_even_without_a_disc(tmp_path):
 
     copy = tmp_path / "independent.c"
     copy.write_text("int independent(int value) { return value + 1; }\n")
-    for pc, size in ((0x80133AB0, 548), (0x801347A0, 648), (0x80134A28, 76), (0x80135480, 1032)):
+    for pc, size in ((0x80133784, 812), (0x80133AB0, 548), (0x801347A0, 648), (0x80134A28, 76), (0x80135480, 1032)):
         row = dict(region="sc02_0039", vram=pc, size=size)
         assert lane.forest_floor_source_only(row, copy, None)
         assert not lane.forest_floor_source_only(dict(row, region="sc99_0001"), copy, None)

@@ -4940,6 +4940,16 @@
       "optimization": "-O2",
       "recovery": "c",
       "extent": "function"
+    },
+    {
+      "name": "func_80133784",
+      "vram": 2148743044,
+      "size": 812,
+      "region": "sc02_0039",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "source": "src/overlays/sc02_0039/80133784.c"
     }
   ]
 }
