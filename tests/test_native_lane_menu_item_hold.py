@@ -42,3 +42,26 @@ def test_menu_item_source_hold(tmp_path):
     result = check(copy, other)
     assert result["admitted"], result
     assert result["qname"] == "sc99_0001__func_8017CEB8"
+
+
+def test_glyph_writer_requires_timed_guest_memory(tmp_path):
+    registry = json.loads((ROOT / "provenance/main12-menu-item.json").read_text())
+    row = next(item for item in registry["matches"] if item["name"] == "func_8017DCB0")
+    source = ROOT / row["source"]
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == row["source_sha256"]
+    pc = row["vram"]
+    (tmp_path / "ir").mkdir()
+    other = dict(member="sc01_0077", vram=pc, start=0, code=[(pc, pc + 120)], data=bytes(120))
+    copy = tmp_path / "glyph.c"
+    copy.write_bytes(source.read_bytes())
+    foreign = dict(row, region=other["member"], source=str(copy))
+
+    assert lane.build_one(row, tmp_path, {}, {}, "clang", None)["rule"] == "memory"
+    assert lane.build_one(foreign, tmp_path, {}, {}, "clang", other)["rule"] == "memory"
+    assert lane.build_one(foreign, tmp_path, {}, {}, "clang", None)["rule"] == "memory"
+
+    if not all(shutil.which(tool) for tool in ("clang", "nm")):
+        pytest.skip("clang and nm required for the independent same-address function")
+    copy.write_text("int func_8017DCB0(void) { return 7; }\n")
+    result = lane.build_one(foreign, tmp_path, {}, {}, "clang", other)
+    assert result["admitted"] and result["qname"] == "sc01_0077__func_8017DCB0"

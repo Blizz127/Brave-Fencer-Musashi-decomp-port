@@ -42,6 +42,17 @@
       "recovery": "c",
       "optimization": "-O2",
       "source_sha256": "859cf7ba5afa3a4ede9ec090b62ac6366129c8cefa250d9923ba4ab998c7eebc"
+    },
+    {
+      "name": "func_8017DCB0",
+      "region": "main_0012",
+      "vram": 2149047472,
+      "size": 120,
+      "source": "src/overlays/main_0012/8017dcb0.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "source_sha256": "a986c6209f43cdd7f62d7d6794a8c6041b1454ae1fa259c935e2eb7cd9edcbc6"
     }
   ]
 }
