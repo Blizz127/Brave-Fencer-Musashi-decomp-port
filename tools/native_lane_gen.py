@@ -1090,6 +1090,10 @@ SCENE_PHASE_EXTENTS = {
         "sc02_0039": (248, 0xBEA43DF222B8BA28),
         "sc03_0001": (248, 0xFF9FB166A2180DC7),
     },
+    # These forest player states dispatch through member-specific game address tables.
+    0x80146360: {"sc01_0077": (64, 0xD6FF4D78017740C9)},
+    0x80159968: {"sc01_0077": (60, 0xB59A7B7CF404FBEB)},
+    0x80159A20: {"sc01_0077": (232, 0xF35D76072A56E095)},
     # These object services call into guest code from the middle of the frame.
     0x8014A2E4: dict.fromkeys(("main_0012", "sc02_0039"), (156, 0x4DBDD625CB4098C8)),
     0x8014C278: dict.fromkeys(("main_0012", "sc02_0039"), (56, 0x93E8D33159724249)),
@@ -1213,6 +1217,10 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
             raise Reject("source", "wrapped-angle step requires the verified clean source")
         if forest_floor_source_only(entry, src, info):
             raise Reject("memory", "floor collision requires checked guest memory and instruction timing")
+        # Older forest source calls the guest phase address directly.
+        if vram == 0x80159968 and hashlib.sha256(src.read_bytes()).hexdigest() == (
+                "bcac09920911836169ac8b046074783fa94dde9ffcf4df65542f7bfbfedb00bc"):
+            raise Reject("timing", "forest phase requires its guest callback and return timing")
         if overlay_extent_source_only(entry, src, info, SCENE_PHASE_EXTENTS):
             raise Reject("timing", "scene phase requires verified guest calls and event timing")
         if mine_slot_update_source_only(entry, src, info):
