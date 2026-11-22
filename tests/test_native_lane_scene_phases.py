@@ -12,6 +12,8 @@ import native_lane_gen as lane
 
 
 PHASES = (
+    ("sc02_0039", 0x8017EED8, 132),
+    ("sc02_0039", 0x8017F050, 96),
     ("sc03_0109", 0x8017D3C0, 204),
     ("sc03_0113", 0x8017F15C, 160),
     ("sc02_0005", 0x80180328, 88),
@@ -174,6 +176,22 @@ def test_mine_emitter_selector_uses_complete_body(pc, tmp_path, monkeypatch):
     assert not lane.overlay_extent_source_only(entry, source, dict(info, data=changed), lane.SCENE_PHASE_EXTENTS)
 
 
+
+def test_mine_child_model_complete_body(tmp_path, monkeypatch):
+    pc = 0x8017EED8
+    source = tmp_path / "independent.c"
+    source.write_text("int independent(void) { return 7; }\n")
+    span = bytes(range(132))
+    foreign = "sc99_0001"
+    info = dict(member=foreign, vram=pc, start=0, data=span)
+    monkeypatch.setitem(lane.SCENE_PHASE_EXTENTS[pc], "sc02_0039", (len(span), lane.fnv1a64(span)))
+    for declared in (0, 4, 128, 131, 133, 136, 264):
+        entry = dict(region=foreign, vram=pc, size=declared)
+        assert lane.overlay_extent_source_only(entry, source, info, lane.SCENE_PHASE_EXTENTS)
+        for data in (None, span[:-1], span[:-1] + bytes([span[-1] ^ 1])):
+            assert not lane.overlay_extent_source_only(entry, source, dict(info, data=data), lane.SCENE_PHASE_EXTENTS)
+
+
 @pytest.mark.parametrize("member,pc,size", PHASES)
 def test_phase_source_stays_interpreted(member, pc, size, tmp_path, monkeypatch):
     # The forest floor wrapper uses the identical registered MAIN source.
@@ -199,6 +217,9 @@ def test_phase_source_stays_interpreted(member, pc, size, tmp_path, monkeypatch)
     info = dict(member="sc99_0001", vram=pc, start=0, code=[(pc, pc + size)], data=data)
     monkeypatch.setitem(lane.SCENE_PHASE_EXTENTS[pc], member, (size, lane.fnv1a64(data)))
     assert check(alternate, info).get("rule") == "timing"
+    if pc == 0x8017F050:
+        for declared in (size - 4, size + 4):
+            assert check(dict(alternate, size=declared), info).get("rule") == "timing"
     if member in ("sc03_0109", "sc03_0113"):
         for reported_size in (size - 4, size + 4):
             assert check(dict(alternate, size=reported_size), info).get("rule") == "timing"
