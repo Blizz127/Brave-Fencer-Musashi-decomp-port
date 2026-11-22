@@ -13,6 +13,7 @@ import argparse
 import re
 import sys
 from collections import Counter
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -390,7 +391,7 @@ def _qualifies(match: dict[str, Any], recoveries: frozenset = QUALIFYING_RECOVER
 def unique_qualifying_bytes(
     matches: list[dict[str, Any]],
     recoveries: frozenset = QUALIFYING_RECOVERIES,
-    regions: dict[str, int] | None = None,
+    regions: Collection[str] | None = None,
 ) -> int:
     """Union overlapping vram spans per region; overlapping ranges count once."""
 
@@ -460,16 +461,49 @@ def fill_missing_classifications(
     return filled
 
 
-def load_registry(path: Path) -> list[dict[str, Any]]:
-    """Read the match registry, refusing anything malformed."""
-
-    if not path.is_file():
-        raise RetailError(f"match registry not found: {path}")
-    document = load_json(path)
+def _registry_rows(document: dict[str, Any], path: Path) -> list[dict[str, Any]]:
     matches = document.get("matches")
     if not isinstance(matches, list):
         raise RetailError(f"registry {path} has no 'matches' list")
     return matches
+
+
+def load_registry(path: Path) -> list[dict[str, Any]]:
+    """Read one explicitly selected match registry."""
+    if not path.is_file():
+        raise RetailError(f"match registry not found: {path}")
+    return _registry_rows(load_json(path), path)
+
+
+def load_default_registry(provenance: Path) -> list[dict[str, Any]]:
+    """Prefer the project's aggregate. A public checkout supplies split registries."""
+    aggregate = provenance / "matches.json"
+    if aggregate.exists():
+        return load_registry(aggregate)
+
+    entries: dict[tuple[str, int], tuple[dict[str, Any], Path]] = {}
+    found = False
+    for path in sorted(provenance.glob("*.json")):
+        document = load_json(path)
+        if "matches" not in document and "targets" not in document:
+            continue
+        found = True
+        for row in _registry_rows(document, path):
+            if (not isinstance(row, dict) or not isinstance(row.get("region"), str)
+                    or not isinstance(row.get("vram"), int)):
+                raise RetailError(f"registry {path} contains a match without a region and integer vram")
+            key = (row["region"], row["vram"])
+            if key in entries:
+                previous, origin = entries[key]
+                if origin == path or previous != row:
+                    raise RetailError(
+                        f"duplicate or conflicting match for {key[0]} at 0x{key[1]:08X} "
+                        f"in {origin.name} and {path.name}"
+                    )
+            entries[key] = (row, path)
+    if not found:
+        raise RetailError(f"no match registries found in {provenance}")
+    return [row for row, _ in entries.values()]
 
 
 def summarise(matches: list[dict[str, Any]]) -> dict[str, Any]:
@@ -535,16 +569,15 @@ def summarise(matches: list[dict[str, Any]]) -> dict[str, Any]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--registry", type=Path, help="default: provenance/matches.json")
+    parser.add_argument("--registry", type=Path, help="use one registry (default: the aggregate or split registries in provenance/)")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     repo = Path(__file__).resolve().parents[1]
-    registry = args.registry or repo / "provenance/matches.json"
     try:
-        matches = load_registry(registry)
+        matches = load_registry(args.registry) if args.registry else load_default_registry(repo / "provenance")
         summary = summarise(matches)
         print(f"REGISTERED {summary['function_count']} ranges, {summary['matched_bytes']:,} summed bytes")
         for region, count in sorted(summary["by_region"].items()):
@@ -602,12 +635,16 @@ def main(argv: list[str] | None = None) -> int:
         scene_assembly = unique_qualifying_bytes(matches, frozenset({"assembly"}), SCENE_OVERLAY_REGION_BYTES)
         print(f"  Mnemonic assembly: {scene_assembly:,} / {scene_total:,} bytes "
               f"({(100.0 * scene_assembly / scene_total) if scene_total else 0.0:.2f}%)")
-        untabled = sorted({str(m.get("region")) for m in matches
-                           if str(m.get("region", "")).startswith("sc")}
-                          - set(SCENE_OVERLAY_REGION_BYTES) - set(IDENTIFIED_REGION_BYTES))
+        untabled = sorted(set(summary["by_region"]) - set(SCENE_OVERLAY_REGION_BYTES) - set(IDENTIFIED_REGION_BYTES))
         if untabled:
-            print(f"  NOT COUNTED: {len(untabled)} registered SC regions missing from the tables: "
+            category = "SC " if all(region.startswith("sc") for region in untabled) else ""
+            print(f"  NOT COUNTED: {len(untabled)} registered {category}regions missing from the tables: "
                   + " ".join(untabled))
+            for region in untabled:
+                c_bytes = unique_qualifying_bytes(matches, PORTABLE_RECOVERIES, {region})
+                asm_bytes = unique_qualifying_bytes(matches, frozenset({"assembly"}), {region})
+                print(f"    {region} has {c_bytes:,} unique C bytes and {asm_bytes:,} unique assembly bytes. "
+                      "The coverage denominator is unknown.")
         print(
             f"  30% threshold: {COVERAGE_THRESHOLD_BYTES:,} bytes"
             f"    {'MET' if summary['meets_coverage_threshold'] else 'NOT MET'}"

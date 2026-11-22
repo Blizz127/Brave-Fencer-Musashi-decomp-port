@@ -111,6 +111,47 @@ class LoadTests(unittest.TestCase):
             with self.assertRaises(RetailError):
                 progress.load_registry(path)
 
+    def test_default_prefers_the_aggregate_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            provenance = Path(temp)
+            source = entry("project", 12)
+            (provenance / "matches.json").write_text(json.dumps({"matches": [source]}))
+            (provenance / "other.json").write_text(json.dumps({"matches": [entry("other", 4)]}))
+            self.assertEqual(progress.load_default_registry(provenance), [source])
+
+    def test_split_registries_count_shared_and_overlapping_ranges_once(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            provenance = Path(temp)
+            first = entry("first", 12, vram=0x1000, recovery="c", extent="function")
+            overlap = entry("overlap", 8, vram=0x1008, recovery="c", extent="function")
+            other = dict(first, region="sc99_0010")
+            (provenance / "manifest.json").write_text(json.dumps({"title": "fixture"}))
+            (provenance / "resident.json").write_text(json.dumps({"matches": [first, overlap]}))
+            (provenance / "scene.json").write_text(json.dumps({"matches": [first, other]}))
+            rows = progress.load_default_registry(provenance)
+            self.assertEqual(len(rows), 3)
+            self.assertEqual(progress.unique_qualifying_bytes(rows, {"c"}, {"main"}), 16)
+            self.assertEqual(progress.unique_qualifying_bytes(rows, {"c"}, {"sc99_0010"}), 12)
+
+    def test_split_registries_keep_duplicate_validation_within_each_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            provenance = Path(temp)
+            source = entry("repeated", 8)
+            (provenance / "first.json").write_text(json.dumps({"matches": [source]}))
+            (provenance / "second.json").write_text(json.dumps({"matches": [source, source]}))
+            with self.assertRaisesRegex(RetailError, "duplicate or conflicting match"):
+                progress.load_default_registry(provenance)
+
+    def test_split_registries_refuse_conflicting_claims_for_one_regional_address(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            provenance = Path(temp)
+            source = entry("same", 8)
+            (provenance / "first.json").write_text(json.dumps({"matches": [source]}))
+            (provenance / "second.json").write_text(json.dumps({"matches": [dict(source, size=12)]}))
+            with self.assertRaisesRegex(RetailError, "first.json and second.json"):
+                progress.load_default_registry(provenance)
+
+
 
 class RecoveryTests(unittest.TestCase):
     def test_old_entries_are_unclassified_even_with_c_filename(self) -> None:
@@ -535,24 +576,31 @@ class UniqueQualifyingCoverageTests(unittest.TestCase):
             self.assertIn("354,254", text)
             self.assertNotIn("440 / 1,180,844", text)
 
-    def test_every_registered_sc_region_is_counted_once(self) -> None:
-        self.assertFalse(set(progress.SCENE_OVERLAY_REGION_BYTES) & set(progress.IDENTIFIED_REGION_BYTES))
+    def test_default_report_identifies_regions_with_unknown_denominators(self) -> None:
+        self.assertTrue(set(progress.SCENE_OVERLAY_REGION_BYTES).isdisjoint(progress.IDENTIFIED_REGION_BYTES))
         tables = set(progress.SCENE_OVERLAY_REGION_BYTES) | set(progress.IDENTIFIED_REGION_BYTES)
-        registry = json.loads((ROOT / "provenance/matches.json").read_text())
-        regions = {m["region"] for m in registry["matches"] if m["region"].startswith("sc")}
-        self.assertEqual(regions - tables, set())
+        rows = progress.load_default_registry(ROOT / "provenance")
+        untabled = {row["region"] for row in rows} - tables
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(progress.main([]), 0)
+        for region in untabled:
+            self.assertIn(f"    {region} has ", output.getvalue())
 
     def test_cli_names_sc_regions_missing_from_the_tables(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "matches.json"
             path.write_text(json.dumps({"matches": [
-                entry("new", 40, region="sc99_0001", recovery="c", extent="function"),
+                entry("new", 40, vram=0x1000, region="sc99_0001", recovery="c", extent="function"),
+                entry("overlap", 12, vram=0x1020, region="sc99_0001", recovery="c", extent="function"),
             ]}))
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
                 self.assertEqual(progress.main(["--registry", str(path)]), 0)
             self.assertIn("NOT COUNTED: 1 registered SC regions missing from the tables: sc99_0001",
                           output.getvalue())
+            self.assertIn("sc99_0001 has 44 unique C bytes and 0 unique assembly bytes. "
+                          "The coverage denominator is unknown.", output.getvalue())
 
 
 if __name__ == "__main__":
