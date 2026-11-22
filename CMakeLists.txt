@@ -263,6 +263,8 @@ if(MUSASHI_BUILD_PC_PORT)
         pc_port/gpu_dma2.c
         pc_port/dma_otc.c
         pc_port/disc_media.c
+        pc_port/forest_player_archive.c
+        pc_port/forest_player_mesh.c
         pc_port/spu_cd_audio.c
         pc_port/irq_controller.c
         pc_port/dma_controller.c
@@ -322,6 +324,9 @@ if(MUSASHI_BUILD_PC_PORT)
     endif()
 
     enable_testing()
+    add_executable(musashi_forest_player_mesh_format tests/forest_player_mesh_format_probe.c)
+    target_link_libraries(musashi_forest_player_mesh_format PRIVATE musashi_pc_port)
+    add_test(NAME forest_player_mesh_format COMMAND musashi_forest_player_mesh_format)
     if(MUSASHI_SMOKE_COMPLETE)
         add_executable(musashi_pc_smoke pc_port/main.c)
         target_compile_features(musashi_pc_smoke PRIVATE c_std_99)
