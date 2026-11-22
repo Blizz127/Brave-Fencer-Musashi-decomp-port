@@ -16,3 +16,7 @@ func_8005E528 = 0x8005E528; // type:func size:0x274
 bfm_screen_observe_15f04 = 0x80015f04;
 bfm_screen_observe_15d4c = 0x80015d4c;
 bfm_screen_observe_3aa24 = 0x8013aa24;
+
+// Caller-specific names for the SC03/0001 field transition.
+bfm_village_transition_2a828 = 0x8012A828;
+bfm_village_transition_87750 = 0x80187750;
