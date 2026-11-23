@@ -6,7 +6,7 @@
 enum { MUSASHI_MAIN12_ROW_CELL = 0x80185af0u, MUSASHI_MAIN12_ROW_DATA = 0x80075ad0u };
 enum { MAIN12_ROW_COUNT = 4, MAIN12_COLUMNS = 7, MAIN12_TEXT_BYTES = 36,
        MAIN12_FILE_ICON_POSITION = 0x80181dc4u,
-       MAIN12_RESTORE_BUFFER = 0x801857f8u, MAIN12_RESTORE_SIZE = 732u,
+       MAIN12_FILE_RESULT = 0x801857e8u, MAIN12_RESTORE_BUFFER = 0x801857f8u, MAIN12_RESTORE_SIZE = 732u,
        MAIN12_CONFIRM_LABEL = 0x801826d8u, MAIN12_LOAD_REQUEST = 0x80185ad4u,
        MAIN12_ROW_DESCRIPTORS = 0x801825a4u, MAIN12_ROW_STRINGS = 0x801853f8u };
 
@@ -39,7 +39,7 @@ struct MusashiMain12Owner {
         int32_t fd;
         uint8_t bytes[768];
         uint16_t copied;
-        uint8_t closed, result, label, request_cleared, consumed;
+        uint8_t closed, result, label, request_cleared, consumed, dismissed, exit_written;
     } restore;
     int installed;
     struct {

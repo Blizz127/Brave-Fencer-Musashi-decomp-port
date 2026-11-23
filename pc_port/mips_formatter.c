@@ -6516,7 +6516,9 @@ static int main12_file_grid_pc(MusashiBootMemory *ram, const FormatterCpu *cpu,
                                const MusashiMain12Owner *owner)
 {
     uint32_t pc = cpu->pc;
-    if (!owner || !owner->display.complete || pc < 0x8017c3fcu || pc >= 0x8017df40u) return 0;
+    if (!owner || !owner->display.complete) return 0;
+    if (main12_loaded_exit_pc(ram, cpu, owner)) return 1;
+    if (pc < 0x8017c3fcu || pc >= 0x8017df40u) return 0;
     /* A confirmed read displays its completion message for 75 menu updates.
      * The positive countdown jumps back to the normal dispatcher and
      * decrements the guest halfword in that jump's delay slot. */
@@ -6967,6 +6969,17 @@ static int cpu_write16(MusashiBootMemory *memory, const FormatterCpu *cpu,
             reg->write16(reg->userdata, address, value);
     }
     if (p) {
+        if (cpu->main12_callback_frame && (cpu->pc == 0x8017c7fcu || cpu->pc == 0x8017c320u)) {
+            MusashiMain12Owner *owner = main12_owner_for(cpu, memory);
+            if (!main12_loaded_exit_pc(memory, cpu, owner) || !main12_current(owner, memory)) return 0;
+            if (cpu->pc == 0x8017c7fcu) {
+                if (address != 0x80115118u || value) return 0;
+                owner->restore.dismissed = 1;
+            } else {
+                if (address != MAIN12_FILE_RESULT || value != 0xffffu) return 0;
+                owner->restore.exit_written = 1;
+            }
+        }
         if (cpu->pc == 0x8017bf64u && address == 0x801853f0u) {
             MusashiMain12Owner *owner = main12_owner_for(cpu, memory);
             if (owner) {

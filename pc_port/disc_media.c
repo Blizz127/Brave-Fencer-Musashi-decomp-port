@@ -494,6 +494,12 @@ static int musashi_main12_transfer_matches(const MusashiMain12Owner *owner, cons
             memcmp(live + offset, owner->display.strings, sizeof owner->display.strings)) return 0;
         cursor = offset + sizeof owner->display.strings;
     }
+    if (installed && owner->restore.exit_written) {
+        uint32_t offset = MAIN12_FILE_RESULT - 0x80128158u;
+        if (!transfer_range_matches(source, live, cursor, offset) ||
+            live[offset] != 0xffu || live[offset + 1u] != 0xffu) return 0;
+        cursor = offset + 2u;
+    }
     if (installed && owner->restore.copied) {
         uint32_t offset = MAIN12_RESTORE_BUFFER - 0x80128158u;
         if (owner->restore.copied > MAIN12_RESTORE_SIZE || !transfer_range_matches(source, live, cursor, offset) ||
