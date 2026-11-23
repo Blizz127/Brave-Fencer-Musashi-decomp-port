@@ -122,8 +122,14 @@ changelog.
 
 ### Verify the scene-object matches
 
-The scene registry covers 638 regional function matches across seventeen overlay members,
-totaling 99,164 bytes.
+The scene registry covers 641 regional function matches across seventeen overlay members,
+totaling 99,992 bytes. Three Twinpeak entries reuse the existing mine C for 828
+bytes of matching game code. They check inventory space and, on one path, store an item
+and its acquisition day. The public player runs these routines on the guest CPU.
+
+The US game and private Linux R106 both restored the Bracelet appraisal objective
+from the same File 4. On R106, Conner identified the Bracelet as the L-Brace,
+and the game confirmed that Musashi equipped it.
 
 Two Twinpeak routines compare an actor’s current and saved coordinates to choose
 a contact check. Together they match 268 bytes in SC03 member 0029. On a recorded
