@@ -5,7 +5,7 @@
 
 typedef struct {
     MusashiBiosEvents bank;
-    unsigned seeks, reads, polls, closes, captures;
+    unsigned seeks, reads, polls, closes, captures, occupied_mask, damaged_mask;
     uint64_t open_id, read_id;
     uint8_t payload[640];
     int closed, fail_close, change_at_close;
@@ -224,8 +224,15 @@ static void metadata_close(FormatterCpu cpu, MetadataFile *file, enum MetadataCl
     CHECK(owner->menu_metadata.stage == (clean_close || which == CLOSE_PRELOADED ?
           MAIN12_METADATA_CLOSED : MAIN12_METADATA_NONE));
 
-    /* The two store frames use the observed mailbox base and return stack.
-     * Each instruction is fetched by the existing mounted formatter. */
+    /* Use the guest service caller stack and the synthetic card classification.
+     * Every slot load and store below executes from the mounted program. */
+    uint32_t slot_status = 0;
+    for (unsigned slot = 0; slot < MAIN12_ROW_COUNT; ++slot) {
+        unsigned bit = 1u << slot;
+        unsigned status = (file->damaged_mask & bit) ? 2u : !!(file->occupied_mask & bit);
+        slot_status |= status << (8u * slot);
+    }
+    metadata_put(0x800760a0u, slot_status);
     cpu.r[19] = MAIN12_MAILBOX; cpu.r[31] = 0x8002be1cu; cpu.r[29] = 0x1f800368u;
     metadata_at(&cpu, 0x8002c2c8u); cpu.r[2] = 1;
     refused_mailbox_step(cpu); /* Ready cannot precede menu state 8. */
@@ -255,18 +262,37 @@ static void metadata_close(FormatterCpu cpu, MetadataFile *file, enum MetadataCl
     uint64_t start_cycles = cycles;
     CHECK(formatter_step(&machine, &cpu) && owner->menu_metadata.stage == MAIN12_METADATA_STATE);
     CHECK(owner->mailbox[1] == 8 && machine.bytes[(MAIN12_MAILBOX & 0x1fffffu) + 1] == 8);
-    metadata_at(&cpu, 0x8002c2c8u); cpu.r[2] = 1;
-    CHECK(formatter_step(&machine, &cpu) && owner->menu_metadata.stage == MAIN12_METADATA_READY);
-    CHECK(owner->mailbox[4] == 1 && machine.bytes[(MAIN12_MAILBOX & 0x1fffffu) + 4] == 1);
-    CHECK(clock_calls == start + 2u && cycles == start_cycles + 6u);
+    CHECK(clock_calls == start + 1u && cycles == start_cycles + 3u);
+    const uint32_t store_pc[] = {0x8002c2c8u, 0x8002c2dcu, 0x8002c2ecu, 0x8002c2fcu};
+    for (unsigned slot = 0; slot < MAIN12_ROW_COUNT; ++slot) {
+        while (cpu.pc < store_pc[slot]) CHECK(formatter_step(&machine, &cpu));
+        CHECK(cpu.pc == store_pc[slot]);
+        FormatterCpu displaced = cpu;
+        displaced.r[19]++;
+        refused_mailbox_step(displaced);
+        unsigned value = (uint8_t)(slot_status >> (8u * slot));
+        metadata_put(0x800760a0u, slot_status ^ (1u << (8u * slot)));
+        refused_mailbox_step(cpu);
+        CHECK(!main12_mailbox_store(&machine, &cpu, MAIN12_MAILBOX + 4u + slot,
+                                    (uint8_t)(value ^ 1u), 0));
+        metadata_put(0x800760a0u, slot_status);
+        unsigned calls = clock_calls;
+        uint64_t previous_cycles = cycles;
+        CHECK(formatter_step(&machine, &cpu));
+        CHECK(clock_calls == calls + 1u && cycles == previous_cycles + 3u);
+        CHECK(owner->mailbox[4u + slot] == value);
+        CHECK(machine.bytes[(MAIN12_MAILBOX & 0x1fffffu) + 4u + slot] == value);
+        CHECK(owner->menu_metadata.stage == MAIN12_METADATA_STATE + slot + 1u);
+    }
+    CHECK(owner->menu_metadata.stage == MAIN12_METADATA_READY);
     check_file_row_display(cpu, file, which == CLOSE_ROW_CHANGED);
-    if (which == CLOSE_ROW_CHANGED) return;
-    puts("The resident state store preceded close. Menu state 8 and ready 1 took two guest stores and six cycles.");
+    if (which == CLOSE_OK) printf("Published four file statuses (occupied %x, damaged %x).\n",
+                                  file->occupied_mask, file->damaged_mask);
 }
 
-static void check_metadata_case(enum MetadataCloseCase which)
+static void check_metadata_case(enum MetadataCloseCase which, unsigned occupied_mask, unsigned damaged_mask)
 {
-    MetadataFile file = {.open_id=37, .read_id=89, .fail_close=which == CLOSE_FAILED,
+    MetadataFile file = {.open_id=37, .read_id=89, .occupied_mask=occupied_mask, .damaged_mask=damaged_mask, .fail_close=which == CLOSE_FAILED,
                          .change_at_close=which == CLOSE_CHANGED}, foreign = {0};
     MusashiCdDevice files = {.userdata=&file, .file_vector=metadata_vector,
         .metadata_events=&file.bank, .metadata_descriptor=metadata_id,
@@ -341,11 +367,16 @@ static void check_metadata_case(enum MetadataCloseCase which)
     file.pending = 0;
     file.position = 1152;
     if (which == CLOSE_OK || which == CLOSE_ROW_CHANGED) {
-        /* File 1 has a 16-byte header and a 112-byte body. Mark it
-         * occupied and encode the byte sum of its single nonzero field. */
-        file.payload[128] = 1;
-        file.payload[128 + 2] = 1;
-        file.payload[128 + 16 + 78] = 1;
+        /* Remembered File 4 on the full card; other fixtures exercise the four cursor values. */
+        file.payload[0] = (uint8_t)(occupied_mask & 3u);
+        /* Each 128-byte summary contains a 16-byte header and a checksummed body. */
+        for (unsigned slot = 0; slot < MAIN12_ROW_COUNT; ++slot) {
+            if (!(occupied_mask & (1u << slot))) continue;
+            uint8_t *summary = file.payload + 128u * (slot + 1u);
+            summary[0] = 0xffu;
+            summary[16u + 78u] = 1u;
+            summary[2] = (damaged_mask & (1u << slot)) ? 2u : 1u;
+        }
     } else {
         for (unsigned i = 0; i < sizeof file.payload; ++i) file.payload[i] = (uint8_t)(i*11u + 9u);
     }
@@ -361,11 +392,14 @@ static void check_metadata_case(enum MetadataCloseCase which)
 
 static void check_metadata_irq(void)
 {
-    check_metadata_case(CLOSE_NO_WITNESS);
-    check_metadata_case(CLOSE_NEW_EVENT);
-    check_metadata_case(CLOSE_FAILED);
-    check_metadata_case(CLOSE_CHANGED);
-    check_metadata_case(CLOSE_PRELOADED);
-    check_metadata_case(CLOSE_ROW_CHANGED);
-    check_metadata_case(CLOSE_OK);
+    check_metadata_case(CLOSE_NO_WITNESS, 1u, 0u);
+    check_metadata_case(CLOSE_NEW_EVENT, 1u, 0u);
+    check_metadata_case(CLOSE_FAILED, 1u, 0u);
+    check_metadata_case(CLOSE_CHANGED, 1u, 0u);
+    check_metadata_case(CLOSE_PRELOADED, 1u, 0u);
+    check_metadata_case(CLOSE_ROW_CHANGED, 1u, 0u);
+    for (unsigned mask = 0; mask < 16u; ++mask) check_metadata_case(CLOSE_OK, mask, 0u);
+    check_metadata_case(CLOSE_OK, 15u, 15u);
+    for (unsigned slot = 0; slot < MAIN12_ROW_COUNT; ++slot)
+        check_metadata_case(CLOSE_OK, 15u, 1u << slot);
 }

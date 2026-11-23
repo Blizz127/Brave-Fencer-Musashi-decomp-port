@@ -4,6 +4,7 @@ static int main12_restore_matches(MusashiBootMemory *ram, const FormatterCpu *cp
                                   const MusashiMain12Owner *owner)
 {
     if (!owner || owner != cpu->main12_callback_frame || !owner->restore.closed ||
+        (!owner->restore.request_cleared && !main12_confirmed_file(ram, owner)) ||
         !cpu->cd_device || owner->restore.files != cpu->cd_device ||
         owner->menu_metadata.file_userdata != cpu->cd_device->userdata ||
         owner->restore.events != cpu->cd_device->metadata_events ||
@@ -113,7 +114,7 @@ static int main12_loaded_exit_pc(MusashiBootMemory *ram, const FormatterCpu *cpu
         !main12_restore_matches(ram, cpu, owner)) return 0;
     uint16_t mode, slot, operation, timer, stage;
     if (!musashi_boot_read16(ram, 0x8011512cu, &mode) || mode != 4u ||
-        !musashi_boot_read16(ram, 0x8011511au, &slot) || slot != 1u ||
+        !musashi_boot_read16(ram, 0x8011511au, &slot) || slot != owner->display.selected_file ||
         !musashi_boot_read16(ram, 0x80115126u, &operation) || operation ||
         !musashi_boot_read16(ram, 0x80115118u, &timer) || timer > 75u ||
         !musashi_boot_read16(ram, 0x80115112u, &stage)) return 0;

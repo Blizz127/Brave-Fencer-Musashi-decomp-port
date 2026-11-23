@@ -511,6 +511,13 @@ static int musashi_main12_transfer_matches(const MusashiMain12Owner *owner, cons
         if (!transfer_range_matches(source, live, cursor, offset) || le32(live + offset) != (owner->restore.request_cleared ? 0u : 2u)) return 0;
         cursor = offset + 4u;
     }
+    if (installed && owner->display.load_row_written) {
+        uint32_t offset = MAIN12_LOAD_ROW - 0x80128158u;
+        if (!musashi_save_payload_offset(owner->display.selected_file) ||
+            !transfer_range_matches(source, live, cursor, offset) ||
+            le32(live + offset) != (unsigned)owner->display.selected_file - 1u) return 0;
+        cursor = offset + 4u;
+    }
     if (!transfer_range_matches(source, live, cursor, MAIN12_MAILBOX)) return 0;
     cursor = MAIN12_MAILBOX + 16u;
     if (installed && owner->restore.result) {
@@ -520,9 +527,13 @@ static int musashi_main12_transfer_matches(const MusashiMain12Owner *owner, cons
     if (!installed || !owner->row_pointer_written)
         return transfer_range_matches(source, live, cursor, MAIN12_BYTES);
     const uint32_t cell = MUSASHI_MAIN12_ROW_CELL - 0x80128158u;
-    return le32(live + cell) == MUSASHI_MAIN12_ROW_DATA &&
-        transfer_range_matches(source, live, cursor, cell) &&
-        transfer_range_matches(source, live, cell + 4u, MAIN12_BYTES);
+    if (owner->row_pointer_written > MAIN12_ROW_COUNT || !transfer_range_matches(source, live, cursor, cell))
+        return 0;
+    for (unsigned slot = 0; slot < owner->row_pointer_written; ++slot) {
+        uint32_t expected = (owner->row_pointer_mask & (1u << slot)) ? MUSASHI_MAIN12_ROW_DATA + MAIN12_SUMMARY_BYTES * slot : 0u;
+        if (le32(live + cell + 4u * slot) != expected) return 0;
+    }
+    return transfer_range_matches(source, live, cell + 4u * owner->row_pointer_written, MAIN12_BYTES);
 }
 
 MusashiMain12Owner *musashi_main12_open(MusashiGuestIrqImage *image,

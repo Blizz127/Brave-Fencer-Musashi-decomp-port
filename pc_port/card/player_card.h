@@ -39,10 +39,10 @@ int musashi_player_card_init_files(MusashiPlayerCard *);
 uint64_t musashi_player_card_metadata_descriptor(const MusashiPlayerCard *,
                              const MusashiBootMemory *, const MusashiBiosEvents *,
                              int32_t fd, uint32_t position, uint32_t count);
-/* Verify the selected File 1 handle and the expected payload transfer phase. */
+/* Verify the selected save file (1 through 4), its open handle and the expected payload transfer phase. */
 uint64_t musashi_player_card_payload_descriptor(const MusashiPlayerCard *,
                              const MusashiBootMemory *, const MusashiBiosEvents *,
-                             int32_t fd, uint32_t position, uint32_t count);
+                             int32_t fd, unsigned file, uint32_t position, uint32_t count);
 /* Return this mounted instance's ID for the exact completed metadata read.
  * NULL output validates without copying. On refusal the output is untouched.
  * Compare the ID earned by the IRQ with the live pre-close result. */

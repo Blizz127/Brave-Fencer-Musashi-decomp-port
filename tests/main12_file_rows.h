@@ -22,32 +22,82 @@ static void file_row_step(FormatterCpu *cpu)
     }
 }
 
+static void check_row_call_rejects_changed_arguments(const FormatterCpu *cpu)
+{
+    for (unsigned argument = 4; argument <= 7; ++argument) {
+        FormatterCpu bad = *cpu;
+        bad.r[argument] ^= argument <= 5 ? 128u : 4u;
+        expect_refused(&machine, &bad);
+    }
+}
+
 static void check_file_row_display(FormatterCpu cpu, const MetadataFile *file, int change_after_clock)
 {
     metadata_at(&cpu, 0x8017d070u);
     cpu.r[31] = 0x8017c2e4u;
     cpu.r[29] = 0x1f800380u;
-    cpu.r[5] = 0x80075b40u;
+    /* End cursors observed after the mounted checksum service, by last
+     * populated header. A checksum failure still advances the reader. */
+    static const uint32_t summary_end[] = {0x80075b40u, 0x80075bc0u, 0x80075c40u, 0x80075cc0u};
+    cpu.r[5] = 0x1f800380u;
+    for (unsigned slot = 0; slot < MAIN12_ROW_COUNT; ++slot)
+        if (file->occupied_mask & (1u << slot)) cpu.r[5] = summary_end[slot];
     cpu.r[6] = 0x80075cd0u;
     cpu.r[7] = 0x20u;
     cpu.r[9] = 0x36u;
     cpu.r[10] = 0xb0u;
 
     unsigned steps = 0;
-    while (cpu.pc != 0x8017d26cu && steps++ < 1500) file_row_step(&cpu);
+    unsigned valid_mask = file->occupied_mask & ~file->damaged_mask;
+    if (!valid_mask) {
+        /* Empty or entirely damaged saves take the no-file return. */
+        while (cpu.pc != 0x8017d270u && steps++ < 1500) file_row_step(&cpu);
+        CHECK(cpu.pc == 0x8017d270u && cpu.r[19] == 0x13u && !owner->display.started &&
+              !owner->row_pointer_mask &&
+              owner->row_pointer_written == (file->occupied_mask ? MAIN12_ROW_COUNT : 0u));
+        while (cpu.pc != 0x8017d280u && steps++ < 1510) file_row_step(&cpu);
+        uint32_t result;
+        CHECK(cpu.pc == 0x8017d280u && cpu.r[31] == 0x8017c2e4u &&
+              musashi_boot_read32(&machine, MAIN12_MENU_WORD, &result) && result == 19u &&
+              owner->display.menu_code == 19u && main12_current(owner, &machine));
+        return;
+    }
+    while (cpu.pc != 0x8017d26cu && steps++ < 1500) {
+        if (cpu.pc == 0x8017d268u) check_row_call_rejects_changed_arguments(&cpu);
+        if (main12_pointer_store_pc(cpu.pc)) {
+            FormatterCpu bad = cpu;
+            ++bad.r[16];
+            expect_copy_access_refused(&bad);
+            bad = cpu;
+            ++bad.r[17];
+            expect_copy_access_refused(&bad);
+            bad = cpu;
+            ++bad.r[18];
+            expect_copy_access_refused(&bad);
+        }
+        file_row_step(&cpu);
+    }
     CHECK(cpu.pc == 0x8017d26cu && cpu.delay_slot && cpu.npc == 0x8017d730u);
-    CHECK(!cpu.main12_building_row && owner->row_pointer_written && !owner->display.started);
-    uint32_t pointer;
-    CHECK(musashi_boot_read32(&machine, MUSASHI_MAIN12_ROW_CELL, &pointer) &&
-          pointer == MUSASHI_MAIN12_ROW_DATA);
+    CHECK(!cpu.main12_building_row && !owner->display.started &&
+          owner->row_pointer_written == MAIN12_ROW_COUNT && owner->row_pointer_mask == valid_mask);
+    for (unsigned row = 0; row < MAIN12_ROW_COUNT; ++row) {
+        uint32_t pointer;
+        CHECK(musashi_boot_read32(&machine, MUSASHI_MAIN12_ROW_CELL + row * 4u, &pointer));
+        CHECK(pointer == (valid_mask & (1u << row) ? MUSASHI_MAIN12_ROW_DATA + row * 128u : 0u));
+        uint8_t *cell = musashi_boot_ram_span(&machine, MUSASHI_MAIN12_ROW_CELL + row * 4u, 1u);
+        CHECK(cell);
+        *cell ^= 1u;
+        CHECK(!main12_identity(owner, &machine, 1));
+        *cell ^= 1u;
+        CHECK(main12_identity(owner, &machine, 1));
+    }
     CHECK(!memcmp(owner->mailbox, owner->mailbox + 8, 8));
-    FormatterCpu bad = cpu;
-    bad.r[5] += 4u;
-    expect_refused(&machine, &bad);
+    check_row_call_rejects_changed_arguments(&cpu);
     CHECK(formatter_step(&machine, &cpu));
     CHECK(cpu.pc == 0x8017d730u && cpu.main12_building_row && !owner->display.started);
+    check_row_call_rejects_changed_arguments(&cpu);
 
-    bad = cpu;
+    FormatterCpu bad = cpu;
     bad.r[31] += 4u;
     expect_refused(&machine, &bad);
     bad = cpu;
@@ -115,17 +165,21 @@ static void check_file_row_display(FormatterCpu cpu, const MetadataFile *file, i
     expect_refused(&machine, &bad);
     CHECK(formatter_step(&machine, &cpu) && cpu.pc == 0x8017d270u && cpu.r[29] == 0x1f800380u);
     CHECK(owner->display.complete && !cpu.main12_building_row);
-    CHECK(dispatches == MAIN12_COLUMNS && occupied_slots == 1 && empty_slots == MAIN12_ROW_COUNT - 1u);
-    CHECK(little32(owner->display.descriptors[0]) == 30u);
-    for (unsigned i = 1; i < MAIN12_ROW_COUNT; ++i) {
-        CHECK(little32(owner->display.descriptors[i]) == 4u);
-        CHECK(memcmp(owner->display.strings[0], owner->display.strings[i], sizeof owner->display.strings[i]));
+    unsigned expected_occupied = 0;
+    for (unsigned slot = 0; slot < MAIN12_ROW_COUNT; ++slot) {
+        int occupied = (valid_mask & (1u << slot)) != 0;
+        expected_occupied += occupied;
+        CHECK(little32(owner->display.descriptors[slot]) == (occupied ? 30u : 4u));
+        if (occupied != (valid_mask & 1u))
+            CHECK(memcmp(owner->display.strings[0], owner->display.strings[slot], sizeof owner->display.strings[slot]));
     }
+    CHECK(dispatches == MAIN12_COLUMNS * expected_occupied && occupied_slots == expected_occupied &&
+          empty_slots == MAIN12_ROW_COUNT - expected_occupied);
     CHECK(!memcmp(owner->menu_metadata.bytes, file->payload, sizeof file->payload));
     CHECK(!memcmp(machine.bytes + 0x75a40u, file->payload, sizeof file->payload));
     CHECK(!memcmp(musashi_boot_ram_span(&machine, MAIN12_ROW_DESCRIPTORS, sizeof owner->display.descriptors),
                   owner->display.descriptors, sizeof owner->display.descriptors));
     CHECK(!memcmp(musashi_boot_ram_span(&machine, MAIN12_ROW_STRINGS, sizeof owner->display.strings),
                   owner->display.strings, sizeof owner->display.strings));
-    puts("Mounted guest code formatted one occupied file row and three empty slots, then returned to its caller.");
+    printf("Mounted file rows matched valid mask %x and damaged mask %x.\n", valid_mask, file->damaged_mask);
 }

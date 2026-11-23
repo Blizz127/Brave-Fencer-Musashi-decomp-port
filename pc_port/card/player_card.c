@@ -1,4 +1,5 @@
 #include "player_card.h"
+#include "save_payload.h"
 #include "card_host_storage.h"
 #include "musashi_sha256_digest.h"
 
@@ -121,16 +122,14 @@ int musashi_player_card_init_files(MusashiPlayerCard *card)
     return 1;
 }
 
-static const CsCompletedRead payload_transfer = {1152u, 0x80075cc0u, 768u};
-
 static void remember_read(void *context, unsigned slot, int32_t fd, uint64_t open_id,
                               const CsCompletedRead *transfer, const uint8_t *bytes)
 {
     MusashiPlayerCard *card = context;
     if (slot != 0) return;
-    if (transfer->position == payload_transfer.position &&
-        transfer->destination == payload_transfer.destination &&
-        transfer->count == payload_transfer.count) {
+    uint32_t relative = transfer->position - MUSASHI_PAYLOAD_FIRST;
+    if (relative < MUSASHI_SAVE_FILES * MUSASHI_PAYLOAD_BYTES && relative % MUSASHI_PAYLOAD_BYTES == 0 &&
+        transfer->destination == MUSASHI_PAYLOAD_DEST && transfer->count == MUSASHI_PAYLOAD_BYTES) {
         card->payload_open_id = 0;
         if (open_id && musashi_sha256_digest(bytes, transfer->count, card->payload_digest))
             card->payload_open_id = open_id;
@@ -216,8 +215,11 @@ uint64_t musashi_player_card_metadata_descriptor(const MusashiPlayerCard *card,
 
 uint64_t musashi_player_card_payload_descriptor(const MusashiPlayerCard *card,
                      const MusashiBootMemory *memory, const MusashiBiosEvents *events,
-                     int32_t fd, uint32_t position, uint32_t count)
+                     int32_t fd, unsigned file, uint32_t position, uint32_t count)
 {
+    uint32_t offset = musashi_save_payload_offset(file);
+    if (!offset) return 0;
+    const CsCompletedRead payload_transfer = {offset, MUSASHI_PAYLOAD_DEST, MUSASHI_PAYLOAD_BYTES};
     uint64_t id = selected_read_descriptor(card, memory, events, fd, position, count, &payload_transfer);
     if (!id || position != payload_transfer.position + payload_transfer.count) return id;
     const uint8_t *bytes = memory->bytes + (payload_transfer.destination - 0x80000000u);

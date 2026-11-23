@@ -141,15 +141,17 @@ static void set_path(const char *full_name)
 }
 
 static void seed_file(const char *full_name, const uint8_t bytes[METADATA_SIZE],
-                      const uint8_t payload[PAYLOAD_SIZE])
+                      const uint8_t payload[4][PAYLOAD_SIZE])
 {
     set_path(full_name);
     assert(cs_open(player.service, PATH_ADDR, (1u << 16) | 0x203) == 2);
     assert(cs_seek(player.service, 2, 512, 0) == 512);
     memcpy(span(OTHER_ADDR, METADATA_SIZE), bytes, METADATA_SIZE);
     assert(cs_write(player.service, 2, OTHER_ADDR, METADATA_SIZE) == METADATA_SIZE);
-    memcpy(span(OTHER_ADDR, PAYLOAD_SIZE), payload, PAYLOAD_SIZE);
-    assert(cs_write(player.service, 2, OTHER_ADDR, PAYLOAD_SIZE) == PAYLOAD_SIZE);
+    for (unsigned row = 0; row < 4; ++row) {
+        memcpy(span(OTHER_ADDR, PAYLOAD_SIZE), payload[row], PAYLOAD_SIZE);
+        assert(cs_write(player.service, 2, OTHER_ADDR, PAYLOAD_SIZE) == PAYLOAD_SIZE);
+    }
     assert(cs_close(player.service, 2) == 2);
 }
 
@@ -306,14 +308,16 @@ static void verify(const uint8_t expected[METADATA_SIZE])
     assert(cs_close(s, 2) == 2);
 }
 
-static uint64_t payload_id(int fd, uint32_t position, uint32_t count)
+static uint64_t payload_id(int fd, unsigned file, uint32_t position, uint32_t count)
 {
-    return musashi_player_card_payload_descriptor(&player, &ram, &events, fd, position, count);
+    return musashi_player_card_payload_descriptor(&player, &ram, &events, fd, file, position, count);
 }
 
-static void verify_payload(const uint8_t expected[PAYLOAD_SIZE])
+static void verify_payload(unsigned file, const uint8_t expected[PAYLOAD_SIZE])
 {
+    static const uint32_t offsets[] = {1152u, 1920u, 2688u, 3456u};
     CardService *s = player.service;
+    uint32_t offset = offsets[file - 1], end = offset + PAYLOAD_SIZE;
     set_path(name);
     assert(cs_first(s, PATH_ADDR, ROW_ADDR) == ROW_ADDR);
     uint64_t previous = 0;
@@ -324,31 +328,42 @@ static void verify_payload(const uint8_t expected[PAYLOAD_SIZE])
             other = cs_open(s, PATH_ADDR, 0x8001);
             assert(other >= 0);
             set_path(name);
-            assert(!payload_id(other, 0, 0));
+            assert(!payload_id(other, file, 0, 0));
         }
         int fd = cs_open(s, PATH_ADDR, 0x8001);
         assert(fd >= 0 && fd != other);
-        uint64_t id = payload_id(fd, 0, 0);
+        uint64_t id = payload_id(fd, file, 0, 0);
         assert(id && id != previous);
+        assert(!payload_id(fd, 0, 0, 0) && !payload_id(fd, 5, 0, 0));
         previous = id;
-        assert(cs_seek(s, fd, 1920, 0) == 1920 && !payload_id(fd, 1920, 0));
-        assert(cs_seek(s, fd, 1152, 0) == 1152);
-        assert(!payload_id(fd, 1152, METADATA_SIZE) && payload_id(fd, 1152, PAYLOAD_SIZE) == id);
+        assert(cs_seek(s, fd, end, 0) == (int32_t)end && !payload_id(fd, file, end, 0));
+        assert(cs_seek(s, fd, offset, 0) == (int32_t)offset);
+        assert(!payload_id(fd, file, offset, METADATA_SIZE));
+        assert(payload_id(fd, file, offset, PAYLOAD_SIZE) == id);
         assert(cs_read(s, fd, OTHER_ADDR, PAYLOAD_SIZE) == 0);
         pump();
-        assert(!payload_id(fd, 1920, 0));
-        assert(cs_seek(s, fd, 1152, 0) == 1152);
+        assert(!payload_id(fd, file, end, 0));
+        assert(cs_seek(s, fd, offset, 0) == (int32_t)offset);
         uint8_t *destination = span(PAYLOAD_ADDR, PAYLOAD_SIZE);
         memset(destination, 0xe6, PAYLOAD_SIZE);
         assert(cs_read(s, fd, PAYLOAD_ADDR, PAYLOAD_SIZE) == 0);
-        assert(!payload_id(fd, 1920, 0) && destination[0] == 0xe6);
+        assert(!payload_id(fd, file, end, 0) && destination[0] == 0xe6);
         pump();
-        assert(!memcmp(destination, expected, PAYLOAD_SIZE) && payload_id(fd, 1920, 0) == id);
+        assert(!memcmp(destination, expected, PAYLOAD_SIZE) && payload_id(fd, file, end, 0) == id);
+        for (unsigned wrong = 1; wrong <= 4; ++wrong) {
+            if (wrong == file) continue;
+            assert(!payload_id(fd, wrong, end, 0));
+            assert(!payload_id(fd, wrong, offsets[wrong - 1] + PAYLOAD_SIZE, 0));
+        }
         destination[PAYLOAD_SIZE - 1] ^= 1;
-        assert(!payload_id(fd, 1920, 0));
+        assert(!payload_id(fd, file, end, 0));
         destination[PAYLOAD_SIZE - 1] ^= 1;
-        assert(payload_id(fd, 1920, 0) == id);
-        assert(cs_close(s, fd) == fd && !payload_id(fd, 1920, 0));
+        assert(payload_id(fd, file, end, 0) == id);
+        if (file == 4 && occupied) {
+            cs_media_changed(s, 0);
+            assert(!payload_id(fd, file, end, 0));
+        }
+        assert(cs_close(s, fd) == fd && !payload_id(fd, file, end, 0));
         if (other >= 0) assert(cs_close(s, other) == other);
     }
 }
@@ -363,8 +378,12 @@ int main(int argc, char **argv)
     } else {
         assert(!strcmp(argv[3], "zeros"));
     }
-    uint8_t payload[PAYLOAD_SIZE];
-    for (size_t i = 0; i < sizeof payload; ++i) payload[i] = expected[i % METADATA_SIZE];
+    uint8_t payload[4][PAYLOAD_SIZE] = {{0}};
+    if (!strcmp(argv[3], "pattern")) {
+        for (unsigned row = 0; row < 4; ++row)
+            for (size_t i = 0; i < PAYLOAD_SIZE; ++i)
+                payload[row][i] = (uint8_t)(expected[i % METADATA_SIZE] + 41u * row);
+    }
     musashi_bios_events_init(&events);
     assert(musashi_player_card_open(&player, &ram, &events, argv[2]));
     assert(player.slot0_mounted);
@@ -376,7 +395,7 @@ int main(int argc, char **argv)
         assert(!strcmp(argv[1], "verify"));
         check_file_vectors();
         verify(expected);
-        verify_payload(payload);
+        for (unsigned file = 1; file <= 4; ++file) verify_payload(file, payload[file - 1]);
     }
     assert(musashi_player_card_finish(&player));
     musashi_player_card_close(&player);

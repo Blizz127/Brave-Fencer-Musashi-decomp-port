@@ -1,15 +1,30 @@
 /* The installed MAIN/0012 callback builds seven fields for each of four file
  * slots. The formatter executes its words from the mounted game, including
  * its resident string copy. The owned image tracks only retired guest stores. */
+/* The foreground retains two independent cursors. The file reader checked
+ * the body of every present summary, including damaged ones. The renderer
+ * looks up only readable rows. Empty headers leave both cursors alone. */
+static int main12_row_call_arguments(const MusashiMain12Owner *owner, const FormatterCpu *cpu)
+{
+    uint32_t readable_offset = 0, checked_end = 0;
+    for (unsigned slot = 0; slot < MAIN12_ROW_COUNT; ++slot) {
+        uint32_t offset = MAIN12_SUMMARY_BYTES * (slot + 1u);
+        if (owner->row_pointer_mask & (1u << slot)) readable_offset = offset;
+        if (owner->mailbox[4u + slot])
+            checked_end = 0x80075a40u + offset + MAIN12_SUMMARY_BYTES;
+    }
+    return readable_offset && cpu->r[4] == readable_offset && cpu->r[5] == checked_end &&
+           cpu->r[6] == 0x80075cd0u && cpu->r[7] == 0x20u;
+}
+
 static int main12_display_word(const MusashiMain12Owner *owner, MusashiBootMemory *ram,
                                const FormatterCpu *cpu, uint32_t *word)
 {
     const uint32_t pc = cpu->pc;
     if (pc == 0x8017d730u) {
-        if (owner->display.started || !owner->row_pointer_written || cpu->delay_slot ||
+        if (owner->display.started || owner->row_pointer_written != MAIN12_ROW_COUNT || cpu->delay_slot ||
             cpu->npc != pc + 4u || cpu->r[31] != 0x8017d270u || cpu->r[29] != 0x1f800380u ||
-            cpu->r[4] != 0x80u || cpu->r[5] != 0x80075b40u ||
-            cpu->r[6] != 0x80075cd0u || cpu->r[7] != 0x20u) return 0;
+            !main12_row_call_arguments(owner, cpu)) return 0;
     } else {
         if (!owner->display.started || owner->display.complete) return 0;
         uint32_t sp = pc == 0x8017dc40u || pc == 0x8017dc44u ? 0x1f800380u : 0x1f800348u;

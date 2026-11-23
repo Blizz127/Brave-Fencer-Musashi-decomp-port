@@ -380,9 +380,9 @@ static uint64_t player_metadata_descriptor(void *userdata, const MusashiBootMemo
 }
 
 static uint64_t player_payload_descriptor(void *userdata, const MusashiBootMemory *memory,
-    const MusashiBiosEvents *events, int32_t fd, uint32_t position, uint32_t count) {
+    const MusashiBiosEvents *events, int32_t fd, unsigned file, uint32_t position, uint32_t count) {
     NativeBoot *boot = userdata;
-    return musashi_player_card_payload_descriptor(&boot->file_card, memory, events, fd, position, count);
+    return musashi_player_card_payload_descriptor(&boot->file_card, memory, events, fd, file, position, count);
 }
 
 static uint64_t player_copy_completed_metadata(void *userdata, const MusashiBootMemory *memory,
