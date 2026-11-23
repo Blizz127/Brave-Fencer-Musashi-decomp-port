@@ -50,7 +50,7 @@ The latest published Linux build is R55 and the latest published Windows build i
 
 ## Source and playtest updates after the candidate build
 
-The archives and their hashes above identify the November 23 build from `f8eb164f`. Subsequent source work added ten regional matches in Twinpeak and six for Fores’s cottage. The scene registry now covers 647 regional matches and 100,356 bytes. None of these sixteen functions is selected for public native dispatch. The public build has not reached the cottage in ordinary gameplay testing.
+The Windows and Linux archives identify the November 23 build from `f8eb164f`. Subsequent source checkpoints now cover 654 regional matches across 19 members, totaling 101,224 bytes. The Fores and Steamwood matches described here have no native dispatch in the public player. The public archives still stop before the opening moon on New Game and before the Chapter 2 bedroom on Continue.
 
 - Two coordinate checks select a contact test for an actor. The original US game returned zero from the first check and `0x2000` from the second during a successful Fusion encounter. The pair accounts for 268 bytes. [Coordinate checks](https://github.com/Blizz127/Brave-Fencer-Musashi-decomp-port/commit/782fe6f3aeac936ba83a8fd6138d20dc31e75ca9)
 - The 56-byte debit subtracts the equipped ability’s cost. On the original File 4, a periodic deduction first took Musashi from 147 to 143 BP. Casting Shrink then took him to 133 BP in 22 game clocks. [Shrink debit](https://github.com/Blizz127/Brave-Fencer-Musashi-decomp-port/commit/292737ec392eba20e15a6be73ac41eb726766469)
@@ -73,6 +73,18 @@ Private R106 then accepted the Steamwood assignment and saved again at Hotelo. A
 Private Linux R123 then cold-loaded that File 4 at story progress 110. A player climbed to the cottage and spoke to Fores. He explained the Steamwood emergency, gave Musashi the Manual and directed him to the top of the cliff in Steamwood Forest. The dialogue closed, story progress advanced to 120, and story flag 237 was the only changed flag. The timer showed 23:55 beside Fores. Moving left took Musashi off the grass and onto the lower path at 23:33, and the pause menu displayed the new objective. The original US reference also shows the Manual award. This R123 playthrough used guest CPU execution for the conversation. Completing the plant and saving that result remain open.
 
 Private Linux R124 implements the four dialogue callbacks as host code. Focused tests exercised all 61 instruction positions across these callbacks with guest instruction decoding disabled in the tested bodies. External game services still use the hybrid runtime. R125 also runs the six-instruction cost lookup for a witnessed Twinpeak Shrink cast as host code. Replaying the original cast through the compiled lookup returned 10 in 13 game clocks. The following debit took BP from 143 to 133 in 22 clocks. These focused tests cover the stated calls. Ordinary R124 and R125 playthroughs through these changes remain unverified here. The Windows and Linux archives listed above predate these private builds.
+
+### Steamwood practice valve and private R123
+
+The village initializer for Fores matches 280 original bytes. The earned File 4 entered his cottage area at story progress 110 and ran this initializer. Controlled comparisons checked 33 combinations of story progress and the game’s readiness check with two host compilers. They covered his actor phase, child actors and ordered service calls. A new visit at progress 120 remains unverified in this comparison.
+
+Six functions in SC03 member 0011 match 588 original bytes. They initialize the pressure controls, advance and wrap the needle, check its position, and update the valve meter. A press in the inclusive 68–80 window adds the current selector’s increment, capped at 96. A miss subtracts 16 with a floor of zero. Four of the six original bodies also occur in other rooms and are counted here once each. The gauge tables, animation data and scene services come from the user’s disc.
+
+On the owner-private Linux R123 playthrough, Musashi followed the Manual objective into Steamwood Forest, climbed to the plant and operated the practice gauge. The meter was photographed empty and half full. After a successful input the plant door opened, and File 4 entered the red-lit interior. The recorded call reached the meter increment. The exact needle position at that press was not recorded. The original US reference shows the same outdoor practice puzzle before the interior valves. This playthrough has yet to establish completion of all eight numbered valves or a subsequent save.
+
+A separate R123 File 4 reached the Twinpeak Magician. The first Fusion contact taught Shrink. A paid cast spent ten BP. A later full-charge contact in that same visit displayed a green 10, raised BP from 109 to 119 in 29 game clocks and returned control. The US game awarded ten BP, from 125 to 135, in the same 29 clocks. R123 ran the reward return as host code and used guest CPU execution for the Fores conversation and practice gauge.
+
+The private launcher served R123 from source `1babffad28d26c9d0cde6bc88e7e189cc328bf9d`. An independent download reproduced the 6,003,529-byte Linux archive, SHA-256 `1bbece9c9b0ff616f2d5194ff48b8d0026e992e1798b06056ac4fdc08ca0e6bc`. The playthroughs above used the staged copy of those same bytes. The public Windows and Linux candidates and their checksums at the top of these notes are separate.
 
 ## Supply your own disc
 
@@ -405,3 +417,4 @@ These source commits came after the Windows and Linux candidate archives.
 - Document the earned Bracelet save and the served Shrink cast. c5c5e8b69e35015426a2979615f7e1c92d0c4f5e
 - Register Twinpeak inventory matches and document the L-Brace appraisal. 043573bc39f83bd7db349c600aed5ce374d2911e
 - Recover Fores’s cottage conversations and document the File 4 playtest. e0e01a5986dcc2bf85d44ce9db0cde58569c0298
+- Match the two village interaction checks for Fores and record the Steamwood Manual playthrough. d3f30461859c49ab7eba3b00575c5f581b8098f2
