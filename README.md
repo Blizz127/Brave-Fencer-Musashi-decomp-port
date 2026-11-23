@@ -20,18 +20,24 @@ the same interval with test providers for the graphics and subsystem calls.
 
 ## Player downloads and source builds
 
-**November 23, 2026.** The replacement Linux build and the Windows build under
-Wine both reached Now Loading on New Game, then stopped before the opening
-moon. Both read an earned File 1 and displayed Loaded data!, then stopped
-before the Chapter 2 bedroom. The original US game reached both destinations.
-The report includes the full candidate changelog, local archive hashes, and
-instructions for supplying your own disc.
-[Four startup tests](docs/RELEASE-CANDIDATE-72cdca11.md) · [Preceding candidate](docs/RELEASE-CANDIDATE-f7e8a138.md)
+**November 23, 2026, 16:41 UTC.** Linux candidate `e58d95ea` reached “Now Loading” on
+New Game and stopped before the opening moon. Continue read an earned File 1,
+displayed “Loaded data!” and stopped before the Chapter 2 bedroom. The
+original US game reached the moon and the bedroom on those routes.
+The Windows build of this candidate is packaged. Its gameplay results are
+pending. The previous candidate stopped at both points on Linux and under
+Wine. The changelog includes all 322 source commits, both local archive
+hashes and instructions for supplying your own US disc.
+[Candidate notes](docs/RELEASE-CANDIDATE-e58d95ea.md) · [Previous four startup tests](docs/RELEASE-CANDIDATE-72cdca11.md)
 
-In separate private Linux play, Musashi earned the Steamwood Manual and
-closed numbered valves 1 through 6 in order. Valve 5 reset its timer to 35
-seconds and valve 6 to 60. The full eight-valve repair remains unverified.
-[Steamwood gameplay results](docs/RELEASE-CANDIDATE-f7e8a138.md#private-steamwood-progress)
+On the separate private Linux build R123, Musashi closed all eight numbered
+Steamwood valves during one visit. The roof vented, the story advanced to
+stage 130 and Fores thanked Musashi. The original US game completed the
+same repair. Both players returned through Fores’s cottage and saved File 4
+at Hotelo. The private character had rested before the attempt. A fresh
+original game restored stage 130 and player control outside Hotelo. At the
+verification cutoff, the R123 cold Continue test was in progress.
+[Steamwood gameplay results](docs/RELEASE-CANDIDATE-e58d95ea.md#verification-and-known-issues)
 
 An earlier nine-function checkpoint matched all 772 bytes of the indoor Steamwood
 pressure-gauge actions and the second valve’s selector. It brought the scene registry
@@ -49,8 +55,7 @@ cover the display for a numbered valve’s short timer, the cleanup and
 restart script after it expires, and the selectors for valves 3 through 8.
 A controlled comparison covered all 65,536 signed tick values. An ordinary
 private Linux playthrough ran out of time after Valve 1, received the restart
-dialogue and closed Valve 1 again. Closing all eight valves in sequence
-remains unverified.
+dialogue and closed Valve 1 again.
 
 Five further matches cover the script transitions after a numbered valve
 and the cleanup at the final progress value. A successful check sets the
@@ -62,8 +67,7 @@ Across 5,633 controlled calls, the original and host C agreed on the whole
 player structure, story writes and external call order. That checkpoint
 brought the match count to 1,005. On an earlier private Linux attempt, valve 4 turned green and
 its clock reset from 3 to 35 seconds. Valve 5’s gauge opened at 23 seconds
-and that attempt ran out of time. The later run closed six valves in order.
-The full repair and a save after the rescue still need a complete playthrough.
+and that attempt ran out of time. A subsequent run closed six valves in order.
 
 Six more C functions bring the verified total to 1,011 across 13 registries.
 Inside Steamwood they select a callback from the supplied room data, check a
@@ -71,8 +75,7 @@ position, and handle descriptor completion, a periodic sequence and a script
 request. The sixth advances the story stage and sets a countdown on the exit
 route. All 432 bytes of their compiled game code matched. In 2,597 controlled
 comparisons the C agreed with the original routines. The ordinary player
-still executes these six through the guest CPU. The full repair and exit
-remain open gameplay tests.
+still executes these six through the guest CPU.
 
 Earlier candidates documented the truncated Linux log path and what happened
 with several occupied saves. [Previous File 1 results](docs/RELEASE-CANDIDATE-97a342d8.md) · [Earlier paired tests](docs/RELEASE-CANDIDATE-c0b07365.md)
@@ -188,8 +191,7 @@ valve 1 turn green and Musashi say “Yes!!” The original showed the Valve Tim
 counting from 60 to 58 as he moved away. On R123 the valve timer expired,
 then the facility clock ran out. Loading File 4 at the inn and paying for a
 rest restored his BP. On the next attempt he closed valves 1 and 2. The Valve
-Timer then showed 53 with 05:00 left on the facility clock. Completing the
-eight-valve rescue remains unverified.
+Timer then showed 53 with 05:00 left on the facility clock.
 
 Two Twinpeak routines compare an actor’s current and saved coordinates to choose
 a contact check. Together they match 268 bytes in SC03 member 0029. On a recorded
