@@ -1,6 +1,6 @@
 /* Owner re-derivation from retail assembly (clean input set). */
 /* Builds a Gouraud quad (POLY_G4) from a 4-vertex record, projected through a matrix or taken as screen xy, and inserts it into the ordering table. */
-#include "psx_types.h"
+#include "primitive_ordering_table.h"
 
 typedef struct {
     u32 xy; /* vx | vy << 16 */
@@ -14,13 +14,10 @@ typedef struct {
     u32 flags;
 } QuadDesc;
 
-extern void *func_80010A08(s32 size);
 extern void func_80058DE8(u32 *p);
 extern void func_80017E8C(void *mtx);
 extern s32 func_8004961C(QuadVert *v0, QuadVert *v1, QuadVert *v2, QuadVert *v3,
                          u32 *sxy0, u32 *sxy1, u32 *sxy2, u32 *sxy3, s32 *p, s32 *flag);
-extern void func_80017F14(void *prim, u32 depth, u32 flags);
-extern void func_80018094(void *prim, u32 depth, u32 flags);
 
 void func_80017778(QuadDesc *q, void *mtx, s32 mode)
 {

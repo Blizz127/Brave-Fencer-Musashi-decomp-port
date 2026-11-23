@@ -1,5 +1,5 @@
 /* Exact retail word export for [80010A08,80010A84); EXE and assembly verified. */
-#include "psx_types.h"
+#include "primitive_ordering_table.h"
 
 extern u8 D_800AF630[];
 extern s32 D_800A5E60;
