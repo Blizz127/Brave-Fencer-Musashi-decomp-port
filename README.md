@@ -20,6 +20,8 @@ the same interval with test providers for the graphics and subsystem calls.
 
 ## Player downloads and source builds
 
+[3104b26b Linux and Windows startup results, four-file Continue test and QA archive checksums](docs/RELEASE-CANDIDATE-3104b26b.md)
+
 The public matching registry now contains 1,016 entries. New C for the story-progress reader and writer matches all 16 original bytes of each routine. During a cold File 4 load, the separate private R137 Linux build entered the writer at startup and later entered the reader. These registrations add no host execution to the public player.
 
 **November 23, 2026, 19:02 UTC.** Private build `27f862e0` completed 10 native scene-counter calls on Linux New Game and 11 on cold File 1. Windows x64 under Wine completed 11 and 12 on the same routes. The direct parent, `e8149f66`, credited zero on all four. Both players stopped before the opening moon on New Game and before the Chapter 2 bedroom on Continue.
