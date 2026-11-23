@@ -286,6 +286,8 @@ typedef struct MusashiEventDevice {
     int (*exit_critical_section)(void *userdata, int32_t *result);
     /* Event table that this polling adapter actually services. */
     const struct MusashiBiosEventTable *(*registered_owner)(void *userdata);
+    /* Consume a delivered event without applying the synchronous FIFO shortcut. */
+    int (*test_delivered)(void *userdata, int32_t handle, int32_t *result);
 } MusashiEventDevice;
 
 /* Owner-thread relative source execution timeline. The selected reference

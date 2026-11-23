@@ -437,6 +437,14 @@ static int test_event(void *userdata, int32_t handle, int32_t *result) {
     return accepted;
 }
 
+static int test_delivered_event(void *userdata, int32_t handle, int32_t *result) {
+    NativeBoot *boot = userdata;
+    int accepted = musashi_bios_events_test(&boot->bios.events, handle, result);
+    if (accepted)
+        fprintf(stderr, "native_boot: SPU_DMA_POLL handle=%08x result=%d\n", (unsigned)handle, *result);
+    return accepted;
+}
+
 static int start_card(void *userdata, int32_t *result) {
     NativeBoot *boot = userdata;
     int accepted;
@@ -952,6 +960,11 @@ static int cd_write32(void *userdata, uint32_t address, uint32_t value) {
             source = musashi_boot_ram_span(&boot->memory, madr, words * 4u);
             if (!musashi_spu_cd_audio_dma_write(boot->spu, source, words * 4u))
                 return 0;
+            /* A committed transfer makes the enabled HwSPU polling event ready.
+             * Callback-mode delivery needs a guest executor. Completing the
+             * memory copy does not invoke one from the DMA register write. */
+            if (!musashi_bios_events_deliver_poll(&boot->bios.events, 0xf0000009u, 0x20u))
+                fprintf(stderr, "native_boot: SPU_DMA event requires a guest callback\n");
             fprintf(stderr, "native_boot: SPU_DMA transferred words=%u madr=%08x\n", words, madr);
             value &= ~0x01000000u;
         }
@@ -4498,6 +4511,7 @@ int main(int argc, char **argv) {
     boot.event.enable_event = enable_event;
     boot.event.b0_0b = test_event;
     boot.event.registered_owner = player_event_owner;
+    boot.event.test_delivered = test_delivered_event;
     boot.input.userdata = &boot;
     boot.input.dequeue_irq_result = input_dequeue;
     boot.input.enqueue_irq_result = input_enqueue;

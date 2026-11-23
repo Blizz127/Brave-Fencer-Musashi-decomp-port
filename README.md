@@ -30,6 +30,12 @@ Both Windows and Linux New Game reached **Now Loading** and went black before
 the opening moon. Both stopped at callback `0x8002CFAC`. The Windows tests ran under Wine. See the full changelog, disc setup, exact
 archive checksums and results for each platform. [Current candidate notes](docs/RELEASE-CANDIDATE-f8eb164f.md)
 
+Later Linux and Windows/Wine builds consumed the last sound transfer during
+New Game and reached the next opening sound call. Both stopped before the moon.
+On the private Linux player, File 4 received the Steamwood Manual, cold-loaded
+its timed save and closed the first numbered valve. The release notes give the
+build and test conditions for each result. [Opening and timed Continue results](docs/RELEASE-CANDIDATE-f8eb164f.md#opening-sound-transfer-and-timed-continue)
+
 Earlier candidates documented the truncated Linux log path and what happened
 with several occupied saves. [Previous File 1 results](docs/RELEASE-CANDIDATE-97a342d8.md) · [Earlier paired tests](docs/RELEASE-CANDIDATE-c0b07365.md)
 

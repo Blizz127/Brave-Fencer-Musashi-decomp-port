@@ -15329,7 +15329,7 @@ typedef enum {
     IRQ_CARD_CLEAR_RESULT, IRQ_CARD_RESET_EVENTS, IRQ_CARD_POLL_EVENTS, IRQ_CARD_FLAGS,
     IRQ_CARD_TEST_EVENT, IRQ_CARD_INFO_BIOS, IRQ_CARD_LOAD_BIOS,
     IRQ_CARD_READ, IRQ_CARD_SEEK_BIOS, IRQ_CARD_READ_BIOS,
-    IRQ_DRAW_COMPLETE, IRQ_DRAW_MASK, IRQ_DRAW_FRAME, IRQ_DRAW_TIME, IRQ_DRAW_SUBMIT, IRQ_CD_DMA, IRQ_LEVEL_SLOT, IRQ_LEVEL_CHOICE, IRQ_LEVEL_COMMAND, IRQ_LEVEL_MASK_OFF, IRQ_LEVEL_MASK_ON, IRQ_CHANNEL_PITCH, IRQ_CHANNEL_RELEASE, IRQ_CHANNEL_EXPIRY, IRQ_CHANNEL_COND_RELEASE, IRQ_OUTSIDE
+    IRQ_DRAW_COMPLETE, IRQ_DRAW_MASK, IRQ_DRAW_FRAME, IRQ_DRAW_TIME, IRQ_DRAW_SUBMIT, IRQ_CD_DMA, IRQ_LEVEL_SLOT, IRQ_LEVEL_CHOICE, IRQ_LEVEL_COMMAND, IRQ_LEVEL_MASK_OFF, IRQ_LEVEL_MASK_ON, IRQ_CHANNEL_PITCH, IRQ_CHANNEL_RELEASE, IRQ_CHANNEL_EXPIRY, IRQ_CHANNEL_COND_RELEASE, IRQ_SPU_TRANSFER_POLL, IRQ_OUTSIDE
 } IrqRegion;
 typedef struct { uint32_t start; size_t offset, length; } IrqCodeRegion;
 #define IRQ_REGION(address, field) {address, offsetof(MusashiGuestIrqImage, field), sizeof(((MusashiGuestIrqImage *)0)->field)}
@@ -15377,7 +15377,9 @@ static const IrqCodeRegion irq_code[] = {
     IRQ_REGION(0x800314dcu, channel_pitch),
     IRQ_REGION(0x800342e8u, channel_release),
     IRQ_REGION(0x80031988u, channel_expiry),
-    IRQ_REGION(0x80033324u, channel_cond_release)
+    IRQ_REGION(0x80033324u, channel_cond_release),
+    /* The same installed function is already mapped in the CD frame. */
+    {0x8003c4f0u, 0, 0xa8u}
 };
 #undef IRQ_REGION
 
@@ -15418,7 +15420,7 @@ int musashi_boot_map_irq_exe(MusashiGuestIrqImage *image, MusashiBootMemory *mem
         const IrqCodeRegion *region = &irq_code[i];
         const uint8_t *p = musashi_boot_ram_span(memory,region->start,region->length);
         if (!p) return 0;
-        if (i == IRQ_DRAW_SUBMIT || i == IRQ_CD_DMA) continue;
+        if (i == IRQ_DRAW_SUBMIT || i == IRQ_CD_DMA || i == IRQ_SPU_TRANSFER_POLL) continue;
         if (i == IRQ_CARD_READ) {
             for (size_t j=0; j<sizeof card_read_spans/sizeof card_read_spans[0]; ++j) {
                 size_t offset=card_read_spans[j].start-region->start;
@@ -15466,7 +15468,8 @@ static int irq_live_word(const MusashiGuestIrqImage *image, MusashiBootMemory *m
     if ((i == IRQ_LEVEL_SLOT && !irq_level_slot_pc(pc)) ||
         (i >= IRQ_LEVEL_CHOICE && i <= IRQ_LEVEL_MASK_ON && !irq_level_leaf_pc(pc) &&
          !(i == IRQ_LEVEL_MASK_ON && irq_channel_mask_pc(pc)))) return 0;
-    if (i == IRQ_DRAW_SUBMIT || i == IRQ_CD_DMA) return cd_parent_word(image,memory,pc,word);
+    if (i == IRQ_DRAW_SUBMIT || i == IRQ_CD_DMA || i == IRQ_SPU_TRANSFER_POLL)
+        return cd_parent_word(image,memory,pc,word);
     if (i == IRQ_OUTSIDE || image->identity != image || image->memory != memory ||
         !musashi_boot_read32(memory,pc,word)) return 0;
     const IrqCodeRegion *r = &irq_code[i];
@@ -15857,12 +15860,42 @@ static int irq_movie_access(const FormatterCpu *cpu,unsigned op,uint32_t address
     }
 }
 
+/* The installed completion query uses its own stack and immediate references
+ * to resident SPU state. An absolute access must resolve to the high half
+ * loaded for the same base register by this mounted function. */
+static int irq_spu_poll_access(const FormatterCpu *cpu, uint32_t word, uint32_t address) {
+    unsigned op = word >> 26;
+    unsigned base = (word >> 21) & 31u;
+    if (base == 29u)
+        return (op == 35u || op == 43u) && cpu->r[29] == 0x8006ca74u &&
+            address >= 0x8006ca74u && address < 0x8006ca94u && !(address & 3u);
+    if (op != 32u && op != 33u && op != 35u && op != 36u && op != 37u &&
+        op != 40u && op != 41u && op != 43u) return 0;
+    if (address < 0x80060000u || address >= 0x80200000u || !base) return 0;
+    if (op >= 40u && cpu->r[(word >> 16) & 31u] > 1u) return 0;
+    for (unsigned distance = 4; distance <= 16u && distance <= cpu->pc - 0x8003c4f0u; distance += 4u) {
+        uint32_t setup;
+        if (!cd_parent_word(cpu->irq_image, cpu->irq_image->memory, cpu->pc-distance, &setup))
+            return 0;
+        if (setup >> 26 == 15u && ((setup >> 16) & 31u) == base &&
+            cpu->r[base] == (setup << 16)) return 1;
+    }
+    return 0;
+}
+
 static int irq_data_access(const FormatterCpu *cpu, uint32_t w) {
     unsigned op = w >> 26;
     if (op < 32) return 1;
     uint32_t address = cpu->r[(w >> 21) & 31u] + (uint32_t)(int32_t)(int16_t)w;
     IrqRegion region = irq_region(cpu->pc);
     if (region==IRQ_CD_DMA) return irq_movie_access(cpu,op,address);
+    if (region == IRQ_SPU_TRANSFER_POLL) return irq_spu_poll_access(cpu, w, address);
+    /* The sound driver rereads its stream flags after a positive poll. */
+    if (region == IRQ_SOUND_TICK && cpu->pc == 0x8002cfd0u) {
+        const uint8_t *flags = musashi_boot_ram_span(cpu->irq_image->memory, 0x8006aef4u, 1);
+        return flags && cpu->r[29] == 0x8006ca94u && cpu->r[31] == 0x8002cfb4u &&
+            op == 40u && address == 0x8006aef4u && (uint8_t)cpu->r[(w >> 16) & 31u] == (*flags & 0xfeu);
+    }
     if (region == IRQ_LEVELS_UPDATE && (cpu->pc == 0x80031c70u || cpu->pc == 0x80031c84u)) {
         /* Kind 1 counts down the current slot's unsigned halfword timer. */
         uint32_t index = cpu->r[17];
@@ -15967,6 +16000,24 @@ static int irq_card_call(IrqRegion parent, IrqRegion child) {
     default:
         return 0;
     }
+}
+
+static int irq_spu_poll_event(const MusashiGuestIrqCard *card, FormatterCpu *cpu) {
+    uint32_t handle = cpu->r[4];
+    unsigned slot = handle & 0xffffu;
+    if (!card || !card->registered_events || !card->events || !card->events->test_delivered ||
+        !card->events->registered_owner ||
+        card->events->registered_owner(card->events->userdata) != card->registered_events ||
+        cpu->pc != 0xb0u || cpu->r[9] != 0x0bu || (handle >> 16) != 0xf100u ||
+        slot >= MUSASHI_BIOS_EVENTS_CAPACITY || !cd_irq_ram_word(card->memory, 0x8006b0e0u, handle))
+        return 0;
+    const MusashiBiosEventRecord *record = &card->registered_events->records[slot];
+    if (!card->registered_events->allocation_serial[slot] || record->class_word != 0xf0000009u ||
+        record->spec != 0x20u || record->mode != 0x2000u || record->callback) return 0;
+    int32_t result;
+    if (!card->events->test_delivered(card->events->userdata, (int32_t)handle, &result)) return 0;
+    cpu->r[2] = (uint32_t)result;
+    return formatter_return(cpu);
 }
 
 static int irq_card_queued_handler(MusashiBootMemory *memory, IrqRegion dest, uint32_t target) {
@@ -16556,6 +16607,20 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
             } else if (op == 2u && region == dest && region >= IRQ_GAME_VBLANK &&
                        region < IRQ_OUTSIDE) {
                 /* A fixed in-function jump does not create an ABI return frame. */
+            } else if (region == IRQ_SOUND_TICK && dest == IRQ_SPU_TRANSFER_POLL) {
+                const uint8_t *flags = musashi_boot_ram_span(memory, 0x8006aef4u, 1);
+                if (op != 3u || origin != 0x8002cfacu || target != irq_code[dest].start ||
+                    depth != 4u || stack[0].callee != IRQ_DISPATCH || stack[1].callee != IRQ_VBLANK ||
+                    stack[2].callee != IRQ_GAME_VBLANK || stack[3].callee != IRQ_SOUND_TICK ||
+                    stack[3].address != 0x80010984u || cpu.r[29] != 0x8006ca94u ||
+                    !flags || (*flags & 3u) != 1u || !services || !services->spu ||
+                    !card || card->memory != memory || !card->registered_events) return 0;
+                stack[depth++] = (IrqGuestReturn){origin + 8u, cpu.r[29], dest};
+            } else if (region == IRQ_SPU_TRANSFER_POLL && dest == IRQ_CARD_TEST_EVENT) {
+                if (op != 3u || (origin != 0x8003c538u && origin != 0x8003c558u) ||
+                    target != irq_code[dest].start || depth != 5u || stack[4].address != 0x8002cfb4u ||
+                    stack[4].callee != IRQ_SPU_TRANSFER_POLL || cpu.r[29] != 0x8006ca74u) return 0;
+                stack[depth++] = (IrqGuestReturn){origin + 8u, cpu.r[29], dest};
             } else if (region == IRQ_MIX_UPDATE && op == 3u &&
                        irq_title_mix_destination(origin, target)) {
                 if (!services || !title_service_ancestry(stack, depth) ||
@@ -16719,6 +16784,7 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
                 !irq_data_access(&cpu,w) || !formatter_step(memory,&cpu)) return 0;
             ++stop->instructions;
             if (cpu.pc != target || cpu.npc != target+4u || cpu.delay_slot) return 0;
+            if (origin == 0x8002cfacu && (cpu.r[4] || cpu.r[31] != origin + 8u)) return 0;
             if (sound_call) {
                 if (!title_mixer_guest_call(memory, &cpu, services, clock, stack, depth, origin, target, stop))
                     return 0;
@@ -16804,7 +16870,10 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
             }
             if (card_bios) {
                 stop->pc = target;
-                if (region==IRQ_CARD_SEEK_BIOS || region==IRQ_CARD_READ_BIOS) {
+                if (depth == 6u && stack[4].callee == IRQ_SPU_TRANSFER_POLL &&
+                    region == IRQ_CARD_TEST_EVENT) {
+                    if (read_phase != UINT32_MAX || !irq_spu_poll_event(card, &cpu)) return 0;
+                } else if (region==IRQ_CARD_SEEK_BIOS || region==IRQ_CARD_READ_BIOS) {
                     if (depth!=6u || stack[4].callee!=IRQ_CARD_READ ||
                         stack[4].address!=0x80062958u ||
                         !irq_metadata_service(&cpu,image,card,region,read_phase)) return 0;
