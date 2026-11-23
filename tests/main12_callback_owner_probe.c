@@ -6,6 +6,7 @@
 #include "musashi_main12.h"
 #include "musashi_disc_media.h"
 #include "musashi_guest_irq.h"
+#include "musashi_gte_owner.h"
 #include "../pc_port/mips_formatter.c"
 
 #include "musashi_sha256_digest.h"
@@ -560,10 +561,104 @@ static void check_revocation(void)
 
 #include "main12_metadata_irq.h"
 
+static uint64_t opening_thread(void *userdata)
+{
+    (void)userdata;
+    return 1;
+}
+static int opening_gte_read(void *owner, const MusashiCpuContext *ctx, uint32_t index, uint32_t *value)
+{
+    return musashi_gte_owner_read_data(owner, ctx, index, value);
+}
+static int opening_gte_write(void *owner, const MusashiCpuContext *ctx, uint32_t index, uint32_t value)
+{
+    return musashi_gte_owner_write_data(owner, ctx, index, value);
+}
+static int opening_gte_command(void *owner, const MusashiCpuContext *ctx, uint32_t command)
+{
+    return musashi_gte_owner_command(owner, ctx, command);
+}
+
+/* The project PAC decoder supplies SC01.CD member zero from the same US disc. */
+static void check_opening_callback_collision(void)
+{
+    enum { opening_size = 513935 };
+    seed_machine();
+    uint8_t *opening = musashi_boot_ram_span(&machine, load_address, opening_size);
+    CHECK(opening);
+#ifdef _WIN32
+    CHECK(_setmode(_fileno(stdin), _O_BINARY) != -1);
+#endif
+    CHECK(fread(opening, 1, opening_size, stdin) == opening_size && fgetc(stdin) == EOF && !ferror(stdin));
+    check_digest(opening, opening_size, "66a047a6242db0d212e27087b7576b19dbc12e399ae0d4f64f370e70bea35069");
+    g_overlay_sc01_0000_words = sc01_entry_matches(&machine);
+    CHECK(g_overlay_sc01_0000_words && g_sc01_code == kOverlaySc01_CodeWords);
+    FormatterCpu cpu = entry(callback_pc);
+    uint32_t actual, expected;
+    for (uint32_t pc = callback_pc; pc < handler_pc; pc += 4u) {
+        cpu.pc = pc;
+        CHECK(formatter_fetch(&machine, &cpu, &actual));
+        CHECK(musashi_boot_read32(&machine, pc, &expected) && actual == expected);
+    }
+    cpu.pc = callback_pc;
+    static const uint32_t mutations[] = {0x80128158u, 0x8012841fu, 0x8017bf00u,
+                                         0x8017bf10u, 0x8017c080u, 0x8017c0dbu};
+    for (size_t i = 0; i < sizeof mutations / sizeof mutations[0]; ++i) {
+        size_t off = mutations[i] - load_address;
+        opening[off] ^= 1u;
+        CHECK(!formatter_fetch(&machine, &cpu, &actual));
+        opening[off] ^= 1u;
+    }
+    /* Even matching entry/caller/slot bytes cannot enroll a different image. */
+    opening[0x3000] ^= 1u;
+    CHECK(sc01_entry_matches(&machine) && !formatter_fetch(&machine, &cpu, &actual));
+    opening[0x3000] ^= 1u;
+    CHECK(sc01_entry_matches(&machine) && formatter_fetch(&machine, &cpu, &actual));
+    const uint32_t *members[] = {kOverlaySc01Member1CodeWords, kOverlaySc01Member77CodeWords};
+    for (size_t i = 0; i < sizeof members / sizeof members[0]; ++i) {
+        g_sc01_code = members[i];
+        CHECK(!formatter_fetch(&machine, &cpu, &actual));
+    }
+    g_sc01_code = kOverlaySc01_CodeWords;
+    g_overlay_sc01_0000_words = 0;
+    CHECK(!formatter_fetch(&machine, &cpu, &actual));
+    g_overlay_sc01_0000_words = 1;
+    cpu.main12_callback_frame = owner;
+    CHECK(!formatter_fetch(&machine, &cpu, &actual));
+    cpu.main12_callback_frame = NULL;
+    cpu.main12_foreground_owner = owner;
+    CHECK(!formatter_fetch(&machine, &cpu, &actual));
+    cpu.main12_foreground_owner = NULL;
+    cpu.pc = 0xa017c080u;
+    CHECK(!formatter_fetch(&machine, &cpu, &actual));
+    cpu.pc = callback_pc;
+    cpu.r[2] = 0x1f8001f8u;
+    cpu.r[3] = 0x1f800220u;
+    cpu.r[4] = 0x1f800218u;
+    cpu.r[5] = cpu.r[16] = 0x1f800258u;
+    cpu.r[29] = 0x1f8001b8u;
+    cpu.r[31] = 0x8017bf14u;
+    MusashiCpuStatus *status = NULL;
+    MusashiGteOwner gte = {0};
+    MusashiCpuTransferDevice device = {.userdata = &gte, .read_data = opening_gte_read,
+        .write_data = opening_gte_write, .command = opening_gte_command};
+    CHECK(musashi_cpu_status_open(&status, opening_thread, NULL));
+    CHECK(musashi_gte_owner_init(&gte, status, opening_thread, NULL, &cpu));
+    CHECK(!formatter_step(&machine, &cpu));
+    cpu.cpu_transfer = &device;
+    CHECK(formatter_step(&machine, &cpu) && cpu.pc == callback_pc + 4u);
+    CHECK(!cpu.main12_callback_frame && !cpu.main12_return_pc);
+    CHECK(gte.command_count + gte.data_read_count + gte.data_write_count == 1u);
+    CHECK(musashi_gte_owner_close(&gte) && musashi_cpu_status_close(status));
+    g_overlay_sc01_0000_words = 0;
+    puts("Opening scene owned all 23 overlapping fetches and retired the boundary without acquiring the file-menu callback.");
+}
+
 int main(int argc, char **argv)
 {
     const char *path = argc > 1 ? argv[1] : getenv("MUSASHI_TEST_DISC");
-    if (argc > 3 || (argc == 3 && strcmp(argv[2], "--verify-transfer-stdin"))) return 1;
+    int opening = argc == 3 && !strcmp(argv[2], "--verify-opening-stdin");
+    if (argc > 3 || (argc == 3 && !opening && strcmp(argv[2], "--verify-transfer-stdin"))) return 1;
     if (!path || !*path) {
         puts("Provide a supported USA disc image to run the MAIN_0012 callback test.");
         return 77;
@@ -574,7 +669,8 @@ int main(int argc, char **argv)
         CHECK(test_machine && musashi_native_lane_usable(test_machine));
         mapped_window = 1;
     }
-    load_media(path, argc == 3);
+    load_media(path, argc == 3 && !opening);
+    if (opening) check_opening_callback_collision();
     check_metadata_irq();
     check_guest_path();
     check_active_menu_owner();

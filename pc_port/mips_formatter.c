@@ -1858,6 +1858,7 @@ static const uint32_t kOverlaySc02_8014C8F0Words[10]; /* shape only: 10 words, f
 static const uint32_t kOverlaySc02_8014C918Words[20]; /* shape only: 20 words, fetched from guest RAM */
 static int g_overlay_sc02_0031_words;
 static int g_overlay_sc01_0000_words;
+static const MusashiBootMemory *g_sc01_opening_callback_memory;
 #define OVERLAY_SC_ACTIVE (g_overlay_sc02_0031_words || g_overlay_sc01_0000_words)
 static const uint32_t kOverlaySc02_80128158Words[178]; /* shape only: 178 words, fetched from guest RAM */
 static const uint32_t kOverlaySc01_80128158Words[178]; /* shape only: 178 words, fetched from guest RAM */
@@ -9210,6 +9211,8 @@ static int reset_fill_word(MusashiBootMemory *memory, uint32_t pc, uint32_t *out
 }
 
 static int movie_callback_word(const MusashiGuestIrqImage *, MusashiBootMemory *,uint32_t,uint32_t *);
+static int sc01_opening_callback_slot(MusashiBootMemory *memory, const FormatterCpu *cpu);
+
 static int formatter_fetch(MusashiBootMemory *memory, const FormatterCpu *cpu, uint32_t *out) {
     const FormatterRange *resident = NULL;
     uint32_t shape;
@@ -9225,7 +9228,11 @@ static int formatter_fetch(MusashiBootMemory *memory, const FormatterCpu *cpu, u
     if (cpu->title_mixer) return title_mixer_word(memory,cpu,out);
     if (cpu->movie_output) return movie_callback_word(cpu->irq_image,memory,cpu->pc,out);
     if (cpu->irq_image) return irq_live_word(cpu->irq_image,memory,cpu->pc,out);
-    if (main12_owns_fetch(cpu)) return main12_callback_word(memory, cpu, out);
+    if (main12_owns_fetch(cpu)) {
+        if (sc01_opening_callback_slot(memory, cpu))
+            return code_word(memory, cpu, cpu->pc, out);
+        return main12_callback_word(memory, cpu, out);
+    }
     if (main12_service_pc(cpu) && !main12_service_matches(memory, cpu)) return 0;
     if (main12_copy_pc(cpu) && !main12_copy_matches(memory, cpu)) return 0;
     if (reset_calls_guest_fill(cpu)) return reset_fill_word(memory, cpu->pc, out);
@@ -11483,6 +11490,7 @@ static int sc02_entry_matches(MusashiBootMemory *memory) {
 static int sc01_entry_matches(MusashiBootMemory *memory) {
     uint64_t digest;
     int member0, member1, member77;
+    g_sc01_opening_callback_memory = NULL;
     /* Both members open with the same prologue and first diverge at word 85
      * (801282AC), so the whole 178-word entry span identifies the image. */
     if (!span_digest(memory, 0x80128158u, SC_ENTRY_WORDS, &digest)) return 0;
@@ -11490,6 +11498,18 @@ static int sc01_entry_matches(MusashiBootMemory *memory) {
     member1 = digest == SC01_MEMBER1_ENTRY_DIGEST;
     member77 = digest == SC01_MEMBER77_ENTRY_DIGEST;
     if (member0) {
+        /* The menu hook aliases this part of the opening scene. Bind its
+         * complete prefix through the shared range once at scene entry. */
+        static const uint8_t opening_prefix_sha256[32] = {
+            0xa2,0x0a,0xa3,0x9d,0x22,0x16,0x64,0xb9,0x03,0x90,0xf7,0x38,0x3b,0x01,0x4f,0xdc,
+            0xfb,0x3f,0xe0,0xe0,0x1d,0x68,0x9a,0x3b,0x37,0x6e,0xdc,0xf9,0xce,0xb9,0x7f,0x85
+        };
+        const size_t size = MAIN12_HANDLER - MAIN12_BASE;
+        const uint8_t *prefix = musashi_boot_ram_span(memory, MAIN12_BASE, size);
+        uint8_t digest[32];
+        if (prefix && musashi_sha256_digest(prefix, size, digest) &&
+            !memcmp(digest, opening_prefix_sha256, sizeof digest))
+            g_sc01_opening_callback_memory = memory;
         g_sc01_code = kOverlaySc01_CodeWords;
         g_sc01_code_bytes = sizeof(kOverlaySc01_CodeWords);
     } else if (member1) {
@@ -11500,6 +11520,29 @@ static int sc01_entry_matches(MusashiBootMemory *memory) {
         g_sc01_code_bytes = sizeof(kOverlaySc01Member77CodeWords);
     }
     return member0 || member1 || member77;
+}
+
+/* New Game's SC01 member zero uses this same address during the opening.
+ * Check the live scene entry and the contiguous caller/collision region again:
+ * selecting the member at its entry alone does not prove it is still resident. */
+static int sc01_opening_callback_slot(MusashiBootMemory *memory, const FormatterCpu *cpu) {
+    const uint32_t caller = 0x8017bf00u;
+    uint64_t identity;
+    if (cpu->pc < MAIN12_CALLBACK || cpu->pc >= MAIN12_HANDLER || (cpu->pc & 3u) ||
+        cpu->main12_callback_frame || cpu->main12_foreground_owner ||
+        cpu->dma_registration || cpu->registration_stack || cpu->irq_image ||
+        cpu->cd_parent_image || cpu->bios_frame || cpu->cd_irq_frame ||
+        cpu->movie_output || cpu->title_mixer ||
+        !g_overlay_sc01_0000_words || g_sc01_code != kOverlaySc01_CodeWords ||
+        memory != g_sc01_opening_callback_memory)
+        return 0;
+    if (cpu->bios_image && (!cpu->bios_image->intersects ||
+        cpu->bios_image->intersects(MAIN12_BASE, SC_ENTRY_WORDS * 4u) ||
+        cpu->bios_image->intersects(caller, MAIN12_HANDLER - caller))) return 0;
+    return span_digest(memory, MAIN12_BASE, SC_ENTRY_WORDS, &identity) &&
+        identity == SC01_MEMBER0_ENTRY_DIGEST &&
+        span_digest(memory, caller, (MAIN12_HANDLER - caller) / 4u, &identity) &&
+        identity == UINT64_C(0xf006626792fe7628);
 }
 
 /* A DIV is only admitted when the retail image carries GCC's canonical
@@ -13283,7 +13326,7 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         cpu->main12_foreground_owner = NULL;
         cpu->main12_foreground_sp = 0;
     }
-    if (cpu->pc == MAIN12_CALLBACK) {
+    if (cpu->pc == MAIN12_CALLBACK && !sc01_opening_callback_slot(memory, cpu)) {
         cpu->main12_copy_dest = 0;
         cpu->main12_directory_found = 0;
         cpu->main12_callback_frame = main12_owner_for(cpu, memory);
