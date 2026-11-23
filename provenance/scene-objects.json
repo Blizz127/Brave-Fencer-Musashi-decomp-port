@@ -6482,6 +6482,32 @@
       "span_sha256": "47fc75c5557040fd12f3d1814eb36a0a23cb522a4ac548d1110642ffc458d83d"
     },
     {
+      "name": "func_8014CC28",
+      "region": "sc03_0029",
+      "vram": 2148846632,
+      "size": 140,
+      "source": "src/overlays/sc03_0029/8014cc28.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 0029 and matched against its complete linked function extent.",
+      "source_sha256": "33b02a3e035b683a5143358cbb186039819cf8d7657119f5189756df0ac902e9",
+      "span_sha256": "6ffe0d77d16928966cd3723be0029a3d5776a5f6abea429e18262aeb4dc8a01e"
+    },
+    {
+      "name": "func_8014F3E8",
+      "region": "sc03_0029",
+      "vram": 2148856808,
+      "size": 128,
+      "source": "src/overlays/sc03_0029/8014f3e8.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 0029 and matched against its complete linked function extent.",
+      "source_sha256": "5b2e2bc01dea1e8b832e0f526ef4c6c8955b2397813a24ad98a013a7ef0927ae",
+      "span_sha256": "207b38dcecc0211f277d3d121f2d5388c46e8491b94f2937f3eb4442d5d4ba09"
+    },
+    {
       "name": "func_8015FA78",
       "region": "sc03_0029",
       "vram": 2148924024,

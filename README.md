@@ -22,13 +22,16 @@ the same interval with test providers for the graphics and subsystem calls.
 
 **November 23, 2026. Player downloads are under review.**
 
-The [latest Windows and Linux candidate notes](docs/RELEASE-CANDIDATE-97a342d8.md)
-record both archive checksums, the full changelog, disc setup and ordinary File 1
-tests. Both platforms stopped before the Chapter 2 bedroom. The Windows build
-showed the correct log path under Wine. Linux on X11 with a C locale cut the path
-off at its first accented character. These archives were withheld.
-The [earlier paired candidate](docs/RELEASE-CANDIDATE-c0b07365.md) also records
-New Game on both platforms and what happened with multiple occupied saves.
+The current Windows and Linux candidate (`f8eb164f`) displayed the complete
+launcher log path in both File 1 error dialogs, including accented folder names.
+Both players read an earned save, showed **Loaded data!** and exited before
+Musashi woke in the Chapter 2 bedroom. The original game restored the bedroom.
+Both Windows and Linux New Game reached **Now Loading** and went black before
+the opening moon. Both stopped at callback `0x8002CFAC`. The Windows tests ran under Wine. See the full changelog, disc setup, exact
+archive checksums and results for each platform. [Current candidate notes](docs/RELEASE-CANDIDATE-f8eb164f.md)
+
+Earlier candidates documented the truncated Linux log path and what happened
+with several occupied saves. [Previous File 1 results](docs/RELEASE-CANDIDATE-97a342d8.md) · [Earlier paired tests](docs/RELEASE-CANDIDATE-c0b07365.md)
 
 Historical player binaries also contain routines removed during the SDK
 source review. This correction is available as source for development and testing.
@@ -119,8 +122,14 @@ changelog.
 
 ### Verify the scene-object matches
 
-The scene registry covers 631 regional function matches across seventeen overlay members,
-totaling 98,616 bytes.
+The scene registry covers 633 regional function matches across seventeen overlay members,
+totaling 98,884 bytes.
+
+Two Twinpeak routines compare an actor’s current and saved coordinates to choose
+a contact check. Together they match 268 bytes in SC03 member 0029. On a recorded
+US Fusion encounter, the first check returned zero and the second returned
+`0x2000`. Musashi then advanced to the next phase. Both routines still execute
+on the guest CPU in the public player.
 
 The cemetery award in SC03 member 0023 stores Jon’s Key, advances story progress
 to 60, sets the completion flag and resumes the room script. The field player

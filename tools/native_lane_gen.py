@@ -1128,6 +1128,8 @@ SCENE_PHASE_EXTENTS = {
     0x80139DC8: {"sc03_0029": None},
     0x801466F0: {"sc03_0029": None},
     0x8014680C: {"sc03_0029": None},
+    0x8014CC28: {"sc03_0029": None},
+    0x8014F3E8: {"sc03_0029": None},
     0x8015F89C: {"sc03_0029": None},
     0x8015FAE8: {"sc03_0029": None},
     0x8015FBE0: {"sc03_0029": None},
