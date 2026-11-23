@@ -3,7 +3,7 @@
 
 /* callers read v0: no (both callers ignore it; retail sets none); void.
  * func_80165A50 is passed &D_80126B58 here (retail loads a0 before the call); its owner prototype is
- * void(void) -- disagreement, same code. The final store targets D_800B99DA via D_800AF630 + 0xA3DA. */
+ * void(void) -- disagreement, same code. The final store targets 0x800B9A0A (D_800AF630 + 0xA3DA). */
 extern s32 func_80029504(void); /* its result is the s compared with 0x6A4 (callers' v0 ignored) */
 extern s32 func_800291DC(s32);
 extern void func_800291C8(s32, s16);

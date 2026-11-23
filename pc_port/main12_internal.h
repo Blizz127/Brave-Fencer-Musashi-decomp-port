@@ -42,6 +42,7 @@ struct MusashiMain12Owner {
         uint8_t bytes[768];
         uint16_t copied;
         uint8_t closed, result, label, request_cleared, consumed, dismissed, exit_written;
+        uint8_t foreground_result_written;
     } restore;
     int installed;
     struct {

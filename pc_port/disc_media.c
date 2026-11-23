@@ -488,6 +488,12 @@ static int musashi_main12_transfer_matches(const MusashiMain12Owner *owner, cons
     if (!transfer_range_matches(source, live, cursor, MAIN12_STATE)) return 0;
     if (!mailbox) return transfer_range_matches(source, live, MAIN12_STATE + 1u, MAIN12_BYTES);
     cursor = MAIN12_STATE + 1u;
+    if (installed && owner->restore.foreground_result_written) {
+        /* The foreground menu has copied the signed file result next to its state. */
+        if (live[cursor] != *transfer_byte(source, cursor) ||
+            live[cursor + 1u] != 0xffu || live[cursor + 2u] != 0xffu) return 0;
+        cursor += 3u;
+    }
     if (installed && owner->display.started) {
         uint32_t offset = MAIN12_ROW_STRINGS - 0x80128158u;
         if (!transfer_range_matches(source, live, cursor, offset) ||

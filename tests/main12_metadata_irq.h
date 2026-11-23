@@ -290,6 +290,73 @@ static void metadata_close(FormatterCpu cpu, MetadataFile *file, enum MetadataCl
                                   file->occupied_mask, file->damaged_mask);
 }
 
+static void check_room_initializer(MusashiCdDevice *files, MusashiEventDevice *polls)
+{
+    /* Reuse the mounted File 1 fixture's real event leases. Supply a synthetic
+     * completed restore so the test can start at the flag reader's return. */
+    owner->restore.files = files;
+    owner->restore.events = files->metadata_events;
+    owner->restore.open_id = owner->menu_metadata.open_id + 1u;
+    memcpy(owner->restore.allocation, owner->menu_metadata.allocation, sizeof owner->restore.allocation);
+    owner->restore.closed = owner->restore.consumed = owner->restore.request_cleared = 1;
+    owner->restore.dismissed = owner->restore.exit_written = owner->restore.foreground_result_written = 1;
+    owner->restore.copied = MAIN12_RESTORE_SIZE;
+    owner->restore.label = 1;
+    owner->display.confirm_phase = 2;
+    memcpy(owner->restore.bytes, machine.bytes + 0x75cc0u, sizeof owner->restore.bytes);
+    memcpy(musashi_boot_ram_span(&machine, MAIN12_RESTORE_BUFFER, MAIN12_RESTORE_SIZE),
+           owner->restore.bytes, MAIN12_RESTORE_SIZE);
+    metadata_put(MAIN12_CONFIRM_LABEL, 21u);
+    metadata_put(MAIN12_LOAD_REQUEST, 0u);
+    CHECK(musashi_boot_write16(&machine, MAIN12_FILE_RESULT, 0xffffu));
+    CHECK(musashi_boot_write16(&machine, MAIN12_MENU_STATUS, 0xffffu));
+    CHECK(musashi_boot_write16(&machine, 0x80115112u, 4u));
+    CHECK(musashi_boot_write16(&machine, 0x80115118u, 0u));
+    machine.bytes[0xb9a15u] = 0;
+
+    const uint32_t top = 0x801fff20u, member = 0x800af630u + 0xa3dau;
+    FormatterCpu cpu = entry(0x80145b44u);
+    cpu.cd_device = files;
+    cpu.event_device = polls;
+    cpu.main12_foreground_owner = owner;
+    cpu.main12_foreground_sp = top;
+    cpu.main12_room_next = cpu.r[31] = cpu.pc;
+    cpu.main12_room_resuming = 1;
+    cpu.r[16] = 2u;
+    cpu.r[29] = top - 80u;
+    metadata_put(top - 8u, MAIN12_MENU_EXIT_RETURN);
+    metadata_put(top - 32u, MAIN12_ROOM_RETURN);
+    metadata_put(top - 56u, MAIN12_INIT_RETURN);
+    metadata_put(top - 60u, cpu.main12_room_s1);
+    metadata_put(top - 64u, cpu.main12_room_s0);
+    CHECK(musashi_boot_write16(&machine, member, 0x1234u));
+
+    for (unsigned steps = 0; cpu.pc != 0x80145bdcu && steps < 32u; ++steps)
+        CHECK(formatter_step(&machine, &cpu));
+    CHECK(cpu.pc == 0x80145bdcu && cpu.r[17] == 0x800af630u &&
+          cpu.r[1] == 0x800bf630u && cpu.r[2] == 0x3000u);
+    FormatterCpu stale = cpu;
+    stale.r[1] -= 0x30u;
+    uint64_t before_cycles = cycles;
+    memcpy(&before_step, &machine, sizeof machine);
+    CHECK(!formatter_step(&machine, &stale) && stale.pc == cpu.pc && cycles == before_cycles);
+    CHECK(!memcmp(&before_step, &machine, sizeof machine));
+
+    FileRowClock change = {musashi_boot_ram_span(&machine, top - 56u, 1u), 0};
+    MusashiExecutionClock changed_return = {&change, change_file_row_sentinel};
+    stale = cpu;
+    stale.clock = &changed_return;
+    CHECK(change.address && !formatter_step(&machine, &stale) && change.calls == 1u && stale.pc == cpu.pc);
+    *change.address ^= 1u;
+    CHECK(!memcmp(&before_step, &machine, sizeof machine));
+    CHECK(musashi_boot_write16(&before_step, member, 0x3000u));
+    CHECK(formatter_step(&machine, &cpu) && cpu.pc == 0x80145be0u);
+    CHECK(!memcmp(&before_step, &machine, sizeof machine));
+    for (unsigned steps = 0; cpu.pc != MAIN12_ROOM_RETURN && steps < 24u; ++steps)
+        CHECK(formatter_step(&machine, &cpu));
+    CHECK(cpu.pc == MAIN12_ROOM_RETURN && !cpu.main12_room_next && cpu.r[29] == top - 24u);
+}
+
 static void check_metadata_case(enum MetadataCloseCase which, unsigned occupied_mask, unsigned damaged_mask)
 {
     MetadataFile file = {.open_id=37, .read_id=89, .occupied_mask=occupied_mask, .damaged_mask=damaged_mask, .fail_close=which == CLOSE_FAILED,
@@ -386,6 +453,8 @@ static void check_metadata_case(enum MetadataCloseCase which, unsigned occupied_
     CHECK(cd_irq_ram_word(&machine, 0x80078c80u, 0) && cd_irq_ram_word(&machine, 0x80078c88u, 1));
     CHECK(cd_irq_ram_word(&machine, 0x80072a34u, UINT32_MAX));
     metadata_close(foreground, &file, which);
+    if (which == CLOSE_OK && occupied_mask == 1u && !damaged_mask)
+        check_room_initializer(&files, &polls);
     if (which == CLOSE_OK) printf("Metadata IRQ returned after %u/%u/%u guest steps with one seek, one read and 12 event polls.\n",
            seek_steps, read_steps, complete_steps);
 }

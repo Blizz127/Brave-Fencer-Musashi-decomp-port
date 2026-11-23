@@ -1,9 +1,9 @@
 /* A closed, verified read of the selected file owns the restored guest
  * bytes until the game's foreground callback has applied the save. */
-static int main12_restore_matches(MusashiBootMemory *ram, const FormatterCpu *cpu,
+static int main12_restore_transaction(MusashiBootMemory *ram, const FormatterCpu *cpu,
                                   const MusashiMain12Owner *owner)
 {
-    if (!owner || owner != cpu->main12_callback_frame || !owner->restore.closed ||
+    if (!owner || !owner->restore.closed ||
         (!owner->restore.request_cleared && !main12_confirmed_file(ram, owner)) ||
         !cpu->cd_device || owner->restore.files != cpu->cd_device ||
         owner->menu_metadata.file_userdata != cpu->cd_device->userdata ||
@@ -13,6 +13,12 @@ static int main12_restore_matches(MusashiBootMemory *ram, const FormatterCpu *cp
     const uint8_t *live = musashi_boot_ram_span(ram, 0x80075cc0u, sizeof owner->restore.bytes);
     return owner->display.confirm_phase == 2u && main12_event_leases(&card, owner->restore.allocation) &&
            live && !memcmp(live, owner->restore.bytes, sizeof owner->restore.bytes);
+}
+
+static int main12_restore_matches(MusashiBootMemory *ram, const FormatterCpu *cpu,
+                                  const MusashiMain12Owner *owner)
+{
+    return owner == cpu->main12_callback_frame && main12_restore_transaction(ram, cpu, owner);
 }
 
 static int main12_restore_pc(MusashiBootMemory *ram, const FormatterCpu *cpu,
@@ -164,4 +170,90 @@ static int main12_loaded_exit_pc(MusashiBootMemory *ram, const FormatterCpu *cpu
             (pc != 0x8017c7fcu || cpu->r[1] + 20760u == 0x80115118u);
     return owner->restore.dismissed && !timer &&
         (pc != 0x8017c820u || (cpu->delay_slot && cpu->branch_pc == pc - 4u && cpu->npc == 0x8017ca00u));
+}
+
+/* Once the loaded message closes, the foreground dispatcher invokes the
+ * selected menu routine. Only the real dispatch delay can arm this frame. */
+enum { MAIN12_MENU_EXIT = 0x8017bf70u, MAIN12_MENU_RESULT_GET = 0x8017bff8u,
+       MAIN12_MENU_EXIT_END = 0x8017c008u, MAIN12_MENU_EXIT_RETURN = 0x8017bf10u,
+       MAIN12_MENU_STATUS = 0x801853f2u };
+
+static int main12_menu_exit_owned(MusashiBootMemory *ram, const FormatterCpu *cpu,
+                                   MusashiMain12Owner *owner)
+{
+    uint16_t stage, timer, state, result;
+    uint32_t target;
+    const uint8_t *active = musashi_boot_ram_span(ram, 0x800b9a15u, 1u);
+    return owner && !cpu->main12_callback_frame && owner->restore.exit_written &&
+           owner->restore.dismissed && owner->restore.request_cleared &&
+           owner->restore.consumed && owner->restore.copied == MAIN12_RESTORE_SIZE &&
+           active && !*active && main12_restore_transaction(ram, cpu, owner) &&
+           musashi_boot_read16(ram, 0x80115112u, &stage) && (stage == 4u || stage == 5u) &&
+           musashi_boot_read16(ram, 0x80115118u, &timer) && !timer &&
+           musashi_boot_read16(ram, MAIN12_FILE_RESULT, &result) && result == 0xffffu &&
+           musashi_boot_read16(ram, 0x801853f0u, &state) && state == 1u &&
+           musashi_boot_read32(ram, 0x80181d6cu + 4u * state, &target) && target == MAIN12_MENU_EXIT &&
+           main12_current(owner, ram);
+}
+
+static int main12_menu_exit_delay(const FormatterCpu *cpu)
+{
+    return cpu->pc == MAIN12_MENU_EXIT_RETURN - 4u && cpu->delay_slot &&
+           cpu->branch_pc == MAIN12_MENU_EXIT_RETURN - 8u && cpu->npc == MAIN12_MENU_EXIT &&
+           cpu->r[2] == MAIN12_MENU_EXIT && cpu->r[31] == MAIN12_MENU_EXIT_RETURN;
+}
+
+#include "main12_room_setup.h"
+
+static int main12_menu_exit_pc(const FormatterCpu *cpu)
+{
+    return cpu->main12_foreground_owner &&
+           ((cpu->pc >= MAIN12_MENU_EXIT && cpu->pc < MAIN12_MENU_EXIT_END) ||
+            (cpu->main12_room_next && main12_room_address(cpu->pc)));
+}
+
+static int main12_menu_exit_word(MusashiBootMemory *ram, const FormatterCpu *cpu, uint32_t *word)
+{
+    MusashiMain12Owner *owner = main12_owner_for(cpu, ram);
+    uint32_t pc = cpu->pc, top = cpu->main12_foreground_sp;
+    if (owner != cpu->main12_foreground_owner || !main12_menu_exit_owned(ram, cpu, owner) ||
+        (pc & 3u) || cpu->merge_pending || cpu->gte_load_pending || !musashi_boot_read32(ram, pc, word))
+        return 0;
+    if (cpu->main12_room_next)
+        return main12_room_address(pc) && main12_room_word(ram, cpu, *word);
+    const uint32_t stack = pc == MAIN12_MENU_EXIT || (pc >= 0x8017bff0u && pc < MAIN12_MENU_RESULT_GET)
+                               ? top : top - 24u;
+    if (cpu->r[29] != stack) return 0;
+    if (pc == MAIN12_MENU_EXIT && (cpu->delay_slot || cpu->npc != pc + 4u ||
+        cpu->r[2] != pc || cpu->r[31] != MAIN12_MENU_EXIT_RETURN)) return 0;
+    if (pc >= MAIN12_MENU_RESULT_GET && cpu->r[31] != MAIN12_MENU_EXIT + 16u) return 0;
+    if (pc == MAIN12_ROOM_RETURN - 8u || pc == MAIN12_ROOM_RETURN - 4u) {
+        uint32_t link;
+        if (!owner->restore.foreground_result_written || !musashi_boot_read32(ram, top - 8u, &link) ||
+            link != MAIN12_MENU_EXIT_RETURN) return 0;
+        if (pc == MAIN12_ROOM_RETURN - 4u &&
+            (!cpu->delay_slot || cpu->branch_pc != pc - 4u || cpu->npc != MAIN12_ROOM_SELECT ||
+             cpu->r[31] != MAIN12_ROOM_RETURN)) return 0;
+    }
+    if (pc == 0x8017bff0u || pc == 0x8017bff4u) {
+        if (cpu->r[31] != MAIN12_MENU_EXIT_RETURN ||
+            (pc == 0x8017bff4u && (!cpu->delay_slot || cpu->branch_pc != pc - 4u ||
+                                     cpu->npc != MAIN12_MENU_EXIT_RETURN))) return 0;
+    }
+
+    unsigned op = *word >> 26;
+    uint32_t addr = cpu->r[(*word >> 21) & 31u] + (uint32_t)(int32_t)(int16_t)*word;
+    if (op < 32u) return 1;
+    if (pc == MAIN12_MENU_EXIT + 4u)
+        return op == 43u && addr == top - 8u && cpu->r[31] == MAIN12_MENU_EXIT_RETURN;
+    if (pc == 0x8017bfe8u) {
+        uint32_t saved;
+        return op == 35u && addr == top - 8u && musashi_boot_read32(ram, addr, &saved) &&
+               saved == MAIN12_MENU_EXIT_RETURN;
+    }
+    if (pc == 0x8017bf84u)
+        return op == 41u && addr == MAIN12_MENU_STATUS &&
+               (uint16_t)cpu->r[(*word >> 16) & 31u] == 0xffffu &&
+               !owner->restore.foreground_result_written;
+    return pc >= MAIN12_MENU_RESULT_GET && op == 33u && addr == MAIN12_FILE_RESULT;
 }

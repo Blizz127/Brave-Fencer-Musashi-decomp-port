@@ -6170,6 +6170,10 @@ typedef struct FormatterCpu {
     uint8_t main12_clearing_file;
     uint8_t main12_card_service;
     uint32_t main12_copy_dest;
+    MusashiMain12Owner *main12_foreground_owner;
+    uint32_t main12_foreground_sp;
+    uint32_t main12_room_next, main12_room_s0, main12_room_s1;
+    uint8_t main12_room_resuming;
     uint32_t main12_payload_pc; /* Next mounted instruction of the selected-file copy. */
     uint8_t main12_copy_pending;
     uint8_t main12_directory_found;
@@ -7354,7 +7358,7 @@ static size_t g_lane_count;
 static int formatter_call(MusashiBootMemory *memory, FormatterCpu *cpu,
                            MusashiConsoleSink sink, void *userdata) {
     uint32_t address = cpu->pc;
-    if (cpu->main12_clearing_file || main12_payload_copy_pc(cpu)) return formatter_step(memory, cpu);
+    if (cpu->main12_clearing_file || main12_payload_copy_pc(cpu) || main12_menu_exit_pc(cpu)) return formatter_step(memory, cpu);
     if (cpu->gte_load_pending) return 0;
     /* A host intrinsic whose matched C the lane admitted runs as that C
      * (tools/native_lane_gen.py INTRINSIC_PCS) instead of the bespoke host
@@ -9210,6 +9214,7 @@ static int formatter_fetch(MusashiBootMemory *memory, const FormatterCpu *cpu, u
     const FormatterRange *resident = NULL;
     uint32_t shape;
     if (!cpu || (cpu->pc & 3u)) return 0;
+    if (main12_menu_exit_pc(cpu)) return main12_menu_exit_word(memory, cpu, out);
     if (cpu->main12_clearing_file) return main12_clear_word(memory, cpu, out);
     if (cpu->main12_row_pc) return main12_row_word(memory, cpu, out);
     if (main12_payload_copy_pc(cpu)) return main12_payload_copy_word(memory, cpu, out);
@@ -12257,7 +12262,7 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     if ((cpu->pc & 3u) || !spu_source_guard(memory, cpu))
         return formatter_refuse0(__LINE__, cpu->pc);
     const int copying_payload = main12_payload_copy_pc(cpu);
-    if ((copying_payload || cpu->main12_clearing_file || cpu->main12_row_pc || main12_owns_fetch(cpu) || main12_service_pc(cpu) || main12_copy_pc(cpu)) && publish_flow && g_entry_hook &&
+    if ((copying_payload || main12_menu_exit_pc(cpu) || cpu->main12_clearing_file || cpu->main12_row_pc || main12_owns_fetch(cpu) || main12_service_pc(cpu) || main12_copy_pc(cpu)) && publish_flow && g_entry_hook &&
         cpu->pc == g_entry_pending && !formatter_fetch(memory, cpu, &instruction))
         return formatter_refuse0(__LINE__, cpu->pc);
     if (publish_flow && g_entry_hook && cpu->pc == g_entry_pending) {
@@ -12266,7 +12271,7 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     }
     if (!cpu->dma_registration && !cpu->irq_image && !cpu->cd_parent_image && !registration_code_pc(cpu->pc) &&
         !startup_exchange_pc(cpu->pc) &&
-        !copying_payload && !cpu->main12_clearing_file && !cpu->main12_row_pc && !main12_owns_fetch(cpu) && !main12_service_pc(cpu) && !main12_copy_pc(cpu) && !reset_calls_guest_fill(cpu) &&
+        !copying_payload && !main12_menu_exit_pc(cpu) && !cpu->main12_clearing_file && !cpu->main12_row_pc && !main12_owns_fetch(cpu) && !main12_service_pc(cpu) && !main12_copy_pc(cpu) && !reset_calls_guest_fill(cpu) &&
         (g_lane_count || g_lane_ovl_count)) {
         int lane = lane_try(memory, cpu);
         if (lane > 0) return 1;
@@ -12743,6 +12748,13 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     const uint32_t store_pc = cpu->pc;
     const int building_row = cpu->main12_building_row;
     const int clearing_file = cpu->main12_clearing_file;
+    const int exiting_menu = main12_menu_exit_pc(cpu);
+    MusashiMain12Owner *enter_menu_exit = main12_menu_exit_delay(cpu) ? main12_owner_for(cpu, memory) : NULL;
+    if (enter_menu_exit && (!main12_menu_exit_owned(memory, cpu, enter_menu_exit) ||
+        cpu->r[29] < 24u || !musashi_boot_ram_span(memory, cpu->r[29] - 24u, 24u)))
+        enter_menu_exit = NULL;
+    const uint32_t menu_exit_npc = cpu->npc, menu_exit_branch = cpu->branch_pc;
+    const int menu_exit_delay = cpu->delay_slot;
     const MusashiMain12Owner *display_owner = cpu->main12_callback_frame;
     const int cold_request = display_owner && store_pc == 0x8017c124u;
     const int grid_issue = main12_file_grid_pc(memory, cpu, display_owner);
@@ -12756,7 +12768,7 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         return formatter_refuse0(__LINE__, cpu->pc);
     uint32_t display_hi = cpu->hi, display_lo = cpu->lo;
     uint32_t display_registers[32];
-    if (cold_request || clearing_file || building_row || grid_issue || restore_issue) {
+    if (cold_request || clearing_file || building_row || grid_issue || restore_issue || enter_menu_exit || exiting_menu) {
         if (clearing_file && opcode >= 32u && (instruction != MIPS_I(43, 4, 0, 0) ||
             cpu->r[4] - MAIN12_RESTORE_BUFFER >= MAIN12_RESTORE_SIZE)) return formatter_refuse0(__LINE__, cpu->pc);
         if (building_row && opcode >= 32u && !main12_display_access(cpu, opcode,
@@ -12852,6 +12864,16 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         if (merge_kind == MERGE_SWL || merge_kind == MERGE_SWR) cost += 2u;
         if (!cpu->clock->advance || !cpu->clock->advance(cpu->clock->userdata, cost) ||
             (cpu->cd_irq_frame && cpu->cd_irq_frame->faulted))
+            return formatter_refuse0(__LINE__, cpu->pc);
+    }
+    if (enter_menu_exit || exiting_menu) {
+        uint32_t current;
+        if (cpu->pc != issued_pc || cpu->npc != menu_exit_npc || cpu->branch_pc != menu_exit_branch ||
+            cpu->delay_slot != menu_exit_delay || memcmp(display_registers, cpu->r, sizeof display_registers) ||
+            (enter_menu_exit ? (main12_owner_for(cpu, memory) != enter_menu_exit ||
+               !main12_menu_exit_delay(cpu) || !main12_menu_exit_owned(memory, cpu, enter_menu_exit) ||
+               !musashi_boot_read32(memory, cpu->pc, &current)) :
+               !main12_menu_exit_word(memory, cpu, &current)) || current != instruction)
             return formatter_refuse0(__LINE__, cpu->pc);
     }
     if (cpu->title_mixer!=mixer_at_issue ||
@@ -13251,6 +13273,16 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     cpu->main12_copy_pending = (uint8_t)(copy_merge && schedule_merge);
     if (copying_payload)
         cpu->main12_payload_pc = old_npc == MAIN12_PAYLOAD_CALL + 8u ? 0u : old_npc;
+    if (exiting_menu) main12_room_retired(cpu, issued_pc, old_npc);
+    if (enter_menu_exit) {
+        cpu->main12_foreground_owner = enter_menu_exit;
+        cpu->main12_foreground_sp = display_registers[29];
+    } else if (exiting_menu && issued_pc == 0x8017bf84u) {
+        cpu->main12_foreground_owner->restore.foreground_result_written = 1;
+    } else if (exiting_menu && issued_pc == 0x8017bff4u && old_npc == MAIN12_MENU_EXIT_RETURN) {
+        cpu->main12_foreground_owner = NULL;
+        cpu->main12_foreground_sp = 0;
+    }
     if (cpu->pc == MAIN12_CALLBACK) {
         cpu->main12_copy_dest = 0;
         cpu->main12_directory_found = 0;
