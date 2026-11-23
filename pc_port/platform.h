@@ -5,6 +5,15 @@
 
 const char *musashi_platform_name(void);
 
+/* The launcher's log path for the SDL dialog. The caller frees the result. */
+char *musashi_platform_launch_log_path(void);
+
+#if defined(__linux__)
+/* SDL's X11 error dialog uses the environment locale for its font set. */
+int musashi_platform_show_utf8_dialog(const char *message);
+int musashi_platform_set_dialog_locale(void);
+#endif
+
 /* Host services the port needs from the operating system, one adapter per
  * host (platform/linux.c, platform/windows.c). The native lane's guest window
  * itself is musashi_native_lane_map_guest (musashi_native_lane.h), which the

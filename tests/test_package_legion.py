@@ -26,7 +26,8 @@ class LegionDiscSelectionTests(unittest.TestCase):
         shutil.copy2(LAUNCHER, self.launcher)
         self.record = self.work / "player arguments"
         player = self.package / "musashi_native_boot"
-        player.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$TEST_PLAYER_ARGS"\n')
+        player.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$TEST_PLAYER_ARGS"\n'
+                          'printf "%s\\n" "$BFM_LAUNCH_LOG"\n')
         player.chmod(0o755)
 
         # A failed lookup should fail the test without opening a desktop dialog.
@@ -63,6 +64,8 @@ class LegionDiscSelectionTests(unittest.TestCase):
         self.assertEqual(self.record.read_text().splitlines(),
                          ["--disc", str(expected), "--extra", "two words"])
         self.assertEqual(self.remembered.read_text().splitlines(), [str(expected)])
+        log = Path(self.env["XDG_STATE_HOME"]) / "bfm-port" / "last-run.log"
+        self.assertEqual(log.read_text().splitlines(), [str(log)])
 
     def test_single_level_library_fallback_prefers_cue(self):
         self.image(self.library_disc, "A track.bin")

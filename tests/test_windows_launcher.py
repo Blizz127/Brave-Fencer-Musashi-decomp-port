@@ -23,7 +23,7 @@ def test_disc_selection_preserves_literal_windows_paths(tmp_path):
 
     install = tmp_path / "Games (Win64) 100% - literal %MUSASHI_TEST_NAME%"
     profile = tmp_path / "Profile (User) 50% - literal %MUSASHI_TEST_NAME%"
-    config = tmp_path / "AppData (Roaming) 20%" / "bfm-port"
+    config = tmp_path / "Étude 雪 (Roaming) 20%" / "bfm-port"
     nearby = install / "disc" / "First (US) 50% complete.cue"
     alternate = profile / "Games/brave-fencer-musashi/disc/Second (US) 75%.cue"
     for image in (nearby, alternate):
@@ -35,7 +35,11 @@ def test_disc_selection_preserves_literal_windows_paths(tmp_path):
     )
     source = tmp_path / "player.c"
     source.write_text(r'''#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+#include "platform.h"
+uint32_t musashi_native_lane_current(void) { return 0; }
 int main(int argc, char **argv) {
     if (argc != 3 || strcmp(argv[1], "--disc")) return 60;
     FILE *file = fopen(argv[2], "rb");
@@ -46,12 +50,18 @@ int main(int argc, char **argv) {
         puts("could not start from your disc image");
         return 2;
     }
+    char *log = musashi_platform_launch_log_path();
+    if (!log) return 62;
+    printf("log=%s\n", log);
+    free(log);
     printf("selected=%s\n", argv[2]);
     return 0;
 }
 ''')
     subprocess.run(
-        [zig, "cc", "-target", "x86_64-windows-gnu", "-O2", "-s", str(source),
+        [zig, "cc", "-target", "x86_64-windows-gnu", "-O2", "-s",
+         "-I", str(ROOT / "pc_port"), "-I", str(ROOT / "pc_port/include"),
+         str(source), str(ROOT / "pc_port/platform/windows.c"),
          "-o", str(tmp_path / "player.exe")], check=True,
     )
     shutil.copyfile(tmp_path / "player.exe", install / "musashi_native_boot.exe")
@@ -80,7 +90,9 @@ int main(int argc, char **argv) {
                               capture_output=True, timeout=120).returncode
 
     def selected(path):
-        assert "selected=" + guest(path) in (config / "last-run.log").read_text().splitlines()
+        lines = (config / "last-run.log").read_text(encoding="utf-8").splitlines()
+        assert "selected=" + guest(path) in lines
+        assert "log=" + guest(config / "last-run.log") in lines
         assert remembered.read_text().strip() == guest(path)
         assert unrelated.read_bytes() == b"original"
 

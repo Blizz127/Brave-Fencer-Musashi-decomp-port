@@ -3321,13 +3321,51 @@ static void observe_entry(void *userdata, const MusashiEntryCpuSnapshot *cpu) {
                 guest_irq_enabled(boot));
 }
 
+static int show_error_dialog(const char *message) {
+    return SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Brave Fencer Musashi", message, NULL);
+}
+
+#if defined(__linux__)
+static int show_linux_error_dialog(const char *message) {
+    if (musashi_platform_set_dialog_locale()) return show_error_dialog(message);
+
+    /* A minimal Linux installation may have no UTF-8 locale. Show its exact
+     * non-ASCII filename bytes as escapes so the filename stays identifiable.
+     * stderr already contains the original message and filesystem path. */
+    static const char digits[] = "0123456789ABCDEF";
+    size_t length = strlen(message);
+    if (length > (SIZE_MAX - 1) / 4) return -1;
+    char *ascii = malloc(length * 4 + 1);
+    if (!ascii) return -1;
+    char *out = ascii;
+    for (const unsigned char *p = (const unsigned char *)message; *p; ++p) {
+        if (*p >= 0x80 || *p == '\\') {
+            *out++ = '\\';
+            *out++ = 'x';
+            *out++ = digits[*p >> 4];
+            *out++ = digits[*p & 15];
+        } else {
+            *out++ = (char)*p;
+        }
+    }
+    *out = 0;
+    int result = show_error_dialog(ascii);
+    free(ascii);
+    return result;
+}
+#endif
+
 /* A problem the player has to act on: stderr always, and an on-screen
  * dialog when a person is playing (MUSASHI_INTERACTIVE, set by launch.sh). */
 static void user_error(const char *message) {
     const char *interactive = getenv("MUSASHI_INTERACTIVE");
     fprintf(stderr, "\n%s\n\n", message);
-    if (interactive && interactive[0] == '1')
-        (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Brave Fencer Musashi", message, NULL);
+    if (interactive && interactive[0] == '1') {
+#if defined(__linux__)
+        if (musashi_platform_show_utf8_dialog(message)) return;
+#endif
+        (void)show_error_dialog(message);
+    }
 }
 
 /* --disc PATH: the EXE is read from the image itself (ISO 9660 root) into
@@ -4077,6 +4115,10 @@ static void plat_timing_attach(int guest_clock, int unthrottled) {
 #endif
 
 int main(int argc, char **argv) {
+#if defined(__linux__)
+    if (argc == 3 && strcmp(argv[1], "--show-error-dialog-utf8") == 0)
+        return show_linux_error_dialog(argv[2]) == 0 ? 0 : 1;
+#endif
     static NativeBoot boot_storage; /* One stable, zero-initialized owner. */
     NativeBoot *const boot_owner = native_boot_owner(&boot_storage);
 #define boot (*boot_owner)
@@ -4611,12 +4653,25 @@ int main(int argc, char **argv) {
             status==MUSASHI_RESETGRAPH_PREFIX_COMPLETE ? "RETURNED" :
             status==MUSASHI_RESETGRAPH_PREFIX_UNSUPPORTED_CALL ? "UNBOUND_CALL" : "REFUSED");
     if (!host_stop_signal && status != MUSASHI_RESETGRAPH_PREFIX_COMPLETE) {
-        char message[320];
-        snprintf(message, sizeof message,
-                 "This early preview has reached a part of the game it cannot run yet "
-                 "(code address %08X), so it has to stop here.\n\nThe log is in "
-                 "~/.local/state/bfm-port/last-run.log.", entry_stop.cpu.pc);
-        user_error(message);
+        char *log_path = musashi_platform_launch_log_path();
+        char reason[160];
+        char *detail = NULL;
+        if (boot.irq.scheduler.faulted && boot.irq.failed_target) {
+            snprintf(reason, sizeof reason,
+                     "This preview stopped in an interrupt callback at %08X. "
+                     "The interrupted game address was %08X.",
+                     (unsigned)boot.irq.failed_target, (unsigned)entry_stop.cpu.pc);
+        } else {
+            snprintf(reason, sizeof reason,
+                     "This preview stopped at game address %08X.", (unsigned)entry_stop.cpu.pc);
+        }
+        if (log_path && *log_path && SDL_asprintf(&detail, "%s\n\nLog file\n%s", reason, log_path) >= 0) {
+            user_error(detail);
+            SDL_free(detail);
+        } else {
+            user_error(reason);
+        }
+        free(log_path);
     }
     fprintf(stderr,"native_boot: MDEC_SETUP command=%08x remaining=%u transfers=%llu "
             "control=%08x dma0=%08x dma1=%08x\n",boot.mdec.command,

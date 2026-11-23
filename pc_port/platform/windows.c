@@ -4,10 +4,34 @@
 #include "musashi_native_lane.h"
 #include "musashi_x11_nograb.h"
 #include <stdint.h>
+#include <stdlib.h>
 #include <windows.h>
 
 const char *musashi_platform_name(void) {
     return "windows";
+}
+
+char *musashi_platform_launch_log_path(void) {
+    DWORD capacity = GetEnvironmentVariableW(L"BFM_LAUNCH_LOG", NULL, 0);
+    if (!capacity) return NULL;
+    WCHAR *wide = malloc((size_t)capacity * sizeof(*wide));
+    if (!wide) return NULL;
+    DWORD length = GetEnvironmentVariableW(L"BFM_LAUNCH_LOG", wide, capacity);
+    char *path = NULL;
+    if (length && length < capacity) {
+        int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide, -1,
+                                       NULL, 0, NULL, NULL);
+        if (size > 0) {
+            path = malloc((size_t)size);
+            if (path && !WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide, -1,
+                                             path, size, NULL, NULL)) {
+                free(path);
+                path = NULL;
+            }
+        }
+    }
+    free(wide);
+    return path;
 }
 
 /* Views of a section must start on the 64 KiB allocation granularity; both

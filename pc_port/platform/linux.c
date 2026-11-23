@@ -8,15 +8,64 @@
 #include "musashi_boot_memory.h"
 #include "musashi_native_lane.h"
 #include <dlfcn.h>
+#include <errno.h>
+#include <langinfo.h>
+#include <locale.h>
+#include <spawn.h>
 #include <signal.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 const char *musashi_platform_name(void) {
     return "linux";
+}
+
+char *musashi_platform_launch_log_path(void) {
+    const char *path = getenv("BFM_LAUNCH_LOG");
+    return path && *path ? strdup(path) : NULL;
+}
+
+static int locale_uses_utf8(const char *name) {
+    locale_t locale = newlocale(LC_CTYPE_MASK, name, (locale_t)0);
+    if (!locale) return 0;
+    const char *codeset = nl_langinfo_l(CODESET, locale);
+    int utf8 = strcmp(codeset, "UTF-8") == 0 || strcmp(codeset, "UTF8") == 0;
+    freelocale(locale);
+    return utf8;
+}
+
+int musashi_platform_set_dialog_locale(void) {
+    /* Only the dedicated dialog process changes its environment. SDL's X11
+     * backend reads it again when it creates the font set. */
+    const char *choices[] = {"C.UTF-8", "en_US.UTF-8", getenv("LANG")};
+    for (size_t i = 0; i < sizeof(choices) / sizeof(choices[0]); ++i) {
+        if (choices[i] && *choices[i] && locale_uses_utf8(choices[i]))
+            return setenv("LC_ALL", choices[i], 1) == 0;
+    }
+    return 0;
+}
+
+int musashi_platform_show_utf8_dialog(const char *message) {
+    const unsigned char *p = (const unsigned char *)message;
+    while (*p && *p < 0x80) ++p;
+    if (!*p || locale_uses_utf8("")) return 0;
+
+    /* The running game can have audio and rendering threads. Start a fresh
+     * process so changing the locale cannot affect those threads. */
+    char *const args[] = {"musashi_native_boot", "--show-error-dialog-utf8", (char *)message, NULL};
+    pid_t child;
+    if (posix_spawn(&child, "/proc/self/exe", NULL, NULL, args, environ) != 0) return 0;
+    int status;
+    pid_t waited;
+    do {
+        waited = waitpid(child, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+    return waited == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
 void *musashi_native_lane_map_guest(size_t size, int *scratchpad_aliased) {

@@ -9,6 +9,7 @@ for %%P in (%0) do set "HERE=%%~dpP"
 set "CONF=%APPDATA%\bfm-port"
 if not exist "%CONF%" mkdir "%CONF%"
 set "LOG=%CONF%\last-run.log"
+set "BFM_LAUNCH_LOG=%LOG%"
 rem Launcher-managed data: explicit env paths never fall through to a picker.
 set "LAUNCHER_DISC="
 if defined BFM_DISC set "LAUNCHER_DISC=1"

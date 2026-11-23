@@ -10,6 +10,7 @@ CONF=${XDG_CONFIG_HOME:-$HOME/.config}/bfm-port
 STATE=${XDG_STATE_HOME:-$HOME/.local/state}/bfm-port
 mkdir -p "$CONF" "$STATE"
 LOG="$STATE/last-run.log"
+export BFM_LAUNCH_LOG="$LOG"
 
 say() {  # message box when a desktop tool exists, always stderr
     echo "bfm: $1" >&2
