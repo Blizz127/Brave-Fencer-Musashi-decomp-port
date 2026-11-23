@@ -11953,6 +11953,8 @@ typedef struct LaneRunFrame {
         int (*pay)(void *, const void *, uint32_t);
         unsigned entry;
         unsigned long long digital, analog53, analog73, presses, releases, cycles, quiet_declines;
+        unsigned long long reset_issues, reset_writes, reset_returns;
+        unsigned long long reset_port_returns[2], reset_declined_issues;
     } pad_latch;
     struct {
         uint8_t digest[2][32];
@@ -12621,6 +12623,7 @@ static int lane_try(MusashiBootMemory *memory, FormatterCpu *cpu) {
 #include "story_word_call.h"
 #include "frame_pad_latch.h"
 #include "controller_mask_map.h"
+#include "controller_disconnect.h"
 
 static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     uint32_t instruction, opcode, rs, rt, rd, immediate, old_npc;
@@ -12714,6 +12717,14 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
             return 1;
         }
         if (lane < 0) return formatter_refuse0(__LINE__, cpu->pc);
+    }
+    if (issued_pc - PAD_DISCONNECT < PAD_DISCONNECT_SIZE) {
+        int reset = controller_disconnect_issue(root, memory, cpu);
+        if (reset > 0) return 1;
+        if (reset < 0) return formatter_refuse0(__LINE__, issued_pc);
+        if (root && root->cpu == cpu && root->prev && root->prev->cpu == cpu &&
+            !root->prev->prev && root->prev->entry_stop)
+            ++root->prev->pad_latch.reset_declined_issues;
     }
     if (game_graphics_pc(cpu->pc) && g_lane_run_frames && g_lane_run_frames->main_entry.next) {
         const int issue = game_graphics_issue(g_lane_run_frames,memory,cpu);

@@ -112,6 +112,12 @@ static int frame_pad_offer(LaneRunFrame *nested, MusashiBootMemory *memory, Form
 }
 
 static void frame_pad_report(const LaneRunFrame *root) {
+    if (root->pad_latch.reset_issues || root->pad_latch.reset_declined_issues)
+        fprintf(stderr, "native_boot: PAD_DISCONNECT issues=%llu writes=%llu returns=%llu "
+                "port1=%llu port2=%llu declined_issues=%llu\n",
+                root->pad_latch.reset_issues, root->pad_latch.reset_writes, root->pad_latch.reset_returns,
+                root->pad_latch.reset_port_returns[0], root->pad_latch.reset_port_returns[1],
+                root->pad_latch.reset_declined_issues);
     if (root->pad_latch.cycles || root->pad_latch.quiet_declines)
         fprintf(stderr, "native_boot: PAD_LATCH digital=%llu analog53=%llu analog73=%llu "
                 "presses=%llu releases=%llu cycles=%llu quiet_declines=%llu\n",

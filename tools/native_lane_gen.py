@@ -1960,6 +1960,13 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
         # A single whole-function charge can miss a channel update during the scan.
         if member is None and vram in (0x800331D4, 0x8002F248, 0x8002DC68):
             raise Reject("timing", "sound channel lookup and its callers require event timing")
+        # Resetting a controller report retires six byte stores at separate
+        # bus times and leaves v0, v1 and a1 observable at its return.
+        if vram == 0x80018F88 and (
+                member is None or entry.get("region") == "main" or
+                src.resolve() == ROOT / "src/main/80018f88.c" or
+                (size == 64 and member_digest(info, vram, size) == 0x102b93aa2fe67a66)):
+            raise Reject("timing", "controller report reset needs individual store times and return registers")
         # The distance caller uses a real guest stack frame and two distinct return PCs.
         if member is None and vram == 0x80013328:
             raise Reject("timing", "distance requires the nested guest call frames and event timing")
