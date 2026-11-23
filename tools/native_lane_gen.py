@@ -1133,7 +1133,19 @@ STEAMWOOD_SCRIPT_EXTENTS = {
 }
 
 
+# Repair and the successor scenes use the active script, callbacks and guest timing.
+STEAMWOOD_REPAIR_EXTENTS = {
+    0x8017D980: {"sc03_0010": (60, 0xEAB73DEC27802413)},
+    0x8017DAD4: {"sc03_0010": (76, 0xE1059CD26FF7368A)},
+    0x8017DD44: {"sc03_0010": (64, 0xCB65A10B0309C55D)},
+    0x8017DF54: {"sc03_0010": (56, 0x040D9AED74ACDCB6)},
+    0x8017DF8C: {"sc03_0010": (40, 0x0381B0DA1F71938E)},
+    0x8017D548: {"sc03_0012": (136, 0x42E665AC7E6ADD1A)},
+}
+
+
 SCENE_PHASE_EXTENTS = {
+    **STEAMWOOD_REPAIR_EXTENTS,
     **{pc: {"sc03_0010": extent} for pc, extent in STEAMWOOD_SCRIPT_EXTENTS.items()},
     **{pc: {"sc03_0010": extent} for pc, extent in STEAMWOOD_TIMER_EXTENTS.items()},
     # File selection runs on the active MAIN menu and calls the guest sound service.
@@ -1516,9 +1528,14 @@ def overlay_extent_source_only(entry, src, info, extents):
                   key in info for key in ("vram", "start", "data")):
         if any(member_digest(info, pc, size) == digest for size, digest in variants.values()):
             return True
+    if pc in STEAMWOOD_REPAIR_EXTENTS and extents is SCENE_PHASE_EXTENTS:
+        if info and all(key in info for key in ("vram", "start", "data")):
+            size, digest = next(iter(variants.values()))
+            if member_digest(info, pc, size) == digest:
+                return True
     # Several scenes reuse the same small script setters. For an unnamed
     # room, verify the Steamwood valve transition as well as the callee.
-    if pc in STEAMWOOD_SCRIPT_EXTENTS and extents is SCENE_PHASE_EXTENTS:
+    elif pc in STEAMWOOD_SCRIPT_EXTENTS and extents is SCENE_PHASE_EXTENTS:
         if info and all(key in info for key in ("vram", "start", "data")):
             size, digest = STEAMWOOD_SCRIPT_EXTENTS[pc]
             caller_size, caller_digest = extents[0x8017DB84]["sc03_0010"]

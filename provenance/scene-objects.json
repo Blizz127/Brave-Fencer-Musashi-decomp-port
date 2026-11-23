@@ -121,6 +121,12 @@
       "file": "extracted/overlays/sc03/0010.pac0.bin",
       "base": 2148696408,
       "sha256": "96bfac48c8790a69a8487bf9c26c15ae0b86ee6a4e946b8e0eb000be633e0149"
+    },
+    "sc03_0012": {
+      "kind": "blob",
+      "file": "extracted/overlays/sc03/0012.pac0.bin",
+      "base": 2148696408,
+      "sha256": "44c1ed65f552cdb746e6b851263e845b2dddf31ad827cb5da433944af0e81552"
     }
   },
   "matches": [
@@ -7486,6 +7492,84 @@
       "origin": "Project C verified against the entire linked function in USA SC03.CD member 0010.",
       "source_sha256": "38d5a64544e148018e273c8c3e9d28d03b50e44b5d928bb135df3a9445b1d0b4",
       "span_sha256": "cbcdc56256facabaaa414ecec4e6262b153ac9c767b43af3bd5f9131217a48ad"
+    },
+    {
+      "name": "func_8017D980",
+      "region": "sc03_0010",
+      "vram": 2149046656,
+      "size": 60,
+      "source": "src/overlays/sc03_0010/8017d980.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Project C verified against the entire linked function in USA SC03.CD member 0010.",
+      "source_sha256": "7819b6ac57a6688b7f2daf75175f4593259c7d85a1a32b11b2c7910f13ff67d3",
+      "span_sha256": "db5e3aca85c9f15eb889f5a5116cd29f0e95fc462eeb58d5bd9ca80165e84786"
+    },
+    {
+      "name": "func_8017DAD4",
+      "region": "sc03_0010",
+      "vram": 2149046996,
+      "size": 76,
+      "source": "src/overlays/sc03_0010/8017dad4.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Project C verified against the entire linked function in USA SC03.CD member 0010.",
+      "source_sha256": "f143608be3f698e7f616ddbd3573c9425997a790fcefabd5d1028bff26e318b3",
+      "span_sha256": "f7fdb8549885bbde3e28fceda414f56adf2e26cc91112076f981c9f029354e7c"
+    },
+    {
+      "name": "func_8017DD44",
+      "region": "sc03_0010",
+      "vram": 2149047620,
+      "size": 64,
+      "source": "src/overlays/sc03_0010/8017dd44.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Project C verified against the entire linked function in USA SC03.CD member 0010.",
+      "source_sha256": "18f9e785982597f43d90b18e1a2830f8f26e308d19e6bf0de677ca267fc313de",
+      "span_sha256": "31e255d26f6ed93e042b64f34d44eae2861dbdb66f82f0ceb206dfd4d954748d"
+    },
+    {
+      "name": "func_8017DF54",
+      "region": "sc03_0010",
+      "vram": 2149048148,
+      "size": 56,
+      "source": "src/overlays/sc03_0010/8017df54.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Project C verified against the entire linked function in USA SC03.CD member 0010.",
+      "source_sha256": "6ad9db751a58b8662cb01a4ecef969928f70c6e8e772354240776d2260c0c86f",
+      "span_sha256": "c1f9afcd84948c5e0bb5f7b0af69b8a39a139202e375c6ac218a945baefcfde9"
+    },
+    {
+      "name": "func_8017DF8C",
+      "region": "sc03_0010",
+      "vram": 2149048204,
+      "size": 40,
+      "source": "src/overlays/sc03_0010/8017df8c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Project C verified against the entire linked function in USA SC03.CD member 0010.",
+      "source_sha256": "0aa550515163d3a480aab716e3484c30eb3236278cf643f1a1b591f7aee3b4e8",
+      "span_sha256": "ab4e6a408b5d93547c07c3d02fc3717d49e2b4f65d55e79f912560ddd99be2cf"
+    },
+    {
+      "name": "func_8017D548",
+      "region": "sc03_0012",
+      "vram": 2149045576,
+      "size": 136,
+      "source": "src/overlays/sc03_0012/8017d548.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Project C verified against the entire linked function in USA SC03.CD member 0012.",
+      "source_sha256": "0cdb36382a632cb1d9c8bbc5feca3af66956ad657d36c43e7e16276a47357a13",
+      "span_sha256": "350d4904dd71ec046b464e504aefb4b1b3ac866f46a55db2f15e7609a37decb8"
     }
   ]
 }

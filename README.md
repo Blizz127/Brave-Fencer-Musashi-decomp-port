@@ -36,9 +36,9 @@ closed numbered valves 1 through 6 in order. Valve 5 reset its timer to 35
 seconds and valve 6 to 60. The full eight-valve repair remains unverified.
 [Steamwood gameplay results](docs/RELEASE-CANDIDATE-f7e8a138.md#private-steamwood-progress)
 
-Nine additional functions now match all 772 bytes of the indoor Steamwood
-pressure-gauge actions and the second valve’s selector. The scene registry
-covers 676 functions across the matched overlays. These nine entries document
+An earlier nine-function checkpoint matched all 772 bytes of the indoor Steamwood
+pressure-gauge actions and the second valve’s selector. It brought the scene registry
+to 676 functions across the matched overlays. These nine entries document
 the decompilation. Native execution of the indoor gauge remains in progress.
 
 The File 1 menu-exit callback and its signed status reader now match the US
@@ -62,11 +62,20 @@ preserves the action flags, loads the next word and advances the byte
 cursor, including its wrap from 255 to zero. The final branch clears a
 story halfword and three 56-byte blocks. All 212 original bytes matched.
 Across 5,633 controlled calls, the original and host C agreed on the whole
-player structure, story writes and external call order. The match count is
-now 1,005. On an earlier private Linux attempt, valve 4 turned green and
+player structure, story writes and external call order. That checkpoint
+brought the match count to 1,005. On an earlier private Linux attempt, valve 4 turned green and
 its clock reset from 3 to 35 seconds. Valve 5’s gauge opened at 23 seconds
 and that attempt ran out of time. The later run closed six valves in order.
 The full repair and a save after the rescue still need a complete playthrough.
+
+Six more C functions bring the verified total to 1,011 across 13 registries.
+Inside Steamwood they select a callback from the supplied room data, check a
+position, and handle descriptor completion, a periodic sequence and a script
+request. The sixth advances the story stage and sets a countdown on the exit
+route. All 432 bytes of their compiled game code matched. In 2,597 controlled
+comparisons the C agreed with the original routines. The ordinary player
+still executes these six through the guest CPU. The full repair and exit
+remain open gameplay tests.
 
 Earlier candidates documented the truncated Linux log path and what happened
 with several occupied saves. [Previous File 1 results](docs/RELEASE-CANDIDATE-97a342d8.md) · [Earlier paired tests](docs/RELEASE-CANDIDATE-c0b07365.md)
@@ -160,8 +169,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The scene registry covers 667 regional function matches across 20 overlay members,
-totaling 102,404 bytes. The recent Steamwood source includes Fores’s cottage
+The scene registry covers 700 regional function matches across 21 overlay members,
+totaling 104,904 bytes. The recent Steamwood source includes Fores’s cottage
 initializer and six functions that run the outdoor practice gauge. Four more C
 functions reproduce 336 bytes of the US game. One records when the emergency
 timer starts. The other three select the outdoor door’s current action, start
