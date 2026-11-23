@@ -38,14 +38,27 @@ menu has an empty warp list. A Linux player built at commit `7fd45d2` was
 checked for both tables and both strings. The source also delegates interrupt
 and device-library routines to the program on your disc.
 
-On a cold launch from a USA disc, a Linux test build reached **Continue** and
-displayed a Chapter 1 save in File 1. After the player chose File 1 and confirmed
-**Yes**, the game read the 768-byte save payload from the configured memory card,
-copied its 732-byte restore record into game memory, and displayed **Loaded data!**
-The player pressed Cross to dismiss the message. Execution stopped in the file
-menu at `0x8017C3FC` before the field appeared. A replacement player download
-still needs to reach ordinary gameplay, save at an inn, and Continue after
-restarting.
+A Linux player built from public revision `ff943a85` showed an earned Chapter 1
+save in File 1, read its 768-byte payload, restored the 732-byte game record and
+displayed **Loaded data!** After Cross, the interrupt dispatcher stopped at
+sound callback `0x8002CE84` with the message still visible. The original US game
+showed Musashi asleep in the bedroom after the same load.
+
+New Game on public Linux revision `c5f6e2f0` reached **NOW LOADING** and
+exited before the opening moon at interrupt callback `0x8002CFAC`. In a
+separate pair of local Linux and Windows x64 builds at `e45d0e034`, New Game
+exited at sound-sequence target `0x800338D0`. The Windows test ran under Wine
+10. A later Linux and Windows pair at `88de76842` also tested an earned
+File 1. Both players displayed **Loaded data!**, accepted Cross and selected
+the bedroom (room 3001, entrance 0). Both stopped at the room-object reset,
+`0x80129258`, with a black screen before the room became active. The Windows
+run used Wine 10. The original US game restored the bedroom from this card.
+
+The room-change routine, the 128-slot reset and the two following scene setup
+functions have matching C source. The two setup functions clear the room
+workspace, initialize three records from scene data and clear two smaller
+records. A playable start, an inn save and a successful Continue after
+restarting still need verification on replacement downloads.
 
 Compiled host code now handles the opening movie’s output callback. In an
 ordinary Linux run, it processed 1,760 strips across 88 complete movie frames
@@ -73,8 +86,14 @@ changelog.
 
 ### Verify the scene-object matches
 
-The scene registry covers 603 regional function matches across fourteen scene overlays,
-totaling 95,084 bytes.
+The scene registry covers 612 regional function matches across sixteen overlay members,
+totaling 96,176 bytes.
+
+Three Twinpeak actor routines in SC03 member 0029 match 288 bytes from the US disc.
+They start action 22, dispatch by phase, and process animation events and cleanup
+in phase four. The component test exercises the callback order and the actor
+fields shared with action 21. Run `python3 -m pytest -q tests/test_twinpeak_action22.py`.
+The public player continues to execute these three routines on the guest CPU.
 
 Jon’s stocks initializer selects a dialogue script using story progress, an event flag and a game query. The host test covers seven outcomes, including the high-progress path that keeps the previous selection. The public player excludes this initializer from native dispatch.
 

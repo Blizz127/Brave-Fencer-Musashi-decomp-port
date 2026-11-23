@@ -6331,6 +6331,71 @@
       "origin": "Independent owner C reconstruction from the US disc. This source matches the mounted room transition after restoring File 1.",
       "source_sha256": "d6c2499b9df07d194cfe2a411d36dc3ea0ddbcc49c40130089fde88ce0405cce",
       "span_sha256": "1d7536e667f0dfdcdf9507a2f0a7b2de2e6c5db0ba811a7e23a13243df7a30d2"
+    },
+    {
+      "name": "func_801378F0",
+      "vram": 2148759792,
+      "size": 232,
+      "region": "main_0012",
+      "source": "src/overlays/main_0012/801378f0.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independent owner C reconstruction from the US disc, matched to the mounted saved-room scene setup.",
+      "source_sha256": "5bda9acb8e8c676445c2c2e3a3d10a22b442bf399057bd076d78880656369222",
+      "span_sha256": "b701331abb8cc5df830599b68c5fb643e19a49ef37deefd51c7a811f4a8a2e6b"
+    },
+    {
+      "name": "func_8013A860",
+      "vram": 2148771936,
+      "size": 80,
+      "region": "main_0012",
+      "source": "src/overlays/main_0012/8013a860.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independent owner C reconstruction from the US disc, matched to the mounted saved-room scene setup.",
+      "source_sha256": "69ce2a4c5159ff87373bac79c92f7ee670aabb1b8dde1219f6cd478b02975576",
+      "span_sha256": "6bbee845059b849602e34b68398dc3d23a247961cf9f6f382bbae61d1c6aab15"
+    },
+    {
+      "name": "func_8015FA78",
+      "region": "sc03_0029",
+      "vram": 2148924024,
+      "size": 52,
+      "source": "src/overlays/sc03_0029/8015fa78.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 0029 and matched against its complete linked function extent.",
+      "source_sha256": "bb25b93ef819eb031b14fa7dccb7306e8ddc688d23cfc418993bafe0ee5ccdb3",
+      "span_sha256": "906551006d432fecaf85cf6071560c49d4f50c47dc89486b29e3a24b56d6ef95"
+    },
+    {
+      "name": "func_8015FAAC",
+      "region": "sc03_0029",
+      "vram": 2148924076,
+      "size": 60,
+      "source": "src/overlays/sc03_0029/8015faac.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 0029 and matched against its complete linked function extent.",
+      "source_sha256": "468c53926746a1d86f07efaf45702776d00aec49a2d1ad9230f5506fde047da7",
+      "span_sha256": "237ea3ec114a876227b4afb177d0a5225ceb2978b2e771dbe1cac4aaa031dd9b"
+    },
+    {
+      "name": "func_8015FE70",
+      "region": "sc03_0029",
+      "vram": 2148925040,
+      "size": 176,
+      "source": "src/overlays/sc03_0029/8015fe70.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 0029 and matched against its complete linked function extent.",
+      "source_sha256": "35395ae365078ff8fc48cd34975c45a59a25577f8fb74dfc3193f7365878c6e8",
+      "span_sha256": "3bcf231622ab5ff2f56778b556c653d86606cb527a09ab9cb8b26691098dd306"
     }
   ]
 }

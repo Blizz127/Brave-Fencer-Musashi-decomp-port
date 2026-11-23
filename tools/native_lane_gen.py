@@ -1110,6 +1110,10 @@ SCENE_PHASE_EXTENTS = {
     # to the game clock as it clears 128 object type fields.
     0x800D1D24: {"main_0010": None},
     0x80129258: {"main_0012": None},
+    # The following initializer and its child issue timed clears of the
+    # workspace, scene records and two trailing records.
+    0x801378F0: {"main_0012": None},
+    0x8013A860: {"main_0012": None},
     # Twinpeak's action and queue operations need the live actor, services and
     # guest timing. The queue bytes alone cannot identify their scene.
     0x801466F0: {"sc03_0029": None},

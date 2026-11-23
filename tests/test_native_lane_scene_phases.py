@@ -1082,6 +1082,8 @@ def test_forest_effect_and_steam_knight_extents(tmp_path, monkeypatch, member):
     ("sc03_0029", 0x8015F89C, 172),
     ("main_0010", 0x800D1D24, 112),
     ("main_0012", 0x80129258, 36),
+    ("main_0012", 0x801378F0, 232),
+    ("main_0012", 0x8013A860, 80),
 ])
 def test_timed_source_keeps_other_room_implementations_selectable(tmp_path, member, pc, size):
     (tmp_path / "ir").mkdir()
@@ -1102,3 +1104,30 @@ def test_timed_source_keeps_other_room_implementations_selectable(tmp_path, memb
     assert lane.build_one(other, tmp_path, {}, {}, "clang", timed_member)["rule"] == "timing"
     assert lane.build_one(dict(other, region=member), tmp_path, {}, {}, "clang", info)["rule"] == "timing"
     assert lane.build_one(other, tmp_path, {}, {}, "clang", info)["admitted"]
+
+
+@pytest.mark.parametrize("pc,size", [
+    (0x8015FA78, 52),
+    (0x8015FAAC, 60),
+    (0x8015FE70, 176),
+])
+def test_twinpeak_action22_source_has_no_generic_handler(tmp_path, pc, size):
+    if not all(shutil.which(tool) for tool in ("clang", "nm")):
+        pytest.skip("clang and nm required for lane generation")
+    (tmp_path / "ir").mkdir()
+    scene = ROOT / "src/overlays/sc03_0029"
+    source = scene / f"{pc:08x}.c"
+    row = dict(name=f"func_{pc:08X}", vram=pc, size=size, region="sc03_0029",
+               source=str(source))
+    other = "sc02_0031"
+    info = dict(vram=pc, start=0, code=[(pc, pc + size)], data=bytes(size))
+    for member in ("sc03_0029", other):
+        result = lane.build_one(dict(row, region=member), tmp_path, {}, {}, "clang",
+                                dict(info, member=member))
+        assert not result["admitted"]
+
+    alternate = tmp_path / "other.c"
+    alternate.write_text(f"int func_{pc:08X}(int x) {{ return x; }}\n")
+    result = lane.build_one(dict(row, region=other, source=str(alternate)),
+                            tmp_path, {}, {}, "clang", dict(info, member=other))
+    assert result["admitted"]
