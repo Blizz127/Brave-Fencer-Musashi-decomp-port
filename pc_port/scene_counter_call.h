@@ -3,6 +3,14 @@
 enum { COUNTER_ENTRY = 0x800118acu, COUNTER_SIZE = 124u, COUNTER_CYCLES = 70u,
        COUNTER_BASE = 0x800af630u, COUNTER_FIELDS = COUNTER_BASE + 0xa3b4u };
 
+enum { STORY_READ = 0x80029504u, STORY_WRITE = 0x80029514u,
+       STORY_WORD = 0x80078e80u, STORY_LEAF_SIZE = 16u, STORY_WORD_CYCLES = 9u };
+
+static int mounted_leaf_target(uint32_t pc)
+{
+    return pc == COUNTER_ENTRY || pc == STORY_READ || pc == STORY_WRITE;
+}
+
 static void scene_counter_capture(LaneRunFrame *root, MusashiBootMemory *ram,
                                   const FormatterCpu *cpu)
 {
@@ -10,13 +18,15 @@ static void scene_counter_capture(LaneRunFrame *root, MusashiBootMemory *ram,
     if (root->main_entry.memory == ram && game_main_owner(root, ram, cpu) &&
         field_scene_bus(cpu) && intrinsic_span(cpu, COUNTER_ENTRY, COUNTER_SIZE) &&
         body && cpu->clock->userdata == cpu->callback_device->userdata && cpu->callback_device->charge_quiet &&
-        musashi_sha256_digest(body, COUNTER_SIZE, root->counter.digest))
-        root->counter.pay = cpu->callback_device->charge_quiet;
+        musashi_sha256_digest(body, COUNTER_SIZE, root->counter.digest)) {
+        root->counter.mounted = 1;
+        root->mounted_call.pay = cpu->callback_device->charge_quiet;
+    }
 }
 
 /* The mounted dispatcher delegates ordinary work inside its selected service.
  * Its own entry, return and delay transitions remain entirely with the parent. */
-static int scene_counter_service_bound(LaneRunFrame *root, MusashiBootMemory *ram,
+static int mounted_leaf_service_bound(LaneRunFrame *root, MusashiBootMemory *ram,
                                        const FormatterCpu *cpu)
 {
     const SceneDispatchFrame *s = &root->scene;
@@ -31,18 +41,18 @@ static int scene_counter_service_bound(LaneRunFrame *root, MusashiBootMemory *ra
         scene_selected(s, ram, cpu) && scene_saved(s, ram, 4u);
 }
 
-static int scene_counter_same_parent(LaneRunFrame *root, MusashiBootMemory *ram,
+static int mounted_leaf_same_parent(LaneRunFrame *root, MusashiBootMemory *ram,
                                      const FormatterCpu *cpu)
 {
     const SceneDispatchFrame *s = &root->scene;
-    if (s->phase != root->counter.parent_phase) return 0;
+    if (s->phase != root->mounted_call.parent_phase) return 0;
     if (s->phase == SCENE_IDLE) return 1;
-    return root->counter.parent_invocation == g_scene_calls &&
-        root->counter.parent_owner == s->owner && root->counter.parent_image == s->image &&
-        root->counter.parent_service == s->service && root->counter.parent_target == s->target &&
-        root->counter.parent_cell == s->cell && root->counter.parent_top == s->top &&
-        !memcmp(root->counter.parent_saved, s->parent, sizeof s->parent) &&
-        scene_counter_service_bound(root, ram, cpu);
+    return root->mounted_call.parent_invocation == g_scene_calls &&
+        root->mounted_call.parent_owner == s->owner && root->mounted_call.parent_image == s->image &&
+        root->mounted_call.parent_service == s->service && root->mounted_call.parent_target == s->target &&
+        root->mounted_call.parent_cell == s->cell && root->mounted_call.parent_top == s->top &&
+        !memcmp(root->mounted_call.parent_saved, s->parent, sizeof s->parent) &&
+        mounted_leaf_service_bound(root, ram, cpu);
 }
 
 static int scene_counter_overlap(uint32_t a, uint32_t size_a, uint32_t b, uint32_t size_b)
@@ -88,59 +98,65 @@ static int scene_counter_separate_from_parent(const SceneDispatchFrame *s, Musas
 
 /* Only normally retired links in the outer CPU loop can supply this ticket.
  * A separate iteration must retire the original branch's delay slot. */
-static void scene_counter_link(LaneRunFrame *root, MusashiBootMemory *ram, const FormatterCpu *cpu, uint32_t origin)
+static void mounted_leaf_link(LaneRunFrame *root, MusashiBootMemory *ram, const FormatterCpu *cpu, uint32_t origin)
 {
-    if (root && root->counter.pay && root->cpu == cpu && !root->prev && !g_lane_active &&
-        cpu->pc == origin + 4u && cpu->npc == COUNTER_ENTRY && cpu->delay_slot &&
+    if (root && root->mounted_call.pay && root->cpu == cpu && !root->prev && !g_lane_active &&
+        cpu->pc == origin + 4u && mounted_leaf_target(cpu->npc) && cpu->delay_slot &&
         cpu->branch_pc == origin && cpu->r[31] == origin + 8u) {
         const SceneDispatchFrame *s = &root->scene;
-        root->counter.delay_step = root->counter.entry_step = 0;
-        if (s->phase != SCENE_IDLE && !scene_counter_service_bound(root, ram, cpu)) return;
-        root->counter.parent_phase = s->phase;
+        root->mounted_call.delay_step = root->mounted_call.entry_step = 0;
+        if (s->phase != SCENE_IDLE && !mounted_leaf_service_bound(root, ram, cpu)) return;
+        root->mounted_call.parent_phase = s->phase;
         if (s->phase == SCENE_SERVICE) {
-            root->counter.parent_owner = s->owner;
-            root->counter.parent_image = s->image;
-            root->counter.parent_service = s->service;
-            root->counter.parent_target = s->target;
-            root->counter.parent_cell = s->cell;
-            root->counter.parent_top = s->top;
-            root->counter.parent_invocation = g_scene_calls;
-            memcpy(root->counter.parent_saved, s->parent, sizeof s->parent);
+            root->mounted_call.parent_owner = s->owner;
+            root->mounted_call.parent_image = s->image;
+            root->mounted_call.parent_service = s->service;
+            root->mounted_call.parent_target = s->target;
+            root->mounted_call.parent_cell = s->cell;
+            root->mounted_call.parent_top = s->top;
+            root->mounted_call.parent_invocation = g_scene_calls;
+            memcpy(root->mounted_call.parent_saved, s->parent, sizeof s->parent);
         }
-        root->counter.origin = origin;
-        root->counter.delay_step = root->counter.step + 1u;
+        root->mounted_call.origin = origin;
+        root->mounted_call.target = cpu->npc;
+        root->mounted_call.delay_step = root->mounted_call.step + 1u;
     }
 }
 
-static int scene_counter_delay(LaneRunFrame *root, MusashiBootMemory *ram, const FormatterCpu *cpu)
+static int mounted_leaf_delay(LaneRunFrame *root, MusashiBootMemory *ram, const FormatterCpu *cpu)
 {
-    return root && root->counter.delay_step && root->counter.delay_step == root->counter.step &&
-        root->cpu == cpu && !g_lane_active && cpu->delay_slot && cpu->branch_pc == root->counter.origin &&
-        cpu->pc == root->counter.origin + 4u && cpu->npc == COUNTER_ENTRY &&
-        cpu->r[31] == root->counter.origin + 8u && scene_counter_same_parent(root, ram, cpu);
+    return root && root->mounted_call.delay_step && root->mounted_call.delay_step == root->mounted_call.step &&
+        root->cpu == cpu && !g_lane_active && cpu->delay_slot && cpu->branch_pc == root->mounted_call.origin &&
+        cpu->pc == root->mounted_call.origin + 4u && cpu->npc == root->mounted_call.target &&
+        cpu->r[31] == root->mounted_call.origin + 8u && mounted_leaf_same_parent(root, ram, cpu);
 }
 
-static int scene_counter_offer(LaneRunFrame *root, MusashiBootMemory *ram, FormatterCpu *cpu)
+static int mounted_leaf_ready(LaneRunFrame *root, MusashiBootMemory *ram, const FormatterCpu *cpu)
 {
-    if (!root || !root->counter.entry_step || root->counter.entry_step != root->counter.step)
+    if (!root || !root->mounted_call.entry_step || root->mounted_call.entry_step != root->mounted_call.step)
         return 0;
-    root->counter.entry_step = 0;
+    root->mounted_call.entry_step = 0;
     if (!game_main_owner(root, ram, cpu) || !field_scene_bus(cpu) || g_lane_active ||
-        cpu->pc != COUNTER_ENTRY || cpu->npc != COUNTER_ENTRY + 4u || cpu->delay_slot || cpu->branch_pc ||
-        cpu->r[31] != root->counter.origin + 8u || cpu->callback_device->charge_quiet != root->counter.pay ||
-        !root->counter.pay || cpu->field_load.reg || cpu->scene_load.reg || cpu->title_mixer ||
+        cpu->pc != root->mounted_call.target || cpu->npc != cpu->pc + 4u || cpu->delay_slot || cpu->branch_pc ||
+        cpu->r[31] != root->mounted_call.origin + 8u || cpu->callback_device->charge_quiet != root->mounted_call.pay ||
+        !root->mounted_call.pay || cpu->field_load.reg || cpu->scene_load.reg || cpu->title_mixer ||
         cpu->irq_dma || cpu->irq_draw || cpu->movie_output || cpu->main12_callback_frame ||
         cpu->main12_foreground_owner || cpu->main12_card_service || cpu->main12_row_pc ||
         cpu->main12_clearing_file || cpu->main12_building_row || cpu->main12_room_resuming ||
         cpu->main12_payload_pc || cpu->main12_copy_pending || cpu->room_reset_owner ||
         cpu->room_scene.owner || cpu->room_latch.owner || root->field_scene.phase != FIELD_IDLE ||
-        !scene_counter_same_parent(root, ram, cpu))
+        !mounted_leaf_same_parent(root, ram, cpu))
         return 0;
 
+    return 1;
+}
+
+static int scene_counter_offer(LaneRunFrame *root, MusashiBootMemory *ram, FormatterCpu *cpu)
+{
     const uint32_t sp = cpu->r[29];
-    if ((sp & 3u) || sp < 8u) return 0;
+    if (!root->counter.mounted || (sp & 3u) || sp < 8u) return 0;
     const uint32_t spill = sp - 8u;
-    const uint32_t origin = root->counter.origin;
+    const uint32_t origin = root->mounted_call.origin;
     /* A stack in cached main RAM must not alias the known game state,
      * resident EXE text or this call's link, delay and return instructions. */
     if (origin < MUSASHI_NATIVE_LANE_GUEST_BASE ||
@@ -164,7 +180,7 @@ static int scene_counter_offer(LaneRunFrame *root, MusashiBootMemory *ram, Forma
         if (field_scene_reserved(COUNTER_ENTRY + offset)) return 0;
     }
 
-    int paid = root->counter.pay(cpu->callback_device->userdata, cpu, COUNTER_CYCLES);
+    int paid = root->mounted_call.pay(cpu->callback_device->userdata, cpu, COUNTER_CYCLES);
     if (paid != 1) {
         if (!paid) ++root->counter.quiet_declines;
         return paid ? -1 : 0;

@@ -11916,17 +11916,25 @@ typedef struct LaneRunFrame {
     GameMainEntry main_entry;
     struct {
         int (*pay)(void *, const void *, uint32_t);
-        uint8_t digest[32];
         unsigned step, delay_step, entry_step;
-        uint32_t origin;
+        uint32_t origin, target;
         enum SceneDispatchPhase parent_phase;
         const MusashiMain12Owner *parent_owner;
         const MusashiGuestIrqImage *parent_image;
         const FormatterRange *parent_service;
         uint32_t parent_target, parent_cell, parent_top, parent_saved[4];
         unsigned long long parent_invocation;
+    } mounted_call;
+    struct {
+        uint8_t digest[32];
+        int mounted;
         unsigned long long completed, quiet_declines;
     } counter;
+    struct {
+        uint8_t read_digest[32], write_digest[32];
+        unsigned long long reads, writes, quiet_declines;
+        int mounted;
+    } story_word;
     FieldScene field_scene;
     struct LaneRunFrame *prev;
     FormatterCpu *cpu;
@@ -12560,6 +12568,7 @@ static int lane_try(MusashiBootMemory *memory, FormatterCpu *cpu) {
 #include "game_graphics_entry.h"
 #include "field_scene_callback.h"
 #include "scene_counter_call.h"
+#include "story_word_call.h"
 
 static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     uint32_t instruction, opcode, rs, rt, rd, immediate, old_npc;
@@ -12581,8 +12590,8 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     const uint32_t issued_pc = cpu->pc;
     LaneRunFrame *root = g_lane_run_frames;
     int scene_prepaid = 0;
-    int counter_link = 0;
-    const int counter_delay = cpu->delay_slot && cpu->npc == COUNTER_ENTRY && scene_counter_delay(root, memory, cpu);
+    int mounted_link = 0;
+    const int mounted_delay = cpu->delay_slot && mounted_leaf_target(cpu->npc) && mounted_leaf_delay(root, memory, cpu);
     const int room_reset_call = issued_pc == ROOM_RESET_CALL && !cpu->delay_slot &&
         !cpu->branch_pc && cpu->npc == ROOM_RESET_CALL + 4u;
     const int room_reset_delay = issued_pc == ROOM_RESET_CALL + 4u && cpu->room_reset_owner &&
@@ -12624,8 +12633,9 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         g_entry_pending = 1u;
         g_entry_hook(g_entry_hook_user, cpu->pc, cpu->r);
     }
-    if (cpu->pc == COUNTER_ENTRY) {
-        int call = scene_counter_offer(root, memory, cpu);
+    if (mounted_leaf_target(cpu->pc) && mounted_leaf_ready(root, memory, cpu)) {
+        int call = cpu->pc == COUNTER_ENTRY ? scene_counter_offer(root, memory, cpu) :
+                                              story_word_offer(root, memory, cpu);
         if (call > 0) return 1;
         if (call < 0) return formatter_refuse0(__LINE__, cpu->pc);
     }
@@ -13369,7 +13379,7 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         }
         case 8: target_npc = cpu->r[rs]; break;
         case 9: target_npc = cpu->r[rs]; cpu->r[rd] = cpu->pc + 8u;
-            counter_link = rd == 31u && target_npc == COUNTER_ENTRY && !cpu->delay_slot && !cpu->branch_pc && cpu->npc == cpu->pc + 4u;
+            mounted_link = rd == 31u && mounted_leaf_target(target_npc) && !cpu->delay_slot && !cpu->branch_pc && cpu->npc == cpu->pc + 4u;
             if (publish_flow && g_trace_state >= 0) musashi_trace_function_entry(target_npc, cpu->pc, 'r');
             if (publish_flow && g_entry_hook) g_entry_pending = target_npc;
             break;
@@ -13448,7 +13458,7 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         break;
     case 2: target_npc = (cpu->pc + 4u & 0xf0000000u) | ((instruction & 0x03ffffffu) << 2); break;
     case 3: cpu->r[31] = cpu->pc + 8u; target_npc = (cpu->pc + 4u & 0xf0000000u) | ((instruction & 0x03ffffffu) << 2);
-        counter_link = target_npc == COUNTER_ENTRY && !cpu->delay_slot && !cpu->branch_pc && cpu->npc == cpu->pc + 4u;
+        mounted_link = mounted_leaf_target(target_npc) && !cpu->delay_slot && !cpu->branch_pc && cpu->npc == cpu->pc + 4u;
         if (publish_flow && g_trace_state >= 0) musashi_trace_function_entry(target_npc, cpu->pc, 'j');
         if (publish_flow && g_entry_hook) g_entry_pending = target_npc;
         break;
@@ -13757,11 +13767,11 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         scene_scalar_retired(cpu, instruction, scene_prior_rt, scene_ram_load);
     cpu->pc = old_npc;
     cpu->npc = target_npc;
-    if (counter_link) scene_counter_link(root, memory, cpu, issued_pc);
-    if (counter_delay && root->counter.delay_step == root->counter.step &&
-        cpu->pc == COUNTER_ENTRY && cpu->npc == COUNTER_ENTRY + 4u &&
-        !cpu->delay_slot && !cpu->branch_pc && cpu->r[31] == root->counter.origin + 8u)
-        root->counter.entry_step = root->counter.step + 1u;
+    if (mounted_link) mounted_leaf_link(root, memory, cpu, issued_pc);
+    if (mounted_delay && root->mounted_call.delay_step == root->mounted_call.step &&
+        cpu->pc == root->mounted_call.target && cpu->npc == cpu->pc + 4u &&
+        !cpu->delay_slot && !cpu->branch_pc && cpu->r[31] == root->mounted_call.origin + 8u)
+        root->mounted_call.entry_step = root->mounted_call.step + 1u;
     if (witness) scene_retired(root, memory, cpu, witness, issued_pc);
     if (cpu->room_latch.returning && menu_exit_delay && menu_exit_branch == issued_pc - 4u)
         room_latch_child_returned(cpu, issued_pc, 0);
@@ -14207,7 +14217,7 @@ static MusashiResetGraphPrefixStatus run_startup_cpu(
         if (frame.prev->scene.phase != SCENE_SERVICE)
             frame.prev->scene.phase = SCENE_IDLE;
         frame.prev->main_entry.next = 0;
-        frame.prev->counter.delay_step = frame.prev->counter.entry_step = 0;
+        frame.prev->mounted_call.delay_step = frame.prev->mounted_call.entry_step = 0;
         FieldScene *field = &frame.prev->field_scene;
         if (field->phase == FIELD_CALLING || field->phase == FIELD_SERVICE_DELAY ||
             (field->phase == FIELD_BODY && field->delay))
@@ -14235,6 +14245,7 @@ static MusashiResetGraphPrefixStatus run_startup_cpu(
         game_main_capture(&frame,memory,cpu);
         field_scene_capture(&frame, memory, cpu);
         scene_counter_capture(&frame, memory, cpu);
+        story_word_capture(&frame, memory, cpu);
     }
     if (g_trace_state >= 0) musashi_trace_function_entry(cpu->pc, cpu->r[31], 'd');
     status = run_startup_cpu_loop(memory, cpu, sink, userdata, result, stop,
@@ -14242,6 +14253,11 @@ static MusashiResetGraphPrefixStatus run_startup_cpu(
     if (!frame.prev && g_scene_native_issues != frame.scene_baseline.native)
         scene_report(&frame, "exit");
     if (frame.field_scene.mounted) field_scene_report(&frame.field_scene);
+    if (frame.story_word.reads || frame.story_word.writes || frame.story_word.quiet_declines)
+        fprintf(stderr, "native_boot: STORY_WORD reads=%llu writes=%llu cycles=%llu quiet_declines=%llu\n",
+                frame.story_word.reads, frame.story_word.writes,
+                (frame.story_word.reads + frame.story_word.writes) * STORY_WORD_CYCLES,
+                frame.story_word.quiet_declines);
     if (frame.counter.completed || frame.counter.quiet_declines)
         fprintf(stderr, "native_boot: SCENE_COUNTER_CALL completed=%llu cycles=%llu quiet_declines=%llu\n",
                 frame.counter.completed, frame.counter.completed * COUNTER_CYCLES, frame.counter.quiet_declines);
@@ -14264,7 +14280,7 @@ static MusashiResetGraphPrefixStatus run_startup_cpu_loop(
     LaneRunFrame *root = g_lane_run_frames;
     uint32_t service_step = 0;
     for (step = 0; step < step_limit; ++step) {
-        root->counter.step = step;
+        root->mounted_call.step = step;
         if (service_step) {
             field_scene_scheduler_retired(&root->field_scene, cpu, service_step);
             service_step = 0;
