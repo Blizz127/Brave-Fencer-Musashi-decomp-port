@@ -22,19 +22,17 @@ the same interval with test providers for the graphics and subsystem calls.
 
 **November 23, 2026. Player downloads are under review.**
 
-The current Windows and Linux candidate (`f8eb164f`) displayed the complete
-launcher log path in both File 1 error dialogs, including accented folder names.
-Both players read an earned save, showed **Loaded data!** and exited before
-Musashi woke in the Chapter 2 bedroom. The original game restored the bedroom.
-Both Windows and Linux New Game reached **Now Loading** and went black before
-the opening moon. Both stopped at callback `0x8002CFAC`. The Windows tests ran under Wine. See the full changelog, disc setup, exact
-archive checksums and results for each platform. [Current candidate notes](docs/RELEASE-CANDIDATE-f8eb164f.md)
+The tested Windows and Linux pair (`239ff493`) ran the opening track’s 12
+music routines and produced more sound after **Now Loading**. Both players
+stopped before the opening moon. Windows ran under Wine. The preceding pair
+also showed **Loaded data!** on an earned File 1 and stopped before the
+Chapter 2 bedroom. The original US game reached both scenes.
+[Full changelog, disc setup, archive hashes and results](docs/RELEASE-CANDIDATE-239ff493.md)
 
-Later Linux and Windows/Wine builds consumed the last sound transfer during
-New Game and reached the next opening sound call. Both stopped before the moon.
-On the private Linux player, File 4 received the Steamwood Manual, cold-loaded
-its timed save and closed the first numbered valve. The release notes give the
-build and test conditions for each result. [Opening and timed Continue results](docs/RELEASE-CANDIDATE-f8eb164f.md#opening-sound-transfer-and-timed-continue)
+In a separate Linux playthrough, File 4 received the Steamwood Manual and
+closed numbered valves 1 and 2. The US disc and private Linux game both
+reset the visible timer to 23:59 after a cold Continue from the same save.
+[Steamwood source and gameplay details](docs/RELEASE-CANDIDATE-f8eb164f.md#steamwood-timer-practice-valve-and-plant-door)
 
 Earlier candidates documented the truncated Linux log path and what happened
 with several occupied saves. [Previous File 1 results](docs/RELEASE-CANDIDATE-97a342d8.md) · [Earlier paired tests](docs/RELEASE-CANDIDATE-c0b07365.md)
@@ -128,13 +126,15 @@ changelog.
 
 ### Verify the scene-object matches
 
-The scene registry covers 658 regional function matches across 19 overlay members,
-totaling 101,560 bytes. The recent Steamwood source includes Fores’s cottage
+The scene registry covers 667 regional function matches across 20 overlay members,
+totaling 102,404 bytes. The recent Steamwood source includes Fores’s cottage
 initializer and six functions that run the outdoor practice gauge. Four more C
 functions reproduce 336 bytes of the US game. One records when the emergency
 timer starts. The other three select the outdoor door’s current action, start
-a delay and finish the transition. These functions use the guest CPU in the
-public player. Public playtests have yet to reach the cottage or the plant.
+a delay and finish the transition. Inside the plant, nine more functions match
+844 bytes of the numbered-valve code. They select valve 1, check the order,
+start the separate Valve Timer and reset progress when time runs out. These
+functions use the guest CPU in the public player. Public playtests have yet to reach the cottage or the plant.
 
 In the US game and private Linux R123, Musashi loaded an earned File 4,
 received the Manual from Fores and regained movement with the timer running.
@@ -143,7 +143,13 @@ staged R123 test Musashi filled the gauge, entered the plant and reached
 the first catwalk with 00:04 left. Steamwood exploded when time ran out.
 The Memory Box offered recovery at a cost of half his Drans, then reported
 that it contained no data. Loading saved data restored day-21 File 4 outside
-the inn. Completing the numbered valves and saving afterward remain open.
+the inn. In later tests, the original US game and private R123 both showed
+valve 1 turn green and Musashi say “Yes!!” The original showed the Valve Timer
+counting from 60 to 58 as he moved away. On R123 the valve timer expired,
+then the facility clock ran out. Loading File 4 at the inn and paying for a
+rest restored his BP. On the next attempt he closed valves 1 and 2. The Valve
+Timer then showed 53 with 05:00 left on the facility clock. Completing the
+eight-valve rescue remains unverified.
 
 Two Twinpeak routines compare an actor’s current and saved coordinates to choose
 a contact check. Together they match 268 bytes in SC03 member 0029. On a recorded

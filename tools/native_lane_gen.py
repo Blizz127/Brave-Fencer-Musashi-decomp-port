@@ -1145,6 +1145,16 @@ SCENE_PHASE_EXTENTS = {
     0x8017D790: {"sc03_0011": (60, 0x472E5C5A921418CF)},
     0x8017D7CC: {"sc03_0011": (64, 0x6D16AEFCAA91377D)},
     0x8017D888: {"sc03_0011": (136, 0xBDE0503DDBBE0D38)},
+    # Interior numbered valves use the live progress, countdown actor and scene scripts.
+    0x8017DB20: {"sc03_0010": (100, 0x460486201C629952)},
+    0x8017DB84: {"sc03_0010": (156, 0x94740EBF5225DFFC)},
+    0x8017DC20: {"sc03_0010": (92, 0xD37204304332DF25)},
+    0x8017DC7C: {"sc03_0010": (92, 0x2055619026ED02DC)},
+    0x8017DD84: {"sc03_0010": (32, 0xA2B9A6B828CC43C5)},
+    0x8017DE84: {"sc03_0010": (44, 0xE8707DD2CCC2E834)},
+    0x8017ECE8: {"sc03_0010": (192, 0x3C5DE3447AE9F6E4)},
+    0x8017EDA8: {"sc03_0010": (48, 0x582FAA5A751E4038)},
+    0x8017EDD8: {"sc03_0010": (88, 0xF6F4EA41A82F21DB)},
     # Fores's room initializer and the Steamwood practice valve depend on
     # guest scene services, live actor state and instruction timing.
     0x801816F0: {"sc03_0002": (280, 0xBEE7B2AD74F21086)},
@@ -1462,7 +1472,9 @@ def overlay_extent_source_only(entry, src, info, extents):
     if pc in (0x8017D2E0, 0x8017D384, 0x8017F07C, 0x8017F120, 0x8017D3C0, 0x8017F15C, 0x8017D828,
               0x8017E414, 0x8017E524, 0x8017EC30, 0x80181894, 0x801818D0, 0x801CBB54, 0x801CBB80,
               0x801CBBDC, 0x801CBC08, 0x801816F0, 0x8017C454, 0x8017C4C4, 0x8017C528,
-              0x8017C5D8, 0x8017C6B8, 0x8017C6F4, 0x8017D790, 0x8017D7CC, 0x8017D888) and info and all(
+              0x8017C5D8, 0x8017C6B8, 0x8017C6F4, 0x8017D790, 0x8017D7CC, 0x8017D888,
+              0x8017DB20, 0x8017DB84, 0x8017DC20, 0x8017DC7C, 0x8017DD84, 0x8017DE84,
+              0x8017ECE8, 0x8017EDA8, 0x8017EDD8) and info and all(
                   key in info for key in ("vram", "start", "data")):
         if any(member_digest(info, pc, size) == digest for size, digest in variants.values()):
             return True
