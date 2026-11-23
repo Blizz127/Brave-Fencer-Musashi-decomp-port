@@ -122,18 +122,22 @@ changelog.
 
 ### Verify the scene-object matches
 
-The scene registry covers 654 regional function matches across 19 overlay members,
-totaling 101,224 bytes. Seven new C functions reproduce 868 bytes of the US
-game. One initializes Fores at the cliff cottage. Six handle the outdoor Steamwood
-practice gauge, including its needle movement, timing check and valve meter. The public player has no native dispatch for these functions.
-Public testing has yet to reach the cottage or the gauge.
+The scene registry covers 658 regional function matches across 19 overlay members,
+totaling 101,560 bytes. The recent Steamwood source includes Fores’s cottage
+initializer and six functions that run the outdoor practice gauge. Four more C
+functions reproduce 336 bytes of the US game. One records when the emergency
+timer starts. The other three select the outdoor door’s current action, start
+a delay and finish the transition. These functions use the guest CPU in the
+public player. Public playtests have yet to reach the cottage or the plant.
 
 In the US game and private Linux R123, Musashi loaded an earned File 4,
-received the Manual from Fores and regained movement with the emergency timer
-running. R123 then reached the Steamwood plant, filled the outdoor practice
-gauge and entered the red-lit interior. The original US reference also shows
-the practice gauge opening the door. The numbered valves inside the plant
-remain a separate gameplay check.
+received the Manual from Fores and regained movement with the timer running.
+The US reference shows the outdoor practice gauge opening the door. In a
+staged R123 test Musashi filled the gauge, entered the plant and reached
+the first catwalk with 00:04 left. Steamwood exploded when time ran out.
+The Memory Box offered recovery at a cost of half his Drans, then reported
+that it contained no data. Loading saved data restored day-21 File 4 outside
+the inn. Completing the numbered valves and saving afterward remain open.
 
 Two Twinpeak routines compare an actor’s current and saved coordinates to choose
 a contact check. Together they match 268 bytes in SC03 member 0029. On a recorded

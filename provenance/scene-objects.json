@@ -6960,6 +6960,58 @@
       "origin": "Independently reconstructed from USA SC03.CD member 0011 and matched against its complete linked function extent.",
       "source_sha256": "ef186b56a76b7a148ccc13479d224c0f28a7d6b63b9d4e1ce122468754fc32f0",
       "span_sha256": "33ee15d665b8061aca39abdacc230fc1f2bab1326cc969de5fbb425d9e479121"
+    },
+    {
+      "name": "func_80162120",
+      "region": "sc03_0002",
+      "vram": 2148933920,
+      "size": 76,
+      "source": "src/overlays/sc03_0002/80162120.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 0002 and matched against its complete linked function extent.",
+      "source_sha256": "b0d9e4a36d389b89beab4a455368d3cee98af76c8b58261dec69142afee7909b",
+      "span_sha256": "2e284355ae1a0457a5e833ad012982392931fe8f98081ea91d3a25e3f491dda2"
+    },
+    {
+      "name": "func_8017D790",
+      "region": "sc03_0011",
+      "vram": 2149046160,
+      "size": 60,
+      "source": "src/overlays/sc03_0011/8017d790.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 0011 and matched against its complete linked function extent.",
+      "source_sha256": "a91a2a21055566de1c776e80a890b4f2b0400848f91e7e1d96e3973840c8f165",
+      "span_sha256": "b0ed2571e23647613e146e847769a3f250612f80dc6219e6b73e55d3c1a7f8c4"
+    },
+    {
+      "name": "func_8017D7CC",
+      "region": "sc03_0011",
+      "vram": 2149046220,
+      "size": 64,
+      "source": "src/overlays/sc03_0011/8017d7cc.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 0011 and matched against its complete linked function extent.",
+      "source_sha256": "36e733584d728e9d2ac60ca0ac888874067129b0498fb743faf4d4dbf0cf81f7",
+      "span_sha256": "0bfdc18691a89f9cab10954a14086885c3688a60736dd438a38dbdf86997d199"
+    },
+    {
+      "name": "func_8017D888",
+      "region": "sc03_0011",
+      "vram": 2149046408,
+      "size": 136,
+      "source": "src/overlays/sc03_0011/8017d888.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 0011 and matched against its complete linked function extent.",
+      "source_sha256": "d5cdb5e83d1cc5719c98268053f63db46d257e7da8968380e8a50ec793271945",
+      "span_sha256": "558f0c121871e9478adbab2fbef965b3f7c08d4420b5e8ad6cbaeb14e200469d"
     }
   ]
 }
