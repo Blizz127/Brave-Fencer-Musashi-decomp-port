@@ -2682,6 +2682,61 @@
       "recovery": "c",
       "extent": "function",
       "origin": "Owner re-derivation first published in e0b1822. The unchanged source matches its USA executable extent."
+    },
+    {
+      "name": "func_8001FB8C",
+      "region": "main",
+      "vram": 2147613580,
+      "size": 124,
+      "source": "src/main/8001fb8c.c",
+      "optimization": "-O2",
+      "recovery": "c",
+      "extent": "function",
+      "origin": "Owner re-derivation first published in e0b1822. The current public source matches the full USA executable extent."
+    },
+    {
+      "name": "func_8001FC08",
+      "region": "main",
+      "vram": 2147613704,
+      "size": 1600,
+      "source": "src/main/8001fc08.c",
+      "optimization": "-O2",
+      "recovery": "c",
+      "extent": "function",
+      "origin": "Owner re-derivation first published in e0b1822. The current public source matches the full USA executable extent."
+    },
+    {
+      "name": "func_80018A20",
+      "region": "main",
+      "vram": 2147584544,
+      "size": 580,
+      "source": "src/main/80018a20.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Owner re-derivation first published in e0b1822. The unchanged source matches its USA executable extent."
+    },
+    {
+      "name": "func_80018CE8",
+      "region": "main",
+      "vram": 2147585256,
+      "size": 400,
+      "source": "src/main/80018ce8.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Owner re-derivation first published in e0b1822. The unchanged source matches its USA executable extent."
+    },
+    {
+      "name": "func_80018F20",
+      "region": "main",
+      "vram": 2147585824,
+      "size": 104,
+      "source": "src/main/80018f20.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Owner re-derivation first published in e0b1822. The unchanged source matches its USA executable extent."
     }
   ]
 }
