@@ -1138,6 +1138,8 @@ SCENE_PHASE_EXTENTS = {
     0x8015FCC8: {"sc03_0029": None},
     0x8015FD74: {"sc03_0029": None},
     0x801612B8: {"sc03_0029": None},
+    0x801655E4: {"sc03_0029": None},
+    0x80165658: {"sc03_0029": None},
     # The cemetery award calls resident inventory and story services, then resumes its room script.
     0x8017D828: {"sc03_0023": (92, 0x2A6B9BFEB36C862E)},
     # The slab selection, forty-tick slide and key proximity callback share room state.

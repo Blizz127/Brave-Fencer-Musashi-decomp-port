@@ -122,8 +122,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The scene registry covers 636 regional function matches across seventeen overlay members,
-totaling 99,076 bytes.
+The scene registry covers 638 regional function matches across seventeen overlay members,
+totaling 99,164 bytes.
 
 Two Twinpeak routines compare an actor’s current and saved coordinates to choose
 a contact check. Together they match 268 bytes in SC03 member 0029. On a recorded
@@ -135,6 +135,11 @@ The 56-byte Twinpeak routine that spends BP also matches the US game. On an
 ordinary Shrink cast, the original charged 10 BP, taking Musashi from 143 to
 133. A separate periodic debit had already taken him from 147 to 143. The
 public player continues to execute this regional routine on the guest CPU.
+
+The cast routine and its ability-cost lookup match a further 64 and 24 bytes
+in Twinpeak. On the US disc, ability 13 selected a cost of 10 before the
+debit. Other rooms can place their cost tables at different addresses. Both
+Twinpeak routines still run on the guest CPU in the public player.
 
 On the same US save, a second successful Fusion hit on the Twinpeak Magician
 displayed a green 10 and raised BP from 125 to 135. Two regional matches cover
