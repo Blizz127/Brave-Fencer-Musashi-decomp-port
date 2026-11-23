@@ -1,6 +1,6 @@
 /* Owner re-derivation from retail assembly (clean input set). */
 /* Builds a 3x3 fixed-point (4.12) rotation matrix from three 12-bit angles via the sin/cos table. */
-#include "psx_types.h"
+#include "render_geometry.h"
 
 #define SIN(w) ((s16)(w))
 #define COS(w) ((w) >> 16)

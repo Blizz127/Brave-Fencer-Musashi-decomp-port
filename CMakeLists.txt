@@ -789,6 +789,7 @@ if(MUSASHI_BUILD_PC_PORT)
                     ${CMAKE_CURRENT_SOURCE_DIR}/config/lane_own_code_allow.txt
                     ${CMAKE_CURRENT_SOURCE_DIR}/include/controller_report.h
                     ${CMAKE_CURRENT_SOURCE_DIR}/include/primitive_ordering_table.h
+                    ${CMAKE_CURRENT_SOURCE_DIR}/include/render_geometry.h
                     ${MUSASHI_LANE_SOURCES}
                     ${MUSASHI_LANE_HOOK_SOURCES}
                     ${CMAKE_CURRENT_SOURCE_DIR}/pc_port/platform/psyq/bfm_psyq_compat.def
@@ -816,7 +817,7 @@ if(MUSASHI_BUILD_PC_PORT)
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_script_variable_fixture.py
                     ${script_test_dir} ${MUSASHI_CLANG} ${CMAKE_AR} "${MUSASHI_LANE_HOST_TARGET}"
             DEPENDS tests/generate_script_variable_fixture.py tools/native_lane_gen.py
-                    provenance/native-main.json config/psyq_ranges.txt include/controller_report.h include/primitive_ordering_table.h
+                    provenance/native-main.json config/psyq_ranges.txt include/controller_report.h include/primitive_ordering_table.h include/render_geometry.h
                     ${MUSASHI_LANE_SOURCES} ${MUSASHI_LANE_HOOK_SOURCES} ${MUSASHI_LANE_SYMBOLS}
             VERBATIM)
         add_executable(musashi_script_variable_probe tests/script_variable_probe.c

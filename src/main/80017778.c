@@ -1,18 +1,7 @@
 /* Owner re-derivation from retail assembly (clean input set). */
 /* Builds a Gouraud quad (POLY_G4) from a 4-vertex record, projected through a matrix or taken as screen xy, and inserts it into the ordering table. */
 #include "primitive_ordering_table.h"
-
-typedef struct {
-    u32 xy; /* vx | vy << 16 */
-    s16 z;
-    s16 pad;
-} QuadVert;
-
-typedef struct {
-    QuadVert v[4];
-    u32 rgb[4];
-    u32 flags;
-} QuadDesc;
+#include "render_geometry.h"
 
 extern void func_80058DE8(u32 *p);
 extern void func_80017E8C(void *mtx);

@@ -12,8 +12,7 @@
  * whatever reproduces the bytes; they are not evidence of the
  * original declaration. */
 
-#include "psx_types.h"
-void func_80017778();
+#include "render_geometry.h"
 void func_80017738(void *p, void *q) {
     func_80017778(p, q, 1);
 }
