@@ -63,11 +63,30 @@ int musashi_boot_call_800426d4(MusashiBootMemory *memory, uint16_t *result) {
 /* Every admitted executable has the same digest. Independent memory instances
  * can map concurrently. Each slot becomes usable once its verified value is
  * available, and every subsequent mapping stores the same value. */
+static _Atomic(uint32_t) pac_targets[MUSASHI_PAC_STATE_COUNT];
 static _Atomic(uint32_t) list_targets[MUSASHI_LIST_STATE_COUNT];
+
+int musashi_boot_pac_target_matches(MusashiBootMemory *memory, uint32_t state,
+                                    uint32_t target) {
+    uint32_t live;
+    return state < MUSASHI_PAC_STATE_COUNT && target != 0 &&
+           target == atomic_load_explicit(&pac_targets[state], memory_order_relaxed) &&
+           musashi_boot_read32(memory, MUSASHI_PAC_TARGET_BASE + 4u * state, &live) &&
+           live == target;
+}
 
 int musashi_boot_list_target_matches(uint32_t state, uint32_t target) {
     return state < MUSASHI_LIST_STATE_COUNT && target != 0 &&
            target == atomic_load_explicit(&list_targets[state], memory_order_relaxed);
+}
+
+static void capture_targets(MusashiBootMemory *memory, uint32_t address,
+                            _Atomic(uint32_t) *targets, uint32_t count) {
+    for (uint32_t index = 0; index < count; ++index) {
+        uint32_t value = 0;
+        musashi_boot_read32(memory, address + 4u * index, &value);
+        atomic_store_explicit(&targets[index], value, memory_order_relaxed);
+    }
 }
 
 int musashi_boot_map_exe(MusashiBootMemory *memory, const uint8_t *exe,
@@ -89,11 +108,8 @@ int musashi_boot_map_exe(MusashiBootMemory *memory, const uint8_t *exe,
         return 0;
 
     memmove(memory->bytes + 0x10000u, exe + 0x800u, 0x64800u);
-    for (uint32_t state = 0; state < MUSASHI_LIST_STATE_COUNT; ++state) {
-        uint32_t target = 0;
-        musashi_boot_read32(memory, MUSASHI_LIST_TARGET_BASE + 4u * state, &target);
-        atomic_store_explicit(&list_targets[state], target, memory_order_relaxed);
-    }
+    capture_targets(memory, MUSASHI_PAC_TARGET_BASE, pac_targets, MUSASHI_PAC_STATE_COUNT);
+    capture_targets(memory, MUSASHI_LIST_TARGET_BASE, list_targets, MUSASHI_LIST_STATE_COUNT);
     return 1;
 }
 

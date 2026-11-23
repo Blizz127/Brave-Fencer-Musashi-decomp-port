@@ -262,6 +262,33 @@ class BootMemoryTests(unittest.TestCase):
         self.assertEqual((stop.call, stop.target), (0x800101C0, 0x800141F0))
         self.assertEqual(bytes(self.memory), expected)
 
+    def test_pac_dispatch_uses_the_authenticated_table_and_live_word(self):
+        path = Path(os.environ.get("MUSASHI_CODE_IMAGE", ROOT / "extracted/disc/files/SLUS_007.26"))
+        if not path.is_file():
+            self.skipTest("requires the mounted US executable")
+        image = path.read_bytes()
+        mapper = self.lib.musashi_boot_map_exe
+        mapper.argtypes = [C.POINTER(Memory), C.c_void_p, C.c_size_t]
+        matches = self.lib.musashi_boot_pac_target_matches
+        matches.argtypes = [C.POINTER(Memory), C.c_uint32, C.c_uint32]
+        self.assertEqual(mapper(self.memory, image, len(image)), 1)
+
+        base = 0x80072A38
+        for state in range(5):
+            address = base + 4 * state
+            target, = struct.unpack_from("<I", image, 0x800 + address - 0x80010000)
+            self.assertTrue(matches(self.memory, state, target))
+            replacement = target ^ 4
+            self.assertFalse(matches(self.memory, state, replacement))
+            self.assertTrue(self.lib.musashi_boot_write32(self.memory, address, replacement))
+            self.assertFalse(matches(self.memory, state, target))
+            self.assertFalse(matches(self.memory, state, replacement))
+            self.assertTrue(self.lib.musashi_boot_write32(self.memory, address, target))
+        for state in (5, 0xffffffff):
+            self.assertFalse(matches(self.memory, state, target))
+        self.assertFalse(matches(self.memory, 0, 0))
+        self.assertFalse(matches(None, 4, target))
+
     def test_map_only_load_preserves_ram_outside_exe_without_applying_crt(self):
         image = self.retail_image()
         mapper = self.lib.musashi_boot_map_exe

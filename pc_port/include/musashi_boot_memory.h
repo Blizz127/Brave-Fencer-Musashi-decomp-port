@@ -15,6 +15,13 @@
 struct MusashiBootMemory;
 int musashi_boot_map_exe(struct MusashiBootMemory *, const uint8_t *, size_t);
 
+/* The PAC worker checks both the live jump-table word and the value retained
+ * from the SHA-256 verified US executable, including for standalone CD IRQs. */
+#define MUSASHI_PAC_STATE_COUNT 5u
+#define MUSASHI_PAC_TARGET_BASE 0x80072a38u
+int musashi_boot_pac_target_matches(struct MusashiBootMemory *, uint32_t state,
+                                    uint32_t target);
+
 /* LIST state dispatch in the pinned game executable. The canonical targets are
  * learned from a successful mapping and checked against the live guest word. */
 #define MUSASHI_LIST_STATE_COUNT 9u

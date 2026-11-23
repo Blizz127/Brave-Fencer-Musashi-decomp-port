@@ -17514,19 +17514,16 @@ static int cd_irq_execute(MusashiBootMemory *memory,
                 }
                 transfer = 3;
             } else if (call == 0x80018788u) {
-                static const uint32_t states[] = {
-                    0x80018824u, 0x80018790u, 0x800187a4u, 0x800187f8u, 0x800188b4u
-                };
-                uint32_t state, live;
+                uint32_t state;
                 accepted = instruction == MIPS_JR(2) && depth == 2 &&
                     returns[0].target == 0x8001a338u && returns[0].pc == 0x80045308u &&
                     returns[1].target == 0x80018730u && returns[1].pc == 0x8001a914u &&
                     cpu.r[29] == saved_sp-0x88u &&
-                    musashi_boot_read32(memory,0x800c7d24u,&state) && state < 5u;
+                    musashi_boot_read32(memory,0x800c7d24u,&state);
                 if (accepted) {
-                    expected = states[state];
-                    accepted = cpu.r[3] == state && cpu.r[2] == expected &&
-                        musashi_boot_read32(memory,0x80072a38u+4u*state,&live) && live == expected;
+                    expected = cpu.r[2];
+                    accepted = cpu.r[3] == state &&
+                        musashi_boot_pac_target_matches(memory, state, expected);
                 }
                 transfer = 3;
             } else if (call == 0x8005ce6cu) {
