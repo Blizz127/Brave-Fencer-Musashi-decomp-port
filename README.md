@@ -22,11 +22,13 @@ the same interval with test providers for the graphics and subsystem calls.
 
 **November 23, 2026. Player downloads are under review.**
 
-The November 23 Linux and Windows-under-Wine test builds (`50455488`)
-ran the opening player's status query in host code. Both returned the active
-state and stopped on **Now Loading** during a later sound request. The
-original US disc reached the moon, the forest and the Chapter 2 bedroom.
-[Full changelog, disc setup, archive hashes and results](docs/RELEASE-CANDIDATE-50455488.md)
+Linux and Windows under Wine both played the opening’s cached note on the host
+in candidate `b2577094`. New Game stopped on **Now Loading** before the moon.
+On the same earned File 1, both showed **Loaded data!** and stopped before the
+bedroom. The original US disc reached the forest and loaded the bedroom.
+The candidate notes include the 314-commit history, both local archive
+checksums, US disc setup and the content findings for historical downloads.
+[Latest paired results](docs/RELEASE-CANDIDATE-b2577094.md) · [Previous candidate](docs/RELEASE-CANDIDATE-50455488.md)
 
 On separate private Linux builds, an earned File 4 received the Steamwood
 Manual and closed numbered valves 1, 2 and 3 in order. The original disc and

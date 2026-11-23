@@ -33,7 +33,7 @@ typedef struct TitleMixerRun {
     uint16_t reverb[2];
     unsigned reverb_seen, key_seen, gain_written;
     uint16_t gain[2];
-    int music;
+    int music, reusing_voice;
 } TitleMixerRun;
 
 #include "opening_music_service.h"
@@ -124,12 +124,16 @@ static void title_mixer_spu_result(const FormatterCpu *cpu,uint32_t addr,uint16_
     }
 }
 
+static int music_cache_store(MusashiBootMemory *, const FormatterCpu *, uint32_t);
+
 static int title_mixer_access(MusashiBootMemory *m,const FormatterCpu *cpu,
                               uint32_t addr,unsigned width,unsigned store,uint32_t value) {
     const TitleMixerRun *r=cpu->title_mixer;
     if (!title_mixer_bound(m,cpu) || !r->symbol || r->issued_pc!=cpu->pc ||
         (width!=1u && width!=2u && width!=4u) || (addr&(width-1u)) || store>1u) return 0;
     if (r->music && r->symbol->family == MUSIC_SEQUENCE) {
+        if (r->reusing_voice && store && width == 4u && value == 0x13u &&
+            music_cache_store(m, cpu, addr)) return 1;
         if (r->symbol->start == 0x80039b20u &&
             music_note_release_status(m,cpu->pc,addr,width,store,value)) return 1;
         if (music_data_access(m, r->root_sp, cpu->r[29], addr, width, store, value))
@@ -246,6 +250,8 @@ static int title_mixer_step(MusashiBootMemory *m,FormatterCpu *cpu,MusashiGuestI
 }
 
 #include "opening_player_status.h"
+#include "opening_sequence_delta.h"
+#include "opening_voice_reuse.h"
 
 static int title_mixer_guest_call(MusashiBootMemory *m,FormatterCpu *cpu,
     const MusashiGuestIrqServices *services,const MusashiExecutionClock *clock,
@@ -305,6 +311,26 @@ static int title_mixer_guest_call(MusashiBootMemory *m,FormatterCpu *cpu,
         int indirect=!op && fn==8u, ret=indirect && rs==31u;
         int link=op==3u || (!op && fn==9u);
         int branch=(op>=1u && op<=7u) || indirect || link;
+        if (music && pc == MUSIC_CACHE_COMPARE && n == 4u &&
+            frames[0].symbol->start == 0x80037fc4u && frames[1].symbol->start == 0x80038a58u &&
+            frames[2].symbol->start == 0x80038ffcu && frames[3].ret == 0x8003907cu &&
+            music_cache_owner(m, cpu)) {
+            run.reusing_voice = 1;
+            int finished = music_cache_native(m, cpu, &run, stop);
+            run.reusing_voice = 0;
+            if (!finished) break;
+            table_address = 0;
+            continue;
+        }
+        if (music && pc == MUSIC_DELTA_START && n == 3u &&
+            frames[0].symbol->start == 0x80037fc4u && frames[1].symbol->start == 0x80038a58u &&
+            frames[2].ret == MUSIC_DELTA_RETURN && cpu->r[4] == MUSIC_PLAYERS &&
+            music_delta_image(m, cpu)) {
+            if (!music_delta_native(m, cpu, &run, stop)) break;
+            --n;
+            table_address = 0;
+            continue;
+        }
         if (!op && fn==9u && (!music || family!=MUSIC_SEQUENCE || ((w>>11)&31u)!=31u)) break;
         uint32_t dest=0,sp=cpu->r[29],load_cell=0,loaded=0;
         const TitleMixerSymbol *child=NULL;

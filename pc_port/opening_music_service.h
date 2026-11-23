@@ -53,6 +53,7 @@ typedef struct { uint32_t parent, site, target; } OpeningMusicCall;
 static const OpeningMusicCall music_calls[] = {
     {0x80037fc4u, 0x80037fe4u, 0x80038a58u},
     {0x80037fc4u, 0x80038030u, 0x8003d3b4u},
+    {0x80037fc4u, 0x8003806cu, 0x8003c23cu}, /* send pending low-voice key-offs */
     {0x80037fc4u, 0x800380f0u, 0x8003b250u},
     {0x80037fc4u, 0x8003812cu, 0x8003c23cu},
     {0x80037fc4u, 0x80038160u, 0x8003be74u},
