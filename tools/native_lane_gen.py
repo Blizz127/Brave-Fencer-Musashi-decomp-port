@@ -1106,6 +1106,11 @@ FOREST_ATTACHMENT_EXTENTS = {
 }
 
 SCENE_PHASE_EXTENTS = {
+    # Twinpeak's action and queue operations need the live actor, services and
+    # guest timing. The queue bytes alone cannot identify their scene.
+    0x801466F0: {"sc03_0029": None},
+    0x8014680C: {"sc03_0029": None},
+    0x8015F89C: {"sc03_0029": None},
     # Jon selects a room script and may advance story state before returning.
     0x801EF558: {"sc03_0054": (384, 0x0A70742E7582B0D2)},
     # Village waypoint motion needs the live actor, its movement services and guest timing.

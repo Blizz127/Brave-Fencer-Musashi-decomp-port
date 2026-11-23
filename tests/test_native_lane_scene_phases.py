@@ -1074,3 +1074,25 @@ def test_forest_effect_and_steam_knight_extents(tmp_path, monkeypatch, member):
     entry["size"] = size - 4
     assert lane.overlay_extent_source_only(entry, source, info, lane.SCENE_PHASE_EXTENTS) == (
         member == "sc01_0077")
+
+
+@pytest.mark.parametrize("pc,size", [(0x801466F0, 96), (0x8014680C, 188), (0x8015F89C, 172)])
+def test_twinpeak_fusion_source_keeps_other_room_implementations_selectable(tmp_path, pc, size):
+    (tmp_path / "ir").mkdir()
+    source = ROOT / f"src/overlays/sc03_0029/{pc:08x}.c"
+    row = dict(name=f"func_{pc:08X}", vram=pc, size=size, region="sc03_0029", source=str(source))
+    assert lane.build_one(row, tmp_path, {}, {}, "clang")["rule"] == "timing"
+
+    alternate = tmp_path / "other.c"
+    alternate.write_bytes(source.read_bytes())
+    other = dict(row, region="sc02_0031", source=str(alternate))
+    assert lane.build_one(other, tmp_path, {}, {}, "clang")["rule"] == "timing"
+
+    if not all(shutil.which(tool) for tool in ("clang", "nm")):
+        pytest.skip("clang and nm required for the independent-source control")
+    alternate.write_text(f"int func_{pc:08X}(int value) {{ return value; }}\n")
+    info = dict(member="sc02_0031", vram=pc, start=0, code=[(pc, pc + size)], data=bytes(size))
+    twinpeak = dict(info, member="sc03_0029")
+    assert lane.build_one(other, tmp_path, {}, {}, "clang", twinpeak)["rule"] == "timing"
+    assert lane.build_one(dict(other, region="sc03_0029"), tmp_path, {}, {}, "clang", info)["rule"] == "timing"
+    assert lane.build_one(other, tmp_path, {}, {}, "clang", info)["admitted"]
