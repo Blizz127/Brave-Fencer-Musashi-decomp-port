@@ -20,6 +20,12 @@ the same interval with test providers for the graphics and subsystem calls.
 
 ## Player downloads and source builds
 
+The public matching registry now contains 1,016 entries. New C for the story-progress reader and writer matches all 16 original bytes of each routine. During a cold File 4 load, the separate private R137 Linux build entered the writer at startup and later entered the reader. These registrations add no host execution to the public player.
+
+**November 23, 2026, 18:11 UTC.** Private build `6186e55c` completed 45 native scene-counter calls across four regular startup tests on Linux and Windows x64 under Wine. New Game stopped before the opening moon, and Continue stopped before the Chapter 2 bedroom. In two separate Linux tests, `e8149f66` reached the same stopping points with zero native scene-counter completions. The original US game and served Linux R137 also cold-loaded the same Earth Scroll save at story stage 135, restored all 320 story bytes and responded to Left. A later R123 inn save recorded 175/175 HP.
+
+[6186e55c platform results, checksums and history](docs/RELEASE-CANDIDATE-6186e55c.md) · [e8149f66 platform results, checksums and history](docs/RELEASE-CANDIDATE-e8149f66.md)
+
 **November 23, 2026, 17:36 UTC.** Private build `94294368` stopped before the opening moon on New Game and before the Chapter 2 bedroom on Continue, on both Linux and Windows x64 under Wine. In separate gameplay, the original US game and the private launcher's Linux R137 both cold-loaded R123's Wednesday 175/175 HP File 4 and restored control outside Hotelo. R137 also closed Steamwood valve 4, and R123 earned the Earth Scroll on Twinpeak Mountain.
 [Windows startup results, File 4 comparisons and Steamwood gameplay](docs/RELEASE-CANDIDATE-94294368.md#november-23-2026-1736-utc-gameplay-update)
 

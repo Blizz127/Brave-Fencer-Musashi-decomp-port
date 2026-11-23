@@ -16,6 +16,26 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2"
+    },
+    {
+      "name": "func_80029504",
+      "region": "main",
+      "vram": 2147652868,
+      "size": 16,
+      "source": "src/main/80029504.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
+    },
+    {
+      "name": "func_80029514",
+      "region": "main",
+      "vram": 2147652884,
+      "size": 16,
+      "source": "src/main/80029514.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2"
     }
   ]
 }
