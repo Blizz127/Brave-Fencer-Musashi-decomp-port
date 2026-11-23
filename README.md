@@ -22,18 +22,17 @@ the same interval with test providers for the graphics and subsystem calls.
 
 **November 23, 2026. Player downloads are under review.**
 
-The November 23 Windows and Linux test builds (`e5fdd4d7`) released
-the first note in the opening track. Both stopped on **Now Loading** when
-the sequencer requested the hardware key-off. Windows ran under Wine.
-The previous File 1 test showed **Loaded data!** and stopped before the
-Chapter 2 bedroom. The original US disc reached the opening moon, the
-forest and the saved bedroom.
-[Full changelog, disc setup, archive hashes and results](docs/RELEASE-CANDIDATE-e5fdd4d7.md)
+The November 23 Linux and Windows-under-Wine test builds (`50455488`)
+ran the opening player's status query in host code. Both returned the active
+state and stopped on **Now Loading** during a later sound request. The
+original US disc reached the moon, the forest and the Chapter 2 bedroom.
+[Full changelog, disc setup, archive hashes and results](docs/RELEASE-CANDIDATE-50455488.md)
 
-In a separate Linux playthrough, File 4 received the Steamwood Manual and
-closed numbered valves 1 and 2. The US disc and private Linux game both
-reset the visible timer to 23:59 after a cold Continue from the same save.
-[Steamwood source and gameplay details](docs/RELEASE-CANDIDATE-f8eb164f.md#steamwood-timer-practice-valve-and-plant-door)
+On separate private Linux builds, an earned File 4 received the Steamwood
+Manual and closed numbered valves 1, 2 and 3 in order. The original disc and
+private Linux game both started the visible timer at 23:59 after a cold
+Continue from the same save.
+[Steamwood gameplay results](docs/RELEASE-CANDIDATE-50455488.md#earned-save-play-on-separate-private-linux-builds)
 
 Earlier candidates documented the truncated Linux log path and what happened
 with several occupied saves. [Previous File 1 results](docs/RELEASE-CANDIDATE-97a342d8.md) · [Earlier paired tests](docs/RELEASE-CANDIDATE-c0b07365.md)

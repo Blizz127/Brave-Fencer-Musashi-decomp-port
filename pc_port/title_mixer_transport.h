@@ -245,6 +245,8 @@ static int title_mixer_step(MusashiBootMemory *m,FormatterCpu *cpu,MusashiGuestI
     return !(cpu->r[29]&3u) && cpu->r[29]<=r->root_sp && r->root_sp-cpu->r[29]<=(r->music ? 0x400u : 0x70u);
 }
 
+#include "opening_player_status.h"
+
 static int title_mixer_guest_call(MusashiBootMemory *m,FormatterCpu *cpu,
     const MusashiGuestIrqServices *services,const MusashiExecutionClock *clock,
     const IrqGuestReturn *ancestors,unsigned depth,uint32_t caller,uint32_t entry,
@@ -282,6 +284,15 @@ static int title_mixer_guest_call(MusashiBootMemory *m,FormatterCpu *cpu,
     unsigned n=1,table_reg=0;
     uint32_t table_address=0,table_value=0;
     cpu->title_mixer=&run;
+    if (music && entry == MUSIC_STATUS_START && music_status_image(m, cpu)) {
+        music_observe_entry(run.symbol, caller);
+        if (music_status_native(m, cpu, &run, stop))
+            n = 0;
+        else {
+            cpu->title_mixer = NULL;
+            return 0;
+        }
+    }
     while (n) {
         run.symbol=frames[n-1].symbol;
         family=run.symbol->family;
