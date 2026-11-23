@@ -97,6 +97,12 @@
       "file": "extracted/overlays/main/0012.bin",
       "base": 2148532568,
       "sha256": "7bf686da174e6bd98cab8e742af629ba4168cff76e3be4e367cb69f783af070c"
+    },
+    "sc03_0023": {
+      "kind": "blob",
+      "file": "extracted/overlays/sc03/0023.pac0.bin",
+      "base": 2148696408,
+      "sha256": "c7534b8e988ffebab4d588ea6b007d95c800c5e42bc60bc012dc9bdccbf9011e"
     }
   },
   "matches": [
@@ -6396,6 +6402,19 @@
       "origin": "Independently reconstructed from USA SC03.CD member 0029 and matched against its complete linked function extent.",
       "source_sha256": "35395ae365078ff8fc48cd34975c45a59a25577f8fb74dfc3193f7365878c6e8",
       "span_sha256": "3bcf231622ab5ff2f56778b556c653d86606cb527a09ab9cb8b26691098dd306"
+    },
+    {
+      "name": "func_8017D828",
+      "region": "sc03_0023",
+      "vram": 2149046312,
+      "size": 92,
+      "source": "src/overlays/sc03_0023/8017d828.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA SC03.CD cemetery room and verified against the complete linked function.",
+      "source_sha256": "b8d05ccb8bbde46227cf42d9da10f7f583f44b1a886af9031daef396d451c1b0",
+      "span_sha256": "0c1456a28f04e3b1dc33b91533b2959cba36ffb12eb626607ef9cb045ae59b42"
     }
   ]
 }

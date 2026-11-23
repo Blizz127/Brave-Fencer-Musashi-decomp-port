@@ -86,8 +86,13 @@ changelog.
 
 ### Verify the scene-object matches
 
-The scene registry covers 612 regional function matches across sixteen overlay members,
-totaling 96,176 bytes.
+The scene registry covers 613 regional function matches across seventeen overlay members,
+totaling 96,268 bytes.
+
+The cemetery award in SC03 member 0023 stores Jon’s Key, advances story progress
+to 60, sets the completion flag and resumes the room script. The field player
+executes this callback on the guest CPU. Run `python3 tests/test_cemetery_key.py`
+to check the order of the award and its inventory effects.
 
 Three Twinpeak actor routines in SC03 member 0029 match 288 bytes from the US disc.
 They start action 22, dispatch by phase, and process animation events and cleanup

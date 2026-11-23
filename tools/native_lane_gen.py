@@ -1119,6 +1119,8 @@ SCENE_PHASE_EXTENTS = {
     0x801466F0: {"sc03_0029": None},
     0x8014680C: {"sc03_0029": None},
     0x8015F89C: {"sc03_0029": None},
+    # The cemetery award calls resident inventory and story services, then resumes its room script.
+    0x8017D828: {"sc03_0023": (92, 0x2A6B9BFEB36C862E)},
     # Jon selects a room script and may advance story state before returning.
     0x801EF558: {"sc03_0054": (384, 0x0A70742E7582B0D2)},
     # Village waypoint motion needs the live actor, its movement services and guest timing.
@@ -1404,9 +1406,9 @@ def overlay_extent_source_only(entry, src, info, extents):
         size, digest = FOREST_ATTACHMENT_EXTENTS[pc]
         if member_digest(info, pc, size) == digest:
             return True
-    # Compare a mine entrance callback at its complete original extent even when the
+    # Compare these room callbacks at their complete original extent even when the
     # supplied registry reports only a prefix or includes the following function.
-    if pc in (0x8017D2E0, 0x8017D384, 0x8017F07C, 0x8017F120, 0x8017D3C0, 0x8017F15C) and info and all(key in info for key in ("vram", "start", "data")):
+    if pc in (0x8017D2E0, 0x8017D384, 0x8017F07C, 0x8017F120, 0x8017D3C0, 0x8017F15C, 0x8017D828) and info and all(key in info for key in ("vram", "start", "data")):
         if any(member_digest(info, pc, size) == digest for size, digest in variants.values()):
             return True
     # A member with a shared original body is identified only by its room or source.
