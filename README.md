@@ -22,10 +22,13 @@ the same interval with test providers for the graphics and subsystem calls.
 
 **November 23, 2026. Player downloads are under review.**
 
-The [Windows and Linux candidate notes](docs/RELEASE-CANDIDATE-c0b07365.md)
-give both local archive checksums, instructions for using your own US disc,
-and the last playable step on each platform. The changelog lists all 301 commits
-from the R55 tag through the shared package source, `c0b073650`.
+The [latest Windows and Linux candidate notes](docs/RELEASE-CANDIDATE-97a342d8.md)
+record both archive checksums, the full changelog, disc setup and ordinary File 1
+tests. Both platforms stopped before the Chapter 2 bedroom. The Windows build
+showed the correct log path under Wine. Linux on X11 with a C locale cut the path
+off at its first accented character. These archives were withheld.
+The [earlier paired candidate](docs/RELEASE-CANDIDATE-c0b07365.md) also records
+New Game on both platforms and what happened with multiple occupied saves.
 
 Historical player binaries also contain routines removed during the SDK
 source review. This correction is available as source for development and testing.
@@ -116,8 +119,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The scene registry covers 626 regional function matches across seventeen overlay members,
-totaling 98,012 bytes.
+The scene registry covers 631 regional function matches across seventeen overlay members,
+totaling 98,616 bytes.
 
 The cemetery award in SC03 member 0023 stores Jon’s Key, advances story progress
 to 60, sets the completion flag and resumes the room script. The field player
@@ -148,6 +151,21 @@ encounter, the tutorial took the first available slot. Both pages advanced
 and Musashi regained control. Host tests cover a full pool, selection of the
 second slot and replacement of an active handle. The public player executes
 these routines on the guest CPU.
+
+The tutorial defaults routine and its two helpers match another 288 bytes.
+On the original game, Musashi’s Shrink tutorial initialized the slot, called a
+graphics service with a 56 × 48 rectangle and cleared 648 halfwords. The full
+initialization took 9,962 guest clocks, including 3,955 in the external
+graphics service and 5,842 in the clear. The public player runs all three
+routines on the guest CPU.
+
+Two more Twinpeak routines match 316 bytes. During a Shrink encounter, the
+original game combined its actor status queries and returned `0x2000` after
+15,955 guest clocks. The following action took 4,218 clocks. Its source
+selects either an actor callback or a sequence of event and state changes.
+That recording did not identify which branch ran. The host fixture covers
+both branches, including callbacks that change the actor. The public player
+continues to execute these routines on the guest CPU.
 
 Jon’s stocks initializer selects a dialogue script using story progress, an event flag and a game query. The host test covers seven outcomes, including the high-progress path that keeps the previous selection. The public player excludes this initializer from native dispatch. The callback following the key-use message also has matching C source. It calls the first actor service, updates the resulting actor part and calls the next service. The callback retains guest timing. On an ordinary private playthrough, Musashi used the key, Jon stood free and the four-log objective appeared at story progress 70. A separate actor routine advances the story.
 

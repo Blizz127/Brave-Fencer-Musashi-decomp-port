@@ -1112,14 +1112,19 @@ def test_timed_source_keeps_other_room_implementations_selectable(tmp_path, memb
 @pytest.mark.parametrize("pc,size", [
     (0x8013767C, 76),
     (0x801377B4, 140),
+    (0x80137840, 176),
+    (0x80139634, 76),
     (0x801399A8, 72),
+    (0x80139DC8, 36),
     (0x8015FA78, 52),
     (0x8015FAAC, 60),
     (0x8015FAE8, 248),
+    (0x8015FBE0, 232),
     (0x8015FCC8, 172),
     (0x8015FD74, 88),
     (0x8015FDCC, 164),
     (0x8015FE70, 176),
+    (0x801612B8, 84),
 ])
 def test_twinpeak_action22_source_has_no_generic_handler(tmp_path, pc, size):
     if not all(shutil.which(tool) for tool in ("clang", "nm")):

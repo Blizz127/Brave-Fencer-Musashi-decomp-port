@@ -9,7 +9,9 @@ import pytest
     ("twinpeak_action22_probe", ["801466f0.c", "8014680c.c", "8015f89c.c",
                                  "8015fa78.c", "8015faac.c", "8015fdcc.c", "8015fe70.c"]),
     ("twinpeak_action22_start_probe", ["8015fae8.c"]),
+    ("twinpeak_contact_state_probe", ["801612b8.c", "8015fbe0.c"]),
     ("twinpeak_contact_probe", ["8015fcc8.c", "8015fd74.c"]),
+    ("twinpeak_tutorial_defaults_probe", ["80137840.c", "80139634.c", "80139dc8.c"]),
     ("twinpeak_tutorial_handle_probe", ["8013767c.c", "801377b4.c", "801399a8.c"]),
 ])
 @pytest.mark.parametrize("compiler", ["gcc", "clang"])

@@ -1122,13 +1122,18 @@ SCENE_PHASE_EXTENTS = {
     # guest timing. The queue bytes alone cannot identify their scene.
     0x8013767C: {"sc03_0029": None},
     0x801377B4: {"sc03_0029": None},
+    0x80137840: {"sc03_0029": None},
+    0x80139634: {"sc03_0029": None},
     0x801399A8: {"sc03_0029": None},
+    0x80139DC8: {"sc03_0029": None},
     0x801466F0: {"sc03_0029": None},
     0x8014680C: {"sc03_0029": None},
     0x8015F89C: {"sc03_0029": None},
     0x8015FAE8: {"sc03_0029": None},
+    0x8015FBE0: {"sc03_0029": None},
     0x8015FCC8: {"sc03_0029": None},
     0x8015FD74: {"sc03_0029": None},
+    0x801612B8: {"sc03_0029": None},
     # The cemetery award calls resident inventory and story services, then resumes its room script.
     0x8017D828: {"sc03_0023": (92, 0x2A6B9BFEB36C862E)},
     # The slab selection, forty-tick slide and key proximity callback share room state.
