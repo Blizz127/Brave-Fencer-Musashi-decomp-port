@@ -11945,6 +11945,11 @@ typedef struct LaneRunFrame {
         unsigned entry;
         unsigned long long digital, analog53, analog73, presses, releases, cycles, quiet_declines;
     } pad_latch;
+    struct {
+        uint8_t digest[2][32];
+        unsigned mounted[2];
+        unsigned long long mask[2], empty[2], disconnected, analog_guest, quiet_declines, cycles;
+    } pad_mapper;
     FieldScene field_scene;
     struct LaneRunFrame *prev;
     FormatterCpu *cpu;
@@ -12606,6 +12611,7 @@ static int lane_try(MusashiBootMemory *memory, FormatterCpu *cpu) {
 #include "scene_counter_call.h"
 #include "story_word_call.h"
 #include "frame_pad_latch.h"
+#include "controller_mask_map.h"
 
 static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     uint32_t instruction, opcode, rs, rt, rd, immediate, old_npc;
@@ -12677,8 +12683,13 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         if (latch < 0) return formatter_refuse0(__LINE__, cpu->pc);
     }
     if (mounted_leaf_target(cpu->pc) && mounted_leaf_ready(root, memory, cpu)) {
-        int call = cpu->pc == COUNTER_ENTRY ? scene_counter_offer(root, memory, cpu) :
-                                              story_word_offer(root, memory, cpu);
+        int call;
+        if (cpu->pc == PAD_EDGE_MAP || cpu->pc == PAD_HELD_MAP)
+            call = controller_mapper_offer(root, memory, cpu);
+        else if (cpu->pc == COUNTER_ENTRY)
+            call = scene_counter_offer(root, memory, cpu);
+        else
+            call = story_word_offer(root, memory, cpu);
         if (call > 0) return 1;
         if (call < 0) return formatter_refuse0(__LINE__, cpu->pc);
     }
@@ -14291,6 +14302,7 @@ static MusashiResetGraphPrefixStatus run_startup_cpu(
         scene_counter_capture(&frame, memory, cpu);
         story_word_capture(&frame, memory, cpu);
         frame_pad_capture(&frame, memory, cpu);
+        controller_mapper_capture(&frame, memory, cpu);
     }
     if (g_trace_state >= 0) musashi_trace_function_entry(cpu->pc, cpu->r[31], 'd');
     status = run_startup_cpu_loop(memory, cpu, sink, userdata, result, stop,
@@ -14299,6 +14311,7 @@ static MusashiResetGraphPrefixStatus run_startup_cpu(
         scene_report(&frame, "exit");
     if (frame.field_scene.mounted) field_scene_report(&frame.field_scene);
     frame_pad_report(&frame);
+    controller_mapper_report(&frame);
     if (frame.story_word.reads || frame.story_word.writes || frame.story_word.quiet_declines)
         fprintf(stderr, "native_boot: STORY_WORD reads=%llu writes=%llu cycles=%llu quiet_declines=%llu\n",
                 frame.story_word.reads, frame.story_word.writes,

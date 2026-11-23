@@ -6,9 +6,12 @@ enum { COUNTER_ENTRY = 0x800118acu, COUNTER_SIZE = 124u, COUNTER_CYCLES = 70u,
 enum { STORY_READ = 0x80029504u, STORY_WRITE = 0x80029514u,
        STORY_WORD = 0x80078e80u, STORY_LEAF_SIZE = 16u, STORY_WORD_CYCLES = 9u };
 
+enum { PAD_EDGE_MAP = 0x80014ed4u, PAD_HELD_MAP = 0x80015018u };
+
 static int mounted_leaf_target(uint32_t pc)
 {
-    return pc == COUNTER_ENTRY || pc == STORY_READ || pc == STORY_WRITE;
+    return pc == COUNTER_ENTRY || pc == STORY_READ || pc == STORY_WRITE ||
+        pc == PAD_EDGE_MAP || pc == PAD_HELD_MAP;
 }
 
 static void scene_counter_capture(LaneRunFrame *root, MusashiBootMemory *ram,
