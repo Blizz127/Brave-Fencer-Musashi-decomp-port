@@ -130,6 +130,8 @@ static int title_mixer_access(MusashiBootMemory *m,const FormatterCpu *cpu,
     if (!title_mixer_bound(m,cpu) || !r->symbol || r->issued_pc!=cpu->pc ||
         (width!=1u && width!=2u && width!=4u) || (addr&(width-1u)) || store>1u) return 0;
     if (r->music && r->symbol->family == MUSIC_SEQUENCE) {
+        if (r->symbol->start == 0x80039b20u &&
+            music_note_release_status(m,cpu->pc,addr,width,store,value)) return 1;
         if (music_data_access(m, r->root_sp, cpu->r[29], addr, width, store, value))
             return !store || addr < cpu->r[29] || addr >= r->root_sp ||
                 (addr < r->frame_sp && width <= r->frame_sp - addr);

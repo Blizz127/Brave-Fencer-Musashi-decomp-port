@@ -22,12 +22,13 @@ the same interval with test providers for the graphics and subsystem calls.
 
 **November 23, 2026. Player downloads are under review.**
 
-The tested Windows and Linux pair (`239ff493`) ran the opening track’s 12
-music routines and produced more sound after **Now Loading**. Both players
-stopped before the opening moon. Windows ran under Wine. The preceding pair
-also showed **Loaded data!** on an earned File 1 and stopped before the
-Chapter 2 bedroom. The original US game reached both scenes.
-[Full changelog, disc setup, archive hashes and results](docs/RELEASE-CANDIDATE-239ff493.md)
+The November 23 Windows and Linux test builds (`e5fdd4d7`) released
+the first note in the opening track. Both stopped on **Now Loading** when
+the sequencer requested the hardware key-off. Windows ran under Wine.
+The previous File 1 test showed **Loaded data!** and stopped before the
+Chapter 2 bedroom. The original US disc reached the opening moon, the
+forest and the saved bedroom.
+[Full changelog, disc setup, archive hashes and results](docs/RELEASE-CANDIDATE-e5fdd4d7.md)
 
 In a separate Linux playthrough, File 4 received the Steamwood Manual and
 closed numbered valves 1 and 2. The US disc and private Linux game both

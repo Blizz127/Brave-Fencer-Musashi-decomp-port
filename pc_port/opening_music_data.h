@@ -212,6 +212,43 @@ static int music_pending_mask(MusashiBootMemory *mem, uint32_t address,
            ((old & 0xffffu) != 0 && value == (old & 0x00ff0000u));
 }
 
+/* The note-off handler queues the low key-off and clears the channel's key
+ * marker before changing this voice's sampled status from 1 to 2. The normal
+ * sweep subsequently commits the pending hardware key mask. */
+static int music_note_release_status(MusashiBootMemory *mem, uint32_t pc, uint32_t address,
+                                     unsigned width, unsigned store, uint32_t value)
+{
+    const uint32_t status = 0x800a4efeu;
+    if (pc != 0x80039c34u || store != 1 || width != 1 || value != 2 ||
+        address < status || address >= status+16u ||
+        !music_data_equals(mem,0x800762b0u,4,status) || !music_data_equals(mem,address,1,1))
+        return 0;
+
+    uint32_t channel, note, cursor, pending_off, pending_on;
+    unsigned slot = address-status;
+    uint32_t bit = 1u << slot;
+    uint32_t voice = MUSIC_VOICES+MUSIC_VOICE_BYTES*slot;
+    if (!music_data_equals(mem,0x800a4e86u,2,0) ||
+        !music_data_equals(mem,0x800a4e8cu,2,0x91u) ||
+        !music_data_equals(mem,voice+0x10,4,bit) ||
+        !music_data_read(mem,voice+4,2,&note) || note >= 128 ||
+        !music_data_read(mem,voice+6,2,&channel) || channel >= 16 ||
+        !music_data_read(mem,0x800a2b98u,4,&pending_off) || !(pending_off & bit) ||
+        !music_data_read(mem,0x800c7d20u,4,&pending_on) || (pending_on & bit))
+        return 0;
+
+    const uint32_t player = MUSIC_PLAYERS;
+    MusicDataTrack track;
+    return music_data_equals(mem,voice+0x50,4,player) &&
+           music_data_equals(mem,voice+0x5a,1,0) &&
+           music_data_equals(mem,voice+0x5b,1,1) && music_data_equals(mem,voice+0x5c,1,1) &&
+           music_data_equals(mem,player+0x1fa,1,1) && music_track_range(mem,player,&track) &&
+           music_data_equals(mem,player+0x1f7,1,0x80u+channel) &&
+           music_data_equals(mem,player+0x23u+channel*0x1au+slot,1,0) &&
+           music_data_read(mem,player,4,&cursor) && cursor > track.start && cursor <= track.end &&
+           music_data_equals(mem,cursor-1u,1,note);
+}
+
 static int music_data_access(MusashiBootMemory *mem, uint32_t root_sp, uint32_t sp,
                              uint32_t address, unsigned width, int write, uint32_t value)
 {
