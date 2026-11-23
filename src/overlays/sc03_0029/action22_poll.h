@@ -17,7 +17,13 @@ typedef FusionWord TwinpeakPollHandle;
 
 typedef struct TwinpeakPollActor {
     Action21Actor base;
-    unsigned char unknownBC[0xdc];
+    unsigned char unknownBC[2];
+    unsigned char contact_flag_be;
+    unsigned char contact_flag_bf;
+    unsigned char unknownC0[0xc4];
+    FusionWord selected_contact;
+    unsigned char unknown188[15];
+    unsigned char contact_flag_197;
     TwinpeakPollHandle handle;
     unsigned char unknown19C[4];
     unsigned char contact;

@@ -109,8 +109,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The scene registry covers 620 regional function matches across seventeen overlay members,
-totaling 97,216 bytes.
+The scene registry covers 622 regional function matches across seventeen overlay members,
+totaling 97,476 bytes.
 
 The cemetery award in SC03 member 0023 stores Jon’s Key, advances story progress
 to 60, sets the completion flag and resumes the room script. The field player
@@ -121,13 +121,15 @@ when Musashi reaches it. The opening flag is set on the final movement update.
 Run `python3 tests/test_cemetery_opening.py` to exercise those callbacks. They
 also execute on the guest CPU in the public player.
 
-Four Twinpeak actor routines in SC03 member 0029 match 452 bytes from the US disc.
-They start action 22, dispatch its phases, poll the current handle in phase three,
-and process animation events and cleanup in phase four. During a Shrink encounter
-on the original game, the actor stayed in phase three for 289 calls and advanced
-on the next call. The public player executes these four routines on the guest CPU.
-Run `python3 -m pytest -q tests/test_twinpeak_action22.py` to check callback
-order, actor fields shared with action 21 and the optional queue request.
+Six Twinpeak actor routines in SC03 member 0029 match 712 bytes from the US disc.
+They start action 22, dispatch its phases, prepare contact, open its handle,
+poll it and process animation events and cleanup. During a Shrink encounter
+on the original game, the actor advanced from phase one to two in 88 clocks
+and from two to three in 11,695. It waited in phase three for 289 calls and
+advanced on the next call. The public player executes these routines on the
+guest CPU. The abort path has host-test coverage. Run
+`python3 -m pytest -q tests/test_twinpeak_action22.py` to check the normal
+and abort paths, service call order, actor fields and the optional queue request.
 
 Jon’s stocks initializer selects a dialogue script using story progress, an event flag and a game query. The host test covers seven outcomes, including the high-progress path that keeps the previous selection. The public player excludes this initializer from native dispatch. The callback following the key-use message also has matching C source. It calls the first actor service, updates the resulting actor part and calls the next service. The callback retains guest timing. On an ordinary private playthrough, Musashi used the key, Jon stood free and the four-log objective appeared at story progress 70. A separate actor routine advances the story.
 
