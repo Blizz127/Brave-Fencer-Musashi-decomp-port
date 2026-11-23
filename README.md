@@ -46,6 +46,15 @@ disc across all 152 bytes. Two option readers used by that callback return
 the same zero-extended byte to both menu and resident callers. The Chapter 2
 bedroom still requires a successful cold Continue in the release candidate.
 
+The matching decompilation now covers 1,000 functions across 13 registries.
+Thirteen new Steamwood functions match 1,084 bytes of the US game. These
+cover the display for a numbered valve’s short timer, the cleanup and
+restart script after it expires, and the selectors for valves 3 through 8.
+A controlled comparison covered all 65,536 signed tick values. An ordinary
+private Linux playthrough ran out of time after Valve 1, received the restart
+dialogue and closed Valve 1 again. Closing all eight valves in sequence
+remains unverified.
+
 Earlier candidates documented the truncated Linux log path and what happened
 with several occupied saves. [Previous File 1 results](docs/RELEASE-CANDIDATE-97a342d8.md) · [Earlier paired tests](docs/RELEASE-CANDIDATE-c0b07365.md)
 

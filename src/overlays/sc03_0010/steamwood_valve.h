@@ -9,7 +9,10 @@ struct ValvePlayer {
 struct ValveTimerActor {
     unsigned short type;
     unsigned short phase;
-    unsigned char reserved[0xfc - 4];
+    unsigned char reserved[0xdc - 4];
+    unsigned int digits;
+    unsigned int label;
+    unsigned char reserved_e4[0xfc - 0xe4];
     short ticks;
 };
 
