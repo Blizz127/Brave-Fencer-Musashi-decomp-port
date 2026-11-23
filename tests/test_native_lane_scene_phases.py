@@ -1110,6 +1110,9 @@ def test_timed_source_keeps_other_room_implementations_selectable(tmp_path, memb
 
 
 @pytest.mark.parametrize("pc,size", [
+    (0x8013767C, 76),
+    (0x801377B4, 140),
+    (0x801399A8, 72),
     (0x8015FA78, 52),
     (0x8015FAAC, 60),
     (0x8015FAE8, 248),

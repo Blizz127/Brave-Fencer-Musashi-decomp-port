@@ -83,7 +83,7 @@ void func_80147324(int effect)
     state.contact = 254;  /* Select a different resource during this call. */
 }
 
-TwinpeakPollHandle func_8013767C(FusionWord resource)
+TwinpeakPollHandle twinpeak_contact_handle(FusionWord resource)
 {
     event(OPEN, resource);
     return 0xf27c3a40u;

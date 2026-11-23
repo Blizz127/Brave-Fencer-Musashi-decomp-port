@@ -116,8 +116,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The scene registry covers 623 regional function matches across seventeen overlay members,
-totaling 97,724 bytes.
+The scene registry covers 626 regional function matches across seventeen overlay members,
+totaling 98,012 bytes.
 
 The cemetery award in SC03 member 0023 stores Jon’s Key, advances story progress
 to 60, sets the completion flag and resumes the room script. The field player
@@ -141,6 +141,13 @@ The 248-byte initial status callback can continue the current action or switch
 the actor to action 3 or 4. In one recorded original encounter, it returned
 to action 22, phase one, after 20,217 clocks including its service calls. The
 recording did not capture the status value. Host tests exercise all three outcomes.
+
+Three more Twinpeak routines match 288 bytes. They find a free tutorial slot,
+initialize it and return a handle to the actor. In an original-game Shrink
+encounter, the tutorial took the first available slot. Both pages advanced
+and Musashi regained control. Host tests cover a full pool, selection of the
+second slot and replacement of an active handle. The public player executes
+these routines on the guest CPU.
 
 Jon’s stocks initializer selects a dialogue script using story progress, an event flag and a game query. The host test covers seven outcomes, including the high-progress path that keeps the previous selection. The public player excludes this initializer from native dispatch. The callback following the key-use message also has matching C source. It calls the first actor service, updates the resulting actor part and calls the next service. The callback retains guest timing. On an ordinary private playthrough, Musashi used the key, Jon stood free and the four-log objective appeared at story progress 70. A separate actor routine advances the story.
 

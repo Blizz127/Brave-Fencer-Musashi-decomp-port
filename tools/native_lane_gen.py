@@ -1120,6 +1120,9 @@ SCENE_PHASE_EXTENTS = {
     0x8014BD24: {"sc03_0006": None},
     # Twinpeak's action and queue operations need the live actor, services and
     # guest timing. The queue bytes alone cannot identify their scene.
+    0x8013767C: {"sc03_0029": None},
+    0x801377B4: {"sc03_0029": None},
+    0x801399A8: {"sc03_0029": None},
     0x801466F0: {"sc03_0029": None},
     0x8014680C: {"sc03_0029": None},
     0x8015F89C: {"sc03_0029": None},

@@ -6404,6 +6404,45 @@
       "span_sha256": "6bbee845059b849602e34b68398dc3d23a247961cf9f6f382bbae61d1c6aab15"
     },
     {
+      "name": "func_8013767C",
+      "region": "sc03_0029",
+      "vram": 2148759164,
+      "size": 76,
+      "source": "src/overlays/sc03_0029/8013767c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 0029 and matched against its complete linked function extent.",
+      "source_sha256": "d085cdfe0981542c156debe85a8037cf5ab65c499754a6aefbfd56d158b0ffff",
+      "span_sha256": "9596955eae32d7e2fcb33ac6455e89ca0c32d51becb5e238cb18a488f52622db"
+    },
+    {
+      "name": "func_801377B4",
+      "region": "sc03_0029",
+      "vram": 2148759476,
+      "size": 140,
+      "source": "src/overlays/sc03_0029/801377b4.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 0029 and matched against its complete linked function extent.",
+      "source_sha256": "799d0e45baa89eab1fa586cc4cbeee6ef6feb6b9f2c9373a03a2a07f06c6072d",
+      "span_sha256": "a9fcbd0f2b8157531d1510d659f1d3da7f0f0ba1552bd9f14db3a040fd213e57"
+    },
+    {
+      "name": "func_801399A8",
+      "region": "sc03_0029",
+      "vram": 2148768168,
+      "size": 72,
+      "source": "src/overlays/sc03_0029/801399a8.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 0029 and matched against its complete linked function extent.",
+      "source_sha256": "91b9b9742a2e317733e40dd425c61146fd25bbb959626366fc2f56bc9577fb4b",
+      "span_sha256": "8283ae1d54b2ca7f226dda9d974721f5bac38d666365860d1e88a2fcf89206a0"
+    },
+    {
       "name": "func_8015FA78",
       "region": "sc03_0029",
       "vram": 2148924024,
@@ -6465,7 +6504,7 @@
       "extent": "function",
       "optimization": "-O2",
       "origin": "Independently reconstructed from USA SC03.CD member 0029 and matched against its complete linked function extent.",
-      "source_sha256": "bfd3bbe36f5ac03e0e99768530424dcdc840580c6beb6143d0834bd283bd1d2b",
+      "source_sha256": "e2b0d0f632ebf1f2f3beca41ea2d245072c96c7690ca83e1a39e3b7821a86a05",
       "span_sha256": "7fe95971c867cca6871e1e71d51ecb080a07ac94b9a6980c4fe607de02f30f59"
     },
     {

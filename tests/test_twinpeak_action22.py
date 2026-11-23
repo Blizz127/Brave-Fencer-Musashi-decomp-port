@@ -10,6 +10,7 @@ import pytest
                                  "8015fa78.c", "8015faac.c", "8015fdcc.c", "8015fe70.c"]),
     ("twinpeak_action22_start_probe", ["8015fae8.c"]),
     ("twinpeak_contact_probe", ["8015fcc8.c", "8015fd74.c"]),
+    ("twinpeak_tutorial_handle_probe", ["8013767c.c", "801377b4.c", "801399a8.c"]),
 ])
 @pytest.mark.parametrize("compiler", ["gcc", "clang"])
 def test_shared_actor_callbacks(tmp_path, compiler, probe_name, sources):
