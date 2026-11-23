@@ -1145,6 +1145,10 @@ SCENE_PHASE_EXTENTS = {
     0x8017D790: {"sc03_0011": (60, 0x472E5C5A921418CF)},
     0x8017D7CC: {"sc03_0011": (64, 0x6D16AEFCAA91377D)},
     0x8017D888: {"sc03_0011": (136, 0xBDE0503DDBBE0D38)},
+    # The indoor pressure gauge uses room-local phase handlers and lookup tables.
+    0x8017C404: {"sc03_0010": (80, 0xB50767E839830FFD)},
+    0x8017C628: {"sc03_0010": (72, 0xD89D520888656EEE)},
+    0x8017DDA4: {"sc03_0010": (32, 0xEFA0D61364690835)},
     # Interior numbered valves use the live progress, countdown actor and scene scripts.
     0x8017DB20: {"sc03_0010": (100, 0x460486201C629952)},
     0x8017DB84: {"sc03_0010": (156, 0x94740EBF5225DFFC)},
@@ -1158,12 +1162,12 @@ SCENE_PHASE_EXTENTS = {
     # Fores's room initializer and the Steamwood practice valve depend on
     # guest scene services, live actor state and instruction timing.
     0x801816F0: {"sc03_0002": (280, 0xBEE7B2AD74F21086)},
-    0x8017C454: {"sc03_0011": (112, 0x7AE55605B3FDFA98)},
-    0x8017C4C4: {"sc03_0011": (100, 0xE3789245D16FC1F5)},
-    0x8017C528: {"sc03_0011": (176, 0x36ADD94DA4723CE3)},
-    0x8017C5D8: {"sc03_0011": (80, 0xD6F505D978EFD781)},
-    0x8017C6B8: {"sc03_0011": (60, 0xD0253A09EFA53AD9)},
-    0x8017C6F4: {"sc03_0011": (60, 0x75E346BBF7D4504B)},
+    0x8017C454: {"sc03_0010": (112, 0x7AE55605B3FDFA98), "sc03_0011": (112, 0x7AE55605B3FDFA98)},
+    0x8017C4C4: {"sc03_0010": (100, 0xE3789245D16FC1F5), "sc03_0011": (100, 0xE3789245D16FC1F5)},
+    0x8017C528: {"sc03_0010": (176, 0x36ADD94DA4723CE3), "sc03_0011": (176, 0x36ADD94DA4723CE3)},
+    0x8017C5D8: {"sc03_0010": (80, 0xD6F505D978EFD781), "sc03_0011": (80, 0xD6F505D978EFD781)},
+    0x8017C6B8: {"sc03_0010": (60, 0xA87D4792589F2F9C), "sc03_0011": (60, 0xD0253A09EFA53AD9)},
+    0x8017C6F4: {"sc03_0010": (60, 0x68D8A22C96F493C6), "sc03_0011": (60, 0x75E346BBF7D4504B)},
     # The village actor queries interaction request 3 before entering the
     # separate cottage module. Both callbacks need the live room services.
     0x80181894: {"sc03_0002": (60, 0x76C26421E1329A88)},
@@ -1474,7 +1478,7 @@ def overlay_extent_source_only(entry, src, info, extents):
               0x801CBBDC, 0x801CBC08, 0x801816F0, 0x8017C454, 0x8017C4C4, 0x8017C528,
               0x8017C5D8, 0x8017C6B8, 0x8017C6F4, 0x8017D790, 0x8017D7CC, 0x8017D888,
               0x8017DB20, 0x8017DB84, 0x8017DC20, 0x8017DC7C, 0x8017DD84, 0x8017DE84,
-              0x8017ECE8, 0x8017EDA8, 0x8017EDD8) and info and all(
+              0x8017ECE8, 0x8017EDA8, 0x8017EDD8, 0x8017C404, 0x8017C628, 0x8017DDA4) and info and all(
                   key in info for key in ("vram", "start", "data")):
         if any(member_digest(info, pc, size) == digest for size, digest in variants.values()):
             return True

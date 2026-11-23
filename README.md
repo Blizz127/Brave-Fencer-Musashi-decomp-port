@@ -34,6 +34,11 @@ private Linux game both started the visible timer at 23:59 after a cold
 Continue from the same save.
 [Steamwood gameplay results](docs/RELEASE-CANDIDATE-50455488.md#earned-save-play-on-separate-private-linux-builds)
 
+Nine additional functions now match all 772 bytes of the indoor Steamwood
+pressure-gauge actions and the second valve’s selector. The scene registry
+covers 676 functions across the matched overlays. These nine entries document
+the decompilation. Native execution of the indoor gauge remains in progress.
+
 Earlier candidates documented the truncated Linux log path and what happened
 with several occupied saves. [Previous File 1 results](docs/RELEASE-CANDIDATE-97a342d8.md) · [Earlier paired tests](docs/RELEASE-CANDIDATE-c0b07365.md)
 
