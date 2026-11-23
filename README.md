@@ -20,6 +20,13 @@ the same interval with test providers for the graphics and subsystem calls.
 
 ## Player downloads and source builds
 
+**November 23, 2026, 17:13 UTC.** Two Longevity Berry HP functions bring the
+public matching registry from 1,012 to 1,014 entries. Both were already
+counted in the private decompilation and both still execute on the guest CPU.
+In separate Wednesday playthroughs, the original US game and private Linux
+R123 each saved 175/175 HP in File 4 after the Mayor's reward.
+[Matching functions and Wednesday save results](docs/RELEASE-CANDIDATE-94294368.md#wednesday-longevity-berry-follow-up)
+
 **November 23, 2026, 17:08 UTC.** Private test build `94294368` completed
 13 scene-counter calls in host code on each of two Linux starts. New Game
 stopped before the opening moon. Continue read an earned File 1 and

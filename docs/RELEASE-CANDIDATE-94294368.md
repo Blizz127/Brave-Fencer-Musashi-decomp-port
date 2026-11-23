@@ -36,6 +36,14 @@ The original US game also completed the repair, saved File 4 at Hotelo and resto
 
 At the November 23 private launcher readback at 16:50 UTC, Linux selected R137 (`e94206f060490e5c224d8ffc4f77202c70dfc24d`) and Windows selected R50. The installer offered the Linux update from R136. On the staged R137 archive, valve 4 turned green and its timer counted from 35 to 34. The timer-reload prologue and continuation executed eight original game instructions in host code. The later timer block appeared in the process-wide guest trace, and the reload recorded 14 decoded attempts with no host return. That trace combines calls from multiple selectors. A separate repeat from the served archive was in progress. The local scene-counter builds below have no public binary release.
 
+## Wednesday Longevity Berry follow-up
+
+**November 23, 2026, 17:13 UTC.** The original US game and private Linux R123 each loaded a copy of the same repaired File 4 and met the Mayor on Wednesday morning. His Longevity Berry raised maximum HP by 25 and restored current HP, taking Musashi from 140/150 to 175/175. Both players then saved at Hotelo. Compared with the common starting card, the original changed 51 bytes in File 4 and R123 changed 52. The rest of each card was byte-identical to its starting copy. All 320 saved story bytes agreed between runs, including reward flag 239. Cold Continue from the two new post-reward saves remains untested.
+
+The original comparison ended at Hotelo after the save. R123 continued in the same session, passed Guard Lumpwood and met Rootrick on Twinpeak Mountain.
+
+The public registry now has 1,014 entries, up from 1,012. New C for the maximum-HP increase matched all 56 original bytes. The existing public C for the current-HP adjustment matched all 232 bytes. Each function has one entry for MAIN/0012 and identical code in 138 scene members. Both were already counted in the private decompilation. The player continues to run both through the guest CPU.
+
 ## Local archive checksums
 
 | Platform | Local build ID | Archive | Bytes | SHA-256 |

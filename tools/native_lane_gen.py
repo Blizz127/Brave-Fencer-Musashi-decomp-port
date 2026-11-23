@@ -1160,6 +1160,9 @@ SCENE_PHASE_EXTENTS = {
     # workspace, scene records and two trailing records.
     0x801378F0: {"main_0012": None},
     0x8013A860: {"main_0012": None},
+    # The berry grant updates maximum and current HP in separate calls.
+    0x8014BB24: {"main_0012": (232, 0x73DB937B625943D2)},
+    0x8014BC0C: {"main_0012": (56, 0x3777C0E3626FFA86)},
     # The rescue reward writes the wrapped BP sum before applying its limit.
     # Both writes remain visible to the game clock in the forest overlay.
     0x8014BCEC: {"sc03_0006": None},
@@ -1525,7 +1528,7 @@ def overlay_extent_source_only(entry, src, info, extents):
               0x8017C5D8, 0x8017C6B8, 0x8017C6F4, 0x8017D790, 0x8017D7CC, 0x8017D888,
               0x8017DB20, 0x8017DB84, 0x8017DC20, 0x8017DC7C, 0x8017DD84, 0x8017DE84,
               0x8017ECE8, 0x8017EDA8, 0x8017EDD8, 0x8017C404, 0x8017C628, 0x8017DDA4,
-              0x8017BF70, 0x8017BFF8)) and info and all(
+              0x8017BF70, 0x8017BFF8, 0x8014BB24, 0x8014BC0C)) and info and all(
                   key in info for key in ("vram", "start", "data")):
         if any(member_digest(info, pc, size) == digest for size, digest in variants.values()):
             return True

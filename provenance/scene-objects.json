@@ -7583,6 +7583,32 @@
       "origin": "Project C verified against the entire linked function in USA SC03.CD member 0012.",
       "source_sha256": "faf89dcb180e4aa816e411446e0315a7f625394b39b29ea227c5347a41b36482",
       "span_sha256": "e3ba25308d395946f287b05e28fd182bcbb548da38875e0bcfa024e817890d3d"
+    },
+    {
+      "name": "func_8014BB24",
+      "region": "main_0012",
+      "vram": 2148842276,
+      "size": 232,
+      "source": "src/overlays/main_0012/8014bb24.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Previously published project C verified against the complete USA MAIN/0012 current-HP adjustment used by the Longevity Berry reward.",
+      "source_sha256": "1be1823003d8e32d4f602a14e74b129413f5e8a44a7caea1b54887e8f3374cee",
+      "span_sha256": "c5897073bde480e56521f69047990755701e63e5f452e11269e830f0a0724f5d"
+    },
+    {
+      "name": "func_8014BC0C",
+      "region": "main_0012",
+      "vram": 2148842508,
+      "size": 56,
+      "source": "src/overlays/main_0012/8014bc0c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independent project C reconstructed from the USA disc. The Longevity Berry award calls this function to increase maximum HP.",
+      "source_sha256": "9a08b12a32b213be454ba08079004d82465680ff058f606fa4588ed80725f95d",
+      "span_sha256": "ee6a185623ab12cc64688f57197028a1c0caf2fe9ef31e824d605025048cb386"
     }
   ]
 }
