@@ -110,6 +110,11 @@ int musashi_psycross_irq_runtime_init(MusashiPsyCrossIrqRuntime *runtime,
     MusashiBootMemory *memory, const void *reserved);
 
 int musashi_psycross_irq_runtime_close(MusashiPsyCrossIrqRuntime *);
+/* Inspect the installed guest-clock source lease under its own mutex. The
+ * producer only records host timing metadata. This query neither collects
+ * that metadata nor dispatches or acknowledges a guest interrupt. */
+int musashi_psycross_irq_runtime_quiet_owner(const MusashiPsyCrossIrqRuntime *,
+                                            const MusashiBootMemory *);
 int musashi_psycross_irq_scheduler_bind_cpu(MusashiPsyCrossIrqScheduler *, MusashiCpuStatus *);
 int musashi_psycross_irq_scheduler_bind_context(MusashiPsyCrossIrqScheduler *,
     int (*provider)(void *, const void *, MusashiCpuContext *), void *userdata);

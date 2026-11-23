@@ -80,6 +80,11 @@ typedef struct MusashiCallbackDevice {
     /* Read-only after a paid RAM load, before its register effect. Return one
      * only when the owner can rule out delivery at the next normal checkpoint. */
     MusashiFieldRestoreQuiet field_restore_quiet;
+    /* A foreground RAM-only native call offers its entire cycle cost before
+     * changing RAM or CPU state. 1 paid all device/source time with no
+     * intervening observer, 0 declined before payment, -1 terminated during
+     * payment. A terminal result must never replay the call. */
+    int (*charge_quiet)(void *userdata, const void *continuation, uint32_t cycles);
 } MusashiCallbackDevice;
 
 #endif

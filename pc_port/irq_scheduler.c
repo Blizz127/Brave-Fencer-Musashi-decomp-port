@@ -358,6 +358,30 @@ static int runtime_read16(void *userdata, uint32_t address, uint16_t *value) {
     return musashi_irq_controller_read16(&runtime->controller, address, value);
 }
 
+int musashi_psycross_irq_runtime_quiet_owner(const MusashiPsyCrossIrqRuntime *r,
+                                            const MusashiBootMemory *memory) {
+    MusashiCpuStatusSnapshot cpu;
+    if (!r || !r->initialized || !memory) return 0;
+    const MusashiPsyCrossIrqScheduler *s = &r->scheduler;
+    if (!scheduler_is_owner(s) || !s->host_edges_advisory || s->memory != memory ||
+        s->device != &r->device || r->device.userdata != r || r->device.read16 != runtime_read16 ||
+        s->cpu_status != r->cpu_status || s->pumping || s->delivering || s->collecting ||
+        s->faulted || s->active_continuation || s->active_exception.owner ||
+        !musashi_cpu_status_snapshot(r->cpu_status, &cpu) || cpu.active || cpu.faulted ||
+        musashi_irq_controller_pending(&r->controller) || !scheduler_lock()) return 0;
+    /* The source thread never touches guest/device state. A full advisory
+     * queue drops host edges, but a broken clock or lease can still fault. */
+    uint64_t now = SDL_GetPerformanceCounter();
+    int ok = active_scheduler == s && vsync_callback == scheduler_vblank && s->installed &&
+        !s->source_overflow && s->source_frequency && s->source_frequency == SDL_GetPerformanceFrequency() &&
+        now >= s->source_tick && now >= s->source_cut_tick &&
+        s->pending_vblanks <= MUSASHI_IRQ_SOURCE_CAPACITY &&
+        s->source_sequence >= s->source_vblanks && s->source_sequence != UINT64_MAX &&
+        s->source_sequence - s->source_vblanks == s->pending_vblanks;
+    scheduler_unlock();
+    return ok;
+}
+
 static int runtime_write16(void *userdata, uint32_t address, uint16_t value) {
     MusashiPsyCrossIrqRuntime *runtime = userdata;
     return musashi_irq_controller_write16(&runtime->controller, address, value);

@@ -1432,19 +1432,31 @@ static int guest_clock_collect(NativeBoot *boot, MusashiIrqSourceBatch *batch) {
     return 1;
 }
 
-static int guest_clock_wait(NativeBoot *boot, uint64_t target_cycle) {
-    if (target_cycle < boot->guest_tick) return 0;
-    boot->guest_tick = target_cycle;
+static int guest_clock_pacing_due(const NativeBoot *boot, uint64_t target_tick,
+                                 uint64_t *frequency, uint64_t *due) {
+    *frequency = 0;
 #ifdef MUSASHI_WITH_BFM_PLAT
     if (g_plat_timing_on) return 1;   /* paced once per guest VBlank instead */
 #endif
-    if (!boot->guest_unthrottled) {
-        uint64_t freq = SDL_GetPerformanceFrequency();
-        uint64_t due = boot->guest_host_origin +
-            (uint64_t)((double)target_cycle * (double)freq / (double)MUSASHI_DEVICE_CLOCK_HZ);
+    if (boot->guest_unthrottled) return 1;
+    *frequency = SDL_GetPerformanceFrequency();
+    double elapsed = (double)target_tick * (double)*frequency / (double)MUSASHI_DEVICE_CLOCK_HZ;
+    if (!*frequency || elapsed >= 0x1p64) return 0;
+    uint64_t ticks = (uint64_t)elapsed;
+    if (ticks > UINT64_MAX - boot->guest_host_origin) return 0;
+    *due = boot->guest_host_origin + ticks;
+    return 1;
+}
+
+static int guest_clock_wait(NativeBoot *boot, uint64_t target_tick) {
+    uint64_t freq, due;
+    if (target_tick < boot->guest_tick || !guest_clock_pacing_due(boot, target_tick, &freq, &due))
+        return 0;
+    boot->guest_tick = target_tick;
+    if (freq) {
         uint64_t now = SDL_GetPerformanceCounter();
         /* Sleep only when the guest is a whole millisecond ahead. */
-        while (now + freq / 1000u < due) {
+        while (now < due && due - now > freq / 1000u) {
             SDL_Delay(1);
             now = SDL_GetPerformanceCounter();
         }
@@ -4521,6 +4533,7 @@ int main(int argc, char **argv) {
     boot.callback.checkpoint = checkpoint;
     boot.callback.field_restore_irq = current_field_irq;
     boot.callback.field_restore_quiet = field_restore_quiet;
+    boot.callback.charge_quiet = mounted_charge_quiet;
     boot.gpu_device.userdata = &boot;
     boot.gpu_device.read32 = gpu_read32;
     boot.gpu_device.write32 = gpu_write32;
