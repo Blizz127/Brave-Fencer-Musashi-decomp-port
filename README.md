@@ -22,18 +22,19 @@ the same interval with test providers for the graphics and subsystem calls.
 
 **November 23, 2026. Player downloads are under review.**
 
-Candidate `be0d0af5` dispatched 27 opening music events in native code on
-Linux and on the Windows player under Wine. Both stopped after **Now Loading**
-before the moon. Both also loaded the same earned File 1 and stopped before
-the Chapter 2 bedroom. The US disc reached the forest and showed the bedroom.
-The notes include all 315 source changes, both local archive checksums,
-platform results, and instructions for supplying a legally owned US disc.
-[Latest paired results](docs/RELEASE-CANDIDATE-be0d0af5.md) · [Previous candidate](docs/RELEASE-CANDIDATE-b2577094.md)
+We withheld candidate `f7e8a138` after finding eight original disc-table
+addresses in the source and in both compiled players. Linux and Windows
+under Wine reached **Now Loading** on New Game and stopped before the opening
+moon. On both platforms, Continue loaded the earned File 1 and stopped
+before the Chapter 2 bedroom. The US disc reached
+both destinations. The notes include the candidate checksums, full change
+history, platform results and instructions for using your own US disc.
+[Candidate report](docs/RELEASE-CANDIDATE-f7e8a138.md) · [Preceding paired results](docs/RELEASE-CANDIDATE-be0d0af5.md)
 
 In separate private Linux play, Musashi earned the Steamwood Manual and
-closed numbered valves 1 through 4 before their deadlines. The fourth timer
-reset to 35 seconds. The complete eight-valve repair remains unverified.
-[Steamwood gameplay results](docs/RELEASE-CANDIDATE-be0d0af5.md#steamwood-decompilation-and-private-gameplay)
+closed numbered valves 1 through 6 in order. Valve 5 reset its timer to 35
+seconds and valve 6 to 60. The full eight-valve repair remains unverified.
+[Steamwood gameplay results](docs/RELEASE-CANDIDATE-f7e8a138.md#private-steamwood-progress)
 
 Nine additional functions now match all 772 bytes of the indoor Steamwood
 pressure-gauge actions and the second valve’s selector. The scene registry
@@ -62,9 +63,9 @@ cursor, including its wrap from 255 to zero. The final branch clears a
 story halfword and three 56-byte blocks. All 212 original bytes matched.
 Across 5,633 controlled calls, the original and host C agreed on the whole
 player structure, story writes and external call order. The match count is
-now 1,005. During a private Linux playthrough, Musashi closed the first four
-valves in order. Valve 4 turned green and its clock reset from 3 seconds
-to 35. Musashi reached Valve 5 with 23 seconds left and ran out of time.
+now 1,005. On an earlier private Linux attempt, valve 4 turned green and
+its clock reset from 3 to 35 seconds. Valve 5’s gauge opened at 23 seconds
+and that attempt ran out of time. The later run closed six valves in order.
 The full repair and a save after the rescue still need a complete playthrough.
 
 Earlier candidates documented the truncated Linux log path and what happened
