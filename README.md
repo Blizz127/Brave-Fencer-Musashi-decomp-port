@@ -22,19 +22,18 @@ the same interval with test providers for the graphics and subsystem calls.
 
 **November 23, 2026. Player downloads are under review.**
 
-Linux and Windows under Wine both played the opening’s cached note on the host
-in candidate `b2577094`. New Game stopped on **Now Loading** before the moon.
-On the same earned File 1, both showed **Loaded data!** and stopped before the
-bedroom. The original US disc reached the forest and loaded the bedroom.
-The candidate notes include the 314-commit history, both local archive
-checksums, US disc setup and the content findings for historical downloads.
-[Latest paired results](docs/RELEASE-CANDIDATE-b2577094.md) · [Previous candidate](docs/RELEASE-CANDIDATE-50455488.md)
+Candidate `be0d0af5` dispatched 27 opening music events in native code on
+Linux and on the Windows player under Wine. Both stopped after **Now Loading**
+before the moon. Both also loaded the same earned File 1 and stopped before
+the Chapter 2 bedroom. The US disc reached the forest and showed the bedroom.
+The notes include all 315 source changes, both local archive checksums,
+platform results, and instructions for supplying a legally owned US disc.
+[Latest paired results](docs/RELEASE-CANDIDATE-be0d0af5.md) · [Previous candidate](docs/RELEASE-CANDIDATE-b2577094.md)
 
-On separate private Linux builds, an earned File 4 received the Steamwood
-Manual and closed numbered valves 1, 2 and 3 in order. The original disc and
-private Linux game both started the visible timer at 23:59 after a cold
-Continue from the same save.
-[Steamwood gameplay results](docs/RELEASE-CANDIDATE-50455488.md#earned-save-play-on-separate-private-linux-builds)
+In separate private Linux play, Musashi earned the Steamwood Manual and
+closed numbered valves 1 through 4 before their deadlines. The fourth timer
+reset to 35 seconds. The complete eight-valve repair remains unverified.
+[Steamwood gameplay results](docs/RELEASE-CANDIDATE-be0d0af5.md#steamwood-decompilation-and-private-gameplay)
 
 Nine additional functions now match all 772 bytes of the indoor Steamwood
 pressure-gauge actions and the second valve’s selector. The scene registry

@@ -228,22 +228,30 @@ static int title_mixer_issue(MusashiBootMemory *m,FormatterCpu *cpu,uint32_t wor
     return title_mixer_access(m,cpu,address,width,op>=40u,value);
 }
 
-static int title_mixer_after_clock(MusashiBootMemory *m,FormatterCpu *cpu,uint32_t word) {
-    uint32_t live;
-    const TitleMixerRun *r=cpu->title_mixer;
+static int title_mixer_unchanged(const TitleMixerRun *r, const FormatterCpu *cpu, uint32_t word) {
     return r && r->issued_pc==cpu->pc && r->issued_word==word &&
         r->issued_npc==cpu->npc && r->issued_branch==cpu->branch_pc && r->issued_delay==cpu->delay_slot &&
-        r->issued_hi==cpu->hi && r->issued_lo==cpu->lo && !memcmp(r->issued_gpr,cpu->r,sizeof r->issued_gpr) &&
+        r->issued_hi==cpu->hi && r->issued_lo==cpu->lo && !memcmp(r->issued_gpr,cpu->r,sizeof r->issued_gpr);
+}
+
+static int title_mixer_after_clock(MusashiBootMemory *m,FormatterCpu *cpu,uint32_t word) {
+    uint32_t live;
+    return title_mixer_unchanged(cpu->title_mixer,cpu,word) &&
         title_mixer_word(m,cpu,&live) && live==word && title_mixer_issue(m,cpu,word);
+}
+
+static void title_mixer_remember_issue(TitleMixerRun *r, const FormatterCpu *cpu, uint32_t word) {
+    r->issued_pc=cpu->pc;
+    r->issued_word=word;r->issued_npc=cpu->npc;r->issued_branch=cpu->branch_pc;
+    r->issued_delay=cpu->delay_slot;r->issued_hi=cpu->hi;r->issued_lo=cpu->lo;
+    memcpy(r->issued_gpr,cpu->r,sizeof r->issued_gpr);
 }
 
 static int title_mixer_step(MusashiBootMemory *m,FormatterCpu *cpu,MusashiGuestIrqStop *stop,
                             uint32_t word) {
     TitleMixerRun *r=cpu->title_mixer;
-    r->issued_pc=stop->pc=cpu->pc;
-    r->issued_word=word;r->issued_npc=cpu->npc;r->issued_branch=cpu->branch_pc;
-    r->issued_delay=cpu->delay_slot;r->issued_hi=cpu->hi;r->issued_lo=cpu->lo;
-    memcpy(r->issued_gpr,cpu->r,sizeof r->issued_gpr);
+    stop->pc=cpu->pc;
+    title_mixer_remember_issue(r,cpu,word);
     if (stop->instructions>=8192u || !title_mixer_issue(m,cpu,word) || !formatter_step(m,cpu)) return 0;
     ++stop->instructions;
     return !(cpu->r[29]&3u) && cpu->r[29]<=r->root_sp && r->root_sp-cpu->r[29]<=(r->music ? 0x400u : 0x70u);
@@ -252,6 +260,7 @@ static int title_mixer_step(MusashiBootMemory *m,FormatterCpu *cpu,MusashiGuestI
 #include "opening_player_status.h"
 #include "opening_sequence_delta.h"
 #include "opening_voice_reuse.h"
+#include "opening_event_dispatch.h"
 
 static int title_mixer_guest_call(MusashiBootMemory *m,FormatterCpu *cpu,
     const MusashiGuestIrqServices *services,const MusashiExecutionClock *clock,
@@ -287,6 +296,8 @@ static int title_mixer_guest_call(MusashiBootMemory *m,FormatterCpu *cpu,
     struct {uint32_t ret,sp;const TitleMixerSymbol *symbol;} frames[16]={{caller+8u,run.root_sp,run.symbol}};
     uint32_t saved[8],gp=cpu->r[28],fp=cpu->r[30];
     memcpy(saved,&cpu->r[16],sizeof saved);
+    OpeningEvent event = {0};
+    OpeningEventCounts completed = {0};
     unsigned n=1,table_reg=0;
     uint32_t table_address=0,table_value=0;
     cpu->title_mixer=&run;
@@ -311,6 +322,28 @@ static int title_mixer_guest_call(MusashiBootMemory *m,FormatterCpu *cpu,
         int indirect=!op && fn==8u, ret=indirect && rs==31u;
         int link=op==3u || (!op && fn==9u);
         int branch=(op>=1u && op<=7u) || indirect || link;
+        if (music && n == 3u && frames[0].symbol->start == 0x80037fc4u &&
+            frames[1].symbol->start == 0x80038a58u && frames[2].symbol->start == MUSIC_EVENT_START &&
+            frames[2].ret == MUSIC_EVENT_PARENT_RETURN) {
+            if (pc == MUSIC_EVENT_START && music_event_select(m, cpu, &event)) {
+                if (!music_event_segment(m, cpu, &run, stop, &event, 0)) break;
+                const TitleMixerSymbol *handler = music_callee(MUSIC_EVENT_START, event.call, cpu->pc);
+                if (!handler || cpu->r[31] != event.call + 8u ||
+                    !music_child_entry(m, cpu, &run, handler, run.frame_sp - 24u)) break;
+                frames[n].ret = cpu->r[31]; frames[n].sp = cpu->r[29]; frames[n].symbol = handler;
+                ++n;
+                table_address = 0;
+                continue;
+            }
+            if (event.target && pc == event.call + 8u) {
+                if (!music_event_segment(m, cpu, &run, stop, &event, 1)) break;
+                music_event_observed(&event, &completed);
+                event = (OpeningEvent){0};
+                --n;
+                table_address = 0;
+                continue;
+            }
+        }
         if (music && pc == MUSIC_CACHE_COMPARE && n == 4u &&
             frames[0].symbol->start == 0x80037fc4u && frames[1].symbol->start == 0x80038a58u &&
             frames[2].symbol->start == 0x80038ffcu && frames[3].ret == 0x8003907cu &&
@@ -389,6 +422,9 @@ static int title_mixer_guest_call(MusashiBootMemory *m,FormatterCpu *cpu,
         }
         if (link || indirect) table_address=0;
     }
+    if (completed.note_off || completed.note_on || completed.controller || completed.program || completed.meta)
+        fprintf(stderr, "native_boot: OPENING_EVENT_COUNTS off=%u on=%u controller=%u program=%u meta=%u\n",
+                completed.note_off, completed.note_on, completed.controller, completed.program, completed.meta);
     int ok=!n && cpu->pc==caller+8u && cpu->r[31]==caller+8u && cpu->r[29]==run.root_sp &&
         cpu->r[28]==gp && cpu->r[30]==fp && !memcmp(saved,&cpu->r[16],sizeof saved);
     cpu->title_mixer=NULL;
