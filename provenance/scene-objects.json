@@ -6313,6 +6313,19 @@
       "span_sha256": "299d77284df14e300eb4e49f81a0e6fb9d60eacdfa15de9d23f68d130bd558e9"
     },
     {
+      "name": "func_801F0048",
+      "region": "sc03_0054",
+      "vram": 2149515336,
+      "size": 80,
+      "source": "src/overlays/sc03_0054/801f0048.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the two callbacks in the US village key-use script.",
+      "source_sha256": "9abbd117283e1ab38fdc9b242848218f12b5d40493dcddd1a74880ca91004e75",
+      "span_sha256": "66c3ec66f4981d9d6450c620b6b09ca3a6e55ba91be6430e16cb56ca80d40afb"
+    },
+    {
       "name": "func_801466F0",
       "region": "sc03_0029",
       "vram": 2148820720,

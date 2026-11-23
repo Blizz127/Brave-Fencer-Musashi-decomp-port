@@ -1129,6 +1129,8 @@ SCENE_PHASE_EXTENTS = {
     0x8017E414: {"sc03_0023": (272, 0x8D6C0096D0502A68)},
     0x8017E524: {"sc03_0023": (232, 0x2E28787897B9A573)},
     0x8017EC30: {"sc03_0023": (84, 0x6D827E64716976A1)},
+    # The room VM invokes two actor services after the key-use message.
+    0x801F0048: {"sc03_0054": None},
     # Jon selects a room script and may advance story state before returning.
     0x801EF558: {"sc03_0054": (384, 0x0A70742E7582B0D2)},
     # Village waypoint motion needs the live actor, its movement services and guest timing.
