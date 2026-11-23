@@ -79,6 +79,12 @@
       "file": "extracted/overlays/sc03/0006.pac0.bin",
       "base": 2148696408,
       "sha256": "0e3d11ca1901d1049f61ebf99e764037d30803dd838728f514f9714f1522c81b"
+    },
+    "sc03_0054": {
+      "kind": "blob",
+      "file": "extracted/overlays/sc03/0054.bin",
+      "base": 2149510248,
+      "sha256": "e4e56cdba54ca64091f28d8495479a351fd78533cb1a778d2f51e21065b7168e"
     }
   },
   "matches": [
@@ -6248,6 +6254,19 @@
       "origin": "Independently reconstructed from USA SC03.CD member 0006 and the public integer types.",
       "source_sha256": "a09874a76efc68443aa7034d43af76dfeb045e7cd84830350cf3aac346f833c4",
       "span_sha256": "ce64730dc03f8457d5f6245aa94690bd6d00b75bbc74fd82cda972728fe3c941"
+    },
+    {
+      "name": "func_801EF558",
+      "region": "sc03_0054",
+      "vram": 2149512536,
+      "size": 384,
+      "source": "src/overlays/sc03_0054/801ef558.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD directory entry 54 and verified against its complete linked function extent.",
+      "source_sha256": "399b44cd7f9b125b238a3f48ad1c6622c4ac7b24d2239580914e9d265f47ca42",
+      "span_sha256": "299d77284df14e300eb4e49f81a0e6fb9d60eacdfa15de9d23f68d130bd558e9"
     }
   ]
 }

@@ -1106,6 +1106,8 @@ FOREST_ATTACHMENT_EXTENTS = {
 }
 
 SCENE_PHASE_EXTENTS = {
+    # Jon selects a room script and may advance story state before returning.
+    0x801EF558: {"sc03_0054": (384, 0x0A70742E7582B0D2)},
     # Village waypoint motion needs the live actor, its movement services and guest timing.
     0x80187A64: {"sc03_0001": (456, 0x467F92EE8AC88EA4)},
     0x80180994: {"sc03_0116": (60, 0xC1D82A67EF1E15BB)},
