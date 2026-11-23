@@ -53,6 +53,28 @@
       "recovery": "c",
       "optimization": "-O2",
       "source_sha256": "a986c6209f43cdd7f62d7d6794a8c6041b1454ae1fa259c935e2eb7cd9edcbc6"
+    },
+    {
+      "name": "func_8017BF70",
+      "region": "main_0012",
+      "vram": 2149039984,
+      "size": 136,
+      "source": "src/overlays/main_0012/8017bf70.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "source_sha256": "a70fcdc430451a867fb8e5325e50d923d15e0b988c2f1bd1ecac6dd5188f5c44"
+    },
+    {
+      "name": "func_8017BFF8",
+      "region": "main_0012",
+      "vram": 2149040120,
+      "size": 16,
+      "source": "src/overlays/main_0012/8017bff8.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "source_sha256": "e0706b58f852a6233158a675eaf2019dd2772aae525a8d8c89698953a8fccfde"
     }
   ]
 }

@@ -1,9 +1,9 @@
 /* Owner re-derivation from retail assembly (clean input set). */
-/* Calls a helper with constant 0x2C and returns its low byte. */
-#include "psx_types.h"
+#include "game_option_values.h"
 
-extern s32 func_800291B4(s32 arg0);
+extern u8 func_800291B4(s32 index);
 
-u8 func_80028FBC(void) {
-    return func_800291B4(0x2C);
+s32 func_80028FBC(void)
+{
+    return func_800291B4(44) & 0xff;
 }

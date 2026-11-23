@@ -39,6 +39,11 @@ pressure-gauge actions and the second valve’s selector. The scene registry
 covers 676 functions across the matched overlays. These nine entries document
 the decompilation. Native execution of the indoor gauge remains in progress.
 
+The File 1 menu-exit callback and its signed status reader now match the US
+disc across all 152 bytes. Two option readers used by that callback return
+the same zero-extended byte to both menu and resident callers. The Chapter 2
+bedroom still requires a successful cold Continue in the release candidate.
+
 Earlier candidates documented the truncated Linux log path and what happened
 with several occupied saves. [Previous File 1 results](docs/RELEASE-CANDIDATE-97a342d8.md) · [Earlier paired tests](docs/RELEASE-CANDIDATE-c0b07365.md)
 

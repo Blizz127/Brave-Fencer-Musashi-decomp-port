@@ -1106,6 +1106,9 @@ FOREST_ATTACHMENT_EXTENTS = {
 }
 
 SCENE_PHASE_EXTENTS = {
+    # File selection runs on the active MAIN menu and calls the guest sound service.
+    0x8017BF70: {"main_0012": (136, 0x9168FA8FF78CA325)},
+    0x8017BFF8: {"main_0012": (16, 0x6FFE8C3A4E255D15)},
     # The room change calls four services. Its slot reset exposes each write
     # to the game clock as it clears 128 object type fields.
     0x800D1D24: {"main_0010": None},
@@ -1478,7 +1481,8 @@ def overlay_extent_source_only(entry, src, info, extents):
               0x801CBBDC, 0x801CBC08, 0x801816F0, 0x8017C454, 0x8017C4C4, 0x8017C528,
               0x8017C5D8, 0x8017C6B8, 0x8017C6F4, 0x8017D790, 0x8017D7CC, 0x8017D888,
               0x8017DB20, 0x8017DB84, 0x8017DC20, 0x8017DC7C, 0x8017DD84, 0x8017DE84,
-              0x8017ECE8, 0x8017EDA8, 0x8017EDD8, 0x8017C404, 0x8017C628, 0x8017DDA4) and info and all(
+              0x8017ECE8, 0x8017EDA8, 0x8017EDD8, 0x8017C404, 0x8017C628, 0x8017DDA4,
+              0x8017BF70, 0x8017BFF8) and info and all(
                   key in info for key in ("vram", "start", "data")):
         if any(member_digest(info, pc, size) == digest for size, digest in variants.values()):
             return True
