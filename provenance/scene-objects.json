@@ -91,6 +91,12 @@
       "file": "extracted/overlays/sc03/0054.bin",
       "base": 2149510248,
       "sha256": "e4e56cdba54ca64091f28d8495479a351fd78533cb1a778d2f51e21065b7168e"
+    },
+    "main_0012": {
+      "kind": "blob",
+      "file": "extracted/overlays/main/0012.bin",
+      "base": 2148532568,
+      "sha256": "7bf686da174e6bd98cab8e742af629ba4168cff76e3be4e367cb69f783af070c"
     }
   },
   "matches": [
@@ -6312,6 +6318,19 @@
       "origin": "Independently reconstructed from USA SC03.CD member 0029 and matched against its complete linked function extent.",
       "source_sha256": "f1acb8ee49ebed6a260c1dfdba96b6c211f3b981ad330bfb1c0e4273145c348c",
       "span_sha256": "77a3bc2106a69d42b71a13a386a6cab529c30c5ee69a248cc0110dc94fe9fc71"
+    },
+    {
+      "name": "func_80129258",
+      "region": "main_0012",
+      "vram": 2148700760,
+      "size": 36,
+      "source": "src/overlays/main_0012/80129258.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independent owner C reconstruction from the US disc. This source matches the mounted room transition after restoring File 1.",
+      "source_sha256": "d6c2499b9df07d194cfe2a411d36dc3ea0ddbcc49c40130089fde88ce0405cce",
+      "span_sha256": "1d7536e667f0dfdcdf9507a2f0a7b2de2e6c5db0ba811a7e23a13243df7a30d2"
     }
   ]
 }

@@ -18,6 +18,19 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2"
+    },
+    {
+      "name": "func_800D1D24",
+      "region": "main_0010",
+      "vram": 2148343076,
+      "size": 112,
+      "source": "src/overlays/main_0010/800d1d24.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independent owner C reconstruction from the US disc. This source matches the mounted room transition after restoring File 1.",
+      "source_sha256": "d0af263c13f8b449171e42508aaad72ff0f6d4c564aa962743a625b15bacdab1",
+      "span_sha256": "7ad3099752c6afb7265ed243276a75a2da4a7d475e54da029b7d6e74cc189b77"
     }
   ]
 }

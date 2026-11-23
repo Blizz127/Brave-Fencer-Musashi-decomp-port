@@ -1106,6 +1106,10 @@ FOREST_ATTACHMENT_EXTENTS = {
 }
 
 SCENE_PHASE_EXTENTS = {
+    # The room change calls four services. Its slot reset exposes each write
+    # to the game clock as it clears 128 object type fields.
+    0x800D1D24: {"main_0010": None},
+    0x80129258: {"main_0012": None},
     # Twinpeak's action and queue operations need the live actor, services and
     # guest timing. The queue bytes alone cannot identify their scene.
     0x801466F0: {"sc03_0029": None},

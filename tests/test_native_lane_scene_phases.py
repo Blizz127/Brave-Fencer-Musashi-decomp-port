@@ -1076,11 +1076,17 @@ def test_forest_effect_and_steam_knight_extents(tmp_path, monkeypatch, member):
         member == "sc01_0077")
 
 
-@pytest.mark.parametrize("pc,size", [(0x801466F0, 96), (0x8014680C, 188), (0x8015F89C, 172)])
-def test_twinpeak_fusion_source_keeps_other_room_implementations_selectable(tmp_path, pc, size):
+@pytest.mark.parametrize("member,pc,size", [
+    ("sc03_0029", 0x801466F0, 96),
+    ("sc03_0029", 0x8014680C, 188),
+    ("sc03_0029", 0x8015F89C, 172),
+    ("main_0010", 0x800D1D24, 112),
+    ("main_0012", 0x80129258, 36),
+])
+def test_timed_source_keeps_other_room_implementations_selectable(tmp_path, member, pc, size):
     (tmp_path / "ir").mkdir()
-    source = ROOT / f"src/overlays/sc03_0029/{pc:08x}.c"
-    row = dict(name=f"func_{pc:08X}", vram=pc, size=size, region="sc03_0029", source=str(source))
+    source = ROOT / f"src/overlays/{member}/{pc:08x}.c"
+    row = dict(name=f"func_{pc:08X}", vram=pc, size=size, region=member, source=str(source))
     assert lane.build_one(row, tmp_path, {}, {}, "clang")["rule"] == "timing"
 
     alternate = tmp_path / "other.c"
@@ -1092,7 +1098,7 @@ def test_twinpeak_fusion_source_keeps_other_room_implementations_selectable(tmp_
         pytest.skip("clang and nm required for the independent-source control")
     alternate.write_text(f"int func_{pc:08X}(int value) {{ return value; }}\n")
     info = dict(member="sc02_0031", vram=pc, start=0, code=[(pc, pc + size)], data=bytes(size))
-    twinpeak = dict(info, member="sc03_0029")
-    assert lane.build_one(other, tmp_path, {}, {}, "clang", twinpeak)["rule"] == "timing"
-    assert lane.build_one(dict(other, region="sc03_0029"), tmp_path, {}, {}, "clang", info)["rule"] == "timing"
+    timed_member = dict(info, member=member)
+    assert lane.build_one(other, tmp_path, {}, {}, "clang", timed_member)["rule"] == "timing"
+    assert lane.build_one(dict(other, region=member), tmp_path, {}, {}, "clang", info)["rule"] == "timing"
     assert lane.build_one(other, tmp_path, {}, {}, "clang", info)["admitted"]
