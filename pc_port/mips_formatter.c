@@ -6126,6 +6126,12 @@ typedef struct RoomSceneFrame {
     unsigned clears;
 } RoomSceneFrame;
 
+typedef struct RoomLatchFrame {
+    MusashiMain12Owner *owner;
+    uint32_t top, next, regs[32];
+    unsigned returning;
+} RoomLatchFrame;
+
 typedef struct FormatterCpu {
     uint32_t r[32];
     uint32_t hi, lo;
@@ -6190,6 +6196,7 @@ typedef struct FormatterCpu {
     uint32_t room_reset_step;
     unsigned room_reset_slot;
     RoomSceneFrame room_scene;
+    RoomLatchFrame room_latch;
 } FormatterCpu;
 
 typedef struct FormatterConsoleContext {
@@ -9230,11 +9237,13 @@ static int room_reset_guest_scene(MusashiBootMemory *memory);
 
 #include "main12_room_slot_reset.h"
 #include "main12_scene_setup.h"
+#include "main10_room_latch.h"
 
 static int formatter_fetch(MusashiBootMemory *memory, const FormatterCpu *cpu, uint32_t *out) {
     const FormatterRange *resident = NULL;
     uint32_t shape;
     if (!cpu || (cpu->pc & 3u)) return 0;
+    if (room_latch_active(cpu)) return room_latch_fetch(memory, cpu, out);
     if (room_scene_active(cpu)) return room_scene_word(memory, cpu, out);
     if (room_reset_active(cpu))
         return room_reset_valid(memory, cpu) && musashi_boot_read32(memory, cpu->pc, out);
@@ -11643,6 +11652,7 @@ static TraceOther g_trace_other[TRACE_OTHER_MAX];
 static unsigned g_trace_other_n;
 static const MusashiNativeLaneEntry *lane_find(uint32_t pc);
 static unsigned long long g_wrapped_angle_trace_steps[3];
+static unsigned long long g_room_latch_trace_steps, g_room_latch_trace_returns;
 
 typedef struct TraceRow { uint32_t target, caller, count; char kind; } TraceRow;
 static int trace_row_cmp(const void *a, const void *b) {
@@ -11682,6 +11692,9 @@ static void trace_dump(void) {
             fprintf(out, "# wrapped_angle_native_steps subtract=%llu return=%llu mask=%llu\n",
                     g_wrapped_angle_trace_steps[0], g_wrapped_angle_trace_steps[1],
                     g_wrapped_angle_trace_steps[2]);
+        if (g_room_latch_trace_steps)
+            fprintf(out, "# room_latch_native steps=%llu returns=%llu\n",
+                    g_room_latch_trace_steps, g_room_latch_trace_returns);
         for (i = 0; i < n; ++i)
             fprintf(out, "%08x %u %c %08x %s\n", rows[i].target, rows[i].count,
                     rows[i].kind, rows[i].caller,
@@ -12387,22 +12400,26 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         g_lane_run_frames->main_entry.next = 0;
     if ((cpu->pc & 3u) || !spu_source_guard(memory, cpu))
         return formatter_refuse0(__LINE__, cpu->pc);
+    const int latching_room = room_latch_active(cpu);
     const int setting_scene = room_scene_active(cpu);
     const int resetting_slots = room_reset_active(cpu);
     const int copying_payload = main12_payload_copy_pc(cpu);
-    if ((setting_scene || resetting_slots || copying_payload || main12_menu_exit_pc(cpu) || cpu->main12_clearing_file || cpu->main12_row_pc || main12_owns_fetch(cpu) || main12_service_pc(cpu) || main12_copy_pc(cpu)) && publish_flow && g_entry_hook &&
+    if ((latching_room || setting_scene || resetting_slots || copying_payload || main12_menu_exit_pc(cpu) || cpu->main12_clearing_file || cpu->main12_row_pc || main12_owns_fetch(cpu) || main12_service_pc(cpu) || main12_copy_pc(cpu)) && publish_flow && g_entry_hook &&
         cpu->pc == g_entry_pending && !formatter_fetch(memory, cpu, &instruction))
         return formatter_refuse0(__LINE__, cpu->pc);
     if (publish_flow && g_entry_hook && cpu->pc == g_entry_pending) {
         g_entry_pending = 1u;
         g_entry_hook(g_entry_hook_user, cpu->pc, cpu->r);
     }
-    if (!setting_scene && !resetting_slots && !cpu->dma_registration && !cpu->irq_image && !cpu->cd_parent_image && !registration_code_pc(cpu->pc) &&
+    if (!latching_room && !setting_scene && !resetting_slots && !cpu->dma_registration && !cpu->irq_image && !cpu->cd_parent_image && !registration_code_pc(cpu->pc) &&
         !startup_exchange_pc(cpu->pc) &&
         !copying_payload && !main12_menu_exit_pc(cpu) && !cpu->main12_clearing_file && !cpu->main12_row_pc && !main12_owns_fetch(cpu) && !main12_service_pc(cpu) && !main12_copy_pc(cpu) && !reset_calls_guest_fill(cpu) &&
         (g_lane_count || g_lane_ovl_count)) {
         int lane = lane_try(memory, cpu);
-        if (lane > 0) return 1;
+        if (lane > 0) {
+            if (cpu->room_latch.returning) room_latch_child_returned(cpu, issued_pc, 1);
+            return 1;
+        }
         if (lane < 0) return formatter_refuse0(__LINE__, cpu->pc);
     }
     if (game_graphics_pc(cpu->pc) && g_lane_run_frames && g_lane_run_frames->main_entry.next) {
@@ -12425,9 +12442,23 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         g_fetch_memory = memory;
         code_sites_invalidate();
     }
+    if (latching_room) {
+        uint32_t target = 0;
+        if (!room_latch_issue(memory, cpu, &target)) return formatter_refuse0(__LINE__, cpu->pc);
+        if (g_trace_state > 0) {
+            ++g_room_latch_trace_steps;
+            if (issued_pc == ROOM_RESET_CALLER + 108u) ++g_room_latch_trace_returns;
+        }
+        if (target && publish_flow) {
+            if (g_trace_state >= 0) musashi_trace_function_entry(target, issued_pc, issued_pc == ROOM_RESET_CALLER + 104u ? 'r' : 'j');
+            if (g_entry_hook) g_entry_pending = target;
+        }
+        return 1;
+    }
     if (setting_scene) {
         uint32_t target = 0;
         if (!room_scene_issue(memory, cpu, &target)) return formatter_refuse0(__LINE__, cpu->pc);
+        if (cpu->room_latch.returning) room_latch_child_returned(cpu, issued_pc, 0);
         if (target && publish_flow) {
             if (g_trace_state >= 0) musashi_trace_function_entry(target, issued_pc, 'j');
             if (g_entry_hook) g_entry_pending = target;
@@ -12437,8 +12468,10 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     if (resetting_slots) {
         MusashiMain12Owner *owner = cpu->room_reset_owner;
         if (!room_reset_issue(memory, cpu)) return formatter_refuse0(__LINE__, cpu->pc);
-        if (issued_pc == ROOM_RESET_ENTRY + 32u && cpu->main12_foreground_owner == owner)
+        if (issued_pc == ROOM_RESET_ENTRY + 32u && cpu->main12_foreground_owner == owner) {
+            room_latch_child_returned(cpu, issued_pc, 0);
             room_scene_begin(cpu, owner);
+        }
         return 1;
     }
     if (!formatter_fetch(memory, cpu, &instruction)) return formatter_refuse0(__LINE__, cpu->pc);
@@ -13470,6 +13503,10 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     }
     cpu->pc = old_npc;
     cpu->npc = target_npc;
+    if (cpu->room_latch.returning && menu_exit_delay && menu_exit_branch == issued_pc - 4u)
+        room_latch_child_returned(cpu, issued_pc, 0);
+    if (exiting_menu && (issued_pc == MAIN12_ROOM_RETURN || issued_pc == MAIN12_ROOM_RETURN + 4u))
+        room_latch_menu_retired(memory, cpu, issued_pc, instruction, menu_exit_branch, menu_exit_delay);
     if (room_reset_call && instruction == MIPS_JAL(ROOM_RESET_ENTRY) &&
         cpu->pc == ROOM_RESET_CALL + 4u && cpu->npc == ROOM_RESET_ENTRY) {
         cpu->room_reset_owner = room_reset_images(memory, cpu);

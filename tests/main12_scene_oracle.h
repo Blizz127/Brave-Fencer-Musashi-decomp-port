@@ -37,7 +37,7 @@ static uint32_t scene_oracle_read(MusashiBootMemory *ram, uint32_t address, unsi
 static void scene_oracle_issue(SceneOracle *model, MusashiBootMemory *ram)
 {
     const uint32_t pc = model->pc, immediate_pc = model->npc;
-    CHECK((pc >= SCENE_TEST_CALL && pc < SCENE_TEST_CALL + 24u) ||
+    CHECK((pc >= ROOM_RESET_CALLER && pc < ROOM_RESET_CALLER + 112u) ||
           (pc >= 0x8017bfe8u && pc <= 0x8017bff4u) ||
           (pc >= SCENE_TEST_SETUP && pc < SCENE_TEST_SETUP + 232u) ||
           (pc >= SCENE_TEST_CHILD && pc < SCENE_TEST_CHILD + 80u) ||

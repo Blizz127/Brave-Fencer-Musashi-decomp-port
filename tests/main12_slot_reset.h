@@ -337,18 +337,15 @@ static void check_foreground_slot_reset(FormatterCpu *cpu)
     musashi_boot_select_overlay_0010_words(1);
     CHECK(cpu->pc == MAIN12_ROOM_RETURN && cpu->main12_foreground_owner == owner &&
           owner->restore.foreground_result_written && !cpu->main12_room_next);
+    check_latch_missing_call(*cpu);
     CHECK(formatter_step(&machine, cpu) && cpu->delay_slot && cpu->npc == caller);
     CHECK(formatter_step(&machine, cpu) && cpu->pc == caller && cpu->r[31] == called_from);
-    unsigned retired = 0;
-    while (cpu->pc != SLOT_RESET_RETURN - 8u && retired < 150000u) {
-        if (!formatter_step(&machine, cpu)) {
-            fprintf(stderr, "Foreground room setup refused before slot reset at %08x\n", cpu->pc);
-            exit(1);
-        }
-        ++retired;
-    }
-    CHECK(retired && retired < 150000u && cpu->main12_foreground_owner == owner);
-    CHECK(formatter_step(&machine, cpu) && formatter_step(&machine, cpu));
+    check_latch_mode_fields(*cpu);
+    check_latch_call(cpu, caller, caller + 64u, 0x8001c0c8u);
+    run_latch_service(cpu, caller + 72u);
+    check_latch_call(cpu, caller + 72u, caller + 72u, 0x80015310u);
+    run_latch_service(cpu, caller + 80u);
+    check_latch_call(cpu, caller + 80u, caller + 80u, SLOT_RESET_ENTRY);
     CHECK(cpu->pc == SLOT_RESET_ENTRY && cpu->r[31] == SLOT_RESET_RETURN &&
           cpu->r[29] + 48u == cpu->main12_foreground_sp);
 

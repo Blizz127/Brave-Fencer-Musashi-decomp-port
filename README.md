@@ -20,7 +20,7 @@ the same interval with test providers for the graphics and subsystem calls.
 
 ## Player downloads and source builds
 
-**November 22, 2026. Player downloads are under review.**
+**November 23, 2026. Player downloads are under review.**
 Historical player binaries also contain routines removed during the SDK
 source review. This correction is available as source for development and testing.
 We downloaded every historical player package from the public releases and
@@ -55,10 +55,33 @@ the bedroom (room 3001, entrance 0). Both stopped at the room-object reset,
 run used Wine 10. The original US game restored the bedroom from this card.
 
 The room-change routine, the 128-slot reset and the two following scene setup
-functions have matching C source. The two setup functions clear the room
+functions have matching C source. On the mounted File 1 path, compiled host
+code latches the pending room mode, saves the previous mode and calls all four
+reset services. The two setup functions clear the room
 workspace, initialize three records from scene data and clear two smaller
 records. A playable start, an inn save and a successful Continue after
 restarting still need verification on replacement downloads.
+
+A Linux player built from the anonymous source archive at `9a45e853` read a
+card with four occupied files. After **Continue**, it displayed **Loading
+Data** and stopped at `0x8017CE28` before the file picker appeared. All four
+files stayed intact.
+
+A Linux player at `88ffbfa6` read File 1, accepted the confirmation and
+displayed **Loaded data!** and accepted a third Cross press. It then stopped at
+interrupt target `0x8003392C` with the message still on screen. The master
+volume had risen one step, from `0x2000` to `0x2222`. The saved room had
+not become active.
+
+A separate, unpublished pair of players at `c0b073650` tested a card with one
+occupied file. Linux and Windows x64 under Wine 10 both read File 1, accepted
+the confirmation, restored all twelve scene values and completed the master
+sound fade. Both stopped at interrupt target `0x80033D28` before Musashi
+could move. Linux still displayed **NOW LOADING**. Windows showed a black
+screen. The original US disc restored Musashi in the bedroom. With an empty
+card, the same Linux build accepted **New Game** and went black before the
+opening moon. A cold reload after making a new save and testing on physical
+Windows hardware remain open.
 
 Compiled host code now handles the opening movie’s output callback. In an
 ordinary Linux run, it processed 1,760 strips across 88 complete movie frames

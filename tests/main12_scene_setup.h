@@ -1,4 +1,5 @@
 #include "main12_scene_oracle.h"
+#include "main12_room_latch.h"
 
 static unsigned scene_clear_collisions;
 
@@ -241,7 +242,14 @@ static void check_scene_setup(FormatterCpu *cpu, int canaries)
               context.gpr == cpu->r && context.pc == pc && context.npc == model.npc &&
               context.instruction_valid && context.instruction == mounted &&
               context.branch_pc == model.branch && context.delay_slot == cpu->delay_slot);
-        if (pc == SCENE_TEST_SETUP) scene_check_ownership(cpu);
+        if (pc >= SCENE_TEST_CALL && pc < SCENE_TEST_CALL + 24u)
+            check_latch_boundary(cpu, fetched);
+        if (pc == SCENE_TEST_CALL || pc == SCENE_TEST_CALL + 4u)
+            scene_reject_byte(cpu, SCENE_TEST_CHILD + 76u);
+        if (pc == SCENE_TEST_SETUP) {
+            CHECK(cpu->r[31] == SCENE_TEST_RETURN && cpu->room_latch.owner == owner);
+            scene_check_ownership(cpu);
+        }
         if (pc == SCENE_TEST_CLEAR) {
             MusashiCpuContext host;
             CHECK(!musashi_boot_continuation_host_context(cpu, &host));
@@ -288,7 +296,8 @@ static void check_scene_setup(FormatterCpu *cpu, int canaries)
     CHECK(saw_return && completed == 6u && checked_charge && model.instructions == 3593u && model.cycles == 8059u &&
           model.reads == 21u && model.writes == 852u && model.loads_delayed == 21u &&
           model.load_uses == 0u && halfword_stores == 12u && zero_words == 832u);
-    CHECK(cpu->pc == MAIN12_ROOM_RETURN + 8u && cpu->main12_foreground_owner == owner);
+    CHECK(cpu->pc == MAIN12_ROOM_RETURN + 8u && cpu->main12_foreground_owner == owner &&
+          !cpu->room_latch.owner);
     for (unsigned i = 0; i < 4u; ++i) {
         uint32_t word;
         CHECK(cpu->main12_foreground_owner == owner && cpu->pc == 0x8017bfe8u + 4u*i &&
