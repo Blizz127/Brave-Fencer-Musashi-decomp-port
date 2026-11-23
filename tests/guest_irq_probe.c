@@ -20,6 +20,47 @@ int VSyncCallback(void (*callback)(void)) { vsync_callback = callback; return 0;
 #include "guest_irq_draw_completion.h"
 #include "guest_irq_cd_dma3.h"
 
+enum FadeClockPhase {
+    STEP_READ = 1, LOAD_DELAY = 2, RISING_STORE = 4, CLAMP_LEVEL = 8, CLAMP_FLAGS = 16
+};
+enum FadeClockAction {
+    NO_CHANGE, CHANGE_STEP, CHANGE_LIVE, CHANGE_BOTH_IMAGES, CHANGE_RETURN, REFUSE_CLOCK
+};
+typedef struct FadeCase {
+    const char *name;
+    uint16_t level, step, target, result;
+    uint8_t flags, result_flags, dirty;
+    unsigned phases;
+    uint32_t clock_pc;
+    enum FadeClockAction action;
+} FadeCase;
+
+/* Results come from the unsigned assignments and comparisons in 8002cdd8.c.
+ * The rising route reads the step and stores the sum before a possible clamp. */
+#define RISE_PHASES (STEP_READ | LOAD_DELAY | RISING_STORE)
+#define CLAMP_PHASES (RISE_PHASES | CLAMP_LEVEL | CLAMP_FLAGS)
+static const FadeCase fade_cases[] = {
+    {"fade-za-rise",       0x2000,0x0222,0x4000,0x2222, 0x01,0x01,1,    RISE_PHASES},
+    {"fade-rise-clamp",    0x3ffe,0x0222,0x4000,0x4000, 0x85,0x84,0x7e, CLAMP_PHASES},
+    {"fade-rise-exact",    0x7fff,0x0001,0x8000,0x8000, 0x83,0x82,0x7e, CLAMP_PHASES},
+    {"fade-rise-wrap",     0xfff0,0x0030,0xfff8,0x0020, 0x01,0x01,0,    RISE_PHASES},
+    {"fade-equal-wrap",    0xffff,0x0001,0xffff,0x0000, 0xff,0xff,0,    RISE_PHASES},
+    {"fade-rise-zero-step",0x0100,0x0000,0x0101,0x0100, 0x81,0x81,0,    RISE_PHASES},
+    {"fade-disabled",      0x2000,0x0222,0x4000,0x2000, 0x80,0x80,0x7e, 0},
+    {"fade-step-on-read",  0x2000,0x0222,0x4000,0x2011, 0x01,0x01,0,    RISE_PHASES,
+        0x8002ce84u, CHANGE_STEP},
+    {"fade-step-after-read",0x2000,0x0222,0x4000,0x2222,0x01,0x01,0,    RISE_PHASES,
+        0x8002ce88u, CHANGE_STEP},
+    {"fade-clock-store-live",0x2000,0x0222,0x4000,0x2000,0x01,0x01,0,    RISE_PHASES,
+        0x8002ce94u, CHANGE_LIVE},
+    {"fade-clock-clamp-images",0x3ffe,0x0222,0x4000,0x4220,0x85,0x85,0, RISE_PHASES | CLAMP_LEVEL,
+        0x8002ceb0u, CHANGE_BOTH_IMAGES},
+    {"fade-clock-flags-return",0x3ffe,0x0222,0x4000,0x4000,0x85,0x85,0,  CLAMP_PHASES,
+        0x8002ceb8u, CHANGE_RETURN},
+    {"fade-clock-step-refused",0x2000,0x0222,0x4000,0x2000,0x01,0x01,0,  STEP_READ,
+        0x8002ce84u, REFUSE_CLOCK},
+};
+
 typedef struct Machine {
     DrawFixture draw;
     CdCompletion cd3;
@@ -40,11 +81,47 @@ typedef struct Machine {
     unsigned calls;
     const char *mode;
     const MusashiGuestIrqCard *card;
+    const FadeCase *fade_case;
+    unsigned fade_phases, clock_changes;
 } Machine;
+
+static int fade_clock(Machine *m, uint32_t cycles) {
+    uint32_t pc = m->stop.pc;
+    unsigned phase;
+    switch (pc) {
+    case 0x8002ce84u: phase = STEP_READ; break;
+    case 0x8002ce88u: phase = LOAD_DELAY; break;
+    case 0x8002ce94u: phase = RISING_STORE; break;
+    case 0x8002ceb0u: phase = CLAMP_LEVEL; break;
+    case 0x8002ceb8u: phase = CLAMP_FLAGS; break;
+    default: return 1;
+    }
+    assert(cycles == (phase == LOAD_DELAY ? 2u : 3u));
+    assert(!(m->fade_phases & phase));
+    m->fade_phases |= phase;
+    if (pc != m->fade_case->clock_pc) return 1;
+    ++m->clock_changes;
+    switch (m->fade_case->action) {
+    case CHANGE_STEP:
+        return musashi_boot_write16(&m->memory, 0x800a4ee2u, 0x11);
+    case CHANGE_LIVE:
+        m->memory.bytes[pc - 0x80000000u] ^= 1u;
+        return 1;
+    case CHANGE_BOTH_IMAGES:
+        m->memory.bytes[pc - 0x80000000u] ^= 1u;
+        m->image.sound_tick[pc - 0x8002cdd8u] ^= 1u;
+        return 1;
+    case CHANGE_RETURN:
+        return musashi_boot_write32(&m->memory, 0x8006ca94u + 24u, 0);
+    case REFUSE_CLOCK: return 0;
+    default: abort();
+    }
+}
 
 static uint64_t thread(void *p) { (void)p; return (uint64_t)SDL_ThreadID(); }
 static int advance(void *p,uint32_t n) {
     Machine *m=p; m->cycles+=n;
+    if (m->fade_case && !fade_clock(m,n)) return 0;
     if (m->draw.channel && !draw_advance(&m->draw,n)) return 0;
     if (m->cd3.channel && !musashi_cd_dma3_advance(m->cd3.channel,m->cycles)) return 0;
     return !m->spu || musashi_spu_cd_audio_advance(m->spu,m->cycles);
@@ -169,6 +246,9 @@ int main(int argc,char **argv) {
     int wrap = !strcmp(m->mode, "fade-wrap");
     int limit = equal || !strcmp(m->mode, "fade-limit") || !strcmp(m->mode, "fade-limit-level-code") ||
         !strcmp(m->mode, "fade-limit-mode-code");
+    for (size_t i = 0; i < sizeof fade_cases / sizeof fade_cases[0]; ++i)
+        if (!strcmp(m->mode, fade_cases[i].name)) m->fade_case = &fade_cases[i];
+    const FadeCase *fc = m->fade_case;
     int fade = limit || wrap || !strcmp(m->mode, "title-fade") || !strcmp(m->mode, "title-fade-code");
     int countdown=!strncmp(m->mode,"countdown-",10);
     int bad_countdown=!strcmp(m->mode,"countdown-code");
@@ -181,7 +261,7 @@ int main(int argc,char **argv) {
         assert(musashi_boot_write16(&m->memory,0x800a4efcu,count));
         if (bad_countdown) m->memory.bytes[0x2d008u]^=1u;
     }
-    int active=countdown || fade || !strcmp(m->mode,"active") || !strcmp(m->mode,"soundless") ||
+    int active=countdown || fade || fc || !strcmp(m->mode,"active") || !strcmp(m->mode,"soundless") ||
         !strcmp(m->mode,"voice-range") || !strcmp(m->mode,"sound-code");
     if (fade) {
         uint16_t start = limit ? 0x23aau : 0x3180u;
@@ -195,6 +275,14 @@ int main(int argc,char **argv) {
         if (!strcmp(m->mode, "fade-limit-level-code")) m->memory.bytes[0x2ceb0u] ^= 1u;
         if (!strcmp(m->mode, "fade-limit-mode-code")) m->memory.bytes[0x2ceb8u] ^= 1u;
         if (!strcmp(m->mode, "title-fade-code")) m->memory.bytes[0x2ce40u] ^= 1u;
+    }
+    if (fc) {
+        assert(musashi_boot_write16(&m->memory, 0x800a4ee0u, fc->level));
+        assert(musashi_boot_write16(&m->memory, 0x800a4ee2u, fc->step));
+        assert(musashi_boot_write16(&m->memory, 0x800a4ee4u, fc->target));
+        m->memory.bytes[0xa4ee6u] = fc->flags;
+        m->memory.bytes[0xa4ee7u] = 0x6b;
+        m->memory.bytes[0xa4f16u] = fc->dirty;
     }
     int card_only=!strcmp(m->mode,"card") || !strcmp(m->mode,"card-code");
     if (argc!=4 || !active) {
@@ -254,6 +342,7 @@ int main(int argc,char **argv) {
        assert(m->dma.interrupt==0x84840000u);
     }
     int success=(countdown && !bad_countdown) || equal || wrap || !strcmp(m->mode,"fade-limit") || !strcmp(m->mode,"title-fade") || !strcmp(m->mode,"vblank") || dma || !strcmp(m->mode,"card") || !strcmp(m->mode,"active");
+    if (fc) success = fc->action == NO_CHANGE || fc->action == CHANGE_STEP;
     if (cd3) success=!strcmp(m->mode,"cd3-complete") || !strcmp(m->mode,"cd3-next");
     if (draw) success=m->draw.queued ? m->draw.queued->complete :
                     !strcmp(m->mode,"draw-complete") || !strcmp(m->mode,"draw-timer") ||
@@ -286,6 +375,18 @@ int main(int argc,char **argv) {
         assert(actual==(count && !bad_countdown ? (uint16_t)(count-1u) : count));
         assert(neighbor==0x4517);
     }
+    if (fc) {
+        uint16_t level, step, target;
+        assert(musashi_boot_read16(&m->memory, 0x800a4ee0u, &level));
+        assert(musashi_boot_read16(&m->memory, 0x800a4ee2u, &step));
+        assert(musashi_boot_read16(&m->memory, 0x800a4ee4u, &target));
+        assert(level == fc->result && target == fc->target);
+        assert(step == (fc->action == CHANGE_STEP ? 0x11u : fc->step));
+        assert(m->memory.bytes[0xa4ee6u] == fc->result_flags);
+        assert(m->memory.bytes[0xa4ee7u] == 0x6b);
+        assert(m->memory.bytes[0xa4f16u] == ((fc->flags & 1u) ? 1u : fc->dirty));
+        assert(m->fade_phases == fc->phases && m->clock_changes == (fc->action != NO_CHANGE));
+    }
     if (fade) {
         uint16_t level;
         assert(musashi_boot_read16(&m->memory, 0x800a4ee0u, &level));
@@ -311,7 +412,8 @@ int main(int argc,char **argv) {
         assert(state.active && state.faulted && s->faulted && !s->return_consumed);
         unsigned steps=m->stop.instructions;
         assert(!musashi_psycross_irq_scheduler_dispatch_pending(s,m->outer) && steps==m->stop.instructions && m->calls==1);
-        if (bad_countdown) assert(m->post==m->before+1 && m->stop.pc==0x8002d008u);
+        if (fc) assert(m->post == m->before + 1 && m->stop.pc == fc->clock_pc);
+        else if (bad_countdown) assert(m->post==m->before+1 && m->stop.pc==0x8002d008u);
         else if(cd3) assert(m->post==m->before && (m->stop.pc==0x80042ea8u ||
             (!strcmp(m->mode,"cd3-image") && m->stop.pc==CD_TEST_CALLBACK)));
         else if(draw) assert(m->post==m->before);
@@ -334,7 +436,7 @@ int main(int argc,char **argv) {
         assert(musashi_gpu_dma2_close(other->draw.channel));
         free(other);
     }
-    if(m->spu)assert(m->envelopes==((!strcmp(m->mode,"sound-code") || !strcmp(m->mode,"title-fade-code") || (limit && !success))?0u:24u) && musashi_spu_cd_audio_destroy(m->spu));
+    if(m->spu)assert(m->envelopes==((!strcmp(m->mode,"sound-code") || !strcmp(m->mode,"title-fade-code") || ((limit || fc) && !success))?0u:24u) && musashi_spu_cd_audio_destroy(m->spu));
     printf("%s complete=%d steps=%u cycles=%u stop=%08x tick_delta=%u I_STAT=%04x DICR=%08x sticky=%d voice_reads=%u\n",
         m->mode,success,m->stop.instructions,m->cycles,m->stop.pc,m->post-m->before,m->irq.status,m->dma.interrupt,s->faulted,m->envelopes);
     assert(musashi_psycross_irq_scheduler_uninstall(s));assert(musashi_cpu_status_close(s->cpu_status));

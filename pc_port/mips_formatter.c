@@ -15883,39 +15883,6 @@ static int irq_data_access(const FormatterCpu *cpu, uint32_t w) {
                 return address==accesses[i].address && op==accesses[i].op;
         return 0;
     }
-    /* The guest clamps its level to the threshold before leaving fade mode. */
-    if (region == IRQ_SOUND_TICK && (cpu->pc == 0x8002ceb0u || cpu->pc == 0x8002ceb8u)) {
-        uint16_t level, target;
-        if (cpu->r[31] != 0x80010984u || cpu->r[29] != 0x8006ca94u ||
-            !cpu->irq_image || !cpu->irq_image->memory) return 0;
-        MusashiBootMemory *ram = cpu->irq_image->memory;
-        const uint8_t *mode = musashi_boot_ram_span(ram, 0x800a4ee6u, 1);
-        uint32_t value = cpu->r[(w >> 16) & 31u];
-        if (!mode || *mode != 5u || !musashi_boot_read16(ram, 0x800a4ee0u, &level) ||
-            !musashi_boot_read16(ram, 0x800a4ee4u, &target)) return 0;
-        if (cpu->pc == 0x8002ceb0u)
-            return op == 41u && address == 0x800a4ee0u && level <= target &&
-                (uint16_t)value == target;
-        return op == 40u && address == 0x800a4ee6u && level == target &&
-            (uint8_t)value == 4u;
-    }
-    /* The installed periodic sound callback reads and advances a group
-     * of guest halfwords. The guest computes the value written to the level. */
-    if (region == IRQ_SOUND_TICK && cpu->pc >= 0x8002ce38u && cpu->pc <= 0x8002ce70u) {
-        static const struct { uint32_t pc, address; unsigned op; } accesses[] = {
-            {0x8002ce38u, 0x800a4ee4u, 37u},
-            {0x8002ce40u, 0x800a4ee0u, 37u},
-            {0x8002ce48u, 0x800a4f16u, 40u},
-            {0x8002ce60u, 0x800a4ee2u, 37u},
-            {0x8002ce70u, 0x800a4ee0u, 41u},
-        };
-        for (size_t i = 0; i < sizeof accesses / sizeof accesses[0]; ++i) {
-            if (cpu->pc == accesses[i].pc)
-                return cpu->r[31] == 0x80010984u && cpu->r[29] == 0x8006ca94u &&
-                    op == accesses[i].op && address == accesses[i].address &&
-                    (op != 40u || (uint8_t)cpu->r[(w >> 16) & 31u] == 1u);
-        }
-    }
     if (region >= IRQ_DRAW_COMPLETE && region <= IRQ_DRAW_SUBMIT) {
         if (!cpu->irq_draw) return 0;
         if (region==IRQ_DRAW_FRAME && cpu->pc==0x800109e8u)
@@ -16404,6 +16371,8 @@ static int cd_irq_execute(MusashiBootMemory *memory,
     const MusashiCdIrqServices *services, MusashiCdIrqFrame *frame, uint32_t context, uint32_t target,
     MusashiResetGraphPrefixStop *stop, FormatterCpu *parent);
 
+#include "main_master_fade.h"
+
 int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *image, MusashiBootMemory *memory,
     uint32_t context, const uint32_t installed[12], const MusashiIrqDispatchDevice *io,
     const MusashiExecutionClock *clock, MusashiDmaController *dma, const MusashiGuestIrqServices *services, MusashiGuestIrqStop *stop) {
@@ -16456,6 +16425,10 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
         uint32_t w, origin = cpu.pc, target = 0, live;
         IrqRegion region = irq_region(origin);
         stop->pc = origin;
+        if (region == IRQ_SOUND_TICK && origin - MASTER_FADE_START < MASTER_FADE_LENGTH) {
+            if (!master_fade_run(memory, &cpu, stack, depth, image, clock, stop)) return 0;
+            continue;
+        }
         if (region >= IRQ_DRAW_COMPLETE && region <= IRQ_DRAW_SUBMIT) {
             int pending_path=cpu.pending_draw.list && (region==IRQ_DRAW_COMPLETE || region==IRQ_DRAW_SUBMIT);
             if (!cpu.irq_draw || (!irq_draw_pc(region,origin) && !pending_path) || !dma ||
