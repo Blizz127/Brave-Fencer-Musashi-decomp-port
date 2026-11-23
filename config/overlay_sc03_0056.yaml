@@ -1,10 +1,7 @@
-# SC03 member 0056 — vendor counterpart vendor/bfm-decomp/src/md_SC03_056 (Druthulu/BFM-decomp;
-# vendor md_SC03_ numbering is 0-based, the same as extracted/overlays/sc03/NNNN.bin).
-#
-# CONTAINER: PAC chunk chain; the code payload (type-0x101 chunk + 0x800) starts at file offset 0x800 and loads at
-# 0x801CBB50, so file offset 0 maps to 0x801CB350 (the registry base). The payload's
-# first word is data; code is [0x801CBB80, 0x801CBC48) (0xC8 bytes), taken from the
-# vendor's function starts and the last jr $ra before the first data symbol it references.
+# The USA SC03/0002 actor dispatcher calls the first Fores conversation
+# entry at 0x801CBB54 and the re-entry at 0x801CBBDC. The four callbacks
+# occupy file offsets [0x804, 0x8F8) in member 0056. The word at 0x800
+# precedes executable code and the first conversation data follows at 0x8F8.
 name: sc03_0056
 sha1: 5dbf20806eb4724aa8f57f97a4376c2c217ec418
 
@@ -38,7 +35,7 @@ segments:
     subsegments:
       - [0x0, data, sc03_0056_container]
       - [0x800, data, sc03_0056_hdr]
-      - [0x830, asm, sc03_0056]
+      - [0x804, asm, sc03_0056]
       - [0x8F8, data, sc03_0056_tail]
 
   - [0x1800]

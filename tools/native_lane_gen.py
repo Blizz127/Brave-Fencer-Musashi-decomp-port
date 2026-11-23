@@ -1140,6 +1140,12 @@ SCENE_PHASE_EXTENTS = {
     0x801612B8: {"sc03_0029": None},
     0x801655E4: {"sc03_0029": None},
     0x80165658: {"sc03_0029": None},
+    # Fores starts and polls two room scripts. Their live actor, story writes,
+    # script services and guest timing still belong to the regional interpreter.
+    0x801CBB54: {"sc03_0056": (44, 0x3EBFE5A9D0859BAB)},
+    0x801CBB80: {"sc03_0056": (92, 0x72211A16475BCBF8)},
+    0x801CBBDC: {"sc03_0056": (44, 0x4E967DE72FE43598)},
+    0x801CBC08: {"sc03_0056": (64, 0x27BEAE7AFA62189E)},
     # The cemetery award calls resident inventory and story services, then resumes its room script.
     0x8017D828: {"sc03_0023": (92, 0x2A6B9BFEB36C862E)},
     # The slab selection, forty-tick slide and key proximity callback share room state.
@@ -1436,7 +1442,8 @@ def overlay_extent_source_only(entry, src, info, extents):
     # Compare these room callbacks at their complete original extent even when the
     # supplied registry reports only a prefix or includes the following function.
     if pc in (0x8017D2E0, 0x8017D384, 0x8017F07C, 0x8017F120, 0x8017D3C0, 0x8017F15C, 0x8017D828,
-              0x8017E414, 0x8017E524, 0x8017EC30) and info and all(key in info for key in ("vram", "start", "data")):
+              0x8017E414, 0x8017E524, 0x8017EC30, 0x801CBB54, 0x801CBB80,
+              0x801CBBDC, 0x801CBC08) and info and all(key in info for key in ("vram", "start", "data")):
         if any(member_digest(info, pc, size) == digest for size, digest in variants.values()):
             return True
     # A member with a shared original body is identified only by its room or source.
