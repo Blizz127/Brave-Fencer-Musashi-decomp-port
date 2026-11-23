@@ -50,14 +50,15 @@ The latest published Linux build is R55 and the latest published Windows build i
 
 ## Source and playtest updates after the candidate build
 
-The archives and their hashes above identify the November 23 build from `f8eb164f`. Subsequent source work added ten regional matches in Twinpeak and four in the separate module for Fores’s cottage. The scene registry now covers 645 regional matches and 100,236 bytes. The public build selects none of these fourteen functions for native dispatch.
+The archives and their hashes above identify the November 23 build from `f8eb164f`. Subsequent source work added ten regional matches in Twinpeak and six for Fores’s cottage. The scene registry now covers 647 regional matches and 100,356 bytes. None of these sixteen functions is selected for public native dispatch. The public build has not reached the cottage in ordinary gameplay testing.
 
 - Two coordinate checks select a contact test for an actor. The original US game returned zero from the first check and `0x2000` from the second during a successful Fusion encounter. The pair accounts for 268 bytes. [Coordinate checks](https://github.com/Blizz127/Brave-Fencer-Musashi-decomp-port/commit/782fe6f3aeac936ba83a8fd6138d20dc31e75ca9)
 - The 56-byte debit subtracts the equipped ability’s cost. On the original File 4, a periodic deduction first took Musashi from 147 to 143 BP. Casting Shrink then took him to 133 BP in 22 game clocks. [Shrink debit](https://github.com/Blizz127/Brave-Fencer-Musashi-decomp-port/commit/292737ec392eba20e15a6be73ac41eb726766469)
 - A successful repeat Fusion hit displayed a green 10 and raised Musashi from 125 to 135 BP. The credit and its caller account for 60 and 76 regional bytes. The 60-byte body also occurs in the forest. The original trace followed the credit back to its caller. Testing has yet to observe the subsequent service return or a live award that hits the BP cap. [Repeat Fusion credit](https://github.com/Blizz127/Brave-Fencer-Musashi-decomp-port/commit/36cb9e48c4c960753d7be144fdeb63e52b57f288)
 - The 64-byte paid-cast routine and its 24-byte lookup select the equipped ability’s cost before calling the debit. In the original US game, Shrink selected ability 13 and returned a cost of 10. This match covers the Twinpeak table in SC03 member 0029. [Paid cast and cost lookup](https://github.com/Blizz127/Brave-Fencer-Musashi-decomp-port/commit/6cf4715b36c3116e2acca2fcbfdaadb0de0d668d)
 - Three Twinpeak inventory routines reuse the existing mine C for 828 matching bytes. They add no native dispatch entries. One path finds an empty inventory slot and stores the item and its acquisition day. Identifying the handler used for the Bracelet pickup still requires a trace of that interaction in the US game.
-- Four functions in SC03 member 0056 start Fores’s first or repeat dialogue and handle its completion. The first conversation selects actor phase 10. Once the script reports completion, the original code sets story progress to 120 and story flag 237. The repeat conversation selects phase 14. All four complete C functions match the original 244 bytes. The script and dialogue text come from the player’s own disc.
+- Four functions in SC03 member 0056 start Fores’s first or repeat dialogue and handle its completion. The first conversation selects actor phase 10. Once the script reports completion, the original code sets story progress to 120 and story flag 237. The repeat conversation selects phase 14. All four complete C functions match the original 244 bytes. The script and dialogue text come from the player’s own disc. [Fores’s dialogue callbacks](https://github.com/Blizz127/Brave-Fencer-Musashi-decomp-port/commit/e0e01a5986dcc2bf85d44ce9db0cde58569c0298)
+- Two 60-byte functions in village member 0002 query interaction request 3. When it succeeds, the first passes the actor to the initial cottage conversation and the other passes it to the repeat conversation. The earned File 4 playthrough exercised the first call. Verification of the repeat call used controlled inputs.
 
 On the separate private Linux R106 playthrough, the same character who delivered the four logs boarded Jon’s raft. After it broke, Musashi spoke, the screen faded and the game automatically restarted him on the river. On a later attempt he steered past the central boulder, collected Drans and reached the second waterfall before losing the last raft log. On the successful attempt, Musashi passed the final sweep with 135 HP and 2,060 Drans. The game loaded the landing in room 3025, entrance 2, at story progress 80. The raft carried him to shore. On the steps the HUD showed 139 HP, 57 BP and 2,060 Drans. Musashi then opened the chest on the ledge. The pickup message named the Bracelet and said it needed appraisal.
 
@@ -69,7 +70,9 @@ The original US game subsequently loaded a copy of the same day-20 File 4 and co
 
 Private R106 then accepted the Steamwood assignment and saved again at Hotelo. A fresh Continue restored day 21, story progress 110 and the L-Brace. Musashi climbed the cliff and reached Fores at his fenced cottage. Pressing Square stopped R106 at `0x801CBB54` before the first dialogue. The game had read the three sectors containing his actor module. Its dialogue callbacks sat just outside the area recognized by that player.
 
-The separate private Linux R123 candidate reads and executes the four callbacks from the mounted disc through the guest CPU. Its fetch checks covered every instruction and rejected a replaced module. At this source checkpoint, a real-client replay through Fores’s first line, receipt of the Steamwood Manual and return to control was pending. The Windows and Linux archives listed above predate this private fix.
+Private Linux R123 then cold-loaded that File 4 at story progress 110. A player climbed to the cottage and spoke to Fores. He explained the Steamwood emergency, gave Musashi the Manual and directed him to the top of the cliff in Steamwood Forest. The dialogue closed, story progress advanced to 120, and story flag 237 was the only changed flag. The timer showed 23:55 beside Fores. Moving left took Musashi off the grass and onto the lower path at 23:33, and the pause menu displayed the new objective. The original US reference also shows the Manual award. This R123 playthrough used guest CPU execution for the conversation. Completing the plant and saving that result remain open.
+
+Private Linux R124 implements the four dialogue callbacks as host code. Focused tests exercised all 61 instruction positions across these callbacks with guest instruction decoding disabled in the tested bodies. External game services still use the hybrid runtime. R125 also runs the six-instruction cost lookup for a witnessed Twinpeak Shrink cast as host code. Replaying the original cast through the compiled lookup returned 10 in 13 game clocks. The following debit took BP from 143 to 133 in 22 clocks. These focused tests cover the stated calls. Ordinary R124 and R125 playthroughs through these changes remain unverified here. The Windows and Linux archives listed above predate these private builds.
 
 ## Supply your own disc
 
@@ -390,3 +393,15 @@ The public R48 Windows and R55 Linux release tags both point to `ad71556b4450659
 - Match three Twinpeak tutorial handle routines and record the two-slot Continue result. 1ee5ec4815260aca4d8777eb6112cbfe442bd439
 - Match Twinpeak tutorial setup and contact decisions, and document both player builds. 43000299588d50905e7324768155dcb9995568cd
 - Show the full launcher log path in Linux and Windows error dialogs. f8eb164fab163bee18e14f6485b181c316dfdedf
+
+### Subsequent public source checkpoints
+
+These source commits came after the Windows and Linux candidate archives.
+
+- Match Twinpeak coordinate checks and document both public player candidates. 782fe6f3aeac936ba83a8fd6138d20dc31e75ca9
+- Match the Twinpeak BP debit and document the four-log raft quest. 292737ec392eba20e15a6be73ac41eb726766469
+- Match repeat Fusion BP credit and document the river checkpoint. 36cb9e48c4c960753d7be144fdeb63e52b57f288
+- Match the Twinpeak cast cost and document the completed river course. 6cf4715b36c3116e2acca2fcbfdaadb0de0d668d
+- Document the earned Bracelet save and the served Shrink cast. c5c5e8b69e35015426a2979615f7e1c92d0c4f5e
+- Register Twinpeak inventory matches and document the L-Brace appraisal. 043573bc39f83bd7db349c600aed5ce374d2911e
+- Recover Fores’s cottage conversations and document the File 4 playtest. e0e01a5986dcc2bf85d44ce9db0cde58569c0298

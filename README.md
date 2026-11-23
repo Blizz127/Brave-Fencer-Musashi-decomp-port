@@ -122,20 +122,21 @@ changelog.
 
 ### Verify the scene-object matches
 
-The scene registry covers 645 regional function matches across 18 overlay members,
-totaling 100,236 bytes. Four functions in SC03 member 0056 control the first
-and repeat conversations with Fores. Together their C sources reproduce 244
-bytes of original code. The public player has no native dispatch for these
-four functions. Three earlier Twinpeak entries match 828 bytes of inventory
+The scene registry covers 647 regional function matches across 18 overlay members,
+totaling 100,356 bytes. In the village, separate functions for the first and repeat conversations
+with Fores each check interaction request 3 before starting their dialogue. Four functions in member 0056 start the dialogue and handle
+its completion. The six C functions reproduce 364 original bytes. These six functions have no public
+native dispatch. The public player has not reached the cottage in testing. Three earlier Twinpeak entries match 828 bytes of inventory
 code, including the item slot and acquisition day.
 
 The US game and private Linux R106 both restored the same File 4, took the
 Bracelet to Conner and equipped the L-Brace. Their story flags and script
 variables agreed after appraisal. R106 then climbed the wall to Fores’s
-cottage. Talking to him stopped the player before his first line. A private
-Linux candidate can fetch all four dialogue functions from the user’s disc.
-The ordinary conversation and receipt of the Steamwood Manual are the next
-gameplay checks.
+cottage. Talking to him stopped the player before his first line. Private
+Linux R123 loaded the earned File 4, reached the same cottage,
+and let Musashi speak to Fores, receive the Steamwood Manual and move again.
+His new objective directed him into Steamwood Forest, and the 24-hour timer
+counted down. This run used guest execution for the conversation.
 
 Two Twinpeak routines compare an actor’s current and saved coordinates to choose
 a contact check. Together they match 268 bytes in SC03 member 0029. On a recorded
