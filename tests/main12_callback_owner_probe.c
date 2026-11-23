@@ -7,7 +7,37 @@
 #include "musashi_disc_media.h"
 #include "musashi_guest_irq.h"
 #include "musashi_gte_owner.h"
+/* During an authenticated slot reset instruction, observe the formatter's
+ * scalar requests in the slot bank. In particular, an SH still requests
+ * its halfword when the addressed slot is already inactive. */
+#include "musashi_boot_memory.h"
+static struct {
+    MusashiBootMemory *memory;
+    uint32_t first, limit, address;
+    size_t width;
+    unsigned count;
+    uint32_t witness_address;
+    uint8_t *witness;
+} slot_ram_access;
+
+static uint8_t *slot_probe_ram_span(MusashiBootMemory *memory, uint32_t address, size_t size)
+{
+    uint8_t *span = musashi_boot_ram_span(memory, address, size);
+    if (memory == slot_ram_access.memory && size <= 4u &&
+        address >= slot_ram_access.first && address < slot_ram_access.limit) {
+        ++slot_ram_access.count;
+        slot_ram_access.address = address;
+        slot_ram_access.width = size;
+        if (span && slot_ram_access.witness && size == sizeof(uint16_t) &&
+            address == slot_ram_access.witness_address)
+            return slot_ram_access.witness;
+    }
+    return span;
+}
+
+#define musashi_boot_ram_span slot_probe_ram_span
 #include "../pc_port/mips_formatter.c"
+#undef musashi_boot_ram_span
 
 #include "musashi_sha256_digest.h"
 
@@ -559,7 +589,10 @@ static void check_revocation(void)
     expect_refused_at(&machine, callback_pc);
 }
 
+static void check_foreground_slot_reset(FormatterCpu *cpu);
+
 #include "main12_metadata_irq.h"
+#include "main12_slot_reset.h"
 
 static uint64_t opening_thread(void *userdata)
 {
@@ -671,6 +704,7 @@ int main(int argc, char **argv)
     }
     load_media(path, argc == 3 && !opening);
     if (opening) check_opening_callback_collision();
+    check_mounted_slot_reset();
     check_metadata_irq();
     check_guest_path();
     check_active_menu_owner();

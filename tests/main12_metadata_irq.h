@@ -355,6 +355,7 @@ static void check_room_initializer(MusashiCdDevice *files, MusashiEventDevice *p
     for (unsigned steps = 0; cpu.pc != MAIN12_ROOM_RETURN && steps < 24u; ++steps)
         CHECK(formatter_step(&machine, &cpu));
     CHECK(cpu.pc == MAIN12_ROOM_RETURN && !cpu.main12_room_next && cpu.r[29] == top - 24u);
+    check_foreground_slot_reset(&cpu);
 }
 
 static void check_metadata_case(enum MetadataCloseCase which, unsigned occupied_mask, unsigned damaged_mask)
