@@ -2659,6 +2659,29 @@
       "recovery": "c",
       "extent": "function",
       "origin": "Owner re-derivation first published in e0b1822. The unchanged source matches its USA executable extent."
+    },
+    {
+      "name": "func_80018730",
+      "region": "main",
+      "vram": 2147583792,
+      "size": 488,
+      "source": "src/main/80018730.c",
+      "optimization": "-O2",
+      "recovery": "c",
+      "extent": "function",
+      "origin": "Owner re-derivation first published in 5cd48bc. The unchanged source matches its USA executable extent.",
+      "rodata_base": 2147953208
+    },
+    {
+      "name": "func_8001F9F8",
+      "region": "main",
+      "vram": 2147613176,
+      "size": 404,
+      "source": "src/main/8001f9f8.c",
+      "optimization": "-O2",
+      "recovery": "c",
+      "extent": "function",
+      "origin": "Owner re-derivation first published in e0b1822. The unchanged source matches its USA executable extent."
     }
   ]
 }
