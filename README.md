@@ -20,7 +20,9 @@ the same interval with test providers for the graphics and subsystem calls.
 
 ## Player downloads and source builds
 
-The matching decompilation now covers **1,020 functions and 145,876 bytes** of the US game. The latest two matches verify existing public C for the 488-byte streaming decompressor and the 404-byte model draw pass. The decompressor resumes partway through compressed input. The draw pass submits the first four objects, then uses the draw mask to select additional pools. Normal Linux and Windows builds still generate host code for the same 204 of 247 eligible functions.
+The matching decompilation covers **1,025 functions and 148,684 bytes** of the US game. The latest five matches verify existing C for controller polling, button history, analog input normalization, model-object dispatch and model rendering. They add 2,808 matched bytes. The preceding checkpoint verified the 488-byte streaming decoder and a 404-byte model draw pass. Normal Linux and Windows builds still select 204 of 247 routines for host execution.
+
+**Desktop tests of `506bc389`.** New Game stopped at Loading before the moon on Linux and Windows x64 under Wine. Continue displayed “Loaded data!” on both platforms and stopped before the Chapter 2 bedroom. Both local archives are held because the decoder implementation reproduces a sequence of original game instructions. Physical Windows testing remains outstanding. [Gameplay results, local archive hashes, disc setup and full changelog](docs/DESKTOP-QA-506bc389.md)
 
 **Desktop tests of `2754ada1`.** On Linux and on Windows x64 under Wine, New Game stopped at Loading before the opening moon. Continue read an earned File 1 and displayed Loaded on both platforms, then stopped before the Chapter 2 bedroom. The four runs recorded zero native direction-mapper returns. A focused controller test completed 42 native returns in 54 cases. Both desktop archives remain local test builds. [Four route results, local checksums and complete source history](docs/RELEASE-CANDIDATE-2754ada1.md)
 
