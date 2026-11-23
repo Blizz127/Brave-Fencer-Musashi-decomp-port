@@ -20,6 +20,15 @@ the same interval with test providers for the graphics and subsystem calls.
 
 ## Player downloads and source builds
 
+**November 23, 2026, 17:08 UTC.** Private test build `94294368` completed
+13 scene-counter calls in host code on each of two Linux starts. New Game
+stopped before the opening moon. Continue read an earned File 1 and
+stopped before the Chapter 2 bedroom. Under Wine, New Game was running
+and the File 1 test was queued.
+The changelog records the 323 commits behind the private build, its local
+archive checksums and the guest CPU paths that still ran.
+[Scene-counter changelog and platform results](docs/RELEASE-CANDIDATE-94294368.md)
+
 **November 23, 2026, 16:41 UTC.** Linux candidate `e58d95ea` reached “Now Loading” on
 New Game and stopped before the opening moon. Continue read an earned File 1,
 displayed “Loaded data!” and stopped before the Chapter 2 bedroom. The
