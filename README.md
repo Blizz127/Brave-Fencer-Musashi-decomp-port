@@ -20,7 +20,7 @@ the same interval with test providers for the graphics and subsystem calls.
 
 ## Player downloads and source builds
 
-The matching decompilation covers **1,025 functions and 148,684 bytes** of the US game. The latest five matches verify existing C for controller polling, button history, analog input normalization, model-object dispatch and model rendering. They add 2,808 matched bytes. The preceding checkpoint verified the 488-byte streaming decoder and a 404-byte model draw pass. Normal Linux and Windows builds still select 204 of 247 routines for host execution.
+The matching decompilation covers **1,028 functions and 149,012 bytes** of the US game. Three controller routines add 328 matching bytes. One copies a connected controller’s buttons and axes into its current report. Another clears the two button bytes and centers four axes when the controller disconnects. The third handles an input-driven frame counter. The port now uses the same controller record type throughout the two-port polling loop. The preceding checkpoint verified controller polling, button history, analog input normalization, model-object dispatch and rendering. Its Linux and Windows generators selected 204 of 247 routines for host execution.
 
 **Desktop tests of `506bc389`.** New Game stopped at Loading before the moon on Linux and Windows x64 under Wine. Continue displayed “Loaded data!” on both platforms and stopped before the Chapter 2 bedroom. Both local archives are held because the decoder implementation reproduces a sequence of original game instructions. Physical Windows testing remains outstanding. [Gameplay results, local archive hashes, disc setup and full changelog](docs/DESKTOP-QA-506bc389.md)
 

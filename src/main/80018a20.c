@@ -1,6 +1,6 @@
 /* Owner re-derivation from retail assembly (clean input set). */
 /* Per-frame controller port service: checks pad state and, on port 0, resets lost pads and sets up the actuator (vibration) parameters. */
-#include "psx_types.h"
+#include "controller_report.h"
 
 /* The default switch arm falls off the end of this int function. Retail then leaves a non-zero v0
  * (1 or 6), and the only caller tests v0 != 0. Host builds return 1 there. MIPS bytes are unchanged. */
@@ -10,13 +10,6 @@
 #define RETAIL_NONZERO_EXIT return 1
 #endif
 
-typedef struct {
-    u8 pad[0x4A];
-    u8 act0;
-    u8 act1;
-} PadRecord;
-
-extern PadRecord D_80078D98[];
 extern u32 D_800AE610;
 extern s32 D_800A5E78;
 extern u8 D_80062BAC[];
@@ -30,7 +23,6 @@ extern s32 func_8005D184(s32 port);
 extern s32 func_8005D244(s32 port, s32 term, s32 offs);
 extern void func_8005D538(s32 port, u8 *data, s32 len);
 extern void func_8005D4B8(s32 port, u8 *data);
-extern void func_80018F88(PadRecord *rec);
 extern void func_80018FC8(void);
 extern s32 func_80028D58(void);
 

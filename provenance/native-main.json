@@ -2714,7 +2714,7 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2",
-      "origin": "Owner re-derivation first published in e0b1822. The unchanged source matches its USA executable extent."
+      "origin": "Owner re-derivation first published in e0b1822. The shared controller report types were verified against the complete US function extent."
     },
     {
       "name": "func_80018CE8",
@@ -2725,7 +2725,7 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2",
-      "origin": "Owner re-derivation first published in e0b1822. The unchanged source matches its USA executable extent."
+      "origin": "Owner re-derivation first published in e0b1822. The shared controller report types were verified against the complete US function extent."
     },
     {
       "name": "func_80018F20",
@@ -2737,6 +2737,39 @@
       "extent": "function",
       "optimization": "-O2",
       "origin": "Owner re-derivation first published in e0b1822. The unchanged source matches its USA executable extent."
+    },
+    {
+      "name": "func_80018C64",
+      "region": "main",
+      "vram": 2147585124,
+      "size": 132,
+      "source": "src/main/80018c64.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Existing owner re-derivation of the controller report mirror from the US executable. The disconnected path clears the current report. The active path mirrors button and axis data."
+    },
+    {
+      "name": "func_80018E9C",
+      "region": "main",
+      "vram": 2147585692,
+      "size": 132,
+      "source": "src/main/80018e9c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Owner controller code first published in e0b1822. The shared report layout and the unsigned eight-bit counter preserve the complete US routine."
+    },
+    {
+      "name": "func_80018F88",
+      "region": "main",
+      "vram": 2147585928,
+      "size": 64,
+      "source": "src/main/80018f88.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Re-derived from the US executable and checked with both controller report callers. Clears two current button bytes and centers four axes for a disconnected or searching controller."
     }
   ]
 }
