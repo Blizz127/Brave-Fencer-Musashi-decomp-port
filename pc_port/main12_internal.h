@@ -20,6 +20,7 @@ struct MusashiMain12Owner {
                    int installed, const uint8_t mailbox[16]);
     const uint8_t *exe_text; /* First sector payload of the mounted executable text. */
     int (*resident_matches)(const MusashiMain12Owner *owner, uint32_t start, uint32_t size);
+    int (*resident_word)(const MusashiMain12Owner *owner, uint32_t address, uint32_t *word);
     uint8_t mailbox[16];
     uint8_t directory_row[40];
     uint8_t directory_valid;

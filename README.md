@@ -20,16 +20,13 @@ the same interval with test providers for the graphics and subsystem calls.
 
 ## Player downloads and source builds
 
-**November 23, 2026. Player downloads are under review.**
-
-We withheld candidate `f7e8a138` after finding eight original disc-table
-addresses in the source and in both compiled players. Linux and Windows
-under Wine reached **Now Loading** on New Game and stopped before the opening
-moon. On both platforms, Continue loaded the earned File 1 and stopped
-before the Chapter 2 bedroom. The US disc reached
-both destinations. The notes include the candidate checksums, full change
-history, platform results and instructions for using your own US disc.
-[Candidate report](docs/RELEASE-CANDIDATE-f7e8a138.md) · [Preceding paired results](docs/RELEASE-CANDIDATE-be0d0af5.md)
+**November 23, 2026.** The replacement Linux build and the Windows build under
+Wine both reached Now Loading on New Game, then stopped before the opening
+moon. Both read an earned File 1 and displayed Loaded data!, then stopped
+before the Chapter 2 bedroom. The original US game reached both destinations.
+The report includes the full candidate changelog, local archive hashes, and
+instructions for supplying your own disc.
+[Four startup tests](docs/RELEASE-CANDIDATE-72cdca11.md) · [Preceding candidate](docs/RELEASE-CANDIDATE-f7e8a138.md)
 
 In separate private Linux play, Musashi earned the Steamwood Manual and
 closed numbered valves 1 through 6 in order. Valve 5 reset its timer to 35

@@ -444,6 +444,17 @@ static int mounted_owner_live(const MusashiMain12Owner *owner) {
         owner->image->memory == owner->memory && owner->image->main12_owner == owner;
 }
 
+/* Read a single aligned word from the authenticated, sector-strided image.
+ * This accessor does not consult the writable guest address space. */
+static int mounted_resident_word(const MusashiMain12Owner *owner, uint32_t address,
+                                 uint32_t *word) {
+    uint32_t offset = address - resident_text_start;
+    if (!mounted_owner_live(owner) || !owner->exe_text || !word ||
+        (offset & 3u) || offset > RESIDENT_TEXT_SIZE - 4u) return 0;
+    *word = le32(transfer_byte(owner->exe_text, offset));
+    return 1;
+}
+
 static int mounted_resident_matches(const MusashiMain12Owner *owner, uint32_t start,
                                     uint32_t size) {
     if (!mounted_owner_live(owner) || !owner->exe_text || !size || ((start | size) & 3u) ||
@@ -557,6 +568,7 @@ MusashiMain12Owner *musashi_main12_open(MusashiGuestIrqImage *image,
         owner->matches = musashi_main12_transfer_matches;
         owner->exe_text = exe_text;
         owner->resident_matches = mounted_resident_matches;
+        owner->resident_word = mounted_resident_word;
         image->main12_owner = owner;
     }
     return owner;

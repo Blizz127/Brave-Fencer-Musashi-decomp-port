@@ -170,6 +170,7 @@ typedef struct NativeBoot {
     MusashiSioController sio;
     MusashiBiosBackupUnit backup_unit;
     const void *continuation;
+    uint32_t irq_gpr[32];
     MusashiGpuController gpu;
     MusashiGpuPsyCross gpu_renderer;
     MusashiGpuBackend gpu_backend;
@@ -477,11 +478,33 @@ static int unavailable_bios_cd(void *userdata, uint16_t pending) {
     return 0;
 }
 
+static int current_field_irq(void *userdata, const MusashiCpuExceptionToken *token,
+                             MusashiCpuStatusSnapshot *snapshot) {
+    NativeBoot *boot = userdata;
+    return boot->irq.scheduler.delivering && token == &boot->irq.scheduler.active_exception &&
+        boot->irq.scheduler.active_continuation == boot->continuation &&
+        musashi_cpu_status_inspect(boot->irq.cpu_status, token, snapshot);
+}
+
+static int mounted_load_guest_quiet(NativeBoot *boot);
+
+/* An ordinary RAM load cannot enable interrupts or change I_MASK. An event
+ * can latch I_STAT before the following instruction checkpoint. */
+static int field_restore_quiet(void *userdata, const void *continuation) {
+    NativeBoot *boot = userdata;
+    int enabled;
+    if (!boot || !continuation || continuation != boot->continuation || boot->host_service_depth ||
+        boot->irq.scheduler.faulted || boot->irq.scheduler.pumping || boot->irq.scheduler.delivering ||
+        !musashi_cpu_status_irq_eligible(boot->irq.cpu_status, &enabled)) return 0;
+    return !enabled || !boot->irq.controller.mask || mounted_load_guest_quiet(boot);
+}
+
 static int before_irq_dispatch(void *userdata, uint16_t pending) {
     NativeBoot *boot = userdata;
     /* BIOS SIO can own and acknowledge VBlank while ChangeClearPad is 1.
      * Let its verifier/handler run, then check the remaining guest route. */
-    if (!musashi_bios_kernel_dispatch_with_context(&boot->bios, pending,
+    if (!musashi_boot_accept_field_irq(boot->continuation, &boot->irq.scheduler.active_exception) ||
+        !musashi_bios_kernel_dispatch_with_context(&boot->bios, pending,
             &boot->irq.scheduler.active_exception))
         return 0;
     pending = musashi_irq_controller_pending(&boot->irq.controller);
@@ -490,10 +513,11 @@ static int before_irq_dispatch(void *userdata, uint16_t pending) {
 
 static int native_cpu_context(void *userdata, const void *continuation, MusashiCpuContext *out) {
     NativeBoot *boot = userdata;
-    if (!boot || !out || !continuation || continuation != boot->continuation) return 0;
+    if (!boot || !out || !continuation || continuation != boot->continuation ||
+        !musashi_boot_mounted_irq_ready(continuation)) return 0;
     if (boot->host_service_depth)
         return musashi_boot_cpu_context(continuation,MUSASHI_CPU_CONTEXT_HOST_BIOS_SERVICE,out);
-    if (musashi_boot_cpu_context(continuation,MUSASHI_CPU_CONTEXT_SOURCE,out)) return 1;
+    if (musashi_boot_field_irq_context(continuation, out, boot->irq_gpr)) return 1;
     return musashi_boot_continuation_host_context(continuation,out);
 }
 
@@ -2475,6 +2499,8 @@ static int checkpoint(void *userdata, const void *continuation) {
     }
     return 1;
 }
+
+#include "mounted_load_quiet.h"
 
 static int run_backup_unit(void *userdata, int32_t *guest_result) {
     NativeBoot *boot = userdata;
@@ -4493,6 +4519,8 @@ int main(int argc, char **argv) {
     boot.callback.a0_72 = remove_bios_cd;
     boot.callback.exit_critical_section = exit_critical;
     boot.callback.checkpoint = checkpoint;
+    boot.callback.field_restore_irq = current_field_irq;
+    boot.callback.field_restore_quiet = field_restore_quiet;
     boot.gpu_device.userdata = &boot;
     boot.gpu_device.read32 = gpu_read32;
     boot.gpu_device.write32 = gpu_write32;

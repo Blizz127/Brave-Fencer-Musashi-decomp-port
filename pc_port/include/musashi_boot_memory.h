@@ -301,6 +301,21 @@ typedef struct MusashiEventDevice {
  * No exception is entered and no time advances. Output is unchanged on refusal. */
 int musashi_boot_cpu_context(const void *continuation,
     MusashiCpuContextProvenance provenance, MusashiCpuContext *out);
+/* Read the one outstanding native field restore on this CPU. The ordinary
+ * checkpoint still exposes the architecturally visible foreground GPR. */
+typedef struct MusashiFieldLoadSnapshot {
+    uint32_t origin, successor, reg, old_value, value, visible;
+} MusashiFieldLoadSnapshot;
+int musashi_boot_field_load_snapshot(const void *continuation, MusashiFieldLoadSnapshot *out);
+/* For an actual IRQ request, gpr is 32 words of scheduler-owned storage
+ * valid through exception begin. Acceptance uses the current scheduler token
+ * before kernel entry. A mere checkpoint or refused admission does no writeback. */
+int musashi_boot_field_irq_context(const void *continuation, MusashiCpuContext *out,
+                                   uint32_t gpr[32]);
+int musashi_boot_accept_field_irq(const void *continuation, const MusashiCpuExceptionToken *);
+/* A differing mounted RAM load requires a proved quiet checkpoint. A real
+ * IRQ request contradicting that proof must refuse before exception entry. */
+int musashi_boot_mounted_irq_ready(const void *continuation);
 /* Known compiled-service entry only, with its required capability present.
  * Unknown/unbound PCs cannot be relabeled as a host service. */
 int musashi_boot_continuation_host_context(const void *continuation,

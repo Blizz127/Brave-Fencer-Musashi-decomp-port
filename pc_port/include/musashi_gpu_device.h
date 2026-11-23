@@ -44,6 +44,12 @@ typedef int (*MusashiCallbackExitCriticalSection)(void *userdata);
  * the returned guest word; returning zero refuses the operation. */
 typedef int (*MusashiCallbackGpuCw)(void *userdata, uint32_t command,
                                     int32_t *result);
+struct MusashiCpuExceptionToken;
+struct MusashiCpuStatusSnapshot;
+typedef int (*MusashiFieldRestoreIrq)(void *userdata,
+    const struct MusashiCpuExceptionToken *, struct MusashiCpuStatusSnapshot *);
+typedef int (*MusashiFieldRestoreQuiet)(void *userdata, const void *continuation);
+
 typedef struct MusashiCallbackDevice {
     MusashiCallbackRead16 read16;
     MusashiCallbackWrite16 write16;
@@ -68,6 +74,12 @@ typedef struct MusashiCallbackDevice {
      * unchanged while this call executes; refusal stops the current run. */
     int (*checkpoint)(void *userdata, const void *continuation);
     struct MusashiMain12Owner *main12_owner;
+    /* Only a scheduler using the field restore IRQ context and acceptance
+     * interfaces may opt in. Inspect its current, genuinely admitted token. */
+    MusashiFieldRestoreIrq field_restore_irq;
+    /* Read-only after a paid RAM load, before its register effect. Return one
+     * only when the owner can rule out delivery at the next normal checkpoint. */
+    MusashiFieldRestoreQuiet field_restore_quiet;
 } MusashiCallbackDevice;
 
 #endif

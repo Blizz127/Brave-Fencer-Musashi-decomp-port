@@ -3243,8 +3243,8 @@ static unsigned resident_range_slot(uint32_t pc) {
 static void remember_resident_range(const FormatterRange *table, const FormatterRange *hit,
                                     uint32_t pc);
 
-static int formatter_range_word(const FormatterRange *ranges, size_t count,
-                                uint32_t pc, uint32_t *out) {
+static const FormatterRange *formatter_range_at(const FormatterRange *ranges, size_t count,
+                                                uint32_t pc) {
     size_t low = 0u;
     size_t high = count;
 
@@ -3255,12 +3255,19 @@ static int formatter_range_word(const FormatterRange *ranges, size_t count,
         } else if (pc >= ranges[middle].end) {
             low = middle + 1u;
         } else {
-            remember_resident_range(ranges, &ranges[middle], pc);
-            *out = ranges[middle].words[(pc - ranges[middle].start) / 4u];
-            return 1;
+            return &ranges[middle];
         }
     }
-    return 0;
+    return NULL;
+}
+
+static int formatter_range_word(const FormatterRange *ranges, size_t count,
+                                uint32_t pc, uint32_t *out) {
+    const FormatterRange *range = formatter_range_at(ranges, count, pc);
+    if (!range) return 0;
+    remember_resident_range(ranges, range, pc);
+    *out = range->words[(pc - range->start) / 4u];
+    return 1;
 }
 
 static const FormatterRange kFormatterRanges0[] = {
@@ -6132,6 +6139,17 @@ typedef struct RoomLatchFrame {
     unsigned returning;
 } RoomLatchFrame;
 
+typedef struct FieldSceneLoad {
+    const struct FormatterCpu *owner;
+    const MusashiCallbackDevice *device;
+    MusashiFieldRestoreIrq irq;
+    MusashiFieldRestoreQuiet quiet;
+    void *worker;
+    int (*checkpoint)(void *, const void *);
+    uint32_t successor, value, old_value, irq_instruction;
+    unsigned reg, irq_prepared;
+} FieldSceneLoad;
+
 typedef struct FormatterCpu {
     uint32_t r[32];
     uint32_t hi, lo;
@@ -6164,6 +6182,16 @@ typedef struct FormatterCpu {
     uint8_t merge_reg;
     uint8_t merge_kind;
     uint8_t merge_pending;
+    /* Only the mounted foreground dispatcher issues these RAM loads. */
+    struct {
+        const struct FormatterCpu *owner;
+        const MusashiCallbackDevice *device;
+        MusashiFieldRestoreQuiet quiet;
+        int (*checkpoint)(void *, const void *);
+        void *worker;
+        uint32_t successor, value;
+        unsigned reg;
+    } scene_load;
     /* MFC2 result belongs to this CPU until its source delay instruction
      * retires; an IRQ or a refused clock must not flush it early. */
     uint32_t gte_load_value;
@@ -6197,6 +6225,7 @@ typedef struct FormatterCpu {
     unsigned room_reset_slot;
     RoomSceneFrame room_scene;
     RoomLatchFrame room_latch;
+    FieldSceneLoad field_load;
 } FormatterCpu;
 
 typedef struct FormatterConsoleContext {
@@ -11652,6 +11681,9 @@ static TraceOther g_trace_other[TRACE_OTHER_MAX];
 static unsigned g_trace_other_n;
 static const MusashiNativeLaneEntry *lane_find(uint32_t pc);
 static unsigned long long g_wrapped_angle_trace_steps[3];
+static unsigned long long g_scene_native_issues, g_scene_scalar_issues, g_scene_calls;
+static unsigned long long g_scene_child_returns, g_scene_returns, g_scene_aggregate_returns;
+static unsigned long long g_scene_delayed_loads, g_scene_equal_loads, g_scene_eager_loads;
 static unsigned long long g_room_latch_trace_steps, g_room_latch_trace_returns;
 
 typedef struct TraceRow { uint32_t target, caller, count; char kind; } TraceRow;
@@ -11692,6 +11724,10 @@ static void trace_dump(void) {
             fprintf(out, "# wrapped_angle_native_steps subtract=%llu return=%llu mask=%llu\n",
                     g_wrapped_angle_trace_steps[0], g_wrapped_angle_trace_steps[1],
                     g_wrapped_angle_trace_steps[2]);
+        if (g_scene_native_issues)
+            fprintf(out, "# mounted_scene_dispatch native_issues=%llu scalar_load_window=%llu calls=%llu child_returns=%llu returns=%llu aggregate_returns=%llu\n",
+                    g_scene_native_issues, g_scene_scalar_issues, g_scene_calls, g_scene_child_returns, g_scene_returns,
+                    g_scene_aggregate_returns);
         if (g_room_latch_trace_steps)
             fprintf(out, "# room_latch_native steps=%llu returns=%llu\n",
                     g_room_latch_trace_steps, g_room_latch_trace_returns);
@@ -11815,6 +11851,7 @@ void musashi_formatter_set_entry_hook(MusashiEntryHook hook, void *userdata) {
     g_entry_pending = 1u;
 }
 static size_t g_lane_count;
+static uint64_t g_lane_generation;
 static uint32_t g_lane_min = UINT32_MAX, g_lane_max;
 static int g_lane_env = -1;
 
@@ -11833,8 +11870,50 @@ typedef struct GameMainEntry {
     unsigned capture_return, return_stage;
 } GameMainEntry;
 
+enum SceneDispatchPhase {
+    SCENE_IDLE, SCENE_PARENT_ISSUE, SCENE_PARENT_DELAY, SCENE_WRAPPER,
+    SCENE_SERVICE_ENTRY, SCENE_SERVICE, SCENE_SERVICE_DELAY
+};
+typedef struct SceneDispatchFrame {
+    enum SceneDispatchPhase phase;
+    MusashiMain12Owner *owner;
+    const MusashiGuestIrqImage *image;
+    const uint8_t *exe_text;
+    int (*matches)(const MusashiMain12Owner *, uint32_t, uint32_t);
+    int (*word)(const MusashiMain12Owner *, uint32_t, uint32_t *);
+    const MusashiCallbackDevice *callback;
+    MusashiFieldRestoreQuiet quiet;
+    const MusashiExecutionClock *clock;
+    MusashiExecutionClock charge;
+    int (*checkpoint)(void *, const void *);
+    void *worker;
+    uint32_t next, top, parent[4], regs[32], hi, lo, cell, target;
+    const FormatterRange *service;
+} SceneDispatchFrame;
+typedef enum FieldScenePhase {
+    FIELD_IDLE, FIELD_CALLING, FIELD_BODY, FIELD_RESTORING,
+    FIELD_SERVICE_ENTRY, FIELD_SERVING, FIELD_SERVICE_DELAY
+} FieldScenePhase;
+
+typedef struct FieldSceneCounters {
+    uint64_t issues, clocks, delegated_issues, delegated_clocks, flag_clears;
+    uint64_t calls, guest_returns, native_returns, completed;
+    uint64_t restore_issues, restore_clocks, complete_19, irq_writebacks, provider_handoffs;
+} FieldSceneCounters;
+
+typedef struct FieldScene {
+    uint8_t caller[8], body[76];
+    uint32_t stack, pc, npc, branch;
+    unsigned mounted, delay, restores;
+    FieldScenePhase phase;
+    FieldSceneCounters counters;
+} FieldScene;
+
 typedef struct LaneRunFrame {
+    SceneDispatchFrame scene;
+    struct { unsigned long long native, scalar, calls, children, returns, aggregate, delayed, equal, eager; } scene_baseline;
     GameMainEntry main_entry;
+    FieldScene field_scene;
     struct LaneRunFrame *prev;
     FormatterCpu *cpu;
     MusashiConsoleSink sink;
@@ -11955,6 +12034,7 @@ int musashi_native_lane_install(const MusashiNativeLaneEntry *entries, size_t co
     }
     free(g_lane);
     g_lane = copy;
+    ++g_lane_generation;
     g_lane_count = count;
     g_lane_min = count ? copy[0].guest_pc : UINT32_MAX;
     g_lane_max = count ? copy[count - 1].guest_pc : 0;
@@ -12289,6 +12369,60 @@ int musashi_native_lane_wrapped_angle(MusashiNativeLaneCall *call) {
     return wrapped_angle_step(call->memory, g_lane_active->cpu);
 }
 
+/* The value belongs to the CPU that issued this one field restore. Nested
+ * CPUs can copy the register bank but cannot retire their parent's load. */
+static int field_scene_pending(const FormatterCpu *cpu) {
+    return cpu->field_load.reg && cpu->field_load.owner == cpu;
+}
+
+static void field_scene_writeback(FormatterCpu *cpu, unsigned overwritten) {
+    if (field_scene_pending(cpu)) {
+        if (cpu->field_load.reg != overwritten)
+            cpu->r[cpu->field_load.reg] = cpu->field_load.value;
+        cpu->field_load = (FieldSceneLoad){0};
+    }
+}
+
+static int field_scene_expected(const FieldScene *field, const FormatterCpu *cpu) {
+    return cpu->pc == field->pc && cpu->npc == field->npc &&
+        cpu->delay_slot == field->delay && cpu->branch_pc == field->branch;
+}
+
+/* The CPU erases completed delay-slot provenance. Check the original edge
+ * after the device charge, before either execution path retires it. */
+static void field_scene_after_charge(LaneRunFrame *frame, const FormatterCpu *cpu) {
+    if (frame && frame->field_scene.phase != FIELD_IDLE && frame->cpu == cpu &&
+        !field_scene_expected(&frame->field_scene, cpu))
+        frame->field_scene.phase = FIELD_IDLE;
+}
+
+static int scene_pending(const FormatterCpu *cpu) {
+    return cpu->scene_load.owner == cpu && cpu->scene_load.reg != 0;
+}
+
+int musashi_boot_mounted_irq_ready(const void *continuation) {
+    return continuation && !scene_pending(continuation);
+}
+
+static int scene_unexpected_successor(const FormatterCpu *cpu) {
+    return scene_pending(cpu) && cpu->pc != UINT_MAX &&
+        (cpu->pc != cpu->scene_load.successor || cpu->npc != cpu->pc + 4u ||
+         cpu->delay_slot || cpu->branch_pc);
+}
+
+/* Apply after the successor has consumed its original operands. A direct
+ * write to the same GPR wins, even when it writes back the original value. */
+static void scene_writeback(FormatterCpu *cpu, unsigned written) {
+    if (scene_pending(cpu)) {
+        if (written != cpu->scene_load.reg)
+            cpu->r[cpu->scene_load.reg] = cpu->scene_load.value;
+        cpu->scene_load.owner = NULL;
+        cpu->scene_load.reg = 0;
+    }
+}
+
+#include "mounted_scene_dispatch.h"
+
 /* 1: native execution advanced the CPU; 0: not a lane call here
  * (the interpreter proceeds); -1: the native call aborted (refuse). */
 static int lane_try(MusashiBootMemory *memory, FormatterCpu *cpu) {
@@ -12299,6 +12433,7 @@ static int lane_try(MusashiBootMemory *memory, FormatterCpu *cpu) {
     uint32_t ra, sp;
     volatile int outcome;
     int staged;
+    if (scene_pending(cpu)) return 0; /* Its successor must issue individually. */
     entry = g_lane_count && cpu->pc != SCENE_SETUP && cpu->pc != SCENE_CHILD ?
             lane_find(cpu->pc) : NULL;
     if (!entry && cpu->pc - WRAPPED_ANGLE_ENTRY < 12u) {
@@ -12313,6 +12448,17 @@ static int lane_try(MusashiBootMemory *memory, FormatterCpu *cpu) {
         return 0;
     /* Overlay PCs: only the member whose bytes are resident, checked now. */
     if (!entry && !(entry = lane_find_overlay(memory, cpu->pc))) return 0;
+    /* A whole-call provider cannot retire the first guest instruction with
+     * the old register and then expose the new value. Keep that successor
+     * on the instruction path when a late-installed provider overlaps it. */
+    FieldSceneLoad handoff = {0};
+    uint32_t previous_gpr = 0;
+    if (field_scene_pending(cpu)) {
+        if (cpu->field_load.old_value != cpu->field_load.value) return 0;
+        handoff = cpu->field_load;
+        previous_gpr = cpu->r[handoff.reg];
+        field_scene_writeback(cpu, 0);
+    }
     ra = cpu->r[31];
     sp = cpu->r[29];
     active.guest_pc = entry->guest_pc;
@@ -12321,41 +12467,84 @@ static int lane_try(MusashiBootMemory *memory, FormatterCpu *cpu) {
     active.cpu = cpu;
     call.memory = memory;
     call.r = cpu->r;
+    /* The registry can be replaced by work inside the provider or its clock. */
+    const MusashiNativeLaneEntry selected = *entry;
+    const uint64_t generation = g_lane_generation;
+    const unsigned long long invocation = g_scene_calls;
+    const int selected_outer = !staged && !active.prev && saved_frames && saved_frames->cpu == cpu &&
+        saved_frames->scene.phase == SCENE_SERVICE_ENTRY && saved_frames->scene.target == cpu->pc;
+    uint32_t output[32], output_hi = 0, output_lo = 0;
+    int aggregate = !handoff.reg && selected_outer && entry == lane_find(cpu->pc) &&
+        scene_aggregate_owned(saved_frames, memory, cpu, &selected, generation, invocation, 0) &&
+        scene_registers(&saved_frames->scene, cpu);
     g_lane_active = &active;
     {
         int code = setjmp(active.abort);
         if (code == 0) {
-            int status = entry->fn(&call);
+            int status = selected.fn(&call);
             outcome = staged ? status : status != 0;
+            if (status <= 0) aggregate = 0;
         } else {
             outcome = -1;
             /* 3/4/5: a guest call from native code refused or stopped;
              * 6: musashi_native_lane_abort (e.g. a trapping divisor). */
             fprintf(stderr, "native_boot: NATIVE_LANE_ABORT_DETAIL pc=%08x code=%d a0=%08x a1=%08x "
-                    "a2=%08x a3=%08x ra=%08x sp=%08x\n", entry->guest_pc, code,
+                    "a2=%08x a3=%08x ra=%08x sp=%08x\n", selected.guest_pc, code,
                     cpu->r[4], cpu->r[5], cpu->r[6], cpu->r[7], ra, sp);
         }
     }
     g_lane_active = active.prev;
     g_lane_run_frames = saved_frames;
+    if (handoff.reg) {
+        if (!outcome) {
+            cpu->r[handoff.reg] = previous_gpr;
+            cpu->field_load = handoff;
+        } else if (saved_frames && saved_frames->cpu == cpu) {
+            saved_frames->field_scene.phase = FIELD_IDLE;
+        }
+    }
     if (staged) return outcome; /* The step preserved its own PC, registers and clock. */
     if (outcome < 0) {
         fprintf(stderr, "native_boot: NATIVE_LANE_ABORT pc=%08x fn=%s\n",
-                entry->guest_pc, entry->name ? entry->name : "?");
+                selected.guest_pc, selected.name ? selected.name : "?");
         return -1;
     }
     if (!outcome) return 0;
+    /* Check the real provider output before normalizing the guest ABI. */
+    if (aggregate) {
+        aggregate = scene_aggregate_owned(saved_frames, memory, cpu, &selected, generation, invocation, 0);
+        memcpy(output, cpu->r, sizeof output);
+        output_hi = cpu->hi;
+        output_lo = cpu->lo;
+    }
     cpu->r[0] = 0;
     cpu->r[29] = sp;
     cpu->r[31] = ra;
-    if (cpu->clock && entry->cost_cycles &&
-        (!cpu->clock->advance || !cpu->clock->advance(cpu->clock->userdata, entry->cost_cycles)))
+    if (cpu->clock && selected.cost_cycles &&
+        (!cpu->clock->advance || !cpu->clock->advance(cpu->clock->userdata, selected.cost_cycles)))
         return -1;
-    return formatter_return(cpu) ? 1 : -1;
+    field_scene_after_charge(saved_frames, cpu);
+    if (aggregate)
+        aggregate = cpu->hi == output_hi && cpu->lo == output_lo && !memcmp(output, cpu->r, sizeof output) &&
+            scene_aggregate_owned(saved_frames, memory, cpu, &selected, generation, invocation, 0);
+    if (!formatter_return(cpu)) return -1;
+    if (aggregate && scene_aggregate_owned(saved_frames, memory, cpu, &selected, generation, invocation, 1)) {
+        SceneDispatchFrame *s = &saved_frames->scene;
+        s->phase = SCENE_WRAPPER;
+        s->next = cpu->pc;
+        scene_remember(s, cpu);
+        ++g_scene_aggregate_returns;
+    } else if (selected_outer && invocation == g_scene_calls && saved_frames->scene.phase == SCENE_SERVICE_ENTRY) {
+        saved_frames->scene.phase = SCENE_IDLE;
+    }
+    if (handoff.reg && saved_frames && saved_frames->cpu == cpu)
+        ++saved_frames->field_scene.counters.provider_handoffs;
+    return 1;
 }
 
 #include "game_main_entry.h"
 #include "game_graphics_entry.h"
+#include "field_scene_callback.h"
 
 static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     uint32_t instruction, opcode, rs, rt, rd, immediate, old_npc;
@@ -12375,6 +12564,8 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     uint32_t scheduled_next_pc = 0;
     uint8_t scheduled_merge_reg = 0;
     const uint32_t issued_pc = cpu->pc;
+    LaneRunFrame *root = g_lane_run_frames;
+    int scene_prepaid = 0;
     const int room_reset_call = issued_pc == ROOM_RESET_CALL && !cpu->delay_slot &&
         !cpu->branch_pc && cpu->npc == ROOM_RESET_CALL + 4u;
     const int room_reset_delay = issued_pc == ROOM_RESET_CALL + 4u && cpu->room_reset_owner &&
@@ -12390,6 +12581,11 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         release_address = cpu->r[2] + 0x3au;
         release_return = cpu->r[31];
     }
+    if (scene_unexpected_successor(cpu)) return formatter_refuse0(__LINE__, cpu->pc);
+    if (cpu->field_load.reg) field_scene_changed_owner(root, cpu);
+    if (root && root->field_scene.mounted &&
+        (root->field_scene.phase != FIELD_IDLE || issued_pc == FIELD_SCENE_CALLER))
+        field_scene_before(root, memory, cpu);
     const struct TitleMixerRun *mixer_at_issue=cpu->title_mixer;
     if (g_lane_run_frames && g_lane_run_frames->main_entry.return_stage == 2u &&
         issued_pc != GRAPHICS_RETURN_JR+4u)
@@ -12417,6 +12613,8 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         (g_lane_count || g_lane_ovl_count)) {
         int lane = lane_try(memory, cpu);
         if (lane > 0) {
+            if (root && root->field_scene.phase != FIELD_IDLE)
+                field_scene_lane_retired(root, memory, cpu, issued_pc);
             if (cpu->room_latch.returning) room_latch_child_returned(cpu, issued_pc, 1);
             return 1;
         }
@@ -12475,6 +12673,20 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         return 1;
     }
     if (!formatter_fetch(memory, cpu, &instruction)) return formatter_refuse0(__LINE__, cpu->pc);
+    if (root && root->cpu == cpu && root->scene.phase == SCENE_WRAPPER) {
+        int native = scene_native_issue(root, memory, cpu, &scene_prepaid);
+        if (native < 0) return formatter_refuse0(__LINE__, issued_pc);
+        if (native > 0) {
+            if (root->field_scene.phase == FIELD_CALLING)
+                field_scene_retired(root, memory, cpu, issued_pc, instruction);
+            return 1;
+        }
+    }
+    if (!scene_prepaid && root && root->cpu == cpu && root->field_scene.phase == FIELD_BODY) {
+        int native = field_scene_issue(root, memory, cpu, instruction, &scene_prepaid);
+        if (native < 0) return formatter_refuse0(__LINE__, issued_pc);
+        if (native > 0) return 1;
+    }
     if (cpu->gte_load_pending &&
         (cpu->merge_pending || cpu->gte_load_next_pc != cpu->pc ||
          cpu->npc != cpu->pc+4u || cpu->delay_slot || cpu->branch_pc ||
@@ -13029,7 +13241,10 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         if (!merge_memory_available(memory, cpu, merge_kind, address))
             return formatter_refuse0(__LINE__, cpu->pc);
     }
-    if (cpu->clock) {
+    enum SceneWitness witness = SCENE_NO_WITNESS;
+    if (root && root->cpu == cpu && (root->scene.phase || issued_pc == SCENE_PARENT_CALL))
+        witness = scene_before_issue(root, memory, cpu, instruction);
+    if (cpu->clock && !scene_prepaid) {
         /* PCSX-Redux psxinterpreter.cc execBlock: BIAS=2. Its memory
          * read/write entry points add one cycle for an actual data access.
          * Count source delay slots normally. Host intrinsics are outside
@@ -13043,6 +13258,9 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
             (cpu->cd_irq_frame && cpu->cd_irq_frame->faulted))
             return formatter_refuse0(__LINE__, cpu->pc);
     }
+    field_scene_after_charge(root, cpu);
+    if (scene_pending(cpu) && (cpu->pc != issued_pc || scene_unexpected_successor(cpu)))
+        return formatter_refuse0(__LINE__, issued_pc);
     if (enter_menu_exit || exiting_menu) {
         uint32_t current;
         if (cpu->pc != issued_pc || cpu->npc != menu_exit_npc || cpu->branch_pc != menu_exit_branch ||
@@ -13053,6 +13271,7 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
                !main12_menu_exit_word(memory, cpu, &current)) || current != instruction)
             return formatter_refuse0(__LINE__, cpu->pc);
     }
+    witness = scene_after_charge(root, memory, cpu, witness);
     if (cpu->title_mixer!=mixer_at_issue ||
         (mixer_at_issue && !title_mixer_after_clock(memory,cpu,instruction))) return 0;
     if (publishing_metadata &&
@@ -13101,6 +13320,14 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         /* At a libgs delayed branch the epilogue retires the load after
          * the branch has read the old register. */
     }
+    uint32_t scene_prior_rt = 0;
+    int scene_ram_load = 0;
+    if (scene_pending(cpu) && issued_pc - SCENE_ENTRY < SCENE_LENGTH) {
+        unsigned width = opcode == 35u ? 4u : (opcode == 33u || opcode == 37u) ? 2u :
+            (opcode == 32u || opcode == 36u) ? 1u : 0u;
+        scene_prior_rt = cpu->r[rt];
+        scene_ram_load = width && intrinsic_span(cpu, cpu->r[rs] + (int32_t)signed_immediate, width);
+    }
     old_npc = cpu->npc;
     target_npc = old_npc + 4u;
 
@@ -13119,7 +13346,7 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
             break;
         }
         case 8: target_npc = cpu->r[rs]; break;
-        case 9: cpu->r[rd] = cpu->pc + 8u; target_npc = cpu->r[rs];
+        case 9: target_npc = cpu->r[rs]; cpu->r[rd] = cpu->pc + 8u;
             if (publish_flow && g_trace_state >= 0) musashi_trace_function_entry(target_npc, cpu->pc, 'r');
             if (publish_flow && g_entry_hook) g_entry_pending = target_npc;
             break;
@@ -13438,6 +13665,7 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         cpu->merge_pending = 0;
         cpu->merge_kind = MERGE_NONE;
     }
+    if (cpu->field_load.reg) field_scene_scalar_successor(cpu, instruction);
     cpu->r[0] = 0;
     if (building_row && (opcode == 40u || opcode == 41u || opcode == 43u)) {
         unsigned width = opcode == 40u ? 1u : opcode == 41u ? 2u : 4u;
@@ -13501,8 +13729,11 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
             cpu->main12_card_service = 0;
         }
     }
+    if (scene_pending(cpu))
+        scene_scalar_retired(cpu, instruction, scene_prior_rt, scene_ram_load);
     cpu->pc = old_npc;
     cpu->npc = target_npc;
+    if (witness) scene_retired(root, memory, cpu, witness, issued_pc);
     if (cpu->room_latch.returning && menu_exit_delay && menu_exit_branch == issued_pc - 4u)
         room_latch_child_returned(cpu, issued_pc, 0);
     if (exiting_menu && (issued_pc == MAIN12_ROOM_RETURN || issued_pc == MAIN12_ROOM_RETURN + 4u))
@@ -13521,6 +13752,8 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
             cpu->room_reset_step = 0;
         }
     }
+    if (root && root->field_scene.phase != FIELD_IDLE)
+        field_scene_retired(root, memory, cpu, issued_pc, instruction);
     if (issued_pc == CRT_GAME_CALL || issued_pc == CRT_GAME_CALL+4u)
         game_main_crt_retired(g_lane_run_frames,memory,cpu,issued_pc);
     else if ((uint32_t)(issued_pc-GAME_CTOR) < GAME_CTOR_END-GAME_CTOR)
@@ -13927,11 +14160,28 @@ static MusashiResetGraphPrefixStatus run_startup_cpu(
     MusashiConsoleSink sink, void *userdata, int32_t *result,
     MusashiResetGraphPrefixStop *stop, MusashiEntryRunStop *entry_stop,
     MusashiEntryObserver observer, void *observer_userdata) {
-    LaneRunFrame frame;
+    LaneRunFrame frame = {0};
     MusashiResetGraphPrefixStatus status;
+    frame.scene = (SceneDispatchFrame){0};
+    frame.scene_baseline.native = g_scene_native_issues;
+    frame.scene_baseline.scalar = g_scene_scalar_issues;
+    frame.scene_baseline.delayed = g_scene_delayed_loads;
+    frame.scene_baseline.equal = g_scene_equal_loads;
+    frame.scene_baseline.eager = g_scene_eager_loads;
+    frame.scene_baseline.calls = g_scene_calls;
+    frame.scene_baseline.children = g_scene_child_returns;
+    frame.scene_baseline.returns = g_scene_returns;
+    frame.scene_baseline.aggregate = g_scene_aggregate_returns;
     frame.prev = g_lane_run_frames;
     if (frame.prev) {
+        /* A nested run cannot witness two consecutive scalar issues on this root. */
+        if (frame.prev->scene.phase != SCENE_SERVICE)
+            frame.prev->scene.phase = SCENE_IDLE;
         frame.prev->main_entry.next = 0;
+        FieldScene *field = &frame.prev->field_scene;
+        if (field->phase == FIELD_CALLING || field->phase == FIELD_SERVICE_DELAY ||
+            (field->phase == FIELD_BODY && field->delay))
+            field->phase = FIELD_IDLE;
         /* A nested CPU between JR and its delay slot breaks the return witness. */
         if (frame.prev->main_entry.return_stage == 2u)
             frame.prev->main_entry.return_stage = 0;
@@ -13951,11 +14201,16 @@ static MusashiResetGraphPrefixStatus run_startup_cpu(
      * first step; bind this run's guest memory up front. */
     g_fetch_memory = memory;
     code_sites_invalidate();
-    if (!frame.prev && entry_stop && cpu->pc == CODE_IMAGE_BASE)
+    if (!frame.prev && entry_stop && cpu->pc == CODE_IMAGE_BASE) {
         game_main_capture(&frame,memory,cpu);
+        field_scene_capture(&frame, memory, cpu);
+    }
     if (g_trace_state >= 0) musashi_trace_function_entry(cpu->pc, cpu->r[31], 'd');
     status = run_startup_cpu_loop(memory, cpu, sink, userdata, result, stop,
                                   entry_stop, observer, observer_userdata);
+    if (!frame.prev && g_scene_native_issues != frame.scene_baseline.native)
+        scene_report(&frame, "exit");
+    if (frame.field_scene.mounted) field_scene_report(&frame.field_scene);
     g_lane_run_frames = frame.prev;
     return status;
 }
@@ -13972,7 +14227,13 @@ static MusashiResetGraphPrefixStatus run_startup_cpu_loop(
     const unsigned step_limit = entry_stop ? 4000000000u : FORMATTER_STEP_LIMIT;
     console.sink = sink;
     console.userdata = userdata;
+    LaneRunFrame *root = g_lane_run_frames;
+    uint32_t service_step = 0;
     for (step = 0; step < step_limit; ++step) {
+        if (service_step) {
+            field_scene_scheduler_retired(&root->field_scene, cpu, service_step);
+            service_step = 0;
+        }
         /* A real return to the sentinel ends this run before any checkpoint:
          * no guest instruction of it is left, and the checkpoint cannot fetch
          * one. An IRQ pending here is taken at the enclosing run's next
@@ -13989,6 +14250,7 @@ static MusashiResetGraphPrefixStatus run_startup_cpu_loop(
          * provider can stop before reaching any of the named call gates. */
         stop->call_address = cpu->pc;
         stop->target_address = cpu->pc;
+        if (cpu->field_load.reg) field_scene_changed_owner(root, cpu);
         if (entry_stop) {
             entry_snapshot(cpu, &entry_stop->cpu);
             if (observer && (cpu->pc == 0x80047d3cu || cpu->pc == 0x80047d48u ||
@@ -14045,6 +14307,12 @@ static MusashiResetGraphPrefixStatus run_startup_cpu_loop(
             if (refusal_trace())
                 fprintf(stderr, "native_boot: RUN_REFUSED pc=%08x why=checkpoint\n", cpu->pc);
             return MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT;
+        }
+        if (scene_unexpected_successor(cpu)) return MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT;
+        if (cpu->field_load.reg) field_scene_changed_owner(root, cpu);
+        if (root && root->cpu == cpu && root->field_scene.phase == FIELD_SERVING) {
+            if (field_scene_expected(&root->field_scene, cpu)) service_step = cpu->pc;
+            else root->field_scene.phase = FIELD_IDLE;
         }
         if (cpu->gte_load_pending && !gte_load_successor_pc(cpu->pc)) {
             if (refusal_trace())
@@ -14329,8 +14597,10 @@ static MusashiResetGraphPrefixStatus run_startup_cpu_loop(
             cpu->pc == STARTUP_CLEAR_29218 || cpu->pc == STARTUP_RECORD_CLEAR) {
             if (!formatter_call(memory, cpu, sink, &console))
                 return MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT;
-        } else if (!formatter_step(memory, cpu)) {
-            return MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT;
+        } else {
+            service_step = 0; /* formatter_step witnesses its own retirement. */
+            if (!formatter_step(memory, cpu))
+                return MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT;
         }
     }
     if (entry_stop) entry_snapshot(cpu, &entry_stop->cpu);
