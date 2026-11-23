@@ -6482,6 +6482,19 @@
       "span_sha256": "47fc75c5557040fd12f3d1814eb36a0a23cb522a4ac548d1110642ffc458d83d"
     },
     {
+      "name": "func_8014BD60",
+      "region": "sc03_0029",
+      "vram": 2148842848,
+      "size": 56,
+      "source": "src/overlays/sc03_0029/8014bd60.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 0029 and matched against its complete linked function extent.",
+      "source_sha256": "74a5ea9c5872ec2ce30c8ba5b23b1ca70da168037d992a6a3e1e7760575b51d9",
+      "span_sha256": "731db5f32df23134e0950160f01a594a0ce77ebc8ccbb750815320a7990307ce"
+    },
+    {
       "name": "func_8014CC28",
       "region": "sc03_0029",
       "vram": 2148846632,
