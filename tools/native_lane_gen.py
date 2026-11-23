@@ -1117,7 +1117,7 @@ SCENE_PHASE_EXTENTS = {
     # The rescue reward writes the wrapped BP sum before applying its limit.
     # Both writes remain visible to the game clock in the forest overlay.
     0x8014BCEC: {"sc03_0006": None},
-    0x8014BD24: {"sc03_0006": None},
+    0x8014BD24: {"sc03_0006": None, "sc03_0029": None},
     # Twinpeak's action and queue operations need the live actor, services and
     # guest timing. The queue bytes alone cannot identify their scene.
     0x8013767C: {"sc03_0029": None},
@@ -1131,6 +1131,7 @@ SCENE_PHASE_EXTENTS = {
     0x8014BD60: {"sc03_0029": None},
     0x8014CC28: {"sc03_0029": None},
     0x8014F3E8: {"sc03_0029": None},
+    0x80150820: {"sc03_0029": None},
     0x8015F89C: {"sc03_0029": None},
     0x8015FAE8: {"sc03_0029": None},
     0x8015FBE0: {"sc03_0029": None},

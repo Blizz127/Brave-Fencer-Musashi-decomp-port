@@ -122,8 +122,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The scene registry covers 634 regional function matches across seventeen overlay members,
-totaling 98,940 bytes.
+The scene registry covers 636 regional function matches across seventeen overlay members,
+totaling 99,076 bytes.
 
 Two Twinpeak routines compare an actor’s current and saved coordinates to choose
 a contact check. Together they match 268 bytes in SC03 member 0029. On a recorded
@@ -135,6 +135,15 @@ The 56-byte Twinpeak routine that spends BP also matches the US game. On an
 ordinary Shrink cast, the original charged 10 BP, taking Musashi from 143 to
 133. A separate periodic debit had already taken him from 147 to 143. The
 public player continues to execute this regional routine on the guest CPU.
+
+On the same US save, a second successful Fusion hit on the Twinpeak Magician
+displayed a green 10 and raised BP from 125 to 135. Two regional matches cover
+the 60-byte credit and its 76-byte caller. The credit also occurs in the forest
+overlay. It writes the 16-bit sum, then writes the maximum if the sum exceeds
+it. For a nonzero award the caller applies the credit and requests a second
+service. The original trace observed the credit return. The later service and
+its return remain unverified. Both routines run on the guest CPU in the public
+player.
 
 The cemetery award in SC03 member 0023 stores Jon’s Key, advances story progress
 to 60, sets the completion flag and resumes the room script. The field player

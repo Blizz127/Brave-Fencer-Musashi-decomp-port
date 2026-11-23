@@ -6352,6 +6352,32 @@
       "span_sha256": "46400f2b1710c9a2eab8e09f99c041e41eccbc4ed4f2e455ebe99fde9e250ad9"
     },
     {
+      "name": "func_8014BD24",
+      "region": "sc03_0029",
+      "vram": 2148842788,
+      "size": 60,
+      "source": "src/overlays/sc03_0029/8014bd24.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Reconstructed from USA SC03.CD member 0029 and the project-authored SC03/0006 BP credit, with the Twinpeak BP bindings and ordered stores.",
+      "source_sha256": "86eb8a690df8bfea56251f65533f954c3bef2e569921ab718eeaa8bfb4369b9c",
+      "span_sha256": "51848222d812e855757e265f6004e7b2da6517867a9ef335fd3f40d3f12b16ef"
+    },
+    {
+      "name": "func_80150820",
+      "region": "sc03_0029",
+      "vram": 2148861984,
+      "size": 76,
+      "source": "src/overlays/sc03_0029/80150820.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 0029 and matched against its complete linked function extent.",
+      "source_sha256": "df6adb9e92b5ca8dafc31635b3856096845ca7f88c0344fd092c5873de7269ee",
+      "span_sha256": "18de0eaa6868d73320fde23df2a1d2af2dfc89b9519437c61d6b8920252cf41e"
+    },
+    {
       "name": "func_8015F89C",
       "region": "sc03_0029",
       "vram": 2148923548,
