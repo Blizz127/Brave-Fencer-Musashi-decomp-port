@@ -2590,6 +2590,36 @@ static int source_irq_owns_draw(void *machine, const MusashiGuestIrqDraw *draw) 
         draw->timer==&boot->timer1 && draw->timer_read16==musashi_scanline_timer_read16;
 }
 
+#ifdef MUSASHI_COMPILED_STREAM
+#ifdef MUSASHI_WITH_BFM_PLAT
+#include "bfm_plat_events.h"
+static void plat_entry_hook(void *, uint32_t, const uint32_t *);
+#endif
+static int source_irq_owns_stream(void *machine, MusashiBootMemory *memory,
+    const MusashiExecutionClock *clock, const MusashiCdRegisterDevice *registers,
+    const MusashiCdIrqFrame *frame, MusashiEntryHook hook) {
+    NativeBoot *boot = machine;
+    if (hook) {
+#ifdef MUSASHI_WITH_BFM_PLAT
+        if (hook != plat_entry_hook || bfm_plat_hooks_has(0x80018730u)) return 0;
+#else
+        return 0;
+#endif
+    }
+    return memory == &boot->memory && clock == &boot->execution_clock &&
+        clock == boot->irq.cd_clock && clock->userdata == boot && clock->advance == advance_source_clock &&
+        registers == boot->irq.cd_registers && registers == &boot->cd_registers &&
+        registers->userdata == boot && registers->read8 == cd_read8 && registers->write8 == cd_write8 &&
+        frame == &boot->irq.cd_frame && frame->busy && !frame->faulted &&
+        boot->irq.scheduler.installed && boot->irq.scheduler.delivering &&
+        boot->irq.scheduler.active_continuation == boot->continuation && boot->continuation &&
+        !boot->irq.scheduler.faulted && !boot->irq.scheduler.return_consumed &&
+        boot->epoch.owner == epoch_owner(boot) && boot->epoch.owner == boot->irq.scheduler.owner_thread &&
+        boot->epoch.active && !boot->epoch.busy && !boot->epoch.faulted &&
+        !boot->bios_callback_frame.busy && !boot->cd_event_busy;
+}
+#endif
+
 static int source_irq_dispatch(void *userdata, MusashiBootMemory *memory, uint32_t context,
     const uint32_t *installed, const void *interrupted, const MusashiIrqDispatchDevice *io) {
     NativeBoot *boot = userdata;
@@ -3478,6 +3508,12 @@ static int load_exe(NativeBoot *boot, const char *path) {
         musashi_boot_map_irq_exe(&boot->irq_image,&boot->memory,exe,size);
     if (accepted) accepted=musashi_boot_bind_irq_draw(&boot->irq_image,
         &boot->irq_draw_host,boot,source_irq_owns_draw);
+#ifdef MUSASHI_COMPILED_STREAM
+    if (accepted) {
+        boot->irq_image.stream_machine = boot;
+        boot->irq_image.owns_stream_clock = source_irq_owns_stream;
+    }
+#endif
     free(exe);
     return accepted;
 }

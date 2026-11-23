@@ -9,6 +9,9 @@
 #include "musashi_gpu_dma2.h"
 #include "musashi_cd_dma3.h"
 #include "main12_internal.h"
+#ifdef MUSASHI_COMPILED_STREAM
+#include "stream_call.h"
+#endif
 #ifdef MUSASHI_LINKED_BIOS_EXCEPTION
 #include "musashi_bios_exception.h"
 #endif
@@ -7521,12 +7524,7 @@ static int formatter_call(MusashiBootMemory *memory, FormatterCpu *cpu,
     return 0;
 }
 
-static uint32_t formatter_sra(uint32_t value, uint32_t shift) {
-    uint32_t result = value >> shift;
-    if (shift && (value & 0x80000000u))
-        result |= UINT32_MAX << (32u - shift);
-    return result;
-}
+#include "formatter_integer.h"
 
 /* First-two-call SPU closure retains live pointer cells and refuses unknown
  * indirect dispatch before it can enter another admitted source stream. */
@@ -11686,6 +11684,11 @@ static unsigned long long g_scene_native_issues, g_scene_scalar_issues, g_scene_
 static unsigned long long g_scene_child_returns, g_scene_returns, g_scene_aggregate_returns;
 static unsigned long long g_scene_delayed_loads, g_scene_equal_loads, g_scene_eager_loads;
 static unsigned long long g_room_latch_trace_steps, g_room_latch_trace_returns;
+#ifdef MUSASHI_COMPILED_STREAM
+static struct {
+    unsigned long long returns, literals, copied, issues, cycles, deferred, resumed, faults;
+} g_stream_trace;
+#endif
 
 typedef struct TraceRow { uint32_t target, caller, count; char kind; } TraceRow;
 static int trace_row_cmp(const void *a, const void *b) {
@@ -11732,6 +11735,12 @@ static void trace_dump(void) {
         if (g_room_latch_trace_steps)
             fprintf(out, "# room_latch_native steps=%llu returns=%llu\n",
                     g_room_latch_trace_steps, g_room_latch_trace_returns);
+#ifdef MUSASHI_COMPILED_STREAM
+        fprintf(out, "# pac_stream_native returns=%llu output=%llu literals=%llu copied=%llu issues=%llu cycles=%llu deferred=%llu scalar_resumes=%llu faults=%llu\n",
+            g_stream_trace.returns, g_stream_trace.literals + g_stream_trace.copied,
+            g_stream_trace.literals, g_stream_trace.copied, g_stream_trace.issues, g_stream_trace.cycles,
+            g_stream_trace.deferred, g_stream_trace.resumed, g_stream_trace.faults);
+#endif
         for (i = 0; i < n; ++i)
             fprintf(out, "%08x %u %c %08x %s\n", rows[i].target, rows[i].count,
                     rows[i].kind, rows[i].caller,
@@ -13417,21 +13426,9 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     old_npc = cpu->npc;
     target_npc = old_npc + 4u;
 
-    switch (opcode) {
+    if (!formatter_integer_effect(instruction, cpu->pc, cpu->r, &target_npc)) switch (opcode) {
     case 0:
         switch (instruction & 63u) {
-        case 0: cpu->r[rd] = cpu->r[rt] << ((instruction >> 6) & 31u); break;
-        case 2: cpu->r[rd] = cpu->r[rt] >> ((instruction >> 6) & 31u); break;
-        case 3: cpu->r[rd] = formatter_sra(cpu->r[rt],
-                                            (instruction >> 6) & 31u); break;
-        case 4: cpu->r[rd] = cpu->r[rt] << (cpu->r[rs] & 31u); break;
-        case 6: cpu->r[rd] = cpu->r[rt] >> (cpu->r[rs] & 31u); break;
-        case 7: {
-            uint32_t amount = cpu->r[rs] & 31u;
-            cpu->r[rd] = formatter_sra(cpu->r[rt], amount);
-            break;
-        }
-        case 8: target_npc = cpu->r[rs]; break;
         case 9: target_npc = cpu->r[rs]; cpu->r[rd] = cpu->pc + 8u;
             mounted_link = rd == 31u && mounted_leaf_target(target_npc) && !cpu->delay_slot && !cpu->branch_pc && cpu->npc == cpu->pc + 4u;
             if (publish_flow && g_trace_state >= 0) musashi_trace_function_entry(target_npc, cpu->pc, 'r');
@@ -13477,7 +13474,6 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
             cpu->r[rd] = (uint32_t)sum;
             break;
         }
-        case 33: cpu->r[rd] = cpu->r[rs] + cpu->r[rt]; break;
         case 34: {
             /* Trapping SUB serves the camera sqrt, movie VLC and exported
              * func_80047EC8 normalisation sites; signed overflow traps fail
@@ -13495,44 +13491,20 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
             cpu->r[rd] = (uint32_t)(int32_t)diff;
             break;
         }
-        case 35: cpu->r[rd] = cpu->r[rs] - cpu->r[rt]; break;
-        case 36: cpu->r[rd] = cpu->r[rs] & cpu->r[rt]; break;
-        case 37: cpu->r[rd] = cpu->r[rs] | cpu->r[rt]; break;
-        case 38: cpu->r[rd] = cpu->r[rs] ^ cpu->r[rt]; break;
-        case 39: cpu->r[rd] = ~(cpu->r[rs] | cpu->r[rt]); break;
-        case 42: cpu->r[rd] = (int32_t)cpu->r[rs] < (int32_t)cpu->r[rt]; break;
-        case 43: cpu->r[rd] = cpu->r[rs] < cpu->r[rt]; break;
         default: return formatter_refuse0(__LINE__, cpu->pc);
         }
         break;
-    case 1:
-        if ((instruction & 0x001f0000u) == 0) { if ((int32_t)cpu->r[rs] < 0) target_npc = cpu->pc + 4u + (uint32_t)((int32_t)signed_immediate * 4); }
-        else if ((instruction & 0x001f0000u) == 0x00010000u) { if ((int32_t)cpu->r[rs] >= 0) target_npc = cpu->pc + 4u + (uint32_t)((int32_t)signed_immediate * 4); }
-        else return formatter_refuse0(__LINE__, cpu->pc);
-        break;
-    case 2: target_npc = (cpu->pc + 4u & 0xf0000000u) | ((instruction & 0x03ffffffu) << 2); break;
     case 3: cpu->r[31] = cpu->pc + 8u; target_npc = (cpu->pc + 4u & 0xf0000000u) | ((instruction & 0x03ffffffu) << 2);
         mounted_link = mounted_leaf_target(target_npc) && !cpu->delay_slot && !cpu->branch_pc && cpu->npc == cpu->pc + 4u;
         if (publish_flow && g_trace_state >= 0) musashi_trace_function_entry(target_npc, cpu->pc, 'j');
         if (publish_flow && g_entry_hook) g_entry_pending = target_npc;
         break;
-    case 4: if (cpu->r[rs] == cpu->r[rt]) target_npc = cpu->pc + 4u + (uint32_t)((int32_t)signed_immediate * 4); break;
-    case 5: if (cpu->r[rs] != cpu->r[rt]) target_npc = cpu->pc + 4u + (uint32_t)((int32_t)signed_immediate * 4); break;
-    case 6: if ((int32_t)cpu->r[rs] <= 0) target_npc = cpu->pc + 4u + (uint32_t)((int32_t)signed_immediate * 4); break;
-    case 7: if ((int32_t)cpu->r[rs] > 0) target_npc = cpu->pc + 4u + (uint32_t)((int32_t)signed_immediate * 4); break;
     case 8: {
         int64_t sum = (int64_t)(int32_t)cpu->r[rs] + signed_immediate;
         if (sum < INT32_MIN || sum > INT32_MAX) return formatter_refuse0(__LINE__, cpu->pc);
         cpu->r[rt] = (uint32_t)sum;
         break;
     }
-    case 9: cpu->r[rt] = cpu->r[rs] + (int32_t)signed_immediate; break;
-    case 10: cpu->r[rt] = (int32_t)cpu->r[rs] < (int32_t)signed_immediate; break;
-    case 11: cpu->r[rt] = cpu->r[rs] < immediate; break;
-    case 12: cpu->r[rt] = cpu->r[rs] & immediate; break;
-    case 13: cpu->r[rt] = cpu->r[rs] | immediate; break;
-    case 14: cpu->r[rt] = cpu->r[rs] ^ immediate; break;
-    case 15: cpu->r[rt] = immediate << 16; break;
     case 16: {
         MusashiCpuContext context;
         uint32_t value;
@@ -15818,6 +15790,20 @@ int musashi_boot_map_irq_exe(MusashiGuestIrqImage *image, MusashiBootMemory *mem
     memcpy(image->title_note, note, sizeof image->title_note);
     memcpy(image->file_note, file_note, sizeof image->file_note);
     if (!cd_parent_map(image,memory)) return 0;
+#ifdef MUSASHI_COMPILED_STREAM
+    for (unsigned i = 0; i < MUSASHI_STREAM_STATE_COUNT; ++i)
+        if (!musashi_boot_read32(memory, 0x80072a38u + i * 4u, &image->stream_targets[i])) return 0;
+    for (unsigned i = 0; i < image->cd_span_count; ++i) {
+        const MusashiGuestCdCodeSpan *span = &image->cd_spans[i];
+        if (span->pc <= MUSASHI_STREAM_ENTRY &&
+            MUSASHI_STREAM_ENTRY - span->pc + MUSASHI_STREAM_CODE_BYTES <= span->size) {
+            image->stream_code_offset = span->offset + MUSASHI_STREAM_ENTRY - span->pc;
+            image->stream_witness_ready =
+                musashi_stream_witness_supports(image->cd_code + image->stream_code_offset);
+            break;
+        }
+    }
+#endif
     image->identity = image;
     image->memory = memory;
     return 1;
@@ -17302,6 +17288,10 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
 
 
 
+#ifdef MUSASHI_COMPILED_STREAM
+#include "stream_cd_frame.h"
+#endif
+
 /* The CD IRQ frame authorizes every guest call edge (cd_irq_call); natively
  * compiled bodies would skip those checks, so the lane stays suspended. */
 int musashi_boot_execute_cd_irq_with_services(MusashiBootMemory *memory,
@@ -17341,6 +17331,10 @@ static int cd_irq_execute(MusashiBootMemory *memory,
     uint32_t previous_decode_end = 0, previous_decode_lba = UINT_MAX;
     uint32_t image_start = 0, image_lba = 0, previous_image_end = 0;
     uint32_t previous_image_lba = UINT_MAX;
+#ifdef MUSASHI_COMPILED_STREAM
+    int stream_attempted = 0, stream_return_pending = 0;
+    MusashiStreamWork stream_work;
+#endif
     int image_call = 0;
     uint32_t list_mode = 0, list_lba = 0, previous_list_lba = UINT_MAX;
     if (!frame) return 0;
@@ -17383,6 +17377,9 @@ static int cd_irq_execute(MusashiBootMemory *memory,
     for (;;) {
         uint32_t instruction, expected = 0, expected_sp = 0, call;
         int transfer = 0, accepted = 1;
+#ifdef MUSASHI_COMPILED_STREAM
+        int stream_delay_pending = 0;
+#endif
         stop->call_address = stop->target_address = cpu.pc;
         uint32_t live_context_pc, live_context_sp;
         if (frame->faulted || !cd_irq_pointers(memory) ||
@@ -17422,6 +17419,39 @@ static int cd_irq_execute(MusashiBootMemory *memory,
          * Keep its source stack bounded separately from the existing lanes. */
         uint32_t stack_bytes = g_overlay_0004_words && depth &&
             returns[0].target == 0x80046610u ? 0x200u : 0x178u;
+#ifdef MUSASHI_COMPILED_STREAM
+        if (cpu.pc == MUSASHI_STREAM_ENTRY && !stream_attempted) {
+            uint32_t bundled = 0;
+            stream_attempted = 1;
+            MusashiStreamCallResult result = stream_cd_try(memory, &cpu, &decode_remaining,
+                returns, depth, context, saved_sp, &bundled, &stream_work);
+            if (result == MUSASHI_STREAM_RETURNED) {
+                stream_return_pending = 1;
+                goto stream_returned;
+            }
+            if (g_trace_state > 0) {
+                if (result == MUSASHI_STREAM_DEFER) ++g_stream_trace.deferred;
+                else if (result == MUSASHI_STREAM_SCALAR) ++g_stream_trace.resumed;
+                else ++g_stream_trace.faults;
+            }
+            if (result == MUSASHI_STREAM_WITNESS_FAILED) break;
+            if (result == MUSASHI_STREAM_FAULT) {
+                stop->call_address = stop->target_address = bundled ? bundled : cpu.pc;
+                break;
+            }
+            if (result == MUSASHI_STREAM_SCALAR) {
+                if (!bundled) continue;
+                /* A checked computed transfer/return already issued before
+                 * the owner changed. Keep its original target and charge only
+                 * the pending delay slot in the ordinary CD frame. */
+                call = bundled; expected = cpu.npc; expected_sp = returns[depth-1].sp;
+                transfer = expected == returns[depth-1].pc ? 2 : 3;
+                stop->call_address = stop->target_address = call;
+                stream_delay_pending = 1;
+                goto select_cd_budget;
+            }
+        }
+#endif
         if (cpu.r[29] < saved_sp-stack_bytes || cpu.r[29] > saved_sp-0x28u ||
             (cpu.r[29] & 3u) || !cd_irq_word(memory, &cpu, cpu.pc, &instruction)) break;
         call = cpu.pc;
@@ -17546,16 +17576,25 @@ static int cd_irq_execute(MusashiBootMemory *memory,
                 transfer = 2;
             }
         }
+#ifdef MUSASHI_COMPILED_STREAM
+    select_cd_budget: ;
+#endif
         int bank_pio = depth >= 4 && returns[0].target == 0x800377d8u &&
             returns[0].pc == 0x80045308u && returns[3].target == 0x8003a84cu &&
             returns[3].pc == 0x8003ae80u;
         unsigned *budget = bank_pio ? &pio_remaining :
             cpu.pc >= 0x80018730u && cpu.pc < 0x80018918u ?
             &decode_remaining : &remaining;
+#ifdef MUSASHI_COMPILED_STREAM
+        if (stream_delay_pending) goto transfer_delay;
+#endif
         if (!*budget) { frame->budget_exhausted = budget == &remaining ? 1u : budget == &decode_remaining ? 2u : 3u; break; }
         --*budget; ++frame->instructions;
         if (!formatter_step(memory,&cpu) || frame->faulted) break;
         if (transfer) {
+#ifdef MUSASHI_COMPILED_STREAM
+        transfer_delay:
+#endif
             if (!*budget) { frame->budget_exhausted = budget == &remaining ? 1u : budget == &decode_remaining ? 2u : 3u; break; }
             --*budget; ++frame->instructions;
             if (!formatter_step(memory,&cpu) || frame->faulted) break;
@@ -17612,6 +17651,9 @@ static int cd_irq_execute(MusashiBootMemory *memory,
                 if (expected == 0x80018730u) {
                     if (!musashi_boot_read32(memory,0x800747acu,&decode_start) ||
                         !musashi_boot_read32(memory,0x800ae7acu,&decode_lba)) break;
+#ifdef MUSASHI_COMPILED_STREAM
+                    stream_attempted = 0;
+#endif
                     decode_remaining = decode_limit;
                 }
             } else if (transfer == 4) {
@@ -17670,6 +17712,9 @@ static int cd_irq_execute(MusashiBootMemory *memory,
                     }
                     image_call = 0;
                 }
+#ifdef MUSASHI_COMPILED_STREAM
+            stream_returned:
+#endif
                 if (depth && returns[depth-1].target == 0x80018730u) {
                     uint32_t end, lba;
                     if (!musashi_boot_read32(memory,0x800747acu,&end) ||
@@ -17680,6 +17725,18 @@ static int cd_irq_execute(MusashiBootMemory *memory,
                         previous_decode_end = end; previous_decode_lba = lba;
                     }
                 }
+#ifdef MUSASHI_COMPILED_STREAM
+                if (stream_return_pending) {
+                    stream_return_pending = 0;
+                    if (g_trace_state > 0) {
+                        ++g_stream_trace.returns;
+                        g_stream_trace.literals += stream_work.literals;
+                        g_stream_trace.copied += stream_work.copied;
+                        g_stream_trace.issues += stream_work.issues;
+                        g_stream_trace.cycles += stream_work.cycles;
+                    }
+                }
+#endif
                 if (depth) --depth;
                 else root_returned = 1;
             }

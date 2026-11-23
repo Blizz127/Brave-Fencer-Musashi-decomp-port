@@ -278,6 +278,9 @@ if(MUSASHI_BUILD_PC_PORT)
         pc_port/bios_card.c
         pc_port/bios_backup_unit.c
         pc_port/bios_input.c
+        pc_port/stream_decode.c
+        pc_port/stream_timing.c
+        pc_port/stream_call.c
         pc_port/source_clock.c
         pc_port/timer2.c
         pc_port/device_epoch.c
@@ -299,6 +302,7 @@ if(MUSASHI_BUILD_PC_PORT)
         COMPILE_DEFINITIONS MUSASHI_NATIVE_MEMSET_BINDING=1)
     set_source_files_properties(src/main/80029044.c src/main/8002906c.c PROPERTIES
         COMPILE_DEFINITIONS MUSASHI_NATIVE_TABLE_CLEAR_BINDING=1)
+    target_compile_definitions(musashi_pc_port PUBLIC MUSASHI_COMPILED_STREAM)
     target_include_directories(musashi_pc_port
         PUBLIC
             ${CMAKE_CURRENT_SOURCE_DIR}/pc_port/include

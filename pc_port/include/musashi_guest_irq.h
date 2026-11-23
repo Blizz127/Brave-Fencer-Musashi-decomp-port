@@ -4,6 +4,7 @@
 #include "musashi_irq_dispatch.h"
 #include "musashi_dma_controller.h"
 #include "musashi_bios_events.h"
+#include "musashi_native_lane.h"
 
 /* Only the owner's verified mappings populate these bytes. Caller-owned,
  * zero-initialized, stable-address storage lasts for one machine lifetime. */
@@ -20,6 +21,9 @@ typedef struct MusashiGuestIrqDrawHost {
     const struct MusashiGuestIrqImage *image;
     uint64_t generation;
 } MusashiGuestIrqDrawHost;
+
+typedef int (*MusashiStreamClockOwner)(void *, MusashiBootMemory *, const MusashiExecutionClock *,
+    const MusashiCdRegisterDevice *, const MusashiCdIrqFrame *, MusashiEntryHook);
 
 typedef struct MusashiGuestIrqImage {
     const struct MusashiGuestIrqImage *identity;
@@ -47,6 +51,13 @@ typedef struct MusashiGuestIrqImage {
     MusashiGuestCdCodeSpan cd_spans[64];
     uint8_t cd_code[32768];
     unsigned cd_span_count;
+    /* Learned during this image's verified mapping. The machine installs the
+     * ordinary clock verifier for its own CD frame after mapping succeeds. */
+    uint32_t stream_targets[5];
+    unsigned stream_code_offset;
+    int stream_witness_ready;
+    void *stream_machine;
+    MusashiStreamClockOwner owns_stream_clock;
     /* Cleared when a fresh mapping begins, including a rejected mapping. */
     struct MusashiMain12Owner *main12_owner;
     uint8_t draw_complete[0x2ec], draw_irq_mask[0x1c];
