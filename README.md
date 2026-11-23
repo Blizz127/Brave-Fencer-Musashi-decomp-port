@@ -86,8 +86,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The scene registry covers 617 regional function matches across seventeen overlay members,
-totaling 97,020 bytes.
+The scene registry covers 619 regional function matches across seventeen overlay members,
+totaling 97,136 bytes.
 
 The cemetery award in SC03 member 0023 stores Jon’s Key, advances story progress
 to 60, sets the completion flag and resumes the room script. The field player
@@ -570,6 +570,14 @@ showed the field shatter, the named Guard emerge, and maximum BP rise from
 150 to 155, with current BP refilled to 155. In one run the first swing
 missed. Musashi turned back toward the intact crystal and broke it on the
 second swing. The Guard then appeared as rescued on the roster.
+
+Hawker Steakwood's Bincho Field uses the same reward. Two more matching C
+functions (116 bytes) add to maximum BP, cap it at 1,634, then refill current
+BP up to that maximum. The public player still executes them on the guest CPU.
+In a private hybrid File 4 playthrough, Musashi broke Hawker's crystal with
+Lumina. Hawker gave his Minku advice, BP went from 111/155 to 160/160, and
+his name appeared in the rescue list back in the village. A recording of the
+original game showed the same advice and its maximum BP rose from 155 to 160.
 
 ### Guard Lumpwood at the Twinpeak gate
 

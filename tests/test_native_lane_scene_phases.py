@@ -1084,6 +1084,8 @@ def test_forest_effect_and_steam_knight_extents(tmp_path, monkeypatch, member):
     ("main_0012", 0x80129258, 36),
     ("main_0012", 0x801378F0, 232),
     ("main_0012", 0x8013A860, 80),
+    ("sc03_0006", 0x8014BCEC, 56),
+    ("sc03_0006", 0x8014BD24, 60),
 ])
 def test_timed_source_keeps_other_room_implementations_selectable(tmp_path, member, pc, size):
     (tmp_path / "ir").mkdir()

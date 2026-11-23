@@ -6066,6 +6066,32 @@
       "span_sha256": "42b2298e7601dd0e3aba8acefe5467eedd08d1f957b00092ed7b4ac74106e2d7"
     },
     {
+      "name": "func_8014BCEC",
+      "region": "sc03_0006",
+      "vram": 2148842732,
+      "size": 56,
+      "source": "src/overlays/sc03_0006/8014bcec.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 0006 and the public integer types.",
+      "source_sha256": "70014767fdb83d3d9d0e0a744c7ea0d5467f062c7aae23f19ab5d88f2025fa95",
+      "span_sha256": "78fc8f196c10ab081d3118870a97dedefe89844e6e531a029e5493cf08da6ab6"
+    },
+    {
+      "name": "func_8014BD24",
+      "region": "sc03_0006",
+      "vram": 2148842788,
+      "size": 60,
+      "source": "src/overlays/sc03_0006/8014bd24.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 0006 and the public integer types.",
+      "source_sha256": "22bd66bca6dd8a36caa0aec13d8bb983f8ec4c9c4cf609bbc675d87a1ebcb4d1",
+      "span_sha256": "51848222d812e855757e265f6004e7b2da6517867a9ef335fd3f40d3f12b16ef"
+    },
+    {
       "name": "func_8017C294",
       "region": "sc03_0006",
       "vram": 2149040788,
