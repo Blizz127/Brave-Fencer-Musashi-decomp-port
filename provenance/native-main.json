@@ -2637,6 +2637,28 @@
       "extent": "function",
       "optimization": "-O2",
       "origin": "Independently reconstructed from the USA game executable. Original execution verified the game track and bank-slot state. Sound services remain external."
+    },
+    {
+      "name": "func_80014ED4",
+      "region": "main",
+      "vram": 2147569364,
+      "size": 324,
+      "source": "src/main/80014ed4.c",
+      "optimization": "-O2",
+      "recovery": "c",
+      "extent": "function",
+      "origin": "Owner re-derivation first published in e0b1822. The unchanged source matches its USA executable extent."
+    },
+    {
+      "name": "func_80015018",
+      "region": "main",
+      "vram": 2147569688,
+      "size": 256,
+      "source": "src/main/80015018.c",
+      "optimization": "-O2",
+      "recovery": "c",
+      "extent": "function",
+      "origin": "Owner re-derivation first published in e0b1822. The unchanged source matches its USA executable extent."
     }
   ]
 }

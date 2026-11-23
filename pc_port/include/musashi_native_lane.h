@@ -35,6 +35,9 @@ typedef struct MusashiNativeLaneCall {
  * the lane fall back to the interpreter. */
 typedef int (*MusashiNativeLaneFn)(MusashiNativeLaneCall *call);
 
+/* Generated frame-poll call into the same timed guest bridge. */
+void musashi_native_frame_pad(uint32_t record);
+
 typedef struct MusashiNativeLaneEntry {
     uint32_t guest_pc;
     uint32_t cost_cycles; /* charged once to the execution clock per call */
@@ -78,6 +81,9 @@ uint32_t musashi_native_lane_arg(const MusashiNativeLaneCall *call, unsigned n);
 /* Install one sorted-or-unsorted table (copied into an index; entries and
  * names must outlive the lane). Replaces any previous table. Returns the
  * number of accepted entries, or -1 on a duplicate/unaligned PC. */
+/* The generated table supplies this installer when linked. Its internal
+ * frame-poll identity is independent of any replacement row in entries. */
+int musashi_native_lane_install_generated(const MusashiNativeLaneEntry *entries, size_t count);
 int musashi_native_lane_install(const MusashiNativeLaneEntry *entries,
                                 size_t count);
 

@@ -3949,7 +3949,7 @@ static NativeBoot *native_boot_owner(NativeBoot *fallback) {
                                                 classes, &count);
         table = merged ? merged : musashi_native_lane_generated;
         if (!merged) count = musashi_native_lane_generated_count;
-        if (musashi_native_lane_install(table, count) < 0) {
+        if (musashi_native_lane_install_generated(table, count) < 0) {
             fprintf(stderr, "native_boot: NATIVE_LANE table rejected; interpreter only\n");
             return window;
         }

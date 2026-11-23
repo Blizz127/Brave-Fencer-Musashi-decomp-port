@@ -2308,6 +2308,8 @@ def emit_table(admitted, out):
               " * register the MIPS ABI carries, so caller and callee prototypes may",
               " * disagree exactly as they can on the PS1. An admitted callee is called",
               " * directly; any other runs on the interpreter (same CPU, same loop). */"]
+    # The poll's compiled call continues to use the timed nested CPU bridge.
+    pad_poll = "lane_func_800189A8" in defs
     direct = thunk = 0
     ovl = {"lane_" + a["qname"]: a for a in admitted if a.get("member")}
     for sym, (callee, sig, argc, va_ret) in sorted(stubs.items()):
@@ -2357,6 +2359,10 @@ def emit_table(admitted, out):
                 lines.append(f"    return {from_guest(to_guest(call, cret, crext), ret, rext)};")
         else:
             thunk += 1
+            if pad_poll and target == "lane_func_80018CE8" and ret == "void" and len(regs) == 1:
+                lines.append(f"    musashi_native_frame_pad({regs[0]});")
+                lines.append("}")
+                continue
             if params:
                 lines.append(f"    const uint32_t args[{len(params)}] = {{{', '.join(regs)}}};")
                 call = f"musashi_native_guest_call(0x{addr}u, {len(params)}u, args, NULL)"
@@ -2390,6 +2396,7 @@ def emit_table(admitted, out):
         lines.append("}")
     lines.append("")
     entries, ovl_entries = [], []
+    poll_row = "NULL"
     for a in sorted(admitted, key=lambda a: (a["vram"], a.get("member") or "")):
         d = "lane_" + a["qname"]
         wrap = f"wrap_{a['member']}_{a['vram']:08x}" if a.get("member") else f"wrap_{a['vram']:08x}"
@@ -2418,6 +2425,8 @@ def emit_table(admitted, out):
         if a.get("member"):
             ovl_entries.append(f"    {{{row}, {a['size']}u, 0x{a['digest']:016x}ull, \"{a['member']}\"}},")
         else:
+            if a["vram"] == 0x800189A8:
+                poll_row = f"&musashi_native_lane_generated[{len(entries)}]"
             entries.append(f"    {row},")
     lines.append("")
     lines.append("const MusashiNativeLaneEntry musashi_native_lane_generated[] = {")
@@ -2431,6 +2440,12 @@ def emit_table(admitted, out):
     lines.extend(ovl_entries or ["    {{0u, 0u, NULL, NULL, 0u, 0u}, 0u, 0u, NULL},"])
     lines.append("};")
     lines.append(f"const size_t musashi_native_lane_overlay_count = {len(ovl_entries)}u;")
+    # Ordinary providers can be replaced through the general registration
+    # API. Bind the actual wrapper identity independently of the selected row.
+    lines += ["", "extern int musashi_native_lane_install_table(const MusashiNativeLaneEntry *, size_t, const MusashiNativeLaneEntry *);",
+              "int musashi_native_lane_install_generated(const MusashiNativeLaneEntry *table, size_t count) {",
+              f"    return musashi_native_lane_install_table(table, count, {poll_row});",
+              "}"]
     (out / "native_lane_table.c").write_text("\n".join(lines) + "\n")
     return direct, thunk
 

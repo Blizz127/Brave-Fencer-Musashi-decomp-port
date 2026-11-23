@@ -11853,6 +11853,7 @@ void musashi_formatter_set_entry_hook(MusashiEntryHook hook, void *userdata) {
 }
 static size_t g_lane_count;
 static uint64_t g_lane_generation;
+static MusashiNativeLaneFn g_installed_frame_poll;
 static uint32_t g_lane_min = UINT32_MAX, g_lane_max;
 static int g_lane_env = -1;
 
@@ -11910,6 +11911,8 @@ typedef struct FieldScene {
     FieldSceneCounters counters;
 } FieldScene;
 
+enum { FRAME_PAD_POLL = 0x800189a8u, PAD_LATCH = 0x80018ce8u, PAD_FIRST = 0x80078d98u };
+
 typedef struct LaneRunFrame {
     SceneDispatchFrame scene;
     struct { unsigned long long native, scalar, calls, children, returns, aggregate, delayed, equal, eager; } scene_baseline;
@@ -11935,6 +11938,13 @@ typedef struct LaneRunFrame {
         unsigned long long reads, writes, quiet_declines;
         int mounted;
     } story_word;
+    struct {
+        uint8_t poll_digest[32], latch_digest[32];
+        uint64_t generation;
+        int (*pay)(void *, const void *, uint32_t);
+        unsigned entry;
+        unsigned long long digital, analog53, analog73, presses, releases, cycles, quiet_declines;
+    } pad_latch;
     FieldScene field_scene;
     struct LaneRunFrame *prev;
     FormatterCpu *cpu;
@@ -11952,6 +11962,7 @@ typedef struct LaneActive {
     FormatterCpu *cpu;
     jmp_buf abort;
     uint32_t guest_pc;   /* the lane entry running */
+    MusashiNativeLaneFn provider;
 } LaneActive;
 
 /* The owner thread runs one CPU loop at a time; frames nest by recursion. */
@@ -12002,14 +12013,17 @@ static MusashiResetGraphPrefixStatus run_startup_cpu(
     MusashiBootMemory *memory, FormatterCpu *cpu,
     MusashiConsoleSink sink, void *userdata, int32_t *result,
     MusashiResetGraphPrefixStop *stop, MusashiEntryRunStop *entry_stop,
-    MusashiEntryObserver observer, void *observer_userdata);
+    MusashiEntryObserver observer, void *observer_userdata, unsigned pad_entry);
 
 static int lane_entry_cmp(const void *a, const void *b) {
     const MusashiNativeLaneEntry *x = a, *y = b;
     return x->guest_pc < y->guest_pc ? -1 : x->guest_pc > y->guest_pc;
 }
 
-int musashi_native_lane_install(const MusashiNativeLaneEntry *entries, size_t count) {
+/* Internal backend for the generic registration API and the generated-table
+ * installer. Only the latter has the compiled poll wrapper from its own TU. */
+int musashi_native_lane_install_table(const MusashiNativeLaneEntry *entries, size_t count,
+                                      const MusashiNativeLaneEntry *compiled_poll) {
     MusashiNativeLaneEntry *copy = NULL;
     size_t i;
     if (count && !entries) return -1;
@@ -12060,7 +12074,17 @@ int musashi_native_lane_install(const MusashiNativeLaneEntry *entries, size_t co
     g_lane_count = count;
     g_lane_min = count ? copy[0].guest_pc : UINT32_MAX;
     g_lane_max = count ? copy[count - 1].guest_pc : 0;
+    const MusashiNativeLaneEntry *poll = lane_find(FRAME_PAD_POLL);
+    g_installed_frame_poll = NULL;
+    if (poll && compiled_poll && compiled_poll->guest_pc == poll->guest_pc &&
+        compiled_poll->fn == poll->fn && compiled_poll->cost_cycles == poll->cost_cycles &&
+        compiled_poll->argc == poll->argc && compiled_poll->returns == poll->returns)
+        g_installed_frame_poll = poll->fn;
     return (int)count;
+}
+
+int musashi_native_lane_install(const MusashiNativeLaneEntry *entries, size_t count) {
+    return musashi_native_lane_install_table(entries, count, NULL);
 }
 
 static const MusashiNativeLaneEntry *lane_find(uint32_t pc) {
@@ -12283,8 +12307,8 @@ uint32_t musashi_native_lane_arg(const MusashiNativeLaneCall *call, unsigned n) 
     return value;
 }
 
-uint32_t musashi_native_guest_call(uint32_t target, unsigned argc,
-                                   const uint32_t *args, uint32_t *v1) {
+static uint32_t lane_guest_call(uint32_t target, unsigned argc, const uint32_t *args,
+                                uint32_t *v1, int frame_pad) {
     LaneActive *active = g_lane_active;
     FormatterCpu *cpu;
     LaneRunFrame *frame;
@@ -12318,7 +12342,9 @@ uint32_t musashi_native_guest_call(uint32_t target, unsigned argc,
         int32_t result = 0;
         MusashiResetGraphPrefixStatus status = run_startup_cpu(active->memory, cpu,
             frame->sink, frame->userdata, &result, frame->stop, frame->entry_stop,
-            frame->observer, frame->observer_userdata);
+            frame->observer, frame->observer_userdata,
+            frame_pad && active->provider == g_installed_frame_poll && active->guest_pc == FRAME_PAD_POLL &&
+            saved_pc == FRAME_PAD_POLL && !frame->prev && args[0] == PAD_FIRST);
         if (status != MUSASHI_RESETGRAPH_PREFIX_COMPLETE) longjmp(active->abort, 4);
     } else {
         unsigned long step;
@@ -12336,6 +12362,15 @@ uint32_t musashi_native_guest_call(uint32_t target, unsigned argc,
     cpu->pc = saved_pc;
     cpu->npc = saved_npc;
     return v0;
+}
+
+uint32_t musashi_native_guest_call(uint32_t target, unsigned argc,
+                                   const uint32_t *args, uint32_t *v1) {
+    return lane_guest_call(target, argc, args, v1, 0);
+}
+
+void musashi_native_frame_pad(uint32_t record) {
+    (void)lane_guest_call(PAD_LATCH, 1u, &record, NULL, 1);
 }
 
 #define WRAPPED_ANGLE_ENTRY UINT32_C(0x80012ab0)
@@ -12484,6 +12519,7 @@ static int lane_try(MusashiBootMemory *memory, FormatterCpu *cpu) {
     ra = cpu->r[31];
     sp = cpu->r[29];
     active.guest_pc = entry->guest_pc;
+    active.provider = entry->fn;
     active.prev = g_lane_active;
     active.memory = memory;
     active.cpu = cpu;
@@ -12569,6 +12605,7 @@ static int lane_try(MusashiBootMemory *memory, FormatterCpu *cpu) {
 #include "field_scene_callback.h"
 #include "scene_counter_call.h"
 #include "story_word_call.h"
+#include "frame_pad_latch.h"
 
 static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     uint32_t instruction, opcode, rs, rt, rd, immediate, old_npc;
@@ -12632,6 +12669,12 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     if (publish_flow && g_entry_hook && cpu->pc == g_entry_pending) {
         g_entry_pending = 1u;
         g_entry_hook(g_entry_hook_user, cpu->pc, cpu->r);
+    }
+    if (root && root->pad_latch.entry) {
+        root->pad_latch.entry = 0;
+        int latch = frame_pad_offer(root, memory, cpu);
+        if (latch > 0) return 1;
+        if (latch < 0) return formatter_refuse0(__LINE__, cpu->pc);
     }
     if (mounted_leaf_target(cpu->pc) && mounted_leaf_ready(root, memory, cpu)) {
         int call = cpu->pc == COUNTER_ENTRY ? scene_counter_offer(root, memory, cpu) :
@@ -14198,9 +14241,10 @@ static MusashiResetGraphPrefixStatus run_startup_cpu(
     MusashiBootMemory *memory, FormatterCpu *cpu,
     MusashiConsoleSink sink, void *userdata, int32_t *result,
     MusashiResetGraphPrefixStop *stop, MusashiEntryRunStop *entry_stop,
-    MusashiEntryObserver observer, void *observer_userdata) {
+    MusashiEntryObserver observer, void *observer_userdata, unsigned pad_entry) {
     LaneRunFrame frame = {0};
     MusashiResetGraphPrefixStatus status;
+    frame.pad_latch.entry = pad_entry;
     frame.scene = (SceneDispatchFrame){0};
     frame.scene_baseline.native = g_scene_native_issues;
     frame.scene_baseline.scalar = g_scene_scalar_issues;
@@ -14246,6 +14290,7 @@ static MusashiResetGraphPrefixStatus run_startup_cpu(
         field_scene_capture(&frame, memory, cpu);
         scene_counter_capture(&frame, memory, cpu);
         story_word_capture(&frame, memory, cpu);
+        frame_pad_capture(&frame, memory, cpu);
     }
     if (g_trace_state >= 0) musashi_trace_function_entry(cpu->pc, cpu->r[31], 'd');
     status = run_startup_cpu_loop(memory, cpu, sink, userdata, result, stop,
@@ -14253,6 +14298,7 @@ static MusashiResetGraphPrefixStatus run_startup_cpu(
     if (!frame.prev && g_scene_native_issues != frame.scene_baseline.native)
         scene_report(&frame, "exit");
     if (frame.field_scene.mounted) field_scene_report(&frame.field_scene);
+    frame_pad_report(&frame);
     if (frame.story_word.reads || frame.story_word.writes || frame.story_word.quiet_declines)
         fprintf(stderr, "native_boot: STORY_WORD reads=%llu writes=%llu cycles=%llu quiet_declines=%llu\n",
                 frame.story_word.reads, frame.story_word.writes,
@@ -14686,7 +14732,7 @@ static MusashiResetGraphPrefixStatus run_startup_callback_prefix(
     cpu.r[29] = 0x801fff80u;
     cpu.r[31] = UINT_MAX;
     return run_startup_cpu(memory, &cpu, sink, userdata, result, stop,
-                           NULL, NULL, NULL);
+                           NULL, NULL, NULL, 0);
 }
 
 MusashiResetGraphPrefixStatus musashi_boot_run_800141f0_callback_prefix(
@@ -17676,7 +17722,7 @@ MusashiResetGraphPrefixStatus musashi_boot_run_entry_with_devices(
     cpu.npc = cpu.pc + 4u;
     cpu.r[31] = incoming_ra;
     return run_startup_cpu(memory, &cpu, sink, sink_userdata, &result,
-                           &stop->boundary, stop, observer, observer_userdata);
+                           &stop->boundary, stop, observer, observer_userdata, 0);
 }
 
 MusashiResetGraphPrefixStatus musashi_boot_run_entry(
@@ -17716,7 +17762,7 @@ int musashi_native_lane_reference_call(MusashiBootMemory *memory, uint32_t targe
     cpu.r[31] = UINT_MAX;
     g_lane_suspended += !use_lane;
     status = run_startup_cpu(memory, &cpu, lane_reference_sink, NULL, &result, &stop,
-                             NULL, NULL, NULL);
+                             NULL, NULL, NULL, 0);
     g_lane_suspended -= !use_lane;
     if (v0) *v0 = cpu.r[2];
     if (v1) *v1 = cpu.r[3];
@@ -17740,7 +17786,7 @@ static MusashiResetGraphPrefixStatus execute_source_frame(
     cpu.r[30] = fp;
     cpu.r[31] = UINT_MAX;
     MusashiResetGraphPrefixStatus status = run_startup_cpu(
-        memory, &cpu, sink, sink_userdata, &result, stop, NULL, NULL, NULL);
+        memory, &cpu, sink, sink_userdata, &result, stop, NULL, NULL, NULL, 0);
     if (checked_irq && status == MUSASHI_RESETGRAPH_PREFIX_COMPLETE &&
         (cpu.npc == UINT_MAX || cpu.r[29] != sp)) return MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT;
     return status;

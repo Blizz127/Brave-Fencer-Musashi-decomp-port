@@ -10,11 +10,11 @@ enum { CRT_GAME_CALL = 0x80010094u, GAME_MAIN_ENTRY = 0x80010178u,
        GRAPHICS_RETURN_JR = GRAPHICS_ENTRY+64u, POST_GRAPHICS = GRAPHICS_CALL+8u,
        CD_START_CALL = POST_GRAPHICS+4u, CD_START_ENTRY = 0x8005fc68u };
 
-static int game_main_owner(LaneRunFrame *frame, MusashiBootMemory *memory,
+static int game_main_bound(LaneRunFrame *frame, MusashiBootMemory *memory,
                            const FormatterCpu *cpu)
 {
     GameMainEntry *entry = &frame->main_entry;
-    return frame == g_lane_run_frames && !frame->prev && frame->entry_stop && frame->cpu == cpu &&
+    return !frame->prev && frame->entry_stop && frame->cpu == cpu &&
         entry->memory == memory && g_fetch_memory == memory && musashi_native_lane_usable(memory) &&
         cpu->clock == entry->clock && cpu->clock->advance == entry->charge.advance &&
         cpu->clock->userdata == entry->charge.userdata && cpu->callback_device == entry->callback &&
@@ -22,6 +22,12 @@ static int game_main_owner(LaneRunFrame *frame, MusashiBootMemory *memory,
         cpu->callback_device->userdata == entry->worker && !cpu->r[0] && !cpu->bios_frame &&
         !cpu->cd_irq_frame && !cpu->registration_stack && !cpu->dma_registration &&
         !cpu->irq_image && !cpu->cd_parent_image && !cpu->merge_pending && !cpu->gte_load_pending;
+}
+
+static int game_main_owner(LaneRunFrame *frame, MusashiBootMemory *memory,
+                           const FormatterCpu *cpu)
+{
+    return frame == g_lane_run_frames && game_main_bound(frame, memory, cpu);
 }
 
 static void game_main_capture(LaneRunFrame *frame, MusashiBootMemory *memory, FormatterCpu *cpu)
