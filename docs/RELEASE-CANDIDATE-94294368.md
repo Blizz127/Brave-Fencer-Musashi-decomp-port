@@ -1,6 +1,18 @@
 # Brave Fencer Musashi for Linux and Windows
 
-Private test build `94294368ddb5f30417bc3d4ea80d8d851a92e569`, verified through 17:08:13 UTC on November 23, 2026. On Linux, New Game stopped before the opening moon and Continue stopped before the Chapter 2 bedroom. Windows New Game was running under Wine. The Windows File 1 test was queued. The two archives are local QA builds. The implementation tested here remains in private review. These notes document the results and the 323 commits that led to the tested build.
+Private test build `94294368ddb5f30417bc3d4ea80d8d851a92e569` stopped before the opening moon on New Game and before the Chapter 2 bedroom on earned File 1, on Linux and on Windows x64 under Wine. Both archives are local QA builds. The implementation remains in private review. The checksums, disc setup and 323-commit source history appear below.
+
+## November 23, 2026, 17:36 UTC gameplay update
+
+**Windows x64 under Wine.** New Game reached the loading screen. After 8,970 interrupt deliveries, it stopped on a request for handler `800338D0` with foreground PC `8004251C`. A separate cold Continue read an earned File 1, showed the confirmation and reported a successful load. After 8,813 interrupt deliveries, it stopped on a request for handler `8003392C` with foreground PC `80042514`. The copied memory card remained byte-identical to its starting image. New Game stopped before the opening moon, and Continue stopped before the Chapter 2 bedroom.
+
+On each Windows route the scene counter returned 13 times. It ran 403 original game instructions in compiled host code, incremented the counter 13 times and cleared 52 flags, with zero scalar loads in those calls. The surrounding player still uses the MIPS interpreter. The two Windows results complete the four ordinary startup checks for this build. Physical Windows, handheld play and an inn save followed by cold Continue remain unverified on `94294368`.
+
+**Wednesday File 4.** The original US game and the private launcher's Linux R137 each cold-loaded a copy of the same File 4 that R123 saved after the Mayor's Longevity Berry. Both showed 175/175 HP, confirmed the load and returned control outside Hotelo in Grillin’s Village. R137 restored all 320 checked story bytes at stage 130. Musashi walked left in both runs. At first town control, 99.5% of corresponding pixels differed by at most eight levels in each RGB channel. Once the walk settled, 99.8% met that threshold. The comparison used a 320×240 grid and each game ran on its own clock. The original game's separately written post-reward card still awaits a cold Continue.
+
+**Steamwood valve 4.** On a separate run from the served hybrid R137 archive, the fourth valve turned green. Its timer fell from 35 to 34 seconds as the mission clock went from 12:46 to 12:44. All eight pressure-gauge routines returned in host code with zero decoded attempts. The timer reload recorded 14 guest attempts and no host return. With 210 controller commands and 630 input edges, all 859 compared images and all 18,461,252 stereo sample frames matched the staged R137 run.
+
+**Twinpeak Mountain.** On the separate private Linux R123 playthrough, Musashi won the second attempt at Rootrick's iron-wall climb and received the Earth Scroll. The running game reached story stage 133 in room 3026. A post-scroll save and cold Continue are still unverified.
 
 ## Changes in this build
 
@@ -8,7 +20,7 @@ The scene counter now runs in compiled host code when the player can verify the 
 
 In two cold Linux starts, the scene counter completed 13 calls per route. Across all 26 returns it executed 806 original game instructions in compiled host code, incremented the counter 26 times, cleared 104 flags and delegated zero loads. The surrounding dispatcher completed 771 of 827 calls on New Game and 774 of 830 on File 1. It retired 4,738 and 4,756 delayed loads respectively. The field callback’s lower service returned through the guest CPU 62 times on New Game and 60 times on File 1. The player still needs the MIPS interpreter for other game and service code. Both playable starts and an inn save followed by cold Continue remain open on this build.
 
-## Gameplay and platform status
+## Gameplay and platform status at 17:08:13 UTC
 
 | Platform and ordinary route | Outcome at the cutoff |
 |---|---|

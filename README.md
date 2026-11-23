@@ -20,6 +20,9 @@ the same interval with test providers for the graphics and subsystem calls.
 
 ## Player downloads and source builds
 
+**November 23, 2026, 17:36 UTC.** Private build `94294368` stopped before the opening moon on New Game and before the Chapter 2 bedroom on Continue, on both Linux and Windows x64 under Wine. In separate gameplay, the original US game and the private launcher's Linux R137 both cold-loaded R123's Wednesday 175/175 HP File 4 and restored control outside Hotelo. R137 also closed Steamwood valve 4, and R123 earned the Earth Scroll on Twinpeak Mountain.
+[Windows startup results, File 4 comparisons and Steamwood gameplay](docs/RELEASE-CANDIDATE-94294368.md#november-23-2026-1736-utc-gameplay-update)
+
 **November 23, 2026, 17:13 UTC.** Two Longevity Berry HP functions bring the
 public matching registry from 1,012 to 1,014 entries. Both were already
 counted in the private decompilation and both still execute on the guest CPU.
