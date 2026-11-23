@@ -21,6 +21,12 @@ the same interval with test providers for the graphics and subsystem calls.
 ## Player downloads and source builds
 
 **November 23, 2026. Player downloads are under review.**
+
+The [Windows and Linux candidate notes](docs/RELEASE-CANDIDATE-c0b07365.md)
+give both local archive checksums, instructions for using your own US disc,
+and the last playable step on each platform. The changelog lists all 301 commits
+from the R55 tag through the shared package source, `c0b073650`.
+
 Historical player binaries also contain routines removed during the SDK
 source review. This correction is available as source for development and testing.
 We downloaded every historical player package from the public releases and
@@ -79,9 +85,10 @@ the confirmation, restored all twelve scene values and completed the master
 sound fade. Both stopped at interrupt target `0x80033D28` before Musashi
 could move. Linux still displayed **NOW LOADING**. Windows showed a black
 screen. The original US disc restored Musashi in the bedroom. With an empty
-card, the same Linux build accepted **New Game** and went black before the
-opening moon. A cold reload after making a new save and testing on physical
-Windows hardware remain open.
+card, both Linux and Windows under Wine accepted **New Game**, then stopped
+on black before the opening moon at interrupt target `0x800338D0`. The
+original game reached controllable forest room 3008. A cold reload following
+a new save and testing on physical Windows hardware remain open.
 
 Compiled host code now handles the opening movie’s output callback. In an
 ordinary Linux run, it processed 1,760 strips across 88 complete movie frames
@@ -109,8 +116,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The scene registry covers 622 regional function matches across seventeen overlay members,
-totaling 97,476 bytes.
+The scene registry covers 623 regional function matches across seventeen overlay members,
+totaling 97,724 bytes.
 
 The cemetery award in SC03 member 0023 stores Jon’s Key, advances story progress
 to 60, sets the completion flag and resumes the room script. The field player
@@ -121,8 +128,8 @@ when Musashi reaches it. The opening flag is set on the final movement update.
 Run `python3 tests/test_cemetery_opening.py` to exercise those callbacks. They
 also execute on the guest CPU in the public player.
 
-Six Twinpeak actor routines in SC03 member 0029 match 712 bytes from the US disc.
-They start action 22, dispatch its phases, prepare contact, open its handle,
+Seven Twinpeak actor routines in SC03 member 0029 match 960 bytes from the US disc.
+They start action 22, dispatch its phases, check the initial actor status, prepare contact, open its handle,
 poll it and process animation events and cleanup. During a Shrink encounter
 on the original game, the actor advanced from phase one to two in 88 clocks
 and from two to three in 11,695. It waited in phase three for 289 calls and
@@ -130,6 +137,10 @@ advanced on the next call. The public player executes these routines on the
 guest CPU. The abort path has host-test coverage. Run
 `python3 -m pytest -q tests/test_twinpeak_action22.py` to check the normal
 and abort paths, service call order, actor fields and the optional queue request.
+The 248-byte initial status callback can continue the current action or switch
+the actor to action 3 or 4. In one recorded original encounter, it returned
+to action 22, phase one, after 20,217 clocks including its service calls. The
+recording did not capture the status value. Host tests exercise all three outcomes.
 
 Jon’s stocks initializer selects a dialogue script using story progress, an event flag and a game query. The host test covers seven outcomes, including the high-progress path that keeps the previous selection. The public player excludes this initializer from native dispatch. The callback following the key-use message also has matching C source. It calls the first actor service, updates the resulting actor part and calls the next service. The callback retains guest timing. On an ordinary private playthrough, Musashi used the key, Jon stood free and the four-log objective appeared at story progress 70. A separate actor routine advances the story.
 

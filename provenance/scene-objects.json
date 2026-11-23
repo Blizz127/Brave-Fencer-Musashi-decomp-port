@@ -6430,6 +6430,19 @@
       "span_sha256": "237ea3ec114a876227b4afb177d0a5225ceb2978b2e771dbe1cac4aaa031dd9b"
     },
     {
+      "name": "func_8015FAE8",
+      "region": "sc03_0029",
+      "vram": 2148924136,
+      "size": 248,
+      "source": "src/overlays/sc03_0029/8015fae8.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 0029 and matched against its complete linked function extent.",
+      "source_sha256": "058b0e6dfd62da6ce9f4db71b902e54ce2fa7d1d5d4f6275b39ddca22e76d84f",
+      "span_sha256": "773514dfa7ee27b1a4a761e818289846e56d2aa55de1e431201eed2742f128df"
+    },
+    {
       "name": "func_8015FCC8",
       "region": "sc03_0029",
       "vram": 2148924616,

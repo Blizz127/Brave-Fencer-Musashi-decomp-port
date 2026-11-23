@@ -1123,6 +1123,7 @@ SCENE_PHASE_EXTENTS = {
     0x801466F0: {"sc03_0029": None},
     0x8014680C: {"sc03_0029": None},
     0x8015F89C: {"sc03_0029": None},
+    0x8015FAE8: {"sc03_0029": None},
     0x8015FCC8: {"sc03_0029": None},
     0x8015FD74: {"sc03_0029": None},
     # The cemetery award calls resident inventory and story services, then resumes its room script.
