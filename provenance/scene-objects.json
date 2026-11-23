@@ -7570,6 +7570,19 @@
       "origin": "Project C verified against the entire linked function in USA SC03.CD member 0012.",
       "source_sha256": "0cdb36382a632cb1d9c8bbc5feca3af66956ad657d36c43e7e16276a47357a13",
       "span_sha256": "350d4904dd71ec046b464e504aefb4b1b3ac866f46a55db2f15e7609a37decb8"
+    },
+    {
+      "name": "func_8017DA80",
+      "region": "sc03_0012",
+      "vram": 2149046912,
+      "size": 168,
+      "source": "src/overlays/sc03_0012/8017da80.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Project C verified against the entire linked function in USA SC03.CD member 0012.",
+      "source_sha256": "faf89dcb180e4aa816e411446e0315a7f625394b39b29ea227c5347a41b36482",
+      "span_sha256": "e3ba25308d395946f287b05e28fd182bcbb548da38875e0bcfa024e817890d3d"
     }
   ]
 }

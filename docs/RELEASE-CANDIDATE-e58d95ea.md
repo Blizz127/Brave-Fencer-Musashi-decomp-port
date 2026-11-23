@@ -30,6 +30,27 @@ The R123 player followed the shortcut through Fores’s cottage and saved at Hot
 
 The separate private Linux build R136 verified the first three valves on its own run. It recovered from a missed third press, rode the lift and saw the plant explode after missing the fourth valve. Private Linux R137 later closed the first four in order on a rested File 4. Its short timer reset to 35 seconds. Neither archive below has demonstrated R123’s repaired-plant route. The rest of Chapter 2 and a complete interpreter-free playthrough remain unverified.
 
+### Follow-up on the repaired File 4
+
+After the 16:41 cutoff, verification confirmed that a fresh R123 process
+loaded its day-23 File 4 and showed Musashi outside Hotelo at stage 130.
+A separate cold start of the original US game restored player control
+outside Hotelo at the same stage.
+
+During two Tuesday morning visits, the Mayor praised Musashi. A separate
+R123 conversation on Wednesday at 09:45 awarded a Longevity Berry. Musashi’s maximum HP rose by 25, and
+his health went from 140/150 to 175/175.
+
+The new source match covers one actor routine in Steamwood’s roof sequence.
+It updates two timers. When the phase timer expires, the actor requests a
+sound and advances to its next phase. The other timer schedules a separate
+request at intervals of one to eight updates. The compiled C matched all 168
+original bytes. GCC and Clang each agreed with the original on 376 test cases
+at two optimization levels.
+The R123 repair recorded 64 guest executions of this routine and one call
+to its phase-expiry service. The original gameplay recording documented the roof
+venting and Fores’s thanks at the scene level.
+
 ## Local candidate archives
 
 | Platform | Filename | Bytes | Local SHA-256 |

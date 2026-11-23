@@ -69,13 +69,19 @@ brought the match count to 1,005. On an earlier private Linux attempt, valve 4 t
 its clock reset from 3 to 35 seconds. Valve 5’s gauge opened at 23 seconds
 and that attempt ran out of time. A subsequent run closed six valves in order.
 
-Six more C functions bring the verified total to 1,011 across 13 registries.
+Six more C functions brought the verified total to 1,011 across 13 registries.
 Inside Steamwood they select a callback from the supplied room data, check a
 position, and handle descriptor completion, a periodic sequence and a script
 request. The sixth advances the story stage and sets a countdown on the exit
 route. All 432 bytes of their compiled game code matched. In 2,597 controlled
 comparisons the C agreed with the original routines. The ordinary player
 still executes these six through the guest CPU.
+
+A seventh match covers the two timers in a roof-vent actor, bringing the total
+to 1,012. All 168 compiled bytes matched the original US room. During the
+eight-valve repair, private Linux R123 executed this routine 64 times on the
+guest CPU and called its expiry service once. Cold Continue on the repaired
+R123 File 4 showed Musashi outside Hotelo at stage 130.
 
 Earlier candidates documented the truncated Linux log path and what happened
 with several occupied saves. [Previous File 1 results](docs/RELEASE-CANDIDATE-97a342d8.md) · [Earlier paired tests](docs/RELEASE-CANDIDATE-c0b07365.md)
@@ -169,8 +175,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The scene registry covers 700 regional function matches across 21 overlay members,
-totaling 104,904 bytes. The recent Steamwood source includes Fores’s cottage
+The scene registry covers 701 regional function matches across 21 overlay members,
+totaling 105,072 bytes. The recent Steamwood source includes Fores’s cottage
 initializer and six functions that run the outdoor practice gauge. Four more C
 functions reproduce 336 bytes of the US game. One records when the emergency
 timer starts. The other three select the outdoor door’s current action, start
