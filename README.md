@@ -20,7 +20,9 @@ the same interval with test providers for the graphics and subsystem calls.
 
 ## Player downloads and source builds
 
-The matching decompilation covers **1,032 functions and 150,388 bytes** of the US game. Four rendering routines add 1,376 matching bytes. They build a four-color quad, insert drawing commands into the ordering table, and calculate a fixed-point rotation matrix. The preceding checkpoint matched three controller routines for copying reports, resetting disconnected inputs and updating a frame counter. It also unified the two-port poller’s report type. Its Linux and Windows generators selected 204 of 248 routines for host execution.
+The matching decompilation covers **1,036 functions and 151,408 bytes** of the US game. Four newly verified functions store the vertical sync result for the current display buffer, test controller and scene flags before a scene callback, flush queued VRAM transfers, and add two full-screen packets to the GPU ordering table. Their 1,020 bytes matched the complete US functions. Earlier ordinary Linux New Game and File 1 runs reached all four entries. The standard desktop build keeps these routines on the guest CPU.
+
+The preceding four rendering routines added 1,376 matching bytes. They build a four-color quad, insert drawing commands into the ordering table, and calculate a fixed-point rotation matrix. The preceding checkpoint matched three controller routines for copying reports, resetting disconnected inputs and updating a frame counter. It also unified the two-port poller’s report type. Its Linux and Windows generators selected 204 of 248 routines for host execution.
 
 **Desktop tests of `506bc389`.** New Game stopped at Loading before the moon on Linux and Windows x64 under Wine. Continue displayed “Loaded data!” on both platforms and stopped before the Chapter 2 bedroom. Both local archives are held because the decoder implementation reproduces a sequence of original game instructions. Physical Windows testing remains outstanding. [Gameplay results, local archive hashes, disc setup and full changelog](docs/DESKTOP-QA-506bc389.md)
 

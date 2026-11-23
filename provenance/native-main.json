@@ -2814,6 +2814,50 @@
       "extent": "function",
       "optimization": "-O2",
       "origin": "Owner re-derivation first published in e0b1822. The complete US function was rebuilt from that public source."
+    },
+    {
+      "name": "func_8001099C",
+      "region": "main",
+      "vram": 2147551644,
+      "size": 108,
+      "source": "src/main/8001099c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O0",
+      "origin": "Stores the result of the vertical sync query in the current display buffer slot. The complete US function was rebuilt from the existing owner-authored source."
+    },
+    {
+      "name": "func_80015208",
+      "region": "main",
+      "vram": 2147570184,
+      "size": 236,
+      "source": "src/main/80015208.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Checks the active controller and scene flags before issuing a scene callback. The complete US function was rebuilt from the existing owner-authored source."
+    },
+    {
+      "name": "func_800184F0",
+      "region": "main",
+      "vram": 2147583216,
+      "size": 548,
+      "source": "src/main/800184f0.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Advances the queued VRAM transfers and dispatches the corresponding upload calls. The complete US function was rebuilt from the existing owner-authored source."
+    },
+    {
+      "name": "func_8001A9F8",
+      "region": "main",
+      "vram": 2147592696,
+      "size": 128,
+      "source": "src/main/8001a9f8.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Links two five-word display packets to the active ordering table. The complete US function was rebuilt from the existing owner-authored source."
     }
   ]
 }
