@@ -1,8 +1,11 @@
 """Check the staged-file scanner with wholly generated reference data."""
+import hashlib
 import random
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import retail_guard
@@ -23,6 +26,32 @@ def has_common_run(source, staged, minimum):
             if length >= minimum and len(values) >= 8:
                 return True
     return False
+
+
+class ShortTableTests(unittest.TestCase):
+    def test_pac_digest_in_staged_bytes(self):
+        # Made-up RAM addresses with a newline byte, including an overlapping
+        # five-pointer candidate just before the actual positive control.
+        words = [(0x800A0000 + 16 * i).to_bytes(4, "little") for i in range(6)]
+        table = b"".join(words[1:])
+        with tempfile.TemporaryDirectory() as work, patch.object(
+                retail_guard, "PAC_TABLE_DIGEST", hashlib.sha256(table).digest()):
+            stage = Path(work) / "stage"
+            stage.mkdir()
+            player = stage / "player.exe"
+            reference = Path(work) / "reference"
+            reference.write_bytes(b"unrelated synthetic reference")
+            for start in (0, 1, (1 << 20) - 13):
+                player.write_bytes(b"x" * start + table)
+                self.assertEqual(retail_guard.pac_table_offset(player), start)
+            player.write_bytes(b"!" + b"".join(words))
+            self.assertEqual(retail_guard.pac_table_offset(player), 5)
+            for reference_args in (["--allow-no-reference"], ["--exe", str(reference)]):
+                self.assertEqual(retail_guard.main(["--stage", str(stage), *reference_args]), 1)
+            player.write_bytes(table[:-1])
+            self.assertIsNone(retail_guard.pac_table_offset(player))
+            player.write_bytes(bytes([table[0] ^ 4]) + table[1:])
+            self.assertEqual(retail_guard.main(["--stage", str(stage), "--allow-no-reference"]), 0)
 
 
 class RunIndexTest(unittest.TestCase):

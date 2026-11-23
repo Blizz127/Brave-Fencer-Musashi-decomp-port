@@ -5,6 +5,7 @@ Checks every file under a staging directory:
   names   no disc images, boot executables or memory-card saves
           (*.cue *.bin *.iso *.img *.chd *.ccd *.mds *.mdf *.mcd *.mcr *.srm,
           SLUS_*/SCUS_*/SLPS_*/SLES_* style names, SYSTEM.CNF)
+  PAC     reject the known short US PAC dispatch table in staged bytes, even without a disc
   hashes  no file identical (SHA-256) to the user's EXE or to any file
           extracted from their disc (--exe, --extracted)
   runs    no file containing a run of >= --run-bytes (default 64) consecutive
@@ -31,6 +32,30 @@ from pathlib import Path
 BAD_EXT = {".cue", ".bin", ".iso", ".img", ".chd", ".ccd", ".mds", ".mdf",
            ".mcd", ".mcr", ".srm", ".gme", ".psv"}
 BAD_NAME = re.compile(r"^(S[CL][UEP][SMS]|SLKA|SCPS|SLPM|PAPX)[_-]?\d{3}\.?\d{2}(;1)?$", re.I)
+
+# Five 32-bit cached RAM pointers, stored little-endian. Start at the high
+# byte of the first pointer so searches can overlap and files need no alignment.
+PAC_POINTER_RUN = re.compile(rb"\x80(?=(?:..[\x00-\x1f]\x80){4})", re.DOTALL)
+PAC_TABLE_SIZE = 20
+PAC_TABLE_DIGEST = bytes.fromhex("91d030722fa871af4b697b4bd2c8aa0381c6a077b105ca8efbeb0c0020c06d07")
+
+
+def pac_table_offset(path: Path) -> int | None:
+    """Find the exact raw table without storing or requiring a retail reference."""
+    start = 0
+    overlap = b""
+    with path.open("rb") as stream:
+        while chunk := stream.read(1 << 20):
+            data = overlap + chunk
+            for hit in PAC_POINTER_RUN.finditer(data, 3):
+                offset = hit.start() - 3
+                if data[offset + 2] >= 0x20:
+                    continue
+                if hashlib.sha256(data[offset:offset + PAC_TABLE_SIZE]).digest() == PAC_TABLE_DIGEST:
+                    return start + offset
+            overlap = data[-(PAC_TABLE_SIZE - 1):]
+            start += len(data) - len(overlap)
+    return None
 
 
 def sha256(path: Path) -> str:
@@ -267,7 +292,7 @@ def main(argv=None) -> int:
                     help="extra files to run-check against (besides --exe)")
     ap.add_argument("--run-bytes", type=int, default=64)
     ap.add_argument("--allow-no-reference", action="store_true",
-                    help="only run the name check when no retail reference is given")
+                    help="run file-name and known PAC table checks without a retail reference")
     args = ap.parse_args(argv)
 
     if not args.stage.is_dir():
@@ -276,7 +301,7 @@ def main(argv=None) -> int:
     has_references = bool(args.exe or args.extracted or args.run_source)
     if not has_references and not args.allow_no_reference:
         print("retail_guard: give --exe, --extracted or --run-source (the user's own files), "
-              "or --allow-no-reference for a name-only check", file=sys.stderr)
+              "or --allow-no-reference to use the built-in checks", file=sys.stderr)
         return 2
 
     ref_hashes: dict[str, str] = {}
@@ -302,6 +327,10 @@ def main(argv=None) -> int:
             if h in ref_hashes:
                 problems.append(f"{rel}: identical to retail file {ref_hashes[h]}")
                 continue
+        offset = pac_table_offset(p)
+        if offset is not None:
+            problems.append(f"{rel}: contains the US PAC dispatch table at 0x{offset:x}")
+            continue
         if index.windows:
             data = p.read_bytes()
             match = next(index.scan(data), None)
@@ -327,7 +356,7 @@ def main(argv=None) -> int:
         print("retail_guard: " + line, file=sys.stderr)
     print(f"retail_guard: {len(staged)} files checked, {len(problems)} problem(s)"
           + (f", {len(errors)} scan error(s)" if errors else "")
-          + ("" if has_references else " (name check only)"))
+          + ("" if has_references else " (file names and known PAC table checked)"))
     return 2 if errors else int(bool(problems))
 
 
