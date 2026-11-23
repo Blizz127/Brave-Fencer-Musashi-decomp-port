@@ -1123,7 +1123,18 @@ STEAMWOOD_TIMER_EXTENTS = {
 }
 
 
+# Valve continuation reads the active script and acts on live player state.
+STEAMWOOD_SCRIPT_EXTENTS = {
+    0x8016216C: (96, 0x578158644C8034FE),
+    0x80171928: (68, 0x12CF01691E7757B9),
+    0x80171A04: (12, 0x5709304973D90204),
+    0x80171A10: (12, 0x81F809B7952CC737),
+    0x80171A1C: (24, 0x4111346C45B60794),
+}
+
+
 SCENE_PHASE_EXTENTS = {
+    **{pc: {"sc03_0010": extent} for pc, extent in STEAMWOOD_SCRIPT_EXTENTS.items()},
     **{pc: {"sc03_0010": extent} for pc, extent in STEAMWOOD_TIMER_EXTENTS.items()},
     # File selection runs on the active MAIN menu and calls the guest sound service.
     0x8017BF70: {"main_0012": (136, 0x9168FA8FF78CA325)},
@@ -1505,8 +1516,17 @@ def overlay_extent_source_only(entry, src, info, extents):
                   key in info for key in ("vram", "start", "data")):
         if any(member_digest(info, pc, size) == digest for size, digest in variants.values()):
             return True
+    # Several scenes reuse the same small script setters. For an unnamed
+    # room, verify the Steamwood valve transition as well as the callee.
+    if pc in STEAMWOOD_SCRIPT_EXTENTS and extents is SCENE_PHASE_EXTENTS:
+        if info and all(key in info for key in ("vram", "start", "data")):
+            size, digest = STEAMWOOD_SCRIPT_EXTENTS[pc]
+            caller_size, caller_digest = extents[0x8017DB84]["sc03_0010"]
+            if (member_digest(info, pc, size) == digest and
+                    member_digest(info, 0x8017DB84, caller_size) == caller_digest):
+                return True
     # The timer body is shared by other scenes. Fores's initializer identifies its village copy.
-    if pc == 0x80162120 and extents is SCENE_PHASE_EXTENTS:
+    elif pc == 0x80162120 and extents is SCENE_PHASE_EXTENTS:
         if info and info.get("data") is not None and "vram" in info and "start" in info:
             size, digest = variants["sc03_0002"]
             init_size, init_digest = SCENE_PHASE_EXTENTS[0x801816F0]["sc03_0002"]

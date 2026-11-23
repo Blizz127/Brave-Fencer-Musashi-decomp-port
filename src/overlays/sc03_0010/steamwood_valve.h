@@ -2,7 +2,14 @@
 #define STEAMWOOD_VALVE_H
 
 struct ValvePlayer {
-    unsigned char reserved[0x218];
+    unsigned char reserved[0x1f8];
+    unsigned int action;
+    unsigned int script_address;
+    unsigned char reserved_200[0x214 - 0x200];
+    unsigned char cursor;
+    unsigned char step;
+    unsigned char substep;
+    unsigned char result;
     unsigned char selector;
 };
 
@@ -29,6 +36,7 @@ extern void func_8016216C(void);
 extern void func_8016EDBC(const unsigned char *action, int flags, int selector);
 extern void func_8016F0AC(void);
 extern int func_8016F1C4(void);
+extern void func_80171A1C(struct ValvePlayer *player);
 extern void func_80171928(struct ValvePlayer *player);
 extern void func_80171A04(struct ValvePlayer *player);
 extern void func_80171A10(struct ValvePlayer *player);

@@ -45,7 +45,7 @@ disc across all 152 bytes. Two option readers used by that callback return
 the same zero-extended byte to both menu and resident callers. The Chapter 2
 bedroom still requires a successful cold Continue in the release candidate.
 
-The matching decompilation now covers 1,000 functions across 13 registries.
+The Steamwood timer checkpoint brought the total to 1,000 matched functions across 13 registries.
 Thirteen new Steamwood functions match 1,084 bytes of the US game. These
 cover the display for a numbered valve’s short timer, the cleanup and
 restart script after it expires, and the selectors for valves 3 through 8.
@@ -53,6 +53,19 @@ A controlled comparison covered all 65,536 signed tick values. An ordinary
 private Linux playthrough ran out of time after Valve 1, received the restart
 dialogue and closed Valve 1 again. Closing all eight valves in sequence
 remains unverified.
+
+Five further matches cover the script transitions after a numbered valve
+and the cleanup at the final progress value. A successful check sets the
+player’s result byte to 1. A failed check sets it to 2. The script reader
+preserves the action flags, loads the next word and advances the byte
+cursor, including its wrap from 255 to zero. The final branch clears a
+story halfword and three 56-byte blocks. All 212 original bytes matched.
+Across 5,633 controlled calls, the original and host C agreed on the whole
+player structure, story writes and external call order. The match count is
+now 1,005. During a private Linux playthrough, Musashi closed the first four
+valves in order. Valve 4 turned green and its clock reset from 3 seconds
+to 35. Musashi reached Valve 5 with 23 seconds left and ran out of time.
+The full repair and a save after the rescue still need a complete playthrough.
 
 Earlier candidates documented the truncated Linux log path and what happened
 with several occupied saves. [Previous File 1 results](docs/RELEASE-CANDIDATE-97a342d8.md) · [Earlier paired tests](docs/RELEASE-CANDIDATE-c0b07365.md)
