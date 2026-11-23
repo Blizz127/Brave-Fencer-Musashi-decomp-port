@@ -15890,6 +15890,26 @@ static int irq_data_access(const FormatterCpu *cpu, uint32_t w) {
     IrqRegion region = irq_region(cpu->pc);
     if (region==IRQ_CD_DMA) return irq_movie_access(cpu,op,address);
     if (region == IRQ_SPU_TRANSFER_POLL) return irq_spu_poll_access(cpu, w, address);
+    /* The request timer and player are persistent state in the bit-3 arm
+     * of the installed sound tick, after its queued voice sweep. */
+    if (region == IRQ_SOUND_TICK && cpu->r[29] == 0x8006ca94u &&
+        cpu->irq_image && cpu->irq_image->memory) {
+        uint16_t old;
+        MusashiBootMemory *m = cpu->irq_image->memory;
+        if (cpu->pc == 0x8002cef4u)
+            return cpu->r[31] == 0x8002cef0u && op == 33u && address == 0x800a4e8au;
+        if (cpu->pc == 0x8002cf28u)
+            return cpu->r[31] == 0x8002cef0u &&
+                op == 33u && address == 0x800a4e86u;
+        if (cpu->pc == 0x8002cf54u) {
+            uint16_t index;
+            if (cpu->r[31] != 0x8002cf34u || op != 41u || address != 0x800a4e8eu ||
+                !musashi_boot_read16(m,address,&old) || !(old & 8u) ||
+                !musashi_boot_read16(m,0x800a4e86u,&index) || index >= 2u) return 0;
+            const uint8_t *state = musashi_boot_ram_span(m,0x800b9ed2u+0x1fcu*index,2u);
+            return state && (!state[0] || !state[1]) && (uint16_t)cpu->r[2] == (old & 0xfff7u);
+        }
+    }
     /* The sound driver rereads its stream flags after a positive poll. */
     if (region == IRQ_SOUND_TICK && cpu->pc == 0x8002cfd0u) {
         const uint8_t *flags = musashi_boot_ram_span(cpu->irq_image->memory, 0x8006aef4u, 1);
@@ -16479,6 +16499,7 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
     MovieOutput slice={0};
     uint64_t retired_upload=0;
     PendingDrawList retired_draw = {0};
+    int swept_music = 0;
     uint32_t reg_address;
     if (!stop) return 0;
     *stop = (MusashiGuestIrqStop){0};
@@ -16607,6 +16628,9 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
             } else if (op == 2u && region == dest && region >= IRQ_GAME_VBLANK &&
                        region < IRQ_OUTSIDE) {
                 /* A fixed in-function jump does not create an ABI return frame. */
+            } else if (region == IRQ_SOUND_TICK && op == 3u &&
+                       music_root_call(memory, &cpu, stack, depth, origin, target, swept_music, 0)) {
+                sound_call = 1;
             } else if (region == IRQ_SOUND_TICK && dest == IRQ_SPU_TRANSFER_POLL) {
                 const uint8_t *flags = musashi_boot_ram_span(memory, 0x8006aef4u, 1);
                 if (op != 3u || origin != 0x8002cfacu || target != irq_code[dest].start ||
@@ -16766,6 +16790,7 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
                     (origin == 0x800429b0u && depth == 1 && op == 3u && dest == IRQ_RETURN);
                 if (!valid || depth >= sizeof(stack)/sizeof(stack[0]) || target != irq_code[dest].start)
                     return 0;
+                if (dest == IRQ_SOUND_TICK) swept_music = 0;
                 stack[depth++] = (IrqGuestReturn){origin+8u,cpu.r[29],dest};
             }
         }
@@ -16788,6 +16813,7 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
             if (sound_call) {
                 if (!title_mixer_guest_call(memory, &cpu, services, clock, stack, depth, origin, target, stop))
                     return 0;
+                if (origin == 0x8002cee8u) swept_music = 1;
                 continue;
             }
             if (region == IRQ_CHANNEL_UPDATE && (
