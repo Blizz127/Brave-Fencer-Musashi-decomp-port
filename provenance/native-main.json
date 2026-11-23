@@ -2770,6 +2770,50 @@
       "extent": "function",
       "optimization": "-O2",
       "origin": "Re-derived from the US executable and checked with both controller report callers. Clears two current button bytes and centers four axes for a disconnected or searching controller."
+    },
+    {
+      "name": "func_80017778",
+      "region": "main",
+      "vram": 2147579768,
+      "size": 336,
+      "source": "src/main/80017778.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Owner re-derivation first published in e0b1822. The complete US function was rebuilt from that public source."
+    },
+    {
+      "name": "func_80017F14",
+      "region": "main",
+      "vram": 2147581716,
+      "size": 384,
+      "source": "src/main/80017f14.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Owner re-derivation first published in e0b1822. The complete US function was rebuilt from that public source."
+    },
+    {
+      "name": "func_80018094",
+      "region": "main",
+      "vram": 2147582100,
+      "size": 256,
+      "source": "src/main/80018094.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Owner re-derivation first published in e0b1822. The complete US function was rebuilt from that public source."
+    },
+    {
+      "name": "func_80020DA4",
+      "region": "main",
+      "vram": 2147618212,
+      "size": 400,
+      "source": "src/main/80020da4.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Owner re-derivation first published in e0b1822. The complete US function was rebuilt from that public source."
     }
   ]
 }
