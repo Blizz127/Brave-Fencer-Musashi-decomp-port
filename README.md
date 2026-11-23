@@ -86,19 +86,25 @@ changelog.
 
 ### Verify the scene-object matches
 
-The scene registry covers 613 regional function matches across seventeen overlay members,
-totaling 96,268 bytes.
+The scene registry covers 617 regional function matches across seventeen overlay members,
+totaling 97,020 bytes.
 
 The cemetery award in SC03 member 0023 stores Jon’s Key, advances story progress
 to 60, sets the completion flag and resumes the room script. The field player
 executes this callback on the guest CPU. Run `python3 tests/test_cemetery_key.py`
-to check the order of the award and its inventory effects.
+to check the order of the award and its inventory effects. Three earlier callbacks
+handle selecting the slab, moving it for 40 updates, and starting the key script
+when Musashi reaches it. The opening flag is set on the final movement update.
+Run `python3 tests/test_cemetery_opening.py` to exercise those callbacks. They
+also execute on the guest CPU in the public player.
 
-Three Twinpeak actor routines in SC03 member 0029 match 288 bytes from the US disc.
-They start action 22, dispatch by phase, and process animation events and cleanup
-in phase four. The component test exercises the callback order and the actor
-fields shared with action 21. Run `python3 -m pytest -q tests/test_twinpeak_action22.py`.
-The public player continues to execute these three routines on the guest CPU.
+Four Twinpeak actor routines in SC03 member 0029 match 452 bytes from the US disc.
+They start action 22, dispatch its phases, poll the current handle in phase three,
+and process animation events and cleanup in phase four. During a Shrink encounter
+on the original game, the actor stayed in phase three for 289 calls and advanced
+on the next call. The public player executes these four routines on the guest CPU.
+Run `python3 -m pytest -q tests/test_twinpeak_action22.py` to check callback
+order, actor fields shared with action 21 and the optional queue request.
 
 Jon’s stocks initializer selects a dialogue script using story progress, an event flag and a game query. The host test covers seven outcomes, including the high-progress path that keeps the previous selection. The public player excludes this initializer from native dispatch.
 

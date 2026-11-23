@@ -1,4 +1,4 @@
-#include "fusion_queue_game.h"
+#include "action22_poll.h"
 
 #include <assert.h>
 #include <stddef.h>
@@ -12,7 +12,14 @@ _Static_assert(offsetof(Action21Actor, frame_events) == 0xb8, "events");
 _Static_assert(offsetof(Action21Actor, next_frame_events) == 0xba, "queued events");
 _Static_assert(sizeof(Action21Actor) == 0xbc, "observed actor prefix");
 
-static Action21Actor subject;
+_Static_assert(offsetof(TwinpeakPollActor, handle) == 0x198, "guest handle");
+_Static_assert(sizeof(TwinpeakPollHandle) == 4, "32-bit guest handle");
+_Static_assert(offsetof(TwinpeakPollActor, contact) == 0x1a0, "contact selector");
+
+static TwinpeakPollActor poll_actor;
+#define subject poll_actor.base
+static int ready, disabled;
+static unsigned int contact_result;
 static char calls[12];
 static unsigned count;
 
@@ -44,7 +51,7 @@ static void cleanup(Action21Actor *actor)
 }
 
 TwinpeakActionCallback D_80189EAC[] = { [21] = cleanup, [22] = cleanup };
-TwinpeakActionCallback D_8018A1F4[] = { [0] = phase_zero, [4] = func_8015FE70 };
+TwinpeakActionCallback D_8018A1F4[] = { [0] = phase_zero, [3] = func_8015FDCC, [4] = func_8015FE70 };
 FusionQueueSlot D_8011F9D0[8];
 
 FusionWord bfm_twinpeak_actor_word(const Action21Actor *actor)
@@ -85,6 +92,80 @@ void func_80161208(Action21Actor *actor)
     record(actor, 'T');
 }
 
+int func_801399F0(TwinpeakPollHandle handle)
+{
+    assert(handle == poll_actor.handle);
+    record(&subject, 'P');
+    return ready;
+}
+
+void func_80147324(int effect)
+{
+    if (effect == 25) {
+        record(&subject, 'B');
+        poll_actor.handle = 29;
+    } else {
+        assert(effect == 2441 && D_8011F9D0[0].kind == 36);
+        record(&subject, 'E');
+    }
+}
+
+void func_80139914(TwinpeakPollHandle handle)
+{
+    assert(handle == 29);
+    record(&subject, 'C');
+    poll_actor.handle = 31;
+}
+
+int func_80028DE0(void)
+{
+    assert(poll_actor.handle == 0);
+    record(&subject, 'D');
+    poll_actor.contact = 177;
+    return disabled;
+}
+
+unsigned int func_80165700(Action21Actor *actor, unsigned int contact)
+{
+    assert(contact == 177);
+    record(actor, 'H');
+    return contact_result;
+}
+
+void func_80146CA0(Action21Actor *actor)
+{
+    record(actor, 'N');
+    ++actor->state.phase;
+}
+
+static void check_poll(void)
+{
+    subject.state.phase = 3;
+    poll_actor.handle = 19;
+    func_8015FAAC(&subject);
+    expect("P");
+    assert(subject.state.phase == 3 && poll_actor.handle == 19);
+
+    ready = -1;
+    disabled = 1;
+    func_8015FAAC(&subject);
+    expect("PBCDN");
+    assert(subject.state.phase == 4);
+
+    subject.state.phase = 3;
+    disabled = 0;
+    contact_result = 256;
+    func_8015FAAC(&subject);
+    expect("PBCDHN");
+    assert(subject.state.phase == 4 && D_8011F9D0[0].kind == 0);
+
+    subject.state.phase = 3;
+    contact_result = 257;
+    func_8015FAAC(&subject);
+    expect("PBCDHEN");
+    assert(subject.state.phase == 4 && D_8011F9D0[0].actor == 17);
+}
+
 int main(void)
 {
     subject.current_action = 21;
@@ -117,5 +198,6 @@ int main(void)
     func_8015FE70(&subject);
     expect("T");
     assert(subject.frame_events == 1);
+    check_poll();
     return 0;
 }

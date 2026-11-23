@@ -6391,6 +6391,19 @@
       "span_sha256": "237ea3ec114a876227b4afb177d0a5225ceb2978b2e771dbe1cac4aaa031dd9b"
     },
     {
+      "name": "func_8015FDCC",
+      "region": "sc03_0029",
+      "vram": 2148924876,
+      "size": 164,
+      "source": "src/overlays/sc03_0029/8015fdcc.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 0029 and matched against its complete linked function extent.",
+      "source_sha256": "b1fc7f3bf84f86f9b48c4c38eca15c8a9bb810ff37854ff855c4298e66378eae",
+      "span_sha256": "f7cff06810cdf6171f132fde610aa1242474ddb005d841bb7e1cbf1273e62d6d"
+    },
+    {
       "name": "func_8015FE70",
       "region": "sc03_0029",
       "vram": 2148925040,
@@ -6415,6 +6428,45 @@
       "origin": "Independently reconstructed from the USA SC03.CD cemetery room and verified against the complete linked function.",
       "source_sha256": "b8d05ccb8bbde46227cf42d9da10f7f583f44b1a886af9031daef396d451c1b0",
       "span_sha256": "0c1456a28f04e3b1dc33b91533b2959cba36ffb12eb626607ef9cb045ae59b42"
+    },
+    {
+      "name": "func_8017E414",
+      "region": "sc03_0023",
+      "vram": 2149049364,
+      "size": 272,
+      "source": "src/overlays/sc03_0023/8017e414.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD cemetery room code and verified across the whole linked function.",
+      "source_sha256": "037a1be3913daac901ca444196a4d138f1bf23d25716e190e8df9231c40f75b7",
+      "span_sha256": "9466bb59b7c103b7d70a65d7743d8dcca19c803a78f3464be5fa40491fed87c8"
+    },
+    {
+      "name": "func_8017E524",
+      "region": "sc03_0023",
+      "vram": 2149049636,
+      "size": 232,
+      "source": "src/overlays/sc03_0023/8017e524.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD cemetery room code and verified across the whole linked function.",
+      "source_sha256": "1c0e5c05e49f631918e01f1d391f24e1d9cdcbcf3e936a02cfbdf2d7e3dc80c2",
+      "span_sha256": "58dc8cfbe849908b7713e6cb76334a2a5cfe0fff80b2e178ee06d8ed86882e43"
+    },
+    {
+      "name": "func_8017EC30",
+      "region": "sc03_0023",
+      "vram": 2149051440,
+      "size": 84,
+      "source": "src/overlays/sc03_0023/8017ec30.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD cemetery room code and verified across the whole linked function.",
+      "source_sha256": "5aa1e87d42a5b553ef3fdd443462f9e8e77ccc6b118de1d231d4ec1e854d68c2",
+      "span_sha256": "4f80d69783b39dd558e3379a5b0889a6be3e725cd362a795f316bfa041d66f79"
     }
   ]
 }

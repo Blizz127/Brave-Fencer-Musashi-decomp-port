@@ -1109,6 +1109,7 @@ def test_timed_source_keeps_other_room_implementations_selectable(tmp_path, memb
 @pytest.mark.parametrize("pc,size", [
     (0x8015FA78, 52),
     (0x8015FAAC, 60),
+    (0x8015FDCC, 164),
     (0x8015FE70, 176),
 ])
 def test_twinpeak_action22_source_has_no_generic_handler(tmp_path, pc, size):
