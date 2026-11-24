@@ -2858,6 +2858,40 @@
       "extent": "function",
       "optimization": "-O2",
       "origin": "Links two five-word display packets to the active ordering table. The complete US function was rebuilt from the existing owner-authored source."
+    },
+    {
+      "name": "func_80015498",
+      "region": "main",
+      "vram": 2147570840,
+      "size": 368,
+      "source": "src/main/80015498.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Draws occupied text and sprite slots and queues their texture-page drawing command. The complete US function was rebuilt from the existing owner-authored source."
+    },
+    {
+      "name": "func_80019A24",
+      "region": "main",
+      "vram": 2147588644,
+      "size": 212,
+      "source": "src/main/80019a24.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Requests a streamed block when the transfer and existing block state permit it. The complete US function was rebuilt from the existing owner-authored source."
+    },
+    {
+      "name": "func_8001AF34",
+      "region": "main",
+      "vram": 2147594036,
+      "size": 416,
+      "source": "src/main/8001af34.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Advances the game loader through its request, read, decode and completion states. The complete US function was rebuilt from the existing owner-authored source.",
+      "rodata_base": 2147953420
     }
   ]
 }
