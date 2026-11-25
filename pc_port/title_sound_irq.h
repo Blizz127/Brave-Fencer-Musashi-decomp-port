@@ -8,8 +8,7 @@ static int irq_level_slot_pc(uint32_t pc) {
         {0x1d8u, 0x380u}, {0x3c8u, 0x434u}, {0x484u, 0x49cu},
         {0x4b0u, 0x4bcu}, {0x4c0u, 0x518u}, {0x51cu, 0x5b4u},
         {0x61cu, 0x698u}, {0x6c8u, 0x75cu}, {0x764u, 0x7c4u},
-        {0x7c8u, 0x7dcu}, {0x7e8u, 0x81cu}, {0x830u, 0x868u},
-        {0x8f0u, 0x960u}, {0x988u, 0x998u}, {0xa14u, 0xa20u},
+        {0x7c8u, 0x7dcu}, {0x7e8u, 0x81cu}, {0x830u, 0x960u}, {0x988u, 0x998u}, {0xa14u, 0xa20u},
         {0xa28u, 0xa5cu},
     };
     uint32_t offset = pc - 0x8003388cu;
@@ -401,8 +400,7 @@ static int irq_file_end_issue(const FormatterCpu *cpu, uint32_t word) {
 /* Bank one's last sequence row precedes the entry table. Its opening five
  * commands use the full and short note formats. Authenticate just that
  * prefix from the mounted disc and pair each operand with its load site. */
-static int irq_level_bank_one_note(const FormatterCpu *cpu, uint32_t word,
-                                   uint32_t address, uint32_t song, uint32_t cursor) {
+static const uint8_t *irq_opening_prefix(const FormatterCpu *cpu, uint32_t song) {
     static const uint8_t prefix_sha256[32] = {
         0x2c, 0x50, 0x67, 0x57, 0x35, 0x06, 0x11, 0x7c,
         0xdd, 0x3f, 0xa0, 0xe6, 0x90, 0xcc, 0x66, 0xee,
@@ -418,19 +416,21 @@ static int irq_level_bank_one_note(const FormatterCpu *cpu, uint32_t word,
         !cd_irq_ram_word(ram, 0x800a4ee8u, header) ||
         !musashi_boot_read16(ram, header, &header_id) || header_id != active ||
         !cd_irq_ram_word(ram, header + 24u, table) ||
-        !cd_irq_ram_word(ram, table + 20u * 12u, song) ||
-        address != cpu->r[5] || address < cursor || address >= song + prefix_size)
-        return 0;
+        !cd_irq_ram_word(ram, table + 20u * 12u, song)) return NULL;
+    const uint8_t *live = musashi_boot_ram_span(ram, song, prefix_size);
+    uint8_t digest[32];
+    return live && musashi_sha256_digest(live, prefix_size, digest) &&
+           !memcmp(digest, prefix_sha256, sizeof digest) ? live : NULL;
+}
 
+static int irq_level_bank_one_note(const FormatterCpu *cpu, uint32_t word,
+                                   uint32_t address, uint32_t song, uint32_t cursor) {
     /* The cursor stays at the command start while A1 advances. */
     unsigned command = cursor - song;
     int short_note = command == 60u;
-    if (command != 0u && command != 20u && command != 40u &&
-        !short_note && command != 68u) return 0;
-    const uint8_t *live = musashi_boot_ram_span(ram, song, prefix_size);
-    uint8_t digest[32];
-    if (!live || !musashi_sha256_digest(live, prefix_size, digest) ||
-        memcmp(digest, prefix_sha256, sizeof digest)) return 0;
+    if ((command != 0u && command != 20u && command != 40u && !short_note && command != 68u) ||
+        address != cpu->r[5] || address < cursor || address >= song + 88u ||
+        !irq_opening_prefix(cpu, song)) return 0;
 
     unsigned op = word >> 26, offset = address - cursor;
     switch (cpu->pc) {
@@ -529,6 +529,99 @@ static uint32_t irq_level_case_target(uint32_t selector) {
     }
 }
 
+/* The full note copies its pan, track and instrument to both the stack
+ * descriptor and the slot cache. The short note at +60 reuses the preceding
+ * full note's cache. At the map lookup the cursor has already advanced. */
+static const uint8_t *irq_opening_descriptor(const FormatterCpu *cpu) {
+    if (!cpu->irq_image || !cpu->irq_image->memory) return NULL;
+    MusashiBootMemory *ram = cpu->irq_image->memory;
+    uint32_t slot = cpu->level_slot, song, cursor;
+    uint16_t kind, bank;
+    if (slot != 0x800a46e8u || cpu->r[16] != slot || cpu->r[23] != slot ||
+        cpu->r[21] >= 8u || cpu->r[29] != 0x8006c9ccu || cpu->r[20] != cpu->r[29] + 16u || !musashi_boot_read16(ram, slot, &kind) ||
+        (kind & 63u) != 5u || !musashi_boot_read16(ram, slot + 52u, &bank) || bank != 1u ||
+        !musashi_boot_read32(ram, slot + 16u, &song) ||
+        !musashi_boot_read32(ram, slot + 12u, &cursor)) return NULL;
+    unsigned offset;
+    switch (cursor - song) {
+    case 20u: offset = 0u; break;
+    case 40u: offset = 20u; break;
+    case 60u: case 68u: offset = 40u; break;
+    case 88u: offset = 68u; break;
+    default: return NULL;
+    }
+    const uint8_t *prefix = irq_opening_prefix(cpu, song);
+    const uint8_t *desc = musashi_boot_ram_span(ram, cpu->r[20], 20u);
+    const uint8_t *cache = musashi_boot_ram_span(ram, slot + 76u, 3u);
+    if (!prefix || !desc || !cache || desc[9] != prefix[offset + 11u] ||
+        desc[10] != prefix[offset + 10u] || desc[11] != prefix[offset + 9u] ||
+        memcmp(cache, desc + 9u, 3u)) return NULL;
+    return desc;
+}
+
+/* The normal track-4 map was populated by the last chunk of the installed
+ * track. Its primary cache and the signed map agree on slot three. */
+static int irq_opening_track4(MusashiBootMemory *ram) {
+    uint16_t primary, mapped;
+    const uint8_t *empty = musashi_boot_ram_span(ram, 0x800a4698u, 1u);
+    return empty && !*empty && musashi_boot_read16(ram, 0x800a4688u, &primary) &&
+           primary == 4u && musashi_boot_read16(ram, 0x800c5338u, &mapped) && mapped == 3u;
+}
+
+/* Track publication precedes individual instrument production. Recheck the
+ * complete row produced for instrument ten before consuming its four fields. */
+static int irq_opening_row10(const FormatterCpu *cpu, const uint8_t *desc) {
+    static const uint8_t row_digest[32] = {
+        0x45, 0x88, 0x5b, 0x68, 0x42, 0x72, 0xd9, 0xa8,
+        0x2d, 0x53, 0x58, 0xdb, 0x1d, 0x1e, 0x80, 0x04,
+        0x2c, 0xbf, 0x64, 0xee, 0x61, 0xf5, 0x8b, 0xd6,
+        0xd6, 0x4c, 0x7c, 0x8f, 0x88, 0x94, 0xff, 0x33
+    };
+    unsigned channel;
+    uint8_t digest[32];
+    MusashiBootMemory *ram = cpu->irq_image->memory;
+    const uint8_t *row = musashi_boot_ram_span(ram, 0x800a61f8u, 12u);
+    return desc && desc[10] == 4u && desc[11] == 10u && cpu->r[22] == 3u &&
+           irq_level_leaf_channel(cpu, &channel) && cpu->r[21] == channel &&
+           irq_opening_track4(ram) && cd_irq_ram_word(ram, 0x8006a97cu, 0x800a6180u) &&
+           row && musashi_sha256_digest(row, 12u, digest) && !memcmp(digest, row_digest, sizeof digest);
+}
+
+static int irq_opening_pan(const FormatterCpu *cpu, uint32_t word) {
+    const uint8_t *desc = irq_opening_descriptor(cpu);
+    if (cpu->r[31] != 0x80033fa4u || !irq_opening_row10(cpu, desc)) return 0;
+    MusashiBootMemory *ram = cpu->irq_image->memory;
+    const uint8_t *bias = musashi_boot_ram_span(ram, cpu->level_slot + 56u, 1u);
+    const uint8_t *channel = musashi_boot_ram_span(ram, cpu->r[17], 0x54u);
+    const uint8_t *stereo = musashi_boot_ram_span(ram, 0x800a4f19u, 1u);
+    if (!bias || *bias > 127u || !stereo || *stereo > 1u || !channel || !desc[9] ||
+        desc[9] > 127u || desc[9] != channel[53] || desc[9] != channel[82]) return 0;
+    unsigned pan = desc[9];
+    if (*bias) {
+        unsigned sum = pan + *bias;
+        pan = sum < 66u ? 1u : sum - 64u;
+        if (pan > 127u) pan = 127u;
+    }
+    if (cpu->r[4] != pan || cpu->r[19] != pan ||
+        (cpu->pc >= 0x80034108u && (*stereo != (cpu->pc < 0x80034158u)))) return 0;
+
+    unsigned op = word >> 26;
+    if (op < 32u) return 1;
+    uint32_t address = cpu->r[(word >> 21) & 31u] + (uint32_t)(int32_t)(int16_t)word;
+    unsigned index;
+    switch (cpu->pc) {
+    case 0x800340f8u: return op == 36u && address == 0x800a4f19u;
+    case 0x80034110u: index = pan - 1u; break;
+    case 0x80034134u: index = 127u - pan; break;
+    case 0x8003415cu: index = 63u; break;
+    case 0x80034144u: case 0x80034170u: return op == 41u && address == cpu->r[18] + 10u;
+    case 0x80034154u: case 0x80034178u: return op == 41u && address == cpu->r[18] + 8u;
+    default: return 0;
+    }
+    return op == 37u && irq_file_table_matches(ram, address, 0x800731a0u, 2u * index,
+                                               cpu->irq_image->file_pan_table, 2u);
+}
+
 /* A note has selected an instrument before these reads. Validate the
  * installed bank pointer and the descriptor's instrument number together.
  * Each instrument record is twelve bytes. */
@@ -537,7 +630,10 @@ static int irq_level_instrument(const FormatterCpu *cpu, uint32_t *row) {
     const uint8_t *instrument = musashi_boot_ram_span(ram, cpu->r[29] + 27u, 1);
     uint32_t bank = cpu->r[22], base;
     if (!instrument || cpu->r[20] != cpu->r[29] + 16u) return 0;
-    if (bank == 0 && *instrument == 26u) base = 0x800a5f68u;
+    if (bank == 3u && *instrument == 10u && cpu->r[31] == 0x80033d6cu &&
+        irq_opening_row10(cpu, irq_opening_descriptor(cpu)))
+        base = 0x800a6180u;
+    else if (bank == 0 && *instrument == 26u) base = 0x800a5f68u;
     else if (bank == 3u && (*instrument == 0u || *instrument == 3u)) base = 0x800a6180u;
     else return 0;
     if (!cd_irq_ram_word(ram, 0x8006a970u + bank * 4u, base)) return 0;
@@ -608,6 +704,12 @@ static int irq_level_slot_data(const FormatterCpu *cpu, uint32_t word, uint32_t 
         return op == 35u && irq_level_case_target(cpu->r[3]) &&
                address == 0x80073120u + 4u * cpu->r[3];
     case 0x80033d98u:
+        if (cpu->r[19] == 4u) {
+            const uint8_t *desc = irq_opening_descriptor(cpu);
+            return desc && desc[10] == 4u && cpu->r[31] == 0x80033d6cu &&
+                   op == 33u && address == 0x800c5338u &&
+                   irq_opening_track4(cpu->irq_image->memory);
+        }
         return op == 33u && (cpu->r[19] == 0u || cpu->r[19] == 0x57u) &&
                address == 0x800c5328u + 4u * cpu->r[19];
     case 0x80033e04u:

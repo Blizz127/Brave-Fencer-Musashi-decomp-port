@@ -12656,6 +12656,10 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     const MusashiGuestIrqImage *level_image =
         (issued_pc == 0x800338d4u || issued_pc == 0x80033d38u ||
          (issued_pc >= 0x8003392cu && issued_pc <= 0x800339c0u) ||
+         issued_pc == 0x80033d98u || issued_pc == 0x80033e04u ||
+         issued_pc == 0x80033e10u || issued_pc == 0x80033e1cu ||
+         issued_pc == 0x80033e28u || issued_pc == 0x80033e34u ||
+         (issued_pc >= 0x800340f4u && issued_pc < 0x8003417cu) ||
          (issued_pc >= 0x80033ad0u && issued_pc <= 0x80033ba0u && irq_opening_note_read(cpu)))
         ? cpu->irq_image : NULL;
     const MusashiGuestIrqImage *release_image = issued_pc == 0x80034310u ? cpu->irq_image : NULL;
@@ -16284,6 +16288,7 @@ static int irq_spu_poll_access(const FormatterCpu *cpu, uint32_t word, uint32_t 
 
 static int irq_data_access(const FormatterCpu *cpu, uint32_t w) {
     if (irq_file_end_pc(cpu->pc)) return irq_file_end_issue(cpu, w);
+    if (cpu->pc >= 0x800340f4u && cpu->pc < 0x8003417cu) return irq_opening_pan(cpu, w);
     unsigned op = w >> 26;
     if (op < 32) return 1;
     uint32_t address = cpu->r[(w >> 21) & 31u] + (uint32_t)(int32_t)(int16_t)w;
