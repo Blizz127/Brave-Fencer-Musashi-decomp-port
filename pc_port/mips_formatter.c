@@ -9231,6 +9231,7 @@ static int card_vblank_helper_word(MusashiBootMemory *memory, uint32_t pc, uint3
 
 static int irq_live_word(const MusashiGuestIrqImage *, MusashiBootMemory *, uint32_t, uint32_t *);
 static int irq_data_access(const FormatterCpu *, uint32_t);
+static int irq_opening_note_read(const FormatterCpu *cpu);
 /* These two return addresses belong to the two observed reset calls into the
  * byte fill. Other callers keep the existing host binding. The reset needs
  * instruction checkpoints during its clears while interrupt sources advance. */
@@ -12652,8 +12653,10 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     const int room_reset_delay = issued_pc == ROOM_RESET_CALL + 4u && cpu->room_reset_owner &&
         cpu->room_reset_step == issued_pc && cpu->delay_slot && cpu->branch_pc == ROOM_RESET_CALL &&
         cpu->npc == ROOM_RESET_ENTRY && cpu->r[31] == ROOM_RESET_CALL + 8u;
-    const MusashiGuestIrqImage *ramp_image =
-        issued_pc >= 0x8003392cu && issued_pc <= 0x800339c0u ? cpu->irq_image : NULL;
+    const MusashiGuestIrqImage *level_image =
+        (issued_pc == 0x800338d4u || (issued_pc >= 0x8003392cu && issued_pc <= 0x800339c0u) ||
+         (issued_pc >= 0x80033ad0u && issued_pc <= 0x80033ba0u && irq_opening_note_read(cpu)))
+        ? cpu->irq_image : NULL;
     const MusashiGuestIrqImage *release_image = issued_pc == 0x80034310u ? cpu->irq_image : NULL;
     const MusashiGuestIrqImage *timer_image = issued_pc == 0x80031c84u ? cpu->irq_image : NULL;
     uint32_t timer_slot = timer_image ? cpu->r[18] : 0;
@@ -13366,12 +13369,12 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
             (cpu->cd_irq_frame && cpu->cd_irq_frame->faulted))
             return formatter_refuse0(__LINE__, cpu->pc);
     }
-    /* Advancing devices can change the mounted slot or its code before the
-     * active ramp accesses RAM, including a store in a jump delay slot. */
-    if (ramp_image) {
+    /* Advancing devices can replace the sequence bank or change its slot
+     * before the ID read or a ramp access, including delay-slot stores. */
+    if (level_image) {
         uint32_t live;
-        if (cpu->pc != issued_pc || cpu->irq_image != ramp_image ||
-            !irq_live_word(ramp_image, memory, issued_pc, &live) || live != instruction ||
+        if (cpu->pc != issued_pc || cpu->irq_image != level_image ||
+            !irq_live_word(level_image, memory, issued_pc, &live) || live != instruction ||
             !irq_data_access(cpu, instruction)) return formatter_refuse0(__LINE__, issued_pc);
     }
     field_scene_after_charge(root, cpu);

@@ -3,7 +3,7 @@
  * and last-channel release paths. */
 static int irq_level_slot_pc(uint32_t pc) {
     static const struct { uint16_t start, end; } spans[] = {
-        {0x000u, 0x044u}, {0x068u, 0x078u}, {0x07cu, 0x15cu},
+        {0x000u, 0x058u}, {0x068u, 0x078u}, {0x07cu, 0x15cu},
         {0x190u, 0x19cu}, {0x1a8u, 0x1bcu},
         {0x1d8u, 0x380u}, {0x3c8u, 0x434u}, {0x484u, 0x49cu},
         {0x4b0u, 0x4bcu}, {0x4c0u, 0x518u}, {0x51cu, 0x5b4u},
@@ -249,8 +249,79 @@ static uint32_t irq_level_stream_at(const FormatterCpu *cpu, uint32_t address) {
     return live && !memcmp(live, mapped, size) ? song : 0;
 }
 
+/* Bank one's last sequence row precedes the entry table. Its opening five
+ * commands use the full and short note formats. Authenticate just that
+ * prefix from the mounted disc and pair each operand with its load site. */
+static int irq_level_bank_one_note(const FormatterCpu *cpu, uint32_t word,
+                                   uint32_t address, uint32_t song, uint32_t cursor) {
+    static const uint8_t prefix_sha256[32] = {
+        0x2c, 0x50, 0x67, 0x57, 0x35, 0x06, 0x11, 0x7c,
+        0xdd, 0x3f, 0xa0, 0xe6, 0x90, 0xcc, 0x66, 0xee,
+        0x01, 0x2c, 0x64, 0x65, 0x39, 0x8d, 0x63, 0x6c,
+        0x1c, 0xfb, 0xa2, 0xef, 0xa4, 0x09, 0xbb, 0xaa
+    };
+    const uint32_t header = 0x800ca23cu, table = 0x800c9ac8u, prefix_size = 88u;
+    MusashiBootMemory *ram = cpu->irq_image->memory;
+    uint16_t active, header_id, sound;
+    if (cpu->level_slot != 0x800a46e8u || song != 0x800c9a50u ||
+        !musashi_boot_read16(ram, cpu->level_slot + 4u, &sound) || sound != 0x0b5bu ||
+        !musashi_boot_read16(ram, 0x800a4ef0u, &active) || active != 1u ||
+        !cd_irq_ram_word(ram, 0x800a4ee8u, header) ||
+        !musashi_boot_read16(ram, header, &header_id) || header_id != active ||
+        !cd_irq_ram_word(ram, header + 24u, table) ||
+        !cd_irq_ram_word(ram, table + 20u * 12u, song) ||
+        address != cpu->r[5] || address < cursor || address >= song + prefix_size)
+        return 0;
+
+    /* The cursor stays at the command start while A1 advances. */
+    unsigned command = cursor - song;
+    int short_note = command == 60u;
+    if (command != 0u && command != 20u && command != 40u &&
+        !short_note && command != 68u) return 0;
+    const uint8_t *live = musashi_boot_ram_span(ram, song, prefix_size);
+    uint8_t digest[32];
+    if (!live || !musashi_sha256_digest(live, prefix_size, digest) ||
+        memcmp(digest, prefix_sha256, sizeof digest)) return 0;
+
+    unsigned op = word >> 26, offset = address - cursor;
+    switch (cpu->pc) {
+    case 0x80033ad0u: return op == 35u && offset == 0u;
+    case 0x80033b18u: return !short_note && op == 35u && offset == 4u;
+    case 0x80033b2cu: return !short_note && op == 35u && offset == 8u;
+    case 0x80033b6cu: return !short_note && op == 37u && offset == 12u;
+    case 0x80033b7cu: return !short_note && op == 35u && offset == 16u;
+    case 0x80033ba0u: return short_note && op == 35u && offset == 4u;
+    default: return 0;
+    }
+}
+
+/* These are the typed sequence reads accepted for the opening bank. Check
+ * them again after advancing devices, which can replace the mounted data. */
+static int irq_opening_note_read(const FormatterCpu *cpu) {
+    switch (cpu->pc) {
+    case 0x80033ad0u: case 0x80033b18u: case 0x80033b2cu:
+    case 0x80033b6cu: case 0x80033b7cu: case 0x80033ba0u: {
+        uint16_t bank;
+        return cpu->irq_image && cpu->level_slot == 0x800a46e8u &&
+               musashi_boot_read16(cpu->irq_image->memory, cpu->level_slot + 52u, &bank) &&
+               bank == 1u;
+    }
+    default: return 0;
+    }
+}
+
 static int irq_level_note_read(const FormatterCpu *cpu, uint32_t word, uint32_t address) {
-    if (address != cpu->r[5] || !irq_level_stream_at(cpu, address)) return 0;
+    if (address != cpu->r[5]) return 0;
+    if (!irq_level_stream_at(cpu, address)) {
+        uint16_t bank;
+        uint32_t song, cursor;
+        MusashiBootMemory *ram = cpu->irq_image->memory;
+        if (!cpu->level_slot || cpu->r[16] != cpu->level_slot ||
+            !musashi_boot_read16(ram, cpu->level_slot + 52u, &bank) || bank != 1u ||
+            !musashi_boot_read32(ram, cpu->level_slot + 16u, &song) ||
+            !musashi_boot_read32(ram, cpu->level_slot + 12u, &cursor)) return 0;
+        return irq_level_bank_one_note(cpu, word, address, song, cursor);
+    }
     unsigned op = word >> 26;
     switch (cpu->pc) {
     case 0x80033ad0u: case 0x80033b18u: case 0x80033b2cu:
@@ -337,6 +408,23 @@ static int irq_level_slot_data(const FormatterCpu *cpu, uint32_t word, uint32_t 
                      op == 35u || op == 43u ? 4u : 0u;
     if (!slot || !width || (address & (width - 1u)) || cpu->r[29] != 0x8006c9ccu) return 0;
 
+    /* The opening sequence has a registered bank in slot zero. This load
+     * compares its ID with the live registry before the guest rejoins the
+     * common update. A different bank would take a separate shutdown path. */
+    if (pc == 0x800338d4u) {
+        uint16_t kind, bank, registry_id, header_id, sound;
+        MusashiBootMemory *ram = cpu->irq_image->memory;
+        return op == 33u && base == 2u && cpu->r[2] == 0x800a0000u &&
+               address == 0x800a4ef0u && slot == 0x800a46e8u &&
+               cpu->r[16] == slot && cpu->r[3] == 1u &&
+               musashi_boot_read16(ram, slot, &kind) && (kind & 63u) == 5u &&
+               musashi_boot_read16(ram, slot + 4u, &sound) && sound == 0x0b5bu &&
+               musashi_boot_read16(ram, slot + 52u, &bank) && bank == 1u &&
+               musashi_boot_read16(ram, address, &registry_id) && registry_id == bank &&
+               cd_irq_ram_word(ram, 0x800a4ee8u, 0x800ca23cu) &&
+               musashi_boot_read16(ram, 0x800ca23cu, &header_id) && header_id == bank &&
+               cd_irq_ram_word(ram, slot + 16u, 0x800c9a50u);
+    }
     if (pc >= 0x8003392cu && pc <= 0x800339c0u)
         return irq_file_ramp_data(cpu, op, address);
     uint32_t frame = cpu->r[29], width_end = address + width;
