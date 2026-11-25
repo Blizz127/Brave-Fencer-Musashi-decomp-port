@@ -12,11 +12,9 @@
  * whatever reproduces the bytes; they are not evidence of the
  * original declaration. */
 
-#include "psx_types.h"
-typedef struct { u32 w[9]; } T_800298BC;
-extern T_800298BC D_80079204;
+#include "room_descriptor.h"
 void func_8002992C(s32);
-void func_800298BC(T_800298BC *dst) {
+void func_800298BC(RoomTransferDescriptor *dst) {
     func_8002992C(1);
     *dst = D_80079204;
 }

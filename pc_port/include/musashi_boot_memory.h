@@ -405,6 +405,8 @@ typedef struct MusashiCpuTransferDevice {
     int (*read_data)(void *, const MusashiCpuContext *, uint32_t, uint32_t *);
     int (*read_control)(void *, const MusashiCpuContext *, uint32_t, uint32_t *);
     int (*command)(void *, const MusashiCpuContext *, uint32_t);
+    /* Successful guest retirement, or an aggregate interval with ordinary == 0. */
+    void (*gte_retired)(void *, const void *, uint32_t, uint32_t, int ordinary);
 } MusashiCpuTransferDevice;
 /* The image owner reserves its exact low-RAM aliases before generic RAM. */
 typedef struct MusashiBiosImageDevice {

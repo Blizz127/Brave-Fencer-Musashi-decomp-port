@@ -19,6 +19,8 @@ typedef struct MusashiCpuContext {
     int instruction_valid;
     int delay_slot;
     MusashiCpuContextProvenance provenance;
+    /* Set only by a source with an independent witness for cached read timing. */
+    int gte_cached_read;
 } MusashiCpuContext;
 typedef enum MusashiCpuExceptionKind {
     MUSASHI_CPU_EXCEPTION_IRQ = 1,
@@ -54,7 +56,8 @@ int musashi_cpu_status_read(MusashiCpuStatus *, uint32_t *);
 int musashi_cpu_status_irq_eligible(MusashiCpuStatus *, int *);
 /* Native BIOS policy / fixture adapter, NOT an implicit SYS or hook. */
 int musashi_cpu_status_set_enabled(MusashiCpuStatus *, int enabled);
-/* Bounded MTC0 Status: same value or old value OR CU2, outside exception. */
+/* Outside exceptions, accept unchanged Status or setting CU2 alone. Kernel
+ * mode can also set SwC alone when cache isolation is off. */
 int musashi_cpu_status_write_source(MusashiCpuStatus *,
     const MusashiCpuContext *, uint32_t value);
 /* hardware_pending is the CP0 external IP2 bit: 0 or 00000400, not I_STAT.

@@ -1,7 +1,7 @@
 /* Owner re-derivation from retail assembly (clean input set). */
 /* Picks a data table by the frame counter func_80029504(): descending thresholds 0x6A4, 0x5DC,
  * 0x578, 0x514, 0x384, 0x258, 0xC8 and 0xA, hands it to func_800D185C and then runs func_80145B24. */
-#include "psx_types.h"
+#include "room_transfer.h"
 
 extern u8 D_801808B8[];
 extern u8 D_80180828[];
@@ -12,7 +12,6 @@ extern u8 D_80180870[];
 extern u8 D_8018084C[];
 extern u8 D_801807BC[];
 extern s32 func_80029504(void);
-extern void func_800D185C(u8 *table);
 extern void func_80145B24(void);
 
 void func_80145934(void)

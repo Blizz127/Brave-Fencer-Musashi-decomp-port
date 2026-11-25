@@ -1994,6 +1994,14 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
         if sdk_overlay(entry.get("region"), vram, size) or sdk_overlay(member, vram, size):
             raise Reject("deny", "SDK library code in this overlay member")
         check_sound_record_clear(entry, src, info)
+        # The reset's 16 stores become visible at different clocks. The final
+        # clear is in the return delay slot. An atomic wrapper cannot resume
+        # from a partially initialized actor at a device deadline.
+        if vram == 0x8001C9D0 and (
+                member is None or entry.get("region") == "main" or
+                src.resolve() == ROOT / "src/main/8001c9d0.c" or
+                (size == 76 and member_digest(info, vram, size) == 0x7191ab498ef23e64)):
+            raise Reject("timing", "actor work reset requires individually timed record stores")
         # The matching menu-item C has no player timing/interrupt qualification.
         # Different members can independently implement a function at this PC.
         if (vram == 0x8017ceb8 or name.lower() == "func_8017ceb8") and (

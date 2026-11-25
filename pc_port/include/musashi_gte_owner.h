@@ -9,6 +9,8 @@
 extern "C" {
 #endif
 
+#include "gte_transfer_delay.h"
+
 #define MUSASHI_GTE_DATA_COUNT 32u
 #define MUSASHI_GTE_CONTROL_COUNT 32u
 #define MUSASHI_GTE_CONTROL_FIRST 21u
@@ -52,6 +54,9 @@ typedef struct MusashiGteOwner {
     uint64_t data_write_count;
     uint64_t data_read_count;
     uint64_t command_count;
+    struct bfm_gte_transfer_delay ir1_delay, control2_delay;
+    uint32_t delay_write_pc, delay_write_word, delay_write_prior;
+    uint8_t delay_write_lane;
 } MusashiGteOwner;
 
 /* context_identity must remain stable for the lease.  The owner accepts only
@@ -116,6 +121,8 @@ int musashi_gte_owner_snapshot(MusashiGteOwner *owner,
 
 /* Teardown is permitted after an old fault, but not from a foreign thread or
  * a callback-reentrant operation.  The shared gteRegs values are preserved. */
+void musashi_gte_owner_cpu_retired(MusashiGteOwner *owner, const void *identity,
+                                   uint32_t pc, uint32_t word, int ordinary);
 int musashi_gte_owner_close(MusashiGteOwner *owner);
 
 #ifdef __cplusplus

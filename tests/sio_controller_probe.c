@@ -11,6 +11,7 @@ typedef struct PadContext {
     int fail_sample;
     int fail_irq;
     uint16_t irq_masks[4];
+    unsigned completed_polls;
 } PadContext;
 
 static uint64_t pad_owner(void *userdata) {
@@ -53,7 +54,7 @@ static uint8_t read_rx(MusashiSioController *sio) {
 
 static void test_pad_exchange_and_timing(void) {
     MusashiSioController sio;
-    PadContext ctx = {0, 0x1230, 0, 0, 0, 0, {0, 0, 0, 0}};
+    PadContext ctx = {.buttons = 0x1230};
     uint16_t status = 0;
     uint64_t first_due;
 
@@ -154,7 +155,7 @@ static void test_pad_exchange_and_timing(void) {
 
 static void test_pad_refusals_and_reset(void) {
     MusashiSioController sio, saved;
-    PadContext ctx = {1, 0x4560, 0, 0, 0, 0, {0, 0, 0, 0}};
+    PadContext ctx = {.buttons = 0x4560};
     uint16_t out = 0xbeef;
     uint8_t byte = 0xaa;
     uint64_t due;
@@ -242,7 +243,7 @@ static void test_pad_refusals_and_reset(void) {
 
 static void test_pad_fifo_and_bad_command(void) {
     MusashiSioController sio;
-    PadContext ctx = {1, 0x3400, 0, 0, 0, 0, {0, 0, 0, 0}};
+    PadContext ctx = {.buttons = 0x3400};
     uint8_t byte;
     configure_pad(&sio, &ctx);
     assert(musashi_sio_controller_write8(&sio, 0x1f801040, 1));
@@ -337,7 +338,143 @@ static void test_transaction_identity_is_not_a_data_byte(void) {
     assert(!sio.ack_pending);
 }
 
+static void poll_complete(void *userdata) {
+    PadContext *ctx = userdata;
+    ++ctx->completed_polls;
+}
+
+static void test_normal_poll_completion(void) {
+    MusashiSioController sio;
+    PadContext ctx = {0};
+    /* Payload length includes 5A, both button bytes and any stick axes. */
+    static const struct {
+        uint16_t select;
+        uint8_t command, id, bytes_to_clock, complete_at;
+    } frames[] = {
+        {0x1003, 0x42, 0x41, 2, 0},  /* deselect before digital high byte */
+        {0x1003, 0x42, 0x41, 2, 0},  /* reset before digital high byte */
+        {0x3003, 0x42, 0xff, 7, 0},  /* absent port */
+        {0x1003, 0x20, 0xff, 7, 0},  /* unsupported command */
+        {0x1003, 0x42, 0x41, 6, 3},  /* one completion despite extra clocks */
+        {0x1003, 0x43, 0xf3, 9, 0},
+        {0x1003, 0x42, 0xf3, 9, 0},
+        {0x1003, 0x42, 0xf3, 9, 0},
+        {0x1003, 0x42, 0x73, 2, 0},  /* missing high button byte */
+        {0x1003, 0x4d, 0xf3, 9, 0},  /* configure after analog has locked */
+        {0x1003, 0x42, 0x73, 10, 3}
+    };
+    configure_pad(&sio, &ctx);
+    sio.poll_complete = poll_complete;
+    for (unsigned i = 0; i < sizeof frames / sizeof frames[0]; ++i) {
+        unsigned before = ctx.completed_polls;
+        assert(musashi_sio_controller_write16(&sio, 0x1f80104a, frames[i].select));
+        assert(musashi_sio_controller_write8(&sio, 0x1f801040, 1));
+        assert(read_rx(&sio) == 0xff);
+        assert(musashi_sio_controller_write8(&sio, 0x1f801040, frames[i].command));
+        assert(read_rx(&sio) == frames[i].id);
+        assert(ctx.completed_polls == before);
+        for (unsigned n = 1; n <= frames[i].bytes_to_clock; ++n) {
+            assert(musashi_sio_controller_write8(&sio, 0x1f801040, 0));
+            assert(ctx.completed_polls == before);
+            read_rx(&sio);
+            if (n == frames[i].complete_at) ++before;
+            assert(ctx.completed_polls == before);
+        }
+        assert(musashi_sio_controller_write16(&sio, 0x1f80104a, i == 1 ? 0x40 : 0));
+        assert(ctx.completed_polls == before);
+    }
+}
+
+static void write_data(MusashiSioController *sio, uint8_t byte) {
+    assert(musashi_sio_controller_write8(sio, 0x1f801040, byte));
+}
+
+static void reselect(MusashiSioController *sio) {
+    assert(musashi_sio_controller_write16(sio, 0x1f80104a, 0));
+    assert(musashi_sio_controller_write16(sio, 0x1f80104a, 0x1003));
+}
+
+static void test_queued_poll_reads(void) {
+    MusashiSioController sio;
+    PadContext ctx = {.buttons = 0x415a};
+    const uint8_t report[] = {0xff, 0x41, 0x5a, 0x5e, 0x41};
+    configure_pad(&sio, &ctx);
+    sio.poll_complete = poll_complete;
+    write_data(&sio, 1);
+    write_data(&sio, 0x42);
+    for (int i = 0; i < 3; ++i) write_data(&sio, 0);
+    /* The first complete report remains in the FIFO while the provider
+     * supplies an identical sample. Only the second report may acknowledge. */
+    reselect(&sio);
+    write_data(&sio, 1);
+    write_data(&sio, 0x42);
+    write_data(&sio, 0);
+    assert(ctx.sample_calls == 2 && ctx.completed_polls == 0);
+    for (unsigned i = 0; i < sizeof report; ++i) {
+        assert(read_rx(&sio) == report[i]);
+        assert(ctx.completed_polls == 0);
+    }
+    write_data(&sio, 0);
+    write_data(&sio, 0);
+    assert(musashi_sio_controller_write16(&sio, 0x1f80104a, 0));
+    for (unsigned i = 0; i < sizeof report; ++i) {
+        assert(ctx.completed_polls == 0);
+        assert(read_rx(&sio) == report[i]);
+    }
+    assert(ctx.completed_polls == 1);
+
+    /* The old ID survives in slot seven. With the FIFO full, the current
+     * sync overwrites the current ID. The guest sees a plausible report
+     * assembled from two transactions, so the provider must retain its edge. */
+    reselect(&sio);
+    for (int i = 0; i < 5; ++i) write_data(&sio, 0);
+    write_data(&sio, 1);
+    write_data(&sio, 0x42);
+    reselect(&sio);
+    write_data(&sio, 1);
+    write_data(&sio, 0x42);
+    write_data(&sio, 0);
+    for (int i = 0; i < 6; ++i) assert(read_rx(&sio) == 0xff);
+    assert(read_rx(&sio) == 0x41 && read_rx(&sio) == 0x5a);
+    write_data(&sio, 0);
+    write_data(&sio, 0);
+    assert(read_rx(&sio) == 0x5e && read_rx(&sio) == 0x41);
+    assert(ctx.completed_polls == 1);
+}
+
+static void test_missing_poll_bytes(void) {
+    MusashiSioController sio;
+    PadContext ctx = {.buttons = 0xf7f7};
+    const uint8_t tx[] = {1, 0x42, 0, 0, 0, 0};
+    configure_pad(&sio, &ctx);
+    sio.poll_complete = poll_complete;
+    for (unsigned missing = 1; missing <= 4; ++missing) {
+        reselect(&sio);
+        /* Fill the receive FIFO exactly at the byte being dropped. The
+         * following response replaces that byte. All others are readable. */
+        for (unsigned i = 0; i < 7 - missing; ++i) write_data(&sio, 0);
+        for (unsigned i = 0; i <= missing + 1; ++i) write_data(&sio, tx[i]);
+        assert(sio.rx_count == 8);
+        while (sio.rx_count) read_rx(&sio);
+        for (unsigned i = missing + 2; i < sizeof tx; ++i) {
+            write_data(&sio, tx[i]);
+            read_rx(&sio);
+        }
+        assert(ctx.completed_polls == 0);
+    }
+    reselect(&sio);
+    for (unsigned i = 0; i < 5; ++i) {
+        write_data(&sio, tx[i]);
+        read_rx(&sio);
+        if (i == 1) assert(read_rx(&sio) == 0xff); /* Empty DATA interrupts the report. */
+    }
+    assert(ctx.completed_polls == 0);
+}
+
 int main(void) {
+    test_normal_poll_completion();
+    test_queued_poll_reads();
+    test_missing_poll_bytes();
     test_transaction_identity_is_not_a_data_byte();
     MusashiSioController sio, saved;
     uint16_t value;

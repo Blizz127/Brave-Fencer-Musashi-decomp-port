@@ -1,16 +1,45 @@
-# brave-fencer-musashi-decomp-port
+# Brave Fencer Musashi PC port
 
-An experimental PC port of *Brave Fencer Musashi* for the USA PlayStation disc
-(SLUS-00726). The player reads your own disc. Its hybrid runtime runs part of
-the game as compiled host code and uses a CPU interpreter for the rest.
+This project reimplements *Brave Fencer Musashi* for the US PlayStation release (SLUS-00726). Supply your own disc image. Keep the CUE file and its referenced BIN tracks together with their original filenames.
+
+## Run the desktop preview
+
+Download the Windows x64 ZIP or Linux x86_64 archive from [GitHub Releases](https://github.com/Blizz127/Brave-Fencer-Musashi-decomp-port/releases/latest). Extract the whole archive and follow its README to select your US disc. The executable also accepts `--disc "path/to/game.cue"`. Append `--windowed` to run in a window.
+
+Press Enter or the controller’s Start button at **Push Start**. Select **Start** to enter the opening scene. The preview reads its title and opening artwork from the disc at runtime and runs the matching title-menu C function on the host CPU. The opening is silent. The preview ends before character control. Continue and saving are unavailable.
+
+To build the preview, install CMake 3.16 or newer and the SDL2 development files (2.0.18 or newer). From the repository root, run
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release --target musashi_native_boot
+```
+
+On a single-configuration Linux build, the player is `build/preview/musashi_native_boot`.
+
+## Earlier hybrid runtime
+
+The earlier player ran part of the game as compiled host code and used a CPU interpreter for the remaining paths.
 
 Startup, the first graphics calls, the mounted room reset, controller disconnect and several sound and scene handlers execute instructions supplied by your disc. The guest CPU advances the same device clock used for rendering and sound. An original US trace and a controlled startup run both measured 111 modeled clocks from main entry to the first graphics wrapper. The controlled test exercised the graphics return with supplied child results.
 
-In ordinary Linux and Windows x64 testing under Wine, test build `7becc625` drew the complete opening title and stopped in the sound interrupt before the palace. Build `328f8faa` loaded an earned File 1, displayed **Loaded data** and **Now Loading**, then stopped before the Chapter 2 bedroom. On the original US game, the same save restored Musashi in the bedroom. Playable New Game, an inn save and Continue from a fresh process are still open on both platforms. Native Windows and handheld checks have yet to be observed on these builds.
+On Linux and on the Windows x64 player under Wine, build `286492fc` loaded File 1 and displayed **Loaded data!**. Confirming the message stopped at `8017C3FC`. The original US game restored Musashi in the Chapter 2 bedroom from the same save. An earlier build, `328f8faa`, reached **Now Loading** before stopping.
+
+For New Game, build `7becc625` drew the complete opening title on Linux and under Wine, then stopped in the sound interrupt before the palace. The later Linux build `1406d60c` still stopped on the moon at `8003B110`. Playable New Game, an inn save and Continue from a fresh process remain unverified on this source line. Native Windows and handheld gameplay also remain unverified.
 
 ## Player downloads and source builds
 
-The public match registries contain **1,067 entries totaling 159,600 bytes** of the US game. Counting each region and start address once gives **1,064 distinct ranges totaling 159,028 bytes**. The room registry includes the 3,080-byte room-entry routine in two scene members, their shared scene command and music picker, and the music caller in the MAIN overlay. These matched sources can be checked against the US disc. [Room matching record](provenance/scene-room-entry.json) The resident sound mixer recalculates volume and pan for up to eight active sound slots. Its compiled C matches all 484 bytes of the US function. This source match adds no entry to the desktop player’s native dispatch table. [Sound matching record](provenance/sound-events.json)
+This source tree contains **1,116 matching entries totaling 168,792 bytes** of the US game. Counting each region and start address once gives **1,113 distinct ranges totaling 168,220 bytes**. The room registry includes the 3,080-byte room-entry routine in two scene members, their shared scene command and music picker, and the music caller in the MAIN overlay. The 160-byte resident routine that advances the mode after a room request also matches the US disc. The desktop player still executes that routine on the guest CPU. [Room matching record](provenance/scene-room-entry.json) The resident sound mixer recalculates volume and pan for up to eight active sound slots. Its compiled C matches all 484 bytes of the US function. This source match adds no entry to the desktop player’s native dispatch table. [Sound matching record](provenance/sound-events.json)
+
+The 208-byte slot search and 596-byte placement constructor match both US bedroom scene members. The search selects a free slot from a pool of 96 actors. The constructor fills that slot and calls its setup routine. During an ordinary File 1 load, the original returned from the first type-360 setup call into this constructor at `8012C9C4`. The desktop player has yet to demonstrate this return in ordinary play. [Room matching record](provenance/scene-room-entry.json)
+
+For the first type-360 room actor, the C sources match the 156-byte dispatcher at `8017FF74`, its 256-byte initial state at `80180808` and the 36-byte allocation wrapper it calls. All three match in both US scene members. If the work allocation succeeds, the function uses the current phase to choose its setup and advances the actor state. The 548-byte fade routine at `8017FD50` also matches both members. It builds a shaded rectangle and links it between two draw-mode packets in the active ordering table. The 176-byte early-story handler at `80180010` redraws the fade during its countdown. When the game signals readiness, it sets story progress to 10, clears four event flags and advances the actor. The command runner repeats while the signed status is 3. The first command in the room launch sequence installs a callback and yields with status 5. A later 68-byte actor state decrements its timer. When the timer runs out, it sets story progress to 2 and requests room 3002. The matched request function stores the room descriptor’s address for the loader. The loader tries the pending request before the queued one, copies the selected 36-byte descriptor, and uses its tag to choose the room resource. The original US File 1 run reached the furnished bedroom. The port has yet to display that room in ordinary play. [Room matching record](provenance/scene-room-entry.json)
+
+The US game's saved-room setup calls a routine that converts relative offsets in textured polygon packets into addresses. The newly reconstructed C matches all 616 bytes of that routine in two scene members. Six further functions on the same File 1 route match existing public C, including allocation of a scene record and clearing event flag 303. Together these seven routines account for 944 distinct bytes in each member. [Saved-room matching record](provenance/scene-room-entry.json)
+
+The saved-room loader calls a scene list reader after two resets. Existing C for the reader and its caller also matches the two SC01 scene members, adding four verified region entries and 624 bytes. The matching check uses the original US disc image.
+
+The field initializer and its event-table helper also match all 808 bytes in each of those scene members. On the File 1 route the initializer sets up the room record, calls the table helper, and returns to the scene command. In mode zero the helper tests five game event flags to choose which tables to install.
 
 The preceding checkpoint added ten Giant Forest routines that set bits in the player status word and ten that read those bits. All 320 bytes match the US overlay. The setters preserve the other bits, and the queries return the masked bit in its original position. The desktop player continues to execute these routines on the guest CPU to preserve memory access timing. [Giant Forest matching record](provenance/scene-objects.json)
 
@@ -180,10 +209,13 @@ on black before the opening moon at interrupt target `0x800338D0`. The
 original game reached controllable forest room 3008. A cold reload following
 a new save and testing on physical Windows hardware remain open.
 
-Compiled host code now handles the opening movie’s output callback. In an
-ordinary Linux run, it processed 1,760 strips across 88 complete movie frames
-and reached the title prompt. The decoder and GPU service calls still execute
-on the guest CPU. The first two frames matched the original strip for strip.
+An earlier hybrid Linux player reached the title after its host callback processed
+1,760 strips across 88 movie frames. The first two frames matched the original
+strip for strip. That path used guest CPU services for decoding and GPU uploads.
+The separate clean-room replacement has been checked against one recorded frame.
+Ordinary playback with that replacement is still unverified. The 564-byte output
+callback appears in two overlapping disc members and counts once in the
+[opening movie registry](provenance/opening-movie.json).
 
 Download the source from GitHub’s **Code** menu and follow the Linux build,
 disc verification and launch instructions below. Windows x64 users can
@@ -963,6 +995,11 @@ The public build uses a curated main-executable registry at
 no-disc smoke test. The existing native-lane allowlist and compiler checks
 decide which routines the player can run as host code. Other paths use the
 interpreter. See [EXCLUDED.md](EXCLUDED.md) for the source inclusion criteria.
+
+The actor work-record reset at `8001C9D0` writes 38 of the record's 132
+bytes and leaves 200 in the return register. Its 16 stores take effect at
+different times. The general player uses guest execution for this routine
+so a device event can observe a partially initialized record.
 
 The 72-byte graphics startup wrapper calls three graphics services, clears its
 152-byte state and runs subsystem initialization. A host test checks call order

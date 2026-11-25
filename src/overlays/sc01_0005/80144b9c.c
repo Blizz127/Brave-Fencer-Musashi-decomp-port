@@ -1,24 +1,18 @@
 /* Room entry and point selection in the scene overlay.
  * Object layouts use the original 32-bit pointer ABI.
  */
-typedef void (*Callback)(void);
+#include "room_descriptor.h"
 
-typedef struct RoomPoint {
-    unsigned char unknown00[3];
-    unsigned char worldValue;
-    unsigned char unknown04[4];
-    unsigned int roomValue;
-    unsigned char *sceneData;
-    unsigned short x, y, z, facing;
-    Callback activate;
-    unsigned char unknown1C[4];
-    Callback finish;
-} RoomPoint;
+/* This matching routine calls overlay code and follows guest pointers in
+ * Room, Scene and RoomEntry. Only the original 32-bit target binds them. */
+#if defined(__mips__) && !defined(__LP64__) && !defined(__linux__) && \
+    (!defined(__SIZEOF_POINTER__) || __SIZEOF_POINTER__ == 4)
+typedef void (*Callback)(void);
 
 /* These are the portions of each game object used during room entry. */
 typedef struct {
     unsigned char unknown00[4];
-    RoomPoint *activePoint;
+    RoomTransferDescriptor *activePoint;
     unsigned int flags;
     unsigned int pointValue;
     unsigned char unknown10[4];
@@ -28,7 +22,7 @@ typedef struct {
     unsigned char unknown17;
     unsigned char restoreFlag;
     unsigned char unknown19[3];
-    RoomPoint **points;
+    RoomTransferDescriptor **points;
     unsigned short savedX, savedY, savedZ, savedFacing;
 } Room;
 
@@ -97,7 +91,7 @@ typedef struct {
     int fieldA0, fieldA4, fieldA8;
     unsigned char fieldAC[8];
     int fieldB4, fieldB8, fieldBC, fieldC0, fieldC4;
-    RoomPoint **points;
+    RoomTransferDescriptor **points;
     unsigned char unknownCC[8];
     int fieldD4, fieldD8;
 } RoomEntry;
@@ -108,7 +102,6 @@ extern unsigned char D_8010F5C8[];
 extern RoomState D_800AF630;
 extern Room D_800AE6A8;
 extern World D_80126948;
-extern RoomPoint D_80078E50;
 extern int D_8011DB14, D_8011DB1C, D_80128150;
 extern void func_80019018(void), func_80018E78(void), func_8002AB64(void);
 extern RoomEntry *func_801457A4(int);
@@ -160,8 +153,8 @@ void func_80144B9C(void)
     Room *room = &D_800AE6A8;
     World *world = &D_80126948;
     RoomEntry *entry;
-    RoomPoint *point;
-    RoomPoint **points;
+    RoomTransferDescriptor *point;
+    RoomTransferDescriptor **points;
     short index;
     Callback finish;
     int fresh;
@@ -188,11 +181,11 @@ void func_80144B9C(void)
     } else {
         point = points[room->pointIndex];
     }
-    room->pointValue = point->roomValue;
+    room->pointValue = point->room_value;
     room->pending = 0;
     scene->field4D = 0;
-    if (point->sceneData != D_8010F5C8) {
-        scene->pointData = point->sceneData;
+    if ((unsigned char *)point->scene_data != D_8010F5C8) {
+        scene->pointData = (unsigned char *)point->scene_data;
     }
 
     if (state->modeA == 0x1000 && state->modeB == 0x1000) {
@@ -216,18 +209,18 @@ void func_80144B9C(void)
     if (state->modeA == 0x1000
         && (state->modeB == 0x1000 || state->modeB == 0x2000)
         && !fresh) {
-        point->activate();
+        ((Callback)point->activate)();
         func_8012A1BC();
     } else {
         if (state->modeA == 0x1000 && state->modeB == 0x3000) {
-            world->pointValue = point->worldValue;
+            world->pointValue = point->world;
         } else {
             world->pointValue = 0;
         }
-        point->activate();
+        ((Callback)point->activate)();
     }
     if (state->roomId == 0x3069) {
-        world->pointValue = point->worldValue;
+        world->pointValue = point->world;
     }
     D_801151D4 = world;
     func_8002850C(entry->ambient[0], entry->ambient[1], entry->ambient[2]);
@@ -304,7 +297,7 @@ void func_80144B9C(void)
     D_80127520 = entry->fieldC4;
     D_801151D8 = 0;
     D_8011DB28 = 0;
-    finish = point->finish;
+    finish = (Callback)point->finish;
     finish();
     func_8013D3D4(entry->fieldA0, entry->fieldA4);
     func_8002D4C8(30, 0);
@@ -319,3 +312,4 @@ void func_80144B9C(void)
         func_8012A110();
     }
 }
+#endif

@@ -13,6 +13,13 @@ option(MUSASHI_USE_VENDOR_BFM
     "Prefer cleaned house-style matched leaves reconciled with vendor/bfm-decomp (Druthulu)"
     OFF)
 
+# The public distribution builds a separate disc-backed desktop player
+# when its source tree excludes the historical CPU implementation.
+if(MUSASHI_BUILD_PC_PORT AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/pc_port/mips_formatter.c")
+    add_subdirectory(preview)
+    return()
+endif()
+
 # PsyCross (MIT) reimplements libgpu, libgte, libspu, libcd, libetc, libapi and
 # libpad for PC. It is vendored at a pinned commit by tools/fetch_toolchains.sh
 # and its checkout is ignored.
@@ -337,12 +344,16 @@ if(MUSASHI_BUILD_PC_PORT)
         target_link_libraries(musashi_pc_smoke PRIVATE musashi_pc_port)
         add_test(NAME musashi_pc_smoke COMMAND musashi_pc_smoke)
     endif()
-    add_executable(musashi_entry_cpu_probe tests/entry_cpu_probe.c)
-    target_compile_features(musashi_entry_cpu_probe PRIVATE c_std_99)
-    target_link_libraries(musashi_entry_cpu_probe PRIVATE musashi_pc_port)
-    add_test(NAME entry_cpu_boundary COMMAND musashi_entry_cpu_probe
-        ${CMAKE_CURRENT_SOURCE_DIR}/extracted/disc/files/SLUS_007.26)
-    set_tests_properties(entry_cpu_boundary PROPERTIES SKIP_RETURN_CODE 77)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/entry_cpu_probe.c")
+        add_executable(musashi_entry_cpu_probe tests/entry_cpu_probe.c)
+        target_compile_features(musashi_entry_cpu_probe PRIVATE c_std_99)
+        target_link_libraries(musashi_entry_cpu_probe PRIVATE musashi_pc_port)
+        add_test(NAME entry_cpu_boundary COMMAND musashi_entry_cpu_probe
+            ${CMAKE_CURRENT_SOURCE_DIR}/extracted/disc/files/SLUS_007.26)
+        set_tests_properties(entry_cpu_boundary PROPERTIES SKIP_RETURN_CODE 77)
+    else()
+        message(STATUS "Private entry CPU probe source absent: entry_cpu_boundary is unavailable")
+    endif()
 
     add_executable(musashi_game_main_entry_probe tests/game_main_entry_probe.c)
     target_compile_features(musashi_game_main_entry_probe PRIVATE c_std_99)
@@ -789,9 +800,14 @@ if(MUSASHI_BUILD_PC_PORT)
                     ${CMAKE_CURRENT_SOURCE_DIR}/tools/psyq_manifest.py
                     ${CMAKE_CURRENT_SOURCE_DIR}/config/psyq_ranges.txt
                     ${CMAKE_CURRENT_SOURCE_DIR}/config/lane_own_code_allow.txt
+                    ${CMAKE_CURRENT_SOURCE_DIR}/include/actor_work_reset.h
                     ${CMAKE_CURRENT_SOURCE_DIR}/include/controller_report.h
                     ${CMAKE_CURRENT_SOURCE_DIR}/include/primitive_ordering_table.h
                     ${CMAKE_CURRENT_SOURCE_DIR}/include/render_geometry.h
+                    ${CMAKE_CURRENT_SOURCE_DIR}/include/saved_room_actor.h
+                    ${CMAKE_CURRENT_SOURCE_DIR}/include/scene_command.h
+                    ${CMAKE_CURRENT_SOURCE_DIR}/include/room_descriptor.h
+                    ${CMAKE_CURRENT_SOURCE_DIR}/include/room_transfer.h
                     ${MUSASHI_LANE_SOURCES}
                     ${MUSASHI_LANE_HOOK_SOURCES}
                     ${CMAKE_CURRENT_SOURCE_DIR}/pc_port/platform/psyq/bfm_psyq_compat.def
@@ -819,7 +835,7 @@ if(MUSASHI_BUILD_PC_PORT)
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_script_variable_fixture.py
                     ${script_test_dir} ${MUSASHI_CLANG} ${CMAKE_AR} "${MUSASHI_LANE_HOST_TARGET}"
             DEPENDS tests/generate_script_variable_fixture.py tools/native_lane_gen.py
-                    provenance/native-main.json config/psyq_ranges.txt include/controller_report.h include/primitive_ordering_table.h include/render_geometry.h
+                    provenance/native-main.json config/psyq_ranges.txt include/controller_report.h include/primitive_ordering_table.h include/render_geometry.h include/room_descriptor.h
                     ${MUSASHI_LANE_SOURCES} ${MUSASHI_LANE_HOOK_SOURCES} ${MUSASHI_LANE_SYMBOLS}
             VERBATIM)
         add_executable(musashi_script_variable_probe tests/script_variable_probe.c

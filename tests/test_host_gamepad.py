@@ -25,3 +25,19 @@ def test_two_virtual_sdl_controllers(tmp_path):
     if result.returncode == 77:
         pytest.skip(result.stdout.strip())
     assert result.returncode == 0, result.stderr
+
+
+def test_keyboard_edges_reach_complete_controller_polls(tmp_path, monkeypatch):
+    config = shutil.which("sdl2-config")
+    if config is None:
+        pytest.skip("SDL2 development files are required")
+    flags = shlex.split(subprocess.check_output([config, "--cflags", "--libs"], text=True))
+    exe = tmp_path / "keyboard_poll"
+    subprocess.run([
+        "cc", "-std=c99", "-Wall", "-Wextra", "-Werror",
+        "-I", str(ROOT / "pc_port/include"), str(ROOT / "tests/sdl_keyboard_poll_probe.c"),
+        str(ROOT / "pc_port/host_gamepad.c"), str(ROOT / "pc_port/sio_controller.c"),
+        "-o", str(exe), *flags,
+    ], check=True)
+    monkeypatch.setenv("SDL_VIDEODRIVER", "dummy")
+    subprocess.run([str(exe)], check=True, timeout=15)

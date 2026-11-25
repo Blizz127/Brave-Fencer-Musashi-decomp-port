@@ -17,6 +17,7 @@
  *
  * Build: -DBFM_PLAT_WITH_SDL_INPUT, `sdl2-config --cflags --libs`.
  * Status: compile-checked; runs once SDL2 is installed. */
+#include "../../include/musashi_sdl_keyboard.h"
 #include "../bfm_plat.h"
 #include "../bfm_plat_console_ui.h"
 #include "../bfm_plat_ini.h"
@@ -42,9 +43,56 @@ typedef struct SdlInput {
     int analog;
     volatile int rescan;
     int text_active;
+    MusashiSdlKeyboard keyboard;
+    uint16_t physical_buttons, unmodified_buttons;
 } SdlInput;
 
 static SdlInput state;
+
+static int game_key(const BfmPlatBinding *b) {
+    return !b->is_hotkey && b->port == 0 && CODE_KIND(b->host_code) == CODE_KEY;
+}
+
+static void bind_game_keys(SdlInput *s) {
+    uint16_t bindings[SDL_NUM_SCANCODES] = {0};
+    for (size_t i = 0; i < s->binding_count; ++i) {
+        const BfmPlatBinding *b = &s->bindings[i];
+        if (game_key(b) && CODE_INDEX(b->host_code) < SDL_NUM_SCANCODES)
+            bindings[CODE_INDEX(b->host_code)] |= b->mask;
+    }
+    if (s->keyboard.watching) musashi_sdl_keyboard_set_bindings(&s->keyboard, bindings);
+    else musashi_sdl_keyboard_open(&s->keyboard, bindings);
+}
+
+static void game_keyboard_enable(int enabled) {
+    if (enabled && !state.keyboard.watching) {
+        bind_game_keys(&state);
+    } else if (!enabled && state.keyboard.watching) {
+        musashi_sdl_keyboard_close(&state.keyboard);
+    }
+}
+
+static void game_keyboard_suppress(int suppressed) {
+    if (state.keyboard.watching)
+        musashi_sdl_keyboard_suppress(&state.keyboard, suppressed);
+}
+
+static uint16_t game_keyboard_sample(uint16_t frame_buttons) {
+    if (!state.keyboard.watching) return frame_buttons;
+    /* Keep every button changed by the frame's mod handlers. Physical
+     * buttons remain held even when an overlapping keyboard press ends. */
+    uint16_t overrides = state.unmodified_buttons ^ frame_buttons;
+    uint16_t buttons = state.physical_buttons | musashi_sdl_keyboard_sample(&state.keyboard);
+    return (buttons & ~overrides) | (frame_buttons & overrides);
+}
+
+static void game_keyboard_complete(void) {
+    if (state.keyboard.watching) musashi_sdl_keyboard_complete(&state.keyboard);
+}
+
+static const BfmPlatGameKeyboard game_keyboard = {
+    game_keyboard_enable, game_keyboard_suppress, game_keyboard_sample, game_keyboard_complete
+};
 
 static int32_t resolve(void *user, const char *device, const char *name) {
     (void)user;
@@ -132,11 +180,13 @@ static int sdl_open(void *self) {
                                         MAX_BINDINGS, &s->binding_count, NULL);
     SDL_AddEventWatch(watch, s);
     scan_pads(s);
+    bfm_plat_input_attach_keyboard(&game_keyboard);
     return BFM_PLAT_OK;
 }
 
 static void sdl_close(void *self) {
     SdlInput *s = (SdlInput *)self;
+    game_keyboard_enable(0);
     SDL_DelEventWatch(watch, s);
     if (s->text_active) SDL_StopTextInput();
     close_pads(s);
@@ -201,9 +251,15 @@ static int sdl_poll(void *self, BfmPlatPad pads[BFM_PLAT_PAD_PORTS],
         if (s->text_active && CODE_KIND(b->host_code) == CODE_KEY &&
             !(b->is_hotkey && b->mask == BFM_HOTKEY_CONSOLE))
             continue;
+        if (s->keyboard.watching && game_key(b)) continue;
         if (!active_code(s, keys, nkeys, b)) continue;
         if (b->is_hotkey) *hotkeys |= b->mask;
         else if (b->port < BFM_PLAT_PAD_PORTS) pads[b->port].buttons |= b->mask;
+    }
+    if (s->keyboard.watching) {
+        s->physical_buttons = pads[0].buttons;
+        pads[0].buttons |= musashi_sdl_keyboard_peek(&s->keyboard);
+        s->unmodified_buttons = pads[0].buttons;
     }
     return BFM_PLAT_OK;
 }
@@ -218,6 +274,7 @@ static int sdl_set_bindings(void *self, const BfmPlatBinding *b, size_t n) {
             return BFM_PLAT_INVALID;
     if (n) memcpy(s->bindings, b, n * sizeof *b);
     s->binding_count = n;
+    if (s->keyboard.watching) bind_game_keys(s);
     return BFM_PLAT_OK;
 }
 

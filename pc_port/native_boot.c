@@ -24,6 +24,7 @@
 #include "musashi_bios_backup_unit.h"
 #include "musashi_bios_input.h"
 #include "musashi_source_clock.h"
+#include "musashi_mdu.h"
 #include "musashi_timer2.h"
 #include "musashi_device_epoch.h"
 #include "musashi_gpu_psycross.h"
@@ -68,6 +69,7 @@ static int log_sample(uint64_t *counter, uint64_t first, uint64_t stride) {
 #ifdef MUSASHI_WITH_BFM_PLAT
 #include "bfm_plat_gpu_bridge.h"
 #include "bfm_plat_input.h"
+#include "bfm_plat_console_ui.h"
 #include "bfm_plat_timing.h"
 #include "bfm_plat_audio.h"
 #include "musashi_plat_audio_sink.h"
@@ -190,6 +192,7 @@ typedef struct NativeBoot {
     MusashiBiosInputDevice bios_input_device;
     MusashiBiosCallbackFrame bios_callback_frame;
     MusashiSourceClock source_clock;
+    MusashiMduTiming mdu;
     uint64_t cd_irq_production_limit;
     MusashiExecutionClock execution_clock;
     MusashiTimer2 timer2;
@@ -288,6 +291,7 @@ static int select_opening_overlay(NativeBoot *boot) {
 
 static int native_devices_shutdown(NativeBoot *boot) {
     if (boot->irq.scheduler.installed) return 0;
+    musashi_host_keyboard_close();
     musashi_host_gamepad_close();
 #ifdef MUSASHI_WITH_BFM_PLAT
     musashi_player_card_close(&boot->file_card);
@@ -1120,32 +1124,24 @@ static void spiral_climb_input(NativeBoot *boot, uint16_t *sio_clear, uint16_t *
     if (stick_ly) *stick_ly = stick_y[heading];
 }
 
+static void complete_keyboard_poll(void *userdata) {
+    (void)userdata;
+#ifdef MUSASHI_WITH_BFM_PLAT
+    if (g_plat_input_on) {
+        bfm_plat_input_complete_pad_poll();
+        return;
+    }
+#endif
+    musashi_host_keyboard_complete();
+}
+
 static int sample_keyboard_pad(void *userdata, uint16_t *buttons) {
     NativeBoot *boot = userdata;
-    const Uint8 *keys;
-    int count;
-    unsigned i;
     uint16_t sampled = 0xffffu;
     uint8_t stick_rx = 0x80u;
     uint8_t stick_ry = 0x80u;
     uint8_t stick_lx = 0x80u;
     uint8_t stick_ly = 0x80u;
-    /* Native keyboard policy follows the pinned PsyCross default mapping.
-     * Digital L3/R3 remain high. Sample real key state once at PAD byte01;
-     * neither a missing SDL context nor a failed provider means neutral input. */
-    static const struct { SDL_Scancode key; unsigned bit; } mapping[] = {
-        {SDL_SCANCODE_SPACE,0}, {SDL_SCANCODE_RETURN,3},
-        {SDL_SCANCODE_UP,4}, {SDL_SCANCODE_RIGHT,5},
-        {SDL_SCANCODE_DOWN,6}, {SDL_SCANCODE_LEFT,7},
-        {SDL_SCANCODE_W,4}, {SDL_SCANCODE_D,5},
-        {SDL_SCANCODE_S,6}, {SDL_SCANCODE_A,7},
-        {SDL_SCANCODE_LCTRL,8}, {SDL_SCANCODE_RCTRL,9},
-        {SDL_SCANCODE_LSHIFT,10}, {SDL_SCANCODE_RSHIFT,11},
-        {SDL_SCANCODE_Z,12}, {SDL_SCANCODE_V,13},
-        {SDL_SCANCODE_C,14}, {SDL_SCANCODE_X,15},
-        {SDL_SCANCODE_U,12}, {SDL_SCANCODE_I,13},
-        {SDL_SCANCODE_K,14}, {SDL_SCANCODE_J,15}
-    };
     if (!buttons) return 0;
     /* SIO write8 treats a failed sampler as a hardware fault and latches
      * sio->faulted permanently. A missing GL context is not a disconnected
@@ -1167,7 +1163,7 @@ static int sample_keyboard_pad(void *userdata, uint16_t *buttons) {
         /* MUSASHI_INPUT=bfm_plat: the platform layer's bindings (keyboard,
          * GameController, scripted pads), polled once per VBlank. */
         BfmPlatPad pad;
-        if (bfm_plat_input_pad(0, &pad) == 0 && pad.connected) {
+        if (bfm_plat_input_sample_gamepad(&pad) == 0 && pad.connected) {
             sampled = (uint16_t)~pad.buttons;
             stick_lx = pad.lx; stick_ly = pad.ly;
             stick_rx = pad.rx; stick_ry = pad.ry;
@@ -1175,14 +1171,7 @@ static int sample_keyboard_pad(void *userdata, uint16_t *buttons) {
     } else
 #endif
     {
-        keys = SDL_GetKeyboardState(&count);
-        if (!keys) return 1;
-        for (i = 0; i < sizeof(mapping) / sizeof(mapping[0]); ++i) {
-            if ((int)mapping[i].key >= count) return 0;
-            if (keys[mapping[i].key]) sampled &= (uint16_t)~(1u << mapping[i].bit);
-        }
-        if ((SDL_GetModState() & KMOD_RSHIFT) != 0)
-            sampled &= (uint16_t)~(1u << 11);
+        sampled &= (uint16_t)~musashi_host_keyboard_sample();
 
         MusashiHostGamepad pad = musashi_host_gamepad_sample();
         sampled &= pad.buttons;
@@ -1737,6 +1726,10 @@ static int epoch_video_edge(void *userdata, uint64_t sequence, uint64_t cycle) {
 #ifdef MUSASHI_WITH_BFM_PLAT
     else
         dev_menu_vblank(boot, 0);
+    if (g_plat_input_on)
+        bfm_plat_input_keyboard_modal(musashi_dev_menu_is_open());
+    else
+        musashi_host_keyboard_suppress(musashi_dev_menu_is_open() || bfm_plat_console_ui_is_open());
 #endif
     if (boot->scene1_reached && boot->gpu.display.width == 320u && boot->gpu.display.height == 240u) {
         if (boot->gte.write_count > 800u) {
@@ -2095,8 +2088,9 @@ static int advance_source_clock(void *userdata, uint32_t cycles) {
         if (boot->sio.cycle > base) base = boot->sio.cycle;
         if (base > UINT64_MAX - cycles) return 0;
         cycle = base + cycles;
-        return musashi_timer2_advance(&boot->timer2, cycle) &&
-               musashi_sio_controller_advance(&boot->sio, cycle);
+        if (!musashi_timer2_advance(&boot->timer2, cycle)) return 0;
+        musashi_mdu_elapsed(&boot->mdu, cycles);
+        return musashi_sio_controller_advance(&boot->sio, cycle);
     }
     boot->cd_irq_production_limit = 0;
     if (boot->irq.cd_frame.busy && boot->cd_drive) {
@@ -2233,6 +2227,12 @@ static int cpu_write_status(void *userdata,const MusashiCpuContext *context,uint
     if (accepted) fprintf(stderr,"native_boot: CPU_STATUS_WRITE pc=%08x value=%08x\n",context->pc,value);
     return accepted;
 }
+static void cpu_gte_retired(void *userdata, const void *identity, uint32_t pc,
+                            uint32_t word, int ordinary) {
+    NativeBoot *boot = userdata;
+    musashi_gte_owner_cpu_retired(&boot->gte, identity, pc, word, ordinary);
+}
+
 static int cpu_write_control(void *userdata,const MusashiCpuContext *context,uint32_t selector,uint32_t value) {
     NativeBoot *boot=userdata;
     int accepted=musashi_gte_owner_write_control(&boot->gte,context,selector,value);
@@ -2546,9 +2546,11 @@ static int run_backup_unit(void *userdata, int32_t *guest_result) {
         /* Under the guest clock the suspended CPU is spinning in the BIOS
          * card wait, so each poll spends guest cycles; nothing else would
          * move device time forward. */
-        if (boot->continuation != continuation ||
-            !advance_epoch(boot, boot->guest_clock ? 1024u : 0u) ||
-            !musashi_psycross_irq_scheduler_dispatch_pending(&boot->irq.scheduler, continuation))
+        const uint32_t spin_cycles = boot->guest_clock ? 1024u : 0u;
+        if (boot->continuation != continuation || !advance_epoch(boot, spin_cycles))
+            return 0;
+        musashi_mdu_elapsed(&boot->mdu, spin_cycles);
+        if (!musashi_psycross_irq_scheduler_dispatch_pending(&boot->irq.scheduler, continuation))
             return 0;
         if ((Uint32)(SDL_GetTicks() - started) >= 10000u) {
             fputs("native_boot: backup-unit wait observation timed out\n", stderr);
@@ -4398,7 +4400,7 @@ int main(int argc, char **argv) {
     boot.cpu_transfer=(MusashiCpuTransferDevice){
         .userdata=&boot,.read_status=cpu_read_status,.write_status=cpu_write_status,
         .write_control=cpu_write_control,.write_data=cpu_write_gte_data,.read_data=cpu_read_gte_data,
-        .read_control=cpu_read_control,.command=cpu_gte_command
+        .read_control=cpu_read_control,.command=cpu_gte_command,.gte_retired=cpu_gte_retired
     };
     boot.image_device=(MusashiBiosImageDevice){&boot,musashi_bios_exception_intersects,
         image_read,image_write,image_table,image_publish};
@@ -4463,6 +4465,12 @@ int main(int argc, char **argv) {
     }
     {
         const MusashiSioPadDevice pad = {&boot, epoch_owner, sample_keyboard_pad, raise_sio_irq};
+        boot.sio.poll_complete = complete_keyboard_poll;
+#ifdef MUSASHI_WITH_BFM_PLAT
+        if (g_plat_input_on) bfm_plat_input_gameplay_keyboard(1);
+        else
+#endif
+            musashi_host_keyboard_open();
         if (!musashi_sio_controller_bind_digital_pad(&boot.sio, &pad)) {
             fputs("native_boot: fresh digital pad binding refused\n", stderr);
             musashi_gpu_psycross_shutdown(&boot.gpu_renderer);
@@ -4697,8 +4705,13 @@ int main(int argc, char **argv) {
         } else fputs("Memory card slot 1 unavailable: file service could not start.\n", stderr);
     }
 #endif
+    if (!musashi_mdu_bind(&boot.mdu, &boot.memory, &boot.execution_clock, &boot.source_clock.cycles)) {
+        fputs("native_boot: CPU timing owner refused before CRT\n", stderr);
+        return 2;
+    }
     status = musashi_boot_run_entry_with_devices(&boot.memory, 0, &boot.startup_devices,
         console_bytes, NULL, observe_entry, &boot, &entry_stop);
+    musashi_mdu_unbind(&boot.mdu);
 #ifdef MUSASHI_WITH_BFM_PLAT
     if (boot.close_requested || (!host_stop_signal && status == MUSASHI_RESETGRAPH_PREFIX_COMPLETE)) {
         if (!musashi_player_card_finish(&boot.file_card)) {

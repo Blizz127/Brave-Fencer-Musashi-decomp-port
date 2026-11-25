@@ -78,6 +78,20 @@ uint32_t bfm_plat_input_hotkeys(void);          /* held this frame */
 uint32_t bfm_plat_input_hotkeys_pressed(void);  /* rising edge this frame */
 int bfm_plat_input_set_bindings(const BfmPlatBinding *b, size_t n);
 
+/* Optional backend support for keyboard transitions between guest pad polls.
+ * Ordinary input_pad reads keep the frame that mods last processed. */
+typedef struct BfmPlatGameKeyboard {
+    void (*enable)(int enabled);
+    void (*suppress)(int suppressed);
+    uint16_t (*sample)(uint16_t frame_buttons);
+    void (*complete)(void);
+} BfmPlatGameKeyboard;
+void bfm_plat_input_attach_keyboard(const BfmPlatGameKeyboard *keyboard);
+void bfm_plat_input_gameplay_keyboard(int enabled);
+void bfm_plat_input_keyboard_modal(int suppressed);
+int bfm_plat_input_sample_gamepad(BfmPlatPad *out);
+void bfm_plat_input_complete_pad_poll(void);
+
 /* PS1 wire format: out[0]=0x41 digital / 0x73 analog, out[1]=0x5A,
  * out[2..3] = ~buttons (lo, hi), out[4..7] = rx, ry, lx, ly (analog only).
  * Returns bytes written (0 if disconnected). */

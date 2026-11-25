@@ -1,230 +1,362 @@
-/* Synthetic thread/context fixtures; equations independently model the selected
- * ROM's saved Status manipulation. No emulator state or host BIOS completion. */
 #include "musashi_cpu_status.h"
-#include <assert.h>
 #include <stdio.h>
 #include <string.h>
-typedef struct Fixture { uint64_t thread; MusashiCpuStatus *owner; int reenter; } Fixture;
-static uint64_t thread_id(void *p) {
-    Fixture *f = p;
-    if (f->reenter) {
-        MusashiCpuStatusSnapshot s;
-        f->reenter = 0;
-        assert(!musashi_cpu_status_snapshot(f->owner, &s));
+
+#define REQUIRE(condition) do { \
+    if (!(condition)) { \
+        fprintf(stderr, "CPU status line %d: %s\n", __LINE__, #condition); \
+        return 0; \
+    } \
+} while (0)
+
+enum { PENDING = 1u << 10, ENABLE = 1, MODE_BITS = 63, SYSCALL_FUNCTION = 12 };
+static const uint32_t cu2 = UINT32_C(1) << 30;
+
+typedef struct Fixture {
+    uint64_t thread;
+    uint32_t registers[32];
+    MusashiCpuStatus *status;
+    MusashiCpuContext context;
+    MusashiCpuExceptionToken token;
+} Fixture;
+
+static uint64_t current_thread(void *user)
+{
+    return *(const uint64_t *)user;
+}
+
+static int open_frame(Fixture *f, uint32_t status,
+                      MusashiCpuContextProvenance provenance, int delay)
+{
+    memset(f, 0, sizeof(*f));
+    f->thread = 13;
+    for (unsigned i = 1; i < 32; ++i)
+        f->registers[i] = (i + 61u) * 713u;
+    f->context.identity = f;
+    f->context.gpr = f->registers;
+    f->context.provenance = provenance;
+    if (provenance == MUSASHI_CPU_CONTEXT_SOURCE) {
+        f->context.pc = 91524u;
+        f->context.npc = f->context.pc + (delay ? 156u : 4u);
+        f->context.branch_pc = delay ? f->context.pc - 4u : 0u;
+        f->context.delay_slot = delay;
+        f->context.instruction_valid = 1;
+        /* The IRQ path only records the fetched word. */
+        f->context.instruction = 613u * 91u;
     }
-    return f->thread;
+    return musashi_cpu_status_open_fixture(&f->status, current_thread, &f->thread, status);
 }
-static MusashiCpuContext context(uint32_t *g, int *identity) {
-    MusashiCpuContext c;
-    memset(&c, 0, sizeof c);
-    c.identity = identity; c.gpr = g;
-    c.pc = 0x8005cf0c; c.npc = c.pc + 4;
-    c.instruction = 12; c.instruction_valid = 1;
-    c.provenance = MUSASHI_CPU_CONTEXT_SOURCE;
-    return c;
+
+/* Each level of the MIPS mode stack contains a pair of bits. */
+static unsigned mode_pair(uint32_t status, unsigned place)
+{
+    return (status / place) % 4u;
 }
-static uint32_t pushed(uint32_t s) {
-    uint32_t upper = s & ~63u;
-    return upper | ((s % 16u) * 4u);
-}
-static uint32_t returned(uint32_t s) {
-    return (s & ~15u) | ((s / 4u) % 16u);
-}
-static void equations(void) {
-    unsigned low, enabled, selector;
-    for (low = 0; low < 64; ++low) for (enabled = 0; enabled < 2; ++enabled)
-    for (selector = 1; selector <= 2; ++selector) {
-        Fixture f = {7, NULL, 0}; uint32_t g[32] = {0}; int id;
-        uint32_t initial = 0x40000000u | low | (enabled << 10), readback;
-        MusashiCpuContext c = context(g, &id);
-        MusashiCpuExceptionToken t; MusashiCpuStatusSnapshot s;
-        int32_t result = 91; uint32_t saved = pushed(initial);
-        if (low & 2u) continue; /* user mode not owned by this profile */
-        g[1] = 0x12345678; g[2] = 0x87654321; g[3] = 0x11223344;
-        g[31] = 0x8004d178; g[4] = selector;
-        assert(musashi_cpu_status_open_fixture(&f.owner, thread_id, &f, initial));
-        assert(musashi_cpu_status_begin(f.owner, selector == 1 ?
-            MUSASHI_CPU_EXCEPTION_SYS1 : MUSASHI_CPU_EXCEPTION_SYS2, &c, 0x400, &t));
-        g[1] = 99; /* token owns entry snapshot, not a late reread */
-        assert(musashi_cpu_status_inspect(f.owner, &t, &s));
-        assert(s.gpr[1] == 0x12345678 && s.gpr[31] == 0x8004d178);
-        assert(s.sr == saved && s.saved_sr == saved);
-        assert(s.cause == 0x420 && s.epc == c.pc && s.cause_epc_valid);
-        assert(musashi_cpu_status_accept_kernel_entry(f.owner, &t));
-        assert(musashi_cpu_status_apply_sys(f.owner, &t, &result));
-        if (selector == 1) {
-            assert(result == ((initial & 0x401) == 0x401)); saved &= ~0x404u;
-        } else { assert(result == 91); saved |= 0x404; }
-        assert(musashi_cpu_status_finish(f.owner, &t));
-        assert(musashi_cpu_status_read(f.owner, &readback));
-        assert(readback == returned(saved));
-        assert(musashi_cpu_status_close(f.owner));
+
+static int round_trip(uint32_t initial, MusashiCpuExceptionKind kind,
+                      MusashiCpuContextProvenance provenance, int delay)
+{
+    Fixture f;
+    MusashiCpuStatusSnapshot state;
+    uint32_t owned_copy[32], observed;
+    int eligible;
+    int32_t result = 1783;
+    const int irq = kind == MUSASHI_CPU_EXCEPTION_IRQ;
+    const int source = provenance == MUSASHI_CPU_CONTEXT_SOURCE;
+    unsigned current = mode_pair(initial, 1), previous = mode_pair(initial, 4);
+    uint32_t entered = (initial & ~(uint32_t)MODE_BITS) + 16u * previous + 4u * current;
+    uint32_t to_restore = entered;
+    REQUIRE(open_frame(&f, initial, provenance, delay));
+    REQUIRE(musashi_cpu_status_read(f.status, &observed) && observed == initial);
+    REQUIRE(musashi_cpu_status_irq_eligible(f.status, &eligible));
+    REQUIRE(eligible == ((initial & (PENDING | ENABLE)) == (PENDING | ENABLE)));
+    if (!irq) {
+        f.registers[4] = (kind == MUSASHI_CPU_EXCEPTION_SYS1) ? 1u : 2u;
+        if (source)
+            f.context.instruction = SYSCALL_FUNCTION;
     }
-}
-static void normal(void) {
-    Fixture f = {7, NULL, 0}; uint32_t g[32] = {0}; int id, eligible;
-    MusashiCpuContext c = context(g, &id);
-    MusashiCpuExceptionToken t; MusashiCpuStatusSnapshot s; uint32_t sr;
-    assert(musashi_cpu_status_open(&f.owner, thread_id, &f));
-    assert(musashi_cpu_status_read(f.owner, &sr) && sr == 0x40000000);
-    assert(musashi_cpu_status_irq_eligible(f.owner, &eligible) && !eligible);
-    assert(musashi_cpu_status_set_enabled(f.owner, 1));
-    c.pc = 0x80012344; c.npc = 0x80023450; c.branch_pc = c.pc - 4;
-    c.delay_slot = 1; c.instruction = 0;
-    assert(musashi_cpu_status_begin(f.owner, MUSASHI_CPU_EXCEPTION_IRQ, &c, 0x400, &t));
-    assert(musashi_cpu_status_inspect(f.owner, &t, &s));
-    assert(s.sr == 0x40000404 && s.epc == 0x80012340 && s.cause == 0x80000400);
-    assert(!musashi_cpu_status_close(f.owner)); /* no fabricated RFE */
-    assert(musashi_cpu_status_accept_kernel_entry(f.owner, &t));
-    assert(musashi_cpu_status_finish(f.owner, &t));
-    assert(musashi_cpu_status_read(f.owner, &sr) && sr == 0x40000401);
-    c = context(g, &id); c.provenance = MUSASHI_CPU_CONTEXT_HOST_BIOS_SERVICE;
-    c.pc = c.npc = c.instruction = 0; c.instruction_valid = 0;
-    assert(musashi_cpu_status_begin(f.owner, MUSASHI_CPU_EXCEPTION_SYS1, &c, 0x400, &t));
-    assert(musashi_cpu_status_inspect(f.owner, &t, &s));
-    assert(!s.cause_epc_valid && !s.cause && !s.epc);
-    assert(musashi_cpu_status_accept_kernel_entry(f.owner, &t));
-    { int32_t prior = -1; assert(musashi_cpu_status_apply_sys(f.owner, &t, &prior)); assert(prior == 1); }
-    assert(musashi_cpu_status_finish(f.owner, &t));
-    assert(musashi_cpu_status_close(f.owner));
-    f.owner = NULL;
-    assert(musashi_cpu_status_open_fixture(&f.owner, thread_id, &f, 0x401));
-    c = context(g, &id); c.pc = 0x80047cdc; c.npc = c.pc + 4;
-    c.instruction = 0x40826000; g[2] = 0x40000401;
-    assert(musashi_cpu_status_write_source(f.owner, &c, g[2]));
-    assert(musashi_cpu_status_read(f.owner, &sr) && sr == g[2]);
-    c.pc = 0x800d3534; c.npc = c.pc + 4; c.instruction = 0x40896000;
-    g[9] = sr | 0x20000;
-    assert(musashi_cpu_status_write_source(f.owner, &c, g[9]));
-    assert(musashi_cpu_status_read(f.owner, &sr) && sr == 0x40020401);
-    assert(musashi_cpu_status_close(f.owner));
-}
-static void refusal(unsigned which) {
-    Fixture f = {7, NULL, 0}; uint32_t g[32] = {0}; int id, other;
-    MusashiCpuContext c = context(g, &id);
-    MusashiCpuExceptionToken t = {0}, bad; MusashiCpuStatusSnapshot before, after;
-    int32_t result = 313; int ok = 1; g[4] = 1;
-    assert(musashi_cpu_status_open(&f.owner, thread_id, &f));
-    assert(musashi_cpu_status_set_enabled(f.owner, 1));
-    if (which <= 10) {
-        assert(musashi_cpu_status_begin(f.owner, MUSASHI_CPU_EXCEPTION_SYS1, &c, 0, &t));
-        assert(musashi_cpu_status_snapshot(f.owner, &before));
-        bad = t;
-        switch (which) {
-        case 0: ok = musashi_cpu_status_finish(f.owner, &t); break;
-        case 1: ++bad.sequence; ok = musashi_cpu_status_inspect(f.owner, &bad, &after); break;
-        case 2: bad.identity = &other; ok = musashi_cpu_status_inspect(f.owner, &bad, &after); break;
-        case 3: bad.owner = NULL; ok = musashi_cpu_status_finish(f.owner, &bad); break;
-        case 4: ok = musashi_cpu_status_begin(f.owner, MUSASHI_CPU_EXCEPTION_SYS1, &c, 0, &bad); break;
-        case 5: ok = musashi_cpu_status_apply_sys(f.owner, &t, &result); break;
-        case 6: assert(musashi_cpu_status_accept_kernel_entry(f.owner, &t));
-                ok = musashi_cpu_status_accept_kernel_entry(f.owner, &t); break;
-        case 7: assert(musashi_cpu_status_accept_kernel_entry(f.owner, &t));
-                ok = musashi_cpu_status_finish(f.owner, &t); break;
-        case 8: assert(musashi_cpu_status_fault(f.owner, &t));
-                ok = musashi_cpu_status_finish(f.owner, &t); break;
-        case 9: ok = musashi_cpu_status_set_enabled(f.owner, 0); break;
-        case 10: f.reenter = 1; ok = musashi_cpu_status_snapshot(f.owner, &after); break;
-        }
-        assert(!ok && result == 313);
-        assert(musashi_cpu_status_snapshot(f.owner, &after));
-        assert(after.active && after.faulted && after.sr == before.sr);
-        assert(after.saved_sr == before.saved_sr && after.sequence == before.sequence);
-        assert(!memcmp(after.gpr, before.gpr, sizeof after.gpr));
-    } else {
-        assert(musashi_cpu_status_snapshot(f.owner, &before));
-        switch (which) {
-        case 11: c.delay_slot = 1; break;
-        case 12: c.instruction_valid = 0; break;
-        case 13: c.gpr = NULL; break;
-        case 14: c.identity = NULL; break;
-        case 15: c.pc |= 1; break;
-        case 16: c.instruction = 0; break;
-        case 17: g[4] = 2; break;
-        case 18: c.provenance = MUSASHI_CPU_CONTEXT_HOST_BIOS_SERVICE; break;
-        case 19: c.provenance = 0; break;
-        case 20: c.delay_slot = 2; break;
-        case 21: c.branch_pc = c.pc - 4; break;
-        }
-        assert(!musashi_cpu_status_begin(f.owner, MUSASHI_CPU_EXCEPTION_SYS1, &c, 0, &t));
-        assert(musashi_cpu_status_snapshot(f.owner, &after));
-        assert(after.sr == before.sr && !after.active && !t.owner);
+    memcpy(owned_copy, f.registers, sizeof(owned_copy));
+    if (current >= 2) {
+        REQUIRE(!musashi_cpu_status_begin(f.status, kind, &f.context, irq ? PENDING : 0, &f.token));
+        REQUIRE(musashi_cpu_status_close(f.status));
+        return 1;
     }
-    assert(musashi_cpu_status_close(f.owner));
-}
-static void boundaries(void) {
-    unsigned which;
-    for (which = 0; which < 16; ++which) {
-        Fixture f = {7, NULL, 0}; uint32_t g[32] = {0}; int id;
-        MusashiCpuContext c = context(g, &id);
-        MusashiCpuExceptionToken t = {0}, old; MusashiCpuStatusSnapshot s;
-        uint32_t value = 0x11111111; int ok = 1;
-        if (which == 0) { f.thread = 0;
-            assert(!musashi_cpu_status_open(&f.owner, thread_id, &f));
-            assert(!f.owner); continue; }
-        assert(musashi_cpu_status_open(&f.owner, thread_id, &f));
-        if (which == 1) {
-            f.thread = 8;
-            assert(!musashi_cpu_status_read(f.owner, &value));
-            assert(value == 0x11111111 && !musashi_cpu_status_close(f.owner));
-            f.thread = 7;
-            assert(musashi_cpu_status_snapshot(f.owner, &s) && !s.faulted);
-            assert(musashi_cpu_status_close(f.owner)); continue;
-        }
-        if (which == 2) {
-            assert(!musashi_cpu_status_open(&f.owner, thread_id, &f));
-            assert(musashi_cpu_status_close(f.owner)); continue;
-        }
-        if (which != 3) assert(musashi_cpu_status_set_enabled(f.owner, 1));
-        c.instruction = 0;
-        if (which == 4) c.instruction = 0x4a000001;
-        if (which == 5) c.instruction = 0x4bffffff;
-        if (which <= 6) {
-            ok = musashi_cpu_status_begin(f.owner, MUSASHI_CPU_EXCEPTION_IRQ,
-                &c, which == 6 ? 4u : 0x400u, &t);
-            assert(!ok && !t.owner);
-        } else if (which == 7) {
-            c.provenance = MUSASHI_CPU_CONTEXT_HOST_BIOS_SERVICE;
-            c.pc = c.npc = 0; c.instruction_valid = 0;
-            assert(musashi_cpu_status_begin(f.owner, MUSASHI_CPU_EXCEPTION_IRQ, &c, 0x400, &t));
-            assert(musashi_cpu_status_inspect(f.owner, &t, &s));
-            assert(!s.cause_epc_valid && !s.cause && !s.epc);
-            assert(musashi_cpu_status_accept_kernel_entry(f.owner, &t));
-            assert(musashi_cpu_status_finish(f.owner, &t));
-        } else if (which == 15) {
-            assert(musashi_cpu_status_begin(f.owner, MUSASHI_CPU_EXCEPTION_IRQ, &c, 0x400, &t));
-            assert(!musashi_cpu_status_finish(f.owner, &t));
-        } else if (which == 8 || which == 9) {
-            assert(musashi_cpu_status_begin(f.owner, MUSASHI_CPU_EXCEPTION_IRQ, &c, 0x400, &t));
-            assert(musashi_cpu_status_accept_kernel_entry(f.owner, &t));
-            if (which == 8) { int32_t v = 12;
-                assert(!musashi_cpu_status_apply_sys(f.owner, &t, &v) && v == 12);
-            } else {
-                assert(musashi_cpu_status_finish(f.owner, &t)); old = t;
-                assert(musashi_cpu_status_begin(f.owner, MUSASHI_CPU_EXCEPTION_IRQ, &c, 0x400, &t));
-                assert(t.sequence == old.sequence + 1);
-                assert(!musashi_cpu_status_finish(f.owner, &old));
-            }
-        } else if (which == 10) {
-            assert(musashi_cpu_status_begin(f.owner, MUSASHI_CPU_EXCEPTION_IRQ, &c, 0x400, &t));
-            assert(musashi_cpu_status_accept_kernel_entry(f.owner, &t));
-            assert(musashi_cpu_status_finish(f.owner, &t));
-            assert(!musashi_cpu_status_finish(f.owner, &t));
+    REQUIRE(musashi_cpu_status_begin(f.status, kind, &f.context, irq ? PENDING : 0, &f.token));
+    REQUIRE(f.token.owner == f.status && f.token.identity == &f && f.token.sequence != 0);
+    memset(f.registers, 0xcc, sizeof(f.registers));
+    REQUIRE(musashi_cpu_status_inspect(f.status, &f.token, &state));
+    REQUIRE(state.active && !state.faulted && !state.kernel_entered && !state.sys_applied);
+    REQUIRE(state.kind == kind && state.provenance == provenance && state.identity == &f);
+    REQUIRE(state.sr == entered && state.saved_sr == entered);
+    REQUIRE(memcmp(owned_copy, state.gpr, sizeof(owned_copy)) == 0);
+    REQUIRE(state.instruction_valid == source && state.delay_slot == delay);
+    REQUIRE(state.instruction == f.context.instruction && state.pc == f.context.pc);
+    REQUIRE(state.npc == f.context.npc && state.branch_pc == f.context.branch_pc);
+    REQUIRE(state.cause_epc_valid == source);
+    REQUIRE(state.epc == (delay ? f.context.branch_pc : f.context.pc));
+    uint32_t cause = irq ? PENDING : 8u * 4u;
+    if (delay)
+        cause |= UINT32_C(1) << 31;
+    REQUIRE(state.cause == (source ? cause : 0u));
+    REQUIRE(musashi_cpu_status_accept_kernel_entry(f.status, &f.token));
+    if (!irq) {
+        REQUIRE(musashi_cpu_status_apply_sys(f.status, &f.token, &result));
+        if (kind == MUSASHI_CPU_EXCEPTION_SYS1) {
+            REQUIRE(result == eligible);
+            to_restore &= ~(uint32_t)(PENDING | 4u);
         } else {
-            c.instruction = 0x40826000; g[2] = 0x40000401;
-            if (which == 11) { g[2] = 0x40000001; }
-            if (which == 12) { c.instruction = 0x40826800; }
-            if (which == 13) { c.instruction = 0x40826001; }
-            if (which == 14) { g[2] = 0; }
-            assert(!musashi_cpu_status_write_source(f.owner, &c,
-                which == 14 ? 0x40000401u : g[2]));
-            assert(musashi_cpu_status_snapshot(f.owner, &s) && s.sr == 0x40000401);
+            REQUIRE(result == 1783);
+            to_restore |= PENDING | 4u;
         }
-        assert(musashi_cpu_status_close(f.owner));
+        REQUIRE(musashi_cpu_status_inspect(f.status, &f.token, &state));
+        REQUIRE(state.sys_applied && state.saved_sr == to_restore);
     }
+    REQUIRE(musashi_cpu_status_finish(f.status, &f.token));
+    REQUIRE(musashi_cpu_status_snapshot(f.status, &state));
+    REQUIRE(!state.active && !state.faulted && state.sequence == f.token.sequence);
+    uint32_t after = (to_restore & ~UINT32_C(15)) +
+                     4u * mode_pair(to_restore, 16) + mode_pair(to_restore, 4);
+    REQUIRE(state.sr == after);
+    REQUIRE(musashi_cpu_status_close(f.status));
+    return 1;
 }
-int main(void) {
-    unsigned i; equations(); normal(); boundaries();
-    for (i = 0; i <= 21; ++i) refusal(i);
-    puts("CPU_STATUS_PASS synthetic_contexts=1"); return 0;
+
+enum InvalidOperation {
+    OTHER_IDENTITY, OTHER_OWNER, STALE_SEQUENCE, EARLY_FINISH, EARLY_APPLY,
+    REPEATED_APPLY, IRQ_AS_SYS, EXPLICIT_FAULT
+};
+
+static int exception_refusal(enum InvalidOperation operation)
+{
+    Fixture f;
+    MusashiCpuStatusSnapshot state;
+    MusashiCpuExceptionToken key;
+    MusashiCpuExceptionKind kind = operation == EARLY_APPLY || operation == REPEATED_APPLY
+        ? MUSASHI_CPU_EXCEPTION_SYS2 : MUSASHI_CPU_EXCEPTION_IRQ;
+    REQUIRE(open_frame(&f, PENDING | ENABLE, MUSASHI_CPU_CONTEXT_HOST_BIOS_SERVICE, 0));
+    f.registers[4] = 2;
+    REQUIRE(musashi_cpu_status_begin(f.status, kind, &f.context,
+            kind == MUSASHI_CPU_EXCEPTION_IRQ ? PENDING : 0, &f.token));
+    key = f.token;
+    switch (operation) {
+    case OTHER_IDENTITY: case OTHER_OWNER: case STALE_SEQUENCE:
+        if (operation == OTHER_IDENTITY) key.identity = f.registers;
+        if (operation == OTHER_OWNER) key.owner = NULL;
+        if (operation == STALE_SEQUENCE) ++key.sequence;
+        REQUIRE(!musashi_cpu_status_inspect(f.status, &key, &state));
+        REQUIRE(!musashi_cpu_status_accept_kernel_entry(f.status, &key));
+        break;
+    case EARLY_FINISH:
+        REQUIRE(!musashi_cpu_status_finish(f.status, &key));
+        break;
+    case EARLY_APPLY:
+        REQUIRE(!musashi_cpu_status_apply_sys(f.status, &key, NULL));
+        break;
+    case REPEATED_APPLY:
+        REQUIRE(musashi_cpu_status_accept_kernel_entry(f.status, &key));
+        REQUIRE(musashi_cpu_status_apply_sys(f.status, &key, NULL));
+        REQUIRE(!musashi_cpu_status_apply_sys(f.status, &key, NULL));
+        break;
+    case IRQ_AS_SYS:
+        REQUIRE(musashi_cpu_status_accept_kernel_entry(f.status, &key));
+        REQUIRE(!musashi_cpu_status_apply_sys(f.status, &key, NULL));
+        break;
+    case EXPLICIT_FAULT:
+        REQUIRE(musashi_cpu_status_fault(f.status, &key));
+        break;
+    }
+    REQUIRE(musashi_cpu_status_inspect(f.status, &f.token, &state));
+    REQUIRE(state.active && state.faulted);
+    REQUIRE(!musashi_cpu_status_finish(f.status, &f.token));
+    REQUIRE(musashi_cpu_status_close(f.status));
+    return 1;
+}
+
+enum InvalidInput {
+    NO_IDENTITY, NO_REGISTERS, UNKNOWN_PROVENANCE, HOST_PC, HOST_NPC, HOST_WORD,
+    HOST_VALID, HOST_DELAY, HOST_BRANCH, SOURCE_UNFETCHED, BAD_SYS_SELECTOR,
+    BAD_SYS_WORD, IRQ_ABSENT, DEVICE_BIT, IRQ_MASKED
+};
+
+static int rejects_begin(enum InvalidInput input)
+{
+    Fixture f;
+    MusashiCpuExceptionKind kind = MUSASHI_CPU_EXCEPTION_IRQ;
+    uint32_t pending = PENDING;
+    uint32_t status = input == IRQ_MASKED ? ENABLE : PENDING | ENABLE;
+    int source = input >= SOURCE_UNFETCHED && input <= BAD_SYS_WORD;
+    REQUIRE(open_frame(&f, status, source ? MUSASHI_CPU_CONTEXT_SOURCE :
+                                       MUSASHI_CPU_CONTEXT_HOST_BIOS_SERVICE, 0));
+    switch (input) {
+    case NO_IDENTITY: f.context.identity = NULL; break;
+    case NO_REGISTERS: f.context.gpr = NULL; break;
+    case UNKNOWN_PROVENANCE: f.context.provenance = (MusashiCpuContextProvenance)7; break;
+    case HOST_PC: f.context.pc = 840u; break;
+    case HOST_NPC: f.context.npc = 484u; break;
+    case HOST_WORD: f.context.instruction = 562u; break;
+    case HOST_VALID: f.context.instruction_valid = 1; break;
+    case HOST_DELAY: f.context.delay_slot = 1; break;
+    case HOST_BRANCH: f.context.branch_pc = 320u; break;
+    case SOURCE_UNFETCHED: f.context.instruction_valid = 0; break;
+    case BAD_SYS_SELECTOR:
+        kind = MUSASHI_CPU_EXCEPTION_SYS1;
+        pending = 0;
+        f.context.instruction = SYSCALL_FUNCTION;
+        f.registers[4] = 2;
+        break;
+    case BAD_SYS_WORD:
+        kind = MUSASHI_CPU_EXCEPTION_SYS2;
+        pending = 0;
+        f.registers[4] = 2;
+        break;
+    case IRQ_ABSENT: pending = 0; break;
+    case DEVICE_BIT: pending = 1; break;
+    case IRQ_MASKED: break;
+    }
+    MusashiCpuExceptionToken output = {NULL, &f.thread, 938u};
+    REQUIRE(!musashi_cpu_status_begin(f.status, kind, &f.context, pending, &output));
+    REQUIRE(output.owner == NULL && output.identity == &f.thread && output.sequence == 938u);
+    MusashiCpuStatusSnapshot state;
+    REQUIRE(musashi_cpu_status_snapshot(f.status, &state));
+    REQUIRE(!state.active && state.sr == status);
+    REQUIRE(musashi_cpu_status_close(f.status));
+    return 1;
+}
+
+static int ownership_and_status_write(void)
+{
+    uint64_t thread = 52;
+    uint32_t result;
+    MusashiCpuStatus *normal = NULL;
+    Fixture f;
+    REQUIRE(musashi_cpu_status_open(&normal, current_thread, &thread));
+    REQUIRE(musashi_cpu_status_read(normal, &result) && result == cu2);
+    REQUIRE(musashi_cpu_status_set_enabled(normal, 1));
+    REQUIRE(musashi_cpu_status_read(normal, &result) && result == (cu2 | PENDING | ENABLE));
+    ++thread;
+    result = 919u;
+    REQUIRE(!musashi_cpu_status_read(normal, &result) && result == 919u);
+    REQUIRE(!musashi_cpu_status_close(normal));
+    --thread;
+    REQUIRE(musashi_cpu_status_set_enabled(normal, 0));
+    REQUIRE(musashi_cpu_status_read(normal, &result) && result == cu2);
+    REQUIRE(musashi_cpu_status_close(normal));
+    REQUIRE(open_frame(&f, 0u, MUSASHI_CPU_CONTEXT_SOURCE, 0));
+    /* Assemble MTC0 of register 25 into Status using architectural fields. */
+    f.context.instruction = (16u << 26) | (4u << 21) | (25u << 16) | (12u << 11);
+    f.registers[25] = 0u;
+    REQUIRE(musashi_cpu_status_write_source(f.status, &f.context, 0u));
+    f.registers[25] = cu2;
+    REQUIRE(musashi_cpu_status_write_source(f.status, &f.context, cu2));
+    REQUIRE(musashi_cpu_status_read(f.status, &result) && result == cu2);
+    f.registers[25] = 0;
+    REQUIRE(!musashi_cpu_status_write_source(f.status, &f.context, 0u));
+    MusashiCpuStatusSnapshot failed;
+    REQUIRE(musashi_cpu_status_snapshot(f.status, &failed));
+    REQUIRE(failed.faulted && failed.sr == cu2);
+    REQUIRE(musashi_cpu_status_close(f.status));
+    return 1;
+}
+
+/* Exercise Status through a fetched MTC0 with its actual live register. */
+static const uint32_t mtc0_status = (16u << 26) | (4u << 21) | (11u << 16) | (12u << 11);
+
+static int swap_cache_write(void)
+{
+    Fixture f;
+    uint32_t observed;
+    int eligible;
+    uint32_t status = cu2 | PENDING | ENABLE;
+    const uint32_t swap_cache = 1u << 17;
+    REQUIRE(open_frame(&f, status, MUSASHI_CPU_CONTEXT_SOURCE, 0));
+    f.context.instruction = mtc0_status;
+    f.registers[11] = status | swap_cache;
+    REQUIRE(musashi_cpu_status_write_source(f.status, &f.context, f.registers[11]));
+    REQUIRE(musashi_cpu_status_read(f.status, &observed) && observed == (status | swap_cache));
+    REQUIRE(musashi_cpu_status_write_source(f.status, &f.context, f.registers[11]));
+    REQUIRE(musashi_cpu_status_irq_eligible(f.status, &eligible) && eligible);
+    REQUIRE(musashi_cpu_status_begin(f.status, MUSASHI_CPU_EXCEPTION_IRQ, &f.context,
+                                     PENDING, &f.token));
+    REQUIRE(musashi_cpu_status_accept_kernel_entry(f.status, &f.token));
+    REQUIRE(musashi_cpu_status_finish(f.status, &f.token));
+    REQUIRE(musashi_cpu_status_read(f.status, &observed) && observed == (status | swap_cache));
+    REQUIRE(musashi_cpu_status_close(f.status));
+    return 1;
+}
+
+static int swap_cache_refusals(void)
+{
+    const uint32_t status = cu2 | PENDING | ENABLE;
+    const uint32_t swap = 1u << 17, isolate = 1u << 16, user = 2u;
+    const struct { uint32_t before, requested; } changes[] = {
+        {status | swap, status},                     /* Clear SwC. */
+        {status, (status | swap) ^ cu2},             /* Disable CU2. */
+        {status ^ cu2, status | swap},               /* Enable both bits. */
+        {status, (status | swap) ^ PENDING},         /* Change IRQ mask. */
+        {status, status | swap | isolate},           /* Enter cache isolation. */
+        {status | isolate, status | isolate | swap}, /* Already isolated. */
+        {status | user, status | user | swap},       /* User-mode write. */
+    };
+    Fixture f;
+    MusashiCpuStatusSnapshot snapshot;
+    for (unsigned i = 0; i < sizeof(changes) / sizeof(changes[0]); ++i) {
+        REQUIRE(open_frame(&f, changes[i].before, MUSASHI_CPU_CONTEXT_SOURCE, 0));
+        f.context.instruction = mtc0_status;
+        f.registers[11] = changes[i].requested;
+        REQUIRE(!musashi_cpu_status_write_source(f.status, &f.context, changes[i].requested));
+        REQUIRE(musashi_cpu_status_snapshot(f.status, &snapshot));
+        REQUIRE(snapshot.sr == changes[i].before && snapshot.faulted);
+        REQUIRE(musashi_cpu_status_close(f.status));
+    }
+
+    enum { OPERAND, UNFETCHED, DESTINATION, HOST_CONTEXT, ACTIVE_IRQ };
+    for (int input = OPERAND; input <= ACTIVE_IRQ; ++input) {
+        int host = input == HOST_CONTEXT;
+        REQUIRE(open_frame(&f, status, host ? MUSASHI_CPU_CONTEXT_HOST_BIOS_SERVICE :
+                                             MUSASHI_CPU_CONTEXT_SOURCE, 0));
+        if (!host)
+            f.context.instruction = mtc0_status;
+        if (input == UNFETCHED)
+            f.context.instruction_valid = 0;
+        if (input == DESTINATION)
+            f.context.instruction ^= 1u << 11;
+        if (input == ACTIVE_IRQ)
+            REQUIRE(musashi_cpu_status_begin(f.status, MUSASHI_CPU_EXCEPTION_IRQ, &f.context,
+                                             PENDING, &f.token));
+        MusashiCpuStatusSnapshot before;
+        REQUIRE(musashi_cpu_status_snapshot(f.status, &before));
+        uint32_t requested = before.sr | swap;
+        f.registers[11] = input == OPERAND ? before.sr : requested;
+        REQUIRE(!musashi_cpu_status_write_source(f.status, &f.context, requested));
+        REQUIRE(musashi_cpu_status_snapshot(f.status, &snapshot));
+        REQUIRE(snapshot.faulted && snapshot.sr == before.sr && snapshot.saved_sr == before.saved_sr);
+        REQUIRE(snapshot.active == before.active && snapshot.sequence == before.sequence);
+        REQUIRE(musashi_cpu_status_close(f.status));
+    }
+    return 1;
+}
+
+int main(void)
+{
+    for (unsigned pair_stack = 0; pair_stack <= MODE_BITS; ++pair_stack) {
+        uint32_t seed = UINT32_C(0x25a00000) | pair_stack;
+        for (unsigned mask = 0; mask <= 1; ++mask) {
+            uint32_t status = seed | (mask ? PENDING : 0);
+            for (unsigned kind = MUSASHI_CPU_EXCEPTION_IRQ; kind <= MUSASHI_CPU_EXCEPTION_SYS2; ++kind) {
+                if (kind == MUSASHI_CPU_EXCEPTION_IRQ && (status & (PENDING | ENABLE)) != (PENDING | ENABLE))
+                    continue;
+                if (!round_trip(status, kind, MUSASHI_CPU_CONTEXT_HOST_BIOS_SERVICE, 0) ||
+                    !round_trip(status, kind, MUSASHI_CPU_CONTEXT_SOURCE, 0) ||
+                    !round_trip(status, kind, MUSASHI_CPU_CONTEXT_SOURCE, 1))
+                    return 1;
+            }
+        }
+    }
+    for (int action = OTHER_IDENTITY; action <= EXPLICIT_FAULT; ++action)
+        if (!exception_refusal(action)) return 1;
+    for (int input = NO_IDENTITY; input <= IRQ_MASKED; ++input)
+        if (!rejects_begin(input)) return 1;
+    if (!ownership_and_status_write() || !swap_cache_write() || !swap_cache_refusals()) return 1;
+    puts("CPU_STATUS_PASS synthetic_contexts=1");
+    return 0;
 }

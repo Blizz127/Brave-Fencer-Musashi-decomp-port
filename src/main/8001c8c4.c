@@ -1,8 +1,7 @@
 /* Exact retail [8001C8C4,8001C924).
  * Words from pinned SLUS_007.26 (live-guest identity).
  */
-#include "psx_types.h"
-void func_8001C9D0();
+#include "actor_work_reset.h"
 void func_80052D90();
 void func_80054514();
 typedef struct {
@@ -12,7 +11,7 @@ typedef struct {
 } T;
 void func_8001C8C4(T *p) {
     s32 tmp[8];
-    func_8001C9D0(p);
+    func_8001C9D0((u8 *)p);
     p->unk0 = 1;
     p->unk2 = 5;
     func_80052D90(0, (u8 *)p + 0x30);

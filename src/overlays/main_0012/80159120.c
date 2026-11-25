@@ -1,14 +1,12 @@
 /* Owner re-derivation from retail assembly (clean input set). */
 /* State step: advances the +0x12 angle, polls the +0x198 handle, and on completion branches on the +0x244 mode. */
-#include "psx_types.h"
+#include "room_descriptor.h"
 
-extern u8 D_80078E50[];
 extern s32 D_80078E8C;
 extern u8 D_80110C3C[];
 extern u8 D_80110D0C[];
 extern s32 func_80029504(void);
 extern s32 func_80029A94(s32 i);
-extern void func_800298BC(u8 *p);
 extern void func_8002992C(s32 a);
 extern u32 func_8013767C(u8 *p);
 extern void func_80139914(u32 h);
@@ -42,7 +40,7 @@ void func_80159120(u8 *o) {
                     func_80175454();
                     func_801458E0();
                     t = D_80078E8C;
-                    func_800298BC(D_80078E50);
+                    func_800298BC(&D_80078E50);
                     func_801458E8();
                     t = t / 2;
                     D_80078E8C = t;

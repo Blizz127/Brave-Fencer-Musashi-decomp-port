@@ -54,6 +54,12 @@ typedef struct MusashiSioController {
     /* DualShock: 0 = digital 0x41. After 0x43, 0x42 returns 0xF3 for two
      * polls so TAP can lock analog, then 0x73 ('s'). */
     int analog_mode;
+    uint8_t normal_poll;
+    uint8_t rx_poll_parts[8];
+    uint8_t poll_parts_read;
+    /* Optional owner notification after the guest reads the current normal
+     * report's ID, sync and both button bytes. Uses pad_device.userdata. */
+    void (*poll_complete)(void *userdata);
 } MusashiSioController;
 
 /* Fresh storage only. Native device reset policy, not BIOS RAM initialization. */

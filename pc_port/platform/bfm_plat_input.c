@@ -39,7 +39,8 @@ static unsigned backend_count = 1;
 static const BfmPlatInputBackend *active;
 static BfmPlatPad latched[BFM_PLAT_PAD_PORTS];
 static uint32_t hotkeys_now, hotkeys_prev;
-static int suppressed;
+static int suppressed, keyboard_modal, sampled_game_keyboard;
+static const BfmPlatGameKeyboard *game_keyboard;
 
 #define TEXT_QUEUE 64
 static BfmPlatTextEvent text_queue[TEXT_QUEUE];
@@ -83,6 +84,8 @@ int bfm_plat_input_open(const char *name, const char **selected) {
 void bfm_plat_input_close(void) {
     if (active && active->close) active->close(active->self);
     active = NULL;
+    game_keyboard = NULL;
+    sampled_game_keyboard = 0;
 }
 
 const char *bfm_plat_input_active(void) { return active ? active->name : NULL; }
@@ -107,18 +110,54 @@ int bfm_plat_input_poll(void) {
     return BFM_PLAT_OK;
 }
 
-int bfm_plat_input_pad(unsigned port, BfmPlatPad *out) {
+static int read_pad(unsigned port, BfmPlatPad *out, int neutral) {
     if (!active) return BFM_PLAT_NOT_READY;
     if (port >= BFM_PLAT_PAD_PORTS || !out) return BFM_PLAT_INVALID;
     *out = latched[port];
-    if (suppressed) {
+    if (neutral) {
         out->buttons = 0;
         out->lx = out->ly = out->rx = out->ry = 0x80;
     }
     return BFM_PLAT_OK;
 }
 
-void bfm_plat_input_suppress(int s) { suppressed = s != 0; }
+int bfm_plat_input_pad(unsigned port, BfmPlatPad *out) {
+    return read_pad(port, out, suppressed);
+}
+
+void bfm_plat_input_attach_keyboard(const BfmPlatGameKeyboard *keyboard) {
+    game_keyboard = keyboard;
+}
+
+void bfm_plat_input_gameplay_keyboard(int enabled) {
+    if (game_keyboard) {
+        game_keyboard->enable(enabled);
+        game_keyboard->suppress(suppressed || keyboard_modal);
+    }
+}
+
+void bfm_plat_input_keyboard_modal(int modal) {
+    keyboard_modal = modal != 0;
+    if (game_keyboard) game_keyboard->suppress(suppressed || keyboard_modal);
+}
+
+void bfm_plat_input_suppress(int s) {
+    suppressed = s != 0;
+    if (game_keyboard) game_keyboard->suppress(suppressed || keyboard_modal);
+}
+
+int bfm_plat_input_sample_gamepad(BfmPlatPad *out) {
+    int neutral = suppressed || keyboard_modal;
+    int r = read_pad(0, out, neutral);
+    sampled_game_keyboard = r == BFM_PLAT_OK && out->connected && game_keyboard && !neutral;
+    if (sampled_game_keyboard) out->buttons = game_keyboard->sample(out->buttons);
+    return r;
+}
+
+void bfm_plat_input_complete_pad_poll(void) {
+    if (sampled_game_keyboard) game_keyboard->complete();
+    sampled_game_keyboard = 0;
+}
 
 int bfm_plat_input_push_text(const char *utf8) {
     size_t n;
@@ -276,6 +315,6 @@ void bfm_plat_input_reset(void) {
     scripted_hotkeys = 0;
     memset(latched, 0, sizeof latched);
     hotkeys_now = hotkeys_prev = 0;
-    suppressed = 0;
+    suppressed = keyboard_modal = 0;
     text_count = 0;
 }

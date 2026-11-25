@@ -1,7 +1,6 @@
-#include "psx_types.h"
+#include "room_descriptor.h"
 
 extern s16 D_800B9A08;
-extern u16 D_80078E50;
 extern s32 func_800CFC5C(s32 id);
 extern s32 func_800CFD68(s32 id);
 extern s32 func_800168C4(s32 index);
@@ -19,8 +18,8 @@ s32 func_800D1EBC(void)
         if (group) {
             goto select;
         }
-        if (func_800CFD68(D_80078E50)) {
-            group = func_800CFC5C(D_80078E50);
+        if (func_800CFD68(ROOM_DESCRIPTOR_ID)) {
+            group = func_800CFC5C(ROOM_DESCRIPTOR_ID);
             mode = 1;
             if (!group) {
                 goto select;

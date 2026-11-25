@@ -1,4 +1,5 @@
 #include "musashi_gpu_controller.h"
+#include "musashi_gpu_dither.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -1006,7 +1007,7 @@ static uint16_t modulate_texel(uint16_t texel, uint32_t rgb) {
     return (uint16_t)(r | (g << 5) | (b << 10) | (texel & 0x8000u));
 }
 
-enum { TEXTURE_ONE = 65536, TEXTURE_HALF = 32768, TEXTURE_RAMP_ONE = 4096 };
+enum { TEXTURE_ONE = 65536, TEXTURE_HALF = 32768, ATTRIBUTE_ONE = 4096 };
 
 typedef struct {
     int x, y, u, v;
@@ -1059,8 +1060,8 @@ static int horizontal_attribute_ramp(int x0, int x1, int x2, int q0, int q1, int
     int left_x = x0, left_q = q0;
     if (x1 < left_x) { left_x = x1; left_q = q1; }
     if (x2 < left_x) { left_x = x2; left_q = q2; }
-    int slope = dx1 ? dq1 * TEXTURE_RAMP_ONE / dx1 : dq2 * TEXTURE_RAMP_ONE / dx2;
-    int64_t increment = (int64_t)slope * (TEXTURE_ONE / TEXTURE_RAMP_ONE);
+    int slope = dx1 ? dq1 * ATTRIBUTE_ONE / dx1 : dq2 * ATTRIBUTE_ONE / dx2;
+    int64_t increment = (int64_t)slope * (TEXTURE_ONE / ATTRIBUTE_ONE);
     *step = increment;
     *origin = (int64_t)left_q * TEXTURE_ONE - left_x * increment;
     return 1;
@@ -1175,12 +1176,12 @@ static int fill_gouraud_triangle(MusashiGpuController *controller,
                                  int x0, int y0, uint32_t rgb0,
                                  int x1, int y1, uint32_t rgb1,
                                  int x2, int y2, uint32_t rgb2) {
+    static const int8_t dither[4][4] = MUSASHI_GPU_DITHER_MATRIX;
+    int dither_enabled = (controller->draw_mode & (1u << 9)) != 0;
     int minx = x0, miny = y0, maxx = x0, maxy = y0, x, y;
     long long area;
     struct {
-        int a, b, c;
-        int horizontal;
-        int64_t step, origin;
+        int64_t dx, dy, origin;
     } channel[3];
 
     if (x1 < minx) minx = x1;
@@ -1196,14 +1197,30 @@ static int fill_gouraud_triangle(MusashiGpuController *controller,
     if (!area) return 1;
     TriangleCoverage coverage = triangle_coverage(x0, y0, x1, y1, x2, y2, area);
 
+    /* The GPU anchors the Q12 color plane at the leftmost vertex. At a
+     * vertical left edge the upper vertex supplies the reference color. */
+    const struct {
+        int x, y;
+        uint32_t rgb;
+    } vertex[3] = {{x0, y0, rgb0}, {x1, y1, rgb1}, {x2, y2, rgb2}};
+    int anchor = 0;
+    for (int i = 1; i < 3; ++i) {
+        if (vertex[i].x < vertex[anchor].x ||
+            (vertex[i].x == vertex[anchor].x && vertex[i].y < vertex[anchor].y))
+            anchor = i;
+    }
     for (int i = 0; i < 3; ++i) {
         unsigned shift = 8u * (unsigned)i;
-        channel[i].a = (int)((rgb0 >> shift) & 255u);
-        channel[i].b = (int)((rgb1 >> shift) & 255u);
-        channel[i].c = (int)((rgb2 >> shift) & 255u);
-        channel[i].horizontal = !(controller->draw_mode & (1u << 9)) &&
-            horizontal_attribute_ramp(x0, x1, x2, channel[i].a, channel[i].b, channel[i].c,
-                                      &channel[i].step, &channel[i].origin);
+        int first = (int)((rgb0 >> shift) & 255u);
+        int db = (int)((rgb1 >> shift) & 255u) - first;
+        int dc = (int)((rgb2 >> shift) & 255u) - first;
+        int reference = (int)((vertex[anchor].rgb >> shift) & 255u);
+        int64_t nx = (int64_t)db * (y2 - y0) - (int64_t)dc * (y1 - y0);
+        int64_t ny = (int64_t)dc * (x1 - x0) - (int64_t)db * (x2 - x0);
+        channel[i].dx = nx * ATTRIBUTE_ONE / area;
+        channel[i].dy = ny * ATTRIBUTE_ONE / area;
+        channel[i].origin = reference * ATTRIBUTE_ONE + ATTRIBUTE_ONE / 2
+                          - vertex[anchor].x * channel[i].dx - vertex[anchor].y * channel[i].dy;
     }
 
     for (y = miny; y <= maxy; ++y) {
@@ -1217,16 +1234,11 @@ static int fill_gouraud_triangle(MusashiGpuController *controller,
             if (!covers_sample(&coverage, w0, w1, w2)) continue;
 
             uint16_t color = 0;
+            int offset = dither_enabled ? dither[y & 3][x & 3] : 0;
             for (int i = 0; i < 3; ++i) {
-                int value;
-                if (channel[i].horizontal) {
-                    value = (int)texture_floor(channel[i].origin + x * channel[i].step + TEXTURE_HALF);
-                } else {
-                    long long weighted = w0 * channel[i].a + w1 * channel[i].b + w2 * channel[i].c;
-                    value = (int)(weighted / area);
-                }
-                unsigned clamped = (unsigned)(value < 0 ? 0 : value > 255 ? 255 : value);
-                color |= (uint16_t)((clamped >> 3) << (5 * i));
+                int64_t fixed = channel[i].origin + x * channel[i].dx + y * channel[i].dy;
+                int value = (int)(fixed / ATTRIBUTE_ONE - (fixed % ATTRIBUTE_ONE < 0));
+                color |= (uint16_t)(musashi_gpu_quantize5(value, offset) << (5 * i));
             }
             if (!plot_drawn(controller, x, y, color)) return 0;
         }

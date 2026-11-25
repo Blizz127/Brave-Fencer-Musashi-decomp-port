@@ -1,5 +1,6 @@
 Scope: this MIT license covers only the owner's original work in this
-repository: the native PC port and its host/platform layer (pc_port/), the
+repository: the native PC port, desktop preview and host/platform layer
+(pc_port/ and preview/), the
 tools and scripts written for this project (tools/), the owner-authored
 matched C under src/ (a reimplementation of the game's code: this license
 grants rights only in the owner's own expression, none in the game), the

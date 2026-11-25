@@ -1,6 +1,6 @@
 /* Owner re-derivation from retail assembly (clean room, clean input set). State view: D_800AF630 + 0x198/0x19C = D_800AF7C8/D_800AF7CC; func_8001C9D0 takes the object (stores through a0). */
 /* func_8001C5B8: initialise object `o` and register every entry of the zero-terminated model list `list`. */
-#include "psx_types.h"
+#include "actor_work_reset.h"
 
 typedef struct {
     s16 a;
@@ -22,7 +22,6 @@ typedef struct {
     u16 idx;
 } State;
 
-extern void func_8001C9D0(Obj *);
 extern void func_80052D90(s32, void *);
 extern void func_80054514(void *, void *);
 extern void func_80053290(void *);
@@ -37,7 +36,7 @@ void func_8001C5B8(Obj *o, u32 *list) {
     u8 *rec;
     u32 i;
 
-    func_8001C9D0(o);
+    func_8001C9D0((u8 *)o);
     o->a = 1;
     o->b = 8;
     func_80052D90(0, o->mat);

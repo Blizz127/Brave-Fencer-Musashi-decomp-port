@@ -3,8 +3,7 @@
  * whatever reproduces the bytes; they are not evidence of the
  * original declaration. */
 
-#include "psx_types.h"
-void func_8001C9D0();
+#include "actor_work_reset.h"
 void func_80052D90();
 void func_80054514();
 void func_80053290();
@@ -17,7 +16,7 @@ typedef struct {
 } T;
 void func_8001C214(T *p, s32 *list) {
     s32 tmp[8];
-    func_8001C9D0(p);
+    func_8001C9D0((u8 *)p);
     p->unk0 = 1;
     p->unk2 = 0;
     func_80052D90(0, (u8 *)p + 0x30);

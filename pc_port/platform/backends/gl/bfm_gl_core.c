@@ -1,6 +1,7 @@
 /* CPU side of the `gl` renderer backend. See bfm_gl_core.h. */
 
 #include "bfm_gl_core.h"
+#include "../../../include/musashi_gpu_dither.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -236,18 +237,10 @@ uint16_t bfm_gl_blend_emulate(const BfmGlBlendState *s, uint16_t back,
 
 /* ---- dither ------------------------------------------------------------ */
 
-const int8_t bfm_gl_dither_matrix[4][4] = {
-    {-4, +0, -3, +1},
-    {+2, -2, +3, -1},
-    {-3, +1, -4, +0},
-    {+3, -1, +2, -2},
-};
+const int8_t bfm_gl_dither_matrix[4][4] = MUSASHI_GPU_DITHER_MATRIX;
 
 int bfm_gl_dither5(int c8, int x, int y) {
-    int c = c8 + bfm_gl_dither_matrix[y & 3][x & 3];
-    if (c < 0) c = 0;
-    if (c > 255) c = 255;
-    return c >> 3;
+    return (int)musashi_gpu_quantize5(c8, bfm_gl_dither_matrix[y & 3][x & 3]);
 }
 
 /* ---- MSAA ---------------------------------------------------------------- */

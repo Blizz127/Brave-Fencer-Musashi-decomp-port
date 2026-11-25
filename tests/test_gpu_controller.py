@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
 GPUREAD = 0x1F801810
@@ -1377,6 +1378,79 @@ class GpuControllerTests(unittest.TestCase):
             rgb = [(a * 4096 + dx * step + 2048) // 4096 for a, step in zip(left, steps)]
             expected = sum((c >> 3) << (5 * k) for k, c in enumerate(rgb))
             self.assertEqual(stored[11 + dx, 5], expected)
+
+    def test_dither_uses_the_same_gouraud_ramp_at_zero_offset(self):
+        stored = {}
+        self.store_cb = STORE(lambda _, x, y, color: stored.__setitem__((x, y), color) or 1)
+        self.controller.backend.store_vram = self.store_cb
+        self.assertEqual(self.write(0xE3000000), 1)
+        self.assertEqual(self.write(0xE403C13F), 1)
+        # The SCPH-5501 08UVI red-to-green width-2 ramp quantizes its
+        # midpoint to 16 in both channels. The dither at VRAM (1, 0) is zero.
+        for mode in (0xE1000000, 0xE1000200):
+            self.assertEqual(self.write(mode), 1)
+            for i, (x, y, rgb) in enumerate(((0, 0, 0xff), (2, 0, 0xff00),
+                                             (0, 4, 0xff), (2, 4, 0xff00))):
+                self.assertEqual(self.write(rgb | (0x38000000 if i == 0 else 0)), 1)
+                self.assertEqual(self.write(x | (y << 16)), 1)
+            self.assertEqual(stored[1, 0], 0x0210)
+
+    def test_gouraud_plane_matches_rotated_hardware_triangles(self):
+        # SCPH-5501 gpuprim 02PGT, radius 13, angles 0 and 4. The two
+        # windings include a tie for the leftmost vertex in the first triangle.
+        cases = (
+            (((141, 380), (122, 391), (122, 369)), (0xCFDC0967, 0x3FBA20E2)),
+            (((140, 385), (127, 367), (118, 388)), (0xDCFD902D, 0x0FE9B380)),
+        )
+        stored = {}
+        self.store_cb = STORE(lambda _, x, y, p: stored.__setitem__((x, y), p) or 1)
+        self.controller.backend.store_vram = self.store_cb
+        self.assertEqual(self.write(0xE3000000), 1)
+        self.assertEqual(self.write(0xE407FFFF), 1)
+        for vertices, checksums in cases:
+            for dither, expected in enumerate(checksums):
+                with self.subTest(vertices=vertices, dither=dither):
+                    stored.clear()
+                    self.assertEqual(self.write(0xE1000000 | (dither << 9)), 1)
+                    for (x, y), word in zip(vertices, (0x30FF0000, 0x0000FF00, 0x000000FF)):
+                        self.assertEqual(self.write(word), 1)
+                        self.assertEqual(self.write(x | (y << 16)), 1)
+                    readback = b"".join(stored.get((x, y), 0).to_bytes(2, "little")
+                                        for y in range(365, 396) for x in range(113, 144))
+                    self.assertEqual(zlib.crc32(readback), expected)
+
+    def test_room_fade_dithers_before_subtracting_in_vram_coordinates(self):
+        stored = {}
+        self.store_cb = STORE(lambda _, x, y, pixel: stored.__setitem__((x, y), pixel) or 1)
+        self.read_cb = READ(lambda _, x, y, out: out.__setitem__(0, 0x4210) or 1)
+        self.controller.backend.store_vram = self.store_cb
+        self.controller.backend.read_vram = self.read_cb
+
+        # Scissor the 8x8 quad to 4x4 and place its local origin at VRAM (1, 1).
+        for word in (0xE3000000 | (2 << 10) | 3, 0xE4000000 | (5 << 10) | 6,
+                     0xE5000000 | (1 << 11) | 1):
+            self.assertEqual(self.write(word), 1)
+
+        def draw(mode, shade):
+            stored.clear()
+            self.assertEqual(self.write(mode), 1)
+            color = shade * 0x010101
+            for i, xy in enumerate((0, 8, 8 << 16, (8 << 16) | 8)):
+                self.assertEqual(self.write(color | (0x3A000000 if i == 0 else 0)), 1)
+                self.assertEqual(self.write(xy), 1)
+            self.assertEqual(set(stored), {(x, y) for y in range(2, 6) for x in range(3, 7)})
+            return [[stored[x, y] for x in range(3, 7)] for y in range(2, 6)]
+
+        # Background and foreground are both 16/31. A negative dither cell
+        # takes one level off the foreground before the subtractive blend.
+        light = 0x0421
+        self.assertEqual(draw(0xE1000240, 128), [
+            [0, light, 0, light], [light, 0, light, 0],
+            [0, light, 0, light], [light, 0, light, 0],
+        ])
+        self.assertEqual(draw(0xE1000040, 128), [[0] * 4 for _ in range(4)])
+        self.assertEqual(draw(0xE1000240, 255), [[0] * 4 for _ in range(4)])
+        self.assertEqual(draw(0xE1000240, 0), [[0x4210] * 4 for _ in range(4)])
 
     def test_gp0_poly_g4_gouraud_quad(self):
         for opcode in (0x38, 0x39, 0x3A, 0x3B):

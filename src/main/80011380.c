@@ -5,6 +5,8 @@
  * The empty input constraint keeps both index values live to preserve the
  * observed register copy; it emits no instruction assembly.
  */
+#include "scene_command.h"
+
 extern unsigned char D_800AF630[], D_800D3A68[];
 typedef struct Other { unsigned char pad[0x16]; unsigned char value; } Other;
 extern Other D_800AE6A8;
@@ -14,7 +16,7 @@ extern unsigned int D_800629D4[];
 extern unsigned short D_800629E8[];
 extern unsigned short D_800629D6[];
 extern void func_800295D4(void),func_80029664(void),func_80011DCC(void),func_80011E24(void),func_800118AC(void),func_80011EB4(void),func_800CEDFC(void),func_80011DA0(void);
-extern void func_8005C4CC(int),func_8002D4C8(int,int),func_80011B7C(int),func_800D1724(void *);
+extern void func_8005C4CC(int),func_8002D4C8(int,int),func_80011B7C(int);
 extern short func_80014CAC(int,int);
 void func_80011380(void)
 {

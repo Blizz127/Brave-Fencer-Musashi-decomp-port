@@ -11,6 +11,8 @@
  * and concurrent owners would make a valid CTC2 transfer observationally
  * ambiguous.  This pointer is only a lease marker, never a second bank. */
 static MusashiGteOwner *g_active_owner;
+/* The physical bank outlives a lease. Carry uncertainty, never old owner values. */
+static unsigned g_unsettled_readback;
 
 static int owner_reentry(MusashiGteOwner *owner) {
     if (owner != NULL && owner->executing) {
@@ -101,12 +103,23 @@ int musashi_gte_owner_init(MusashiGteOwner *owner,
     owner->data_write_count = 0;
     owner->data_read_count = 0;
     owner->command_count = 0;
+    owner->ir1_delay = (struct bfm_gte_transfer_delay){0};
+    owner->control2_delay = (struct bfm_gte_transfer_delay){0};
+    owner->delay_write_lane = 0;
+    owner->delay_write_prior = 0;
+    if (g_unsettled_readback & 1u)
+        bfm_gte_delay_retire(&owner->ir1_delay, BFM_GTE_DELAY_UNCERTAIN_WRITE, 0);
+    if (g_unsettled_readback & 2u)
+        bfm_gte_delay_retire(&owner->control2_delay, BFM_GTE_DELAY_UNCERTAIN_WRITE, 0);
+    g_unsettled_readback = 0;
     owner->initialized = 1;
     owner->faulted = 0;
     owner->executing = 0;
     owner->reentry_violation = 0;
     return 1;
 }
+
+#include "gte_delay_wiring.inc"
 
 int musashi_gte_owner_write_control(MusashiGteOwner *owner,
                                     const MusashiCpuContext *context,
@@ -131,11 +144,13 @@ int musashi_gte_owner_write_control(MusashiGteOwner *owner,
 
     /* CTC2 performs the source-backed sign extension/masking rules for H,
      * DQA, ZSF3, ZSF4 and FLAG.  No shadow is updated before this call. */
+    const uint32_t prior = selector == 2u ? gteRegs.CP2C.p[2].d : 0;
     CTC2(value, (int)selector);
     if (owner->reentry_violation || owner->faulted) {
         owner->executing = 0;
         return 0;
     }
+    if (selector == 2u) owner_stage_transfer(owner, context, GTE_DELAY_CONTROL2, prior);
     owner->write_count++;
     owner->executing = 0;
     return 1;
@@ -169,12 +184,21 @@ int musashi_gte_owner_read_control(MusashiGteOwner *owner,
      * the data bank and can clobber it, so it must not back control reads.)
      * No counter advances: this is an observation, and SWC2-style stores
      * compose it with a RAM write at the execution layer. */
-    live = CFC2((int)selector);
+    uint32_t result = 0;
+    const int early = selector == 2u ? owner_early_read(owner, context, GTE_DELAY_CONTROL2, &result) : 0;
+    if (early < 0) {
+        owner->executing = 0;
+        return 0;
+    }
+    if (!early) {
+        live = CFC2((int)selector);
+        result = (uint32_t)live;
+    }
     if (owner->reentry_violation || owner->faulted) {
         owner->executing = 0;
         return 0;
     }
-    *value = (uint32_t)live;
+    *value = result;
     owner->executing = 0;
     return 1;
 }
@@ -218,7 +242,11 @@ int musashi_gte_owner_write_data(MusashiGteOwner *owner,
      * register, so a full-width store is the hardware behaviour. */
     if (selector == 0u || selector == 1u || selector == 2u || selector == 3u ||
         selector == 4u || selector == 5u || selector == 6u || selector == 8u ||
-        selector == 9u || selector == 10u || selector == 11u) {
+        selector == 9u || selector == 10u || selector == 11u || selector == 19u) {
+        if (selector == 9u) {
+            const uint32_t old_ir1 = gteRegs.CP2D.p[9].d & 0xffffu;
+            owner_stage_transfer(owner, context, GTE_DELAY_IR1, (old_ir1 ^ 0x8000u) - 0x8000u);
+        }
         gteRegs.CP2D.p[selector].d = value;
         owner->data_write_count++;
         owner->executing = 0;
@@ -284,7 +312,13 @@ int musashi_gte_owner_read_data(MusashiGteOwner *owner,
      * LZCR, plus the RGB0..2 colour FIFO: libgs GsTMDfastG3GL stores RGB2 with
      * SWC2 (80057A58, reached at the opening scene's mode 7->8 transition).
      * RGB0..2 read back as plain words, as PsyCross's MFC2 does. */
-    local = MFC2((int)selector);
+    uint32_t prior = 0;
+    const int early = selector == 9u ? owner_early_read(owner, context, GTE_DELAY_IR1, &prior) : 0;
+    if (early < 0) {
+        owner->executing = 0;
+        return 0;
+    }
+    local = early ? prior : MFC2((int)selector);
     owner->data_read_count++;
     *value = local;
     owner->executing = 0;
@@ -305,6 +339,7 @@ int musashi_gte_owner_command(MusashiGteOwner *owner,
         owner->executing = 0;
         return 0;
     }
+    owner_delay_discontinuity(owner);
     owner->command_count++;
     owner->executing = 0;
     return 1;
@@ -335,6 +370,7 @@ void musashi_gte_owner_native_end(MusashiGteOwner *owner, uint32_t commands) {
     if (owner == NULL || !owner->executing) return;
     if (owner->command_count <= UINT64_MAX - commands) owner->command_count += commands;
     else owner->faulted = 1;
+    owner_delay_discontinuity(owner);
     owner->executing = 0;
 }
 
@@ -375,6 +411,8 @@ int musashi_gte_owner_close(MusashiGteOwner *owner) {
         return 0;
     }
     owner->executing = 0;
+    g_unsettled_readback = (owner->ir1_delay.remaining || owner->delay_write_lane == GTE_DELAY_IR1 ? 1u : 0u) |
+                           (owner->control2_delay.remaining || owner->delay_write_lane == GTE_DELAY_CONTROL2 ? 2u : 0u);
     owner->initialized = 0;
     if (g_active_owner == owner) g_active_owner = NULL;
     return 1;

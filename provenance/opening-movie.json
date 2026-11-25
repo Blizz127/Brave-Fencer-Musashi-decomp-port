@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "note": "Opening movie callback reconstructed from the USA disc. The same routine also runs from MAIN member 4 during the opening.",
+  "note": "The opening movie output callback at 0x800D24D0 matches US MAIN member 3. Member 4 is physically contained in member 3, starting at offset 0x51800. The registry counts this shared function once.",
   "targets": {
     "main_0003": {
       "kind": "blob",
@@ -18,7 +18,9 @@
       "source": "src/overlays/main_0003/800d24d0.c",
       "recovery": "c",
       "extent": "function",
-      "optimization": "-O2"
+      "optimization": "-O2",
+      "source_sha256": "d574e4881c3cfacd4b409dd553f598c0513859877d81c7f489fe52aed8acd299",
+      "span_sha256": "acfeff4c5b8d1f16f32201a2a1c368a5b8f881fcf5f260bc16f2b28ea5a4031b"
     }
   ]
 }

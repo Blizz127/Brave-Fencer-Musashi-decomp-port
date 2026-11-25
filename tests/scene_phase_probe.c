@@ -1,4 +1,5 @@
 #include "scene_countdown.h"
+#include "room_descriptor.h"
 #include "fade_setup.h"
 #include <assert.h>
 #include <stddef.h>
@@ -13,7 +14,7 @@ u8 D_80126B58[2];
 static u16 provider_id;
 static unsigned provider_calls;
 s16 D_800B9A08;
-u16 D_80078E50;
+RoomTransferDescriptor D_80078E50;
 
 static SceneCountdown *active;
 static unsigned event;
@@ -86,7 +87,7 @@ s32 func_800CFD68(s32 id)
     assert(calls == 1 && id == pending_mode);
     ++calls;
     ++pending_mode;
-    D_80078E50 = pending_mode;
+    D_80078E50.room = pending_mode;
     return scenario != PENDING_REJECTED;
 }
 
@@ -162,7 +163,7 @@ int main(void)
             old_mode = scenario == STANDARD ? 0x3005 : (s16)(-1000 - (int)seed);
             pending_mode = (u16)(0x8123u + seed);
             D_800B9A08 = old_mode;
-            D_80078E50 = pending_mode;
+            D_80078E50.room = pending_mode;
             fade_result = (s32)((seed << 16) | (seed & 1));
             run_phase_sequence(&state);
         }

@@ -12,75 +12,87 @@ static int main12_room_address(uint32_t pc)
            (pc >= MAIN12_ROOM_INIT && pc < MAIN12_ROOM_INIT_END);
 }
 
+#include "main12_room_access.h"
+
 static int main12_room_word(MusashiBootMemory *ram, const FormatterCpu *cpu, uint32_t word)
 {
-    const uint32_t pc = cpu->pc, top = cpu->main12_foreground_sp;
-    const int init = pc >= MAIN12_ROOM_INIT;
-    const uint32_t start = init ? MAIN12_ROOM_INIT : MAIN12_ROOM_SELECT;
-    const uint32_t returning = init ? MAIN12_INIT_RETURN : MAIN12_ROOM_RETURN;
-    const uint32_t jump = init ? 0x80145bf0u : 0x80145a24u;
-    const uint32_t caller_sp = top - (init ? 48u : 24u);
-    const uint32_t frame = caller_sp - (init ? 32u : 24u);
-    uint32_t saved;
-    if (!cpu->main12_foreground_owner->restore.foreground_result_written ||
-        pc != cpu->main12_room_next || !musashi_boot_read32(ram, top - 8u, &saved) ||
-        saved != MAIN12_MENU_EXIT_RETURN ||
-        cpu->r[29] != (pc == start || pc >= jump ? caller_sp : frame))
+    if (!ram || !cpu || !cpu->main12_foreground_owner ||
+        cpu->main12_foreground_owner != main12_owner_for(cpu, ram) ||
+        !cpu->main12_foreground_owner->restore.foreground_result_written ||
+        cpu->merge_pending || cpu->gte_load_pending ||
+        !main12_room_address(cpu->pc) || cpu->main12_room_next != cpu->pc ||
+        !room_ram_value(ram, cpu->pc, word)) return 0;
+
+    const int inner = cpu->pc >= MAIN12_ROOM_INIT;
+    const uint32_t entry = inner ? MAIN12_ROOM_INIT : MAIN12_ROOM_SELECT;
+    const uint32_t caller = inner ? MAIN12_INIT_RETURN : MAIN12_ROOM_RETURN;
+    const uint32_t end = inner ? MAIN12_ROOM_INIT_END : MAIN12_ROOM_SELECT_END;
+    uint32_t top = cpu->main12_foreground_sp;
+    if (top < 80 || (top & 3) || !musashi_boot_ram_span(ram, top - 80, 80))
         return 0;
-    if (init && (!musashi_boot_read32(ram, top - 32u, &saved) || saved != MAIN12_ROOM_RETURN))
-        return 0;
-    if (cpu->delay_slot) {
-        uint32_t branch;
-        if (cpu->branch_pc != pc - 4u || !musashi_boot_read32(ram, cpu->branch_pc, &branch))
-            return 0;
-        if (branch >> 26 == 3u && (cpu->r[31] != pc + 4u ||
-            cpu->npc != ((pc & 0xf0000000u) | ((branch & 0x03ffffffu) << 2)))) return 0;
-    }
-    if (cpu->main12_room_resuming && (cpu->r[31] != pc || cpu->delay_slot || cpu->npc != pc + 4u))
-        return 0;
-    if (pc == start && (cpu->r[31] != returning || cpu->delay_slot || cpu->npc != pc + 4u))
-        return 0;
-    if (pc >= jump && (cpu->r[31] != returning ||
-        (pc == jump + 4u && (!cpu->delay_slot || cpu->branch_pc != jump || cpu->npc != returning))))
-        return 0;
-    /* The in-game counter selects a complete 36-byte entry in the mounted
-     * table. The caller has computed its actual argument before this JAL. */
-    if (pc == 0x80145a0cu || pc == 0x80145a10u) {
-        const uint32_t offset = cpu->r[4] - 0x801807bcu;
-        if (offset > 7u * 36u || offset % 36u) return 0;
-    }
+    uint32_t menu_frame = top - 24, selector_frame = menu_frame - 24;
+    uint32_t frame = inner ? selector_frame - 32 : selector_frame;
+    uint32_t previous_sp = inner ? selector_frame : menu_frame;
+
+    if (!room_ram_value(ram, menu_frame + 16, MAIN12_MENU_EXIT_RETURN)) return 0;
+    if (inner && !room_ram_value(ram, selector_frame + 16, MAIN12_ROOM_RETURN)) return 0;
+    if (cpu->main12_room_resuming && (cpu->delay_slot || cpu->r[31] != cpu->pc)) return 0;
+
+    uint32_t branch = 0;
     unsigned op = word >> 26;
-    uint32_t address = cpu->r[(word >> 21) & 31u] + (uint32_t)(int32_t)(int16_t)word;
-    uint32_t value = cpu->r[(word >> 16) & 31u];
-    const uint32_t link_slot = caller_sp - 8u;
-    if (pc == 0x80145bdcu) {
-        /* S1 holds D_800AF630. The mounted SH uses AT one page higher
-         * because the member's low half is a signed displacement. */
-        return !cpu->delay_slot && cpu->npc == pc + 4u &&
-               op == 41u && ((word >> 21) & 31u) == 1u && ((word >> 16) & 31u) == 2u &&
-               cpu->r[17] == 0x800af630u && cpu->r[1] == cpu->r[17] + 0x10000u &&
-               address == cpu->r[17] + 0xa3dau && value == 0x3000u &&
-               musashi_boot_read32(ram, link_slot, &saved) && saved == MAIN12_INIT_RETURN;
+    int control = room_is_control(word);
+    if (cpu->pc != entry && !musashi_boot_read32(ram, cpu->pc - 4, &branch)) return 0;
+    /* Neither mounted routine has an alternate entry into a transfer's delay slot. */
+    if (!!cpu->delay_slot != room_is_control(branch)) return 0;
+    if (cpu->delay_slot) {
+        if (cpu->branch_pc != cpu->pc - 4 || control ||
+            !room_control(ram, cpu, cpu->branch_pc, branch, word, entry, end, caller, 1))
+            return 0;
+    } else {
+        if (cpu->npc != cpu->pc + 4) return 0;
+        if (control) {
+            uint32_t slot;
+            if (!musashi_boot_read32(ram, cpu->pc + 4, &slot) ||
+                !room_control(ram, cpu, cpu->pc, word, slot, entry, end, caller, 0)) return 0;
+        }
     }
-    if (op < 32u) return 1;
-    if (pc == start + 4u) return op == 43u && address == link_slot && value == returning;
-    if (pc == (init ? 0x80145be0u : 0x80145a1cu))
-        return op == 35u && address == link_slot && musashi_boot_read32(ram, address, &saved) && saved == returning;
-    if (!init) return 0;
-    switch (pc) {
-    case 0x80145b2cu: return op == 43u && address == frame + 20u && value == cpu->main12_room_s1;
-    case 0x80145b34u: return op == 43u && address == frame + 16u && value == cpu->main12_room_s0;
-    case 0x80145be4u: return op == 35u && address == frame + 20u &&
-                             musashi_boot_read32(ram, address, &saved) && saved == cpu->main12_room_s1;
-    case 0x80145be8u: return op == 35u && address == frame + 16u &&
-                             musashi_boot_read32(ram, address, &saved) && saved == cpu->main12_room_s0;
-    case 0x80145b9cu: return op == 36u && address == 0x80078ec0u;
-    case 0x80145bb4u: {
-        const uint8_t *setting = musashi_boot_ram_span(ram, address, 1u);
-        return op == 40u && address == 0x80078ec0u && setting && (*setting & 0x7fu) && value == 1u;
+
+    uint32_t transfer = cpu->delay_slot ? branch : word;
+    int at_return = (transfer >> 26) == 0 && (transfer & 63) == 8;
+    if (cpu->r[29] != (cpu->pc == entry || at_return ? previous_sp : frame)) return 0;
+    if (!room_saved_register(ram, cpu, entry, frame, 31, inner ? 24 : 16, caller)) return 0;
+    if (inner && (!room_saved_register(ram, cpu, entry, frame, 16, 16, cpu->main12_room_s0) ||
+                  !room_saved_register(ram, cpu, entry, frame, 17, 20, cpu->main12_room_s1))) return 0;
+
+    unsigned base = (word >> 21) & 31, reg = (word >> 16) & 31;
+    uint32_t address = cpu->r[base] + (int16_t)word;
+    if (op == 35 || op == 43) { /* The only word objects here are ABI save slots. */
+        uint32_t offset;
+        uint32_t incoming;
+        if (reg == 31) {
+            offset = inner ? 24 : 16;
+            incoming = caller;
+        } else if (inner && (reg == 16 || reg == 17)) {
+            offset = reg == 16 ? 16 : 20;
+            incoming = reg == 16 ? cpu->main12_room_s0 : cpu->main12_room_s1;
+        } else {
+            return 0;
+        }
+        return base == 29 && address == frame + offset &&
+               (op == 43 ? cpu->r[reg] == incoming : room_ram_value(ram, address, incoming));
     }
-    default: return 0;
+    if (op == 41) { /* Destination-room halfword of the live game state. */
+        return inner && cpu->r[17] == 0x800af630u && address == 0x800b9a0au &&
+               cpu->r[reg] == 0x3000u && musashi_boot_ram_span(ram, address, 2);
     }
+    if (op == 36 || op == 40) { /* Progress-dependent latch, read or set. */
+        if (!inner || address != 0x80078ec0u) return 0;
+        const uint8_t *latch = musashi_boot_ram_span(ram, address, 1);
+        return latch && (op == 36 || (cpu->r[reg] == 1 && (*latch & 0x7f) != 0));
+    }
+    if (control) return 1;
+    if (!op) return word == 0 || (word & 63) == 33;
+    return op == 9 || op == 10 || op == 12 || op == 15;
 }
 
 static void main12_room_retired(FormatterCpu *cpu, uint32_t issued, uint32_t next)

@@ -1,5 +1,9 @@
 # Excluded from this public snapshot
 
+## Desktop preview
+
+The desktop release omits the historical hybrid formatter and its movie-strip, opening-music, title-mixer and sound-interrupt implementations. The player builds from the independent `preview/` sources, the public matching title routine, the disc reader, the host font and the SHA-256 implementation. At runtime the user’s disc supplies the title and opening textures and palettes.
+
 ## November 25, 2026 source correction
 
 Earlier public snapshots included fixed sequences of actions from the original executable expressed as C operations on guest registers and memory. The initial scan checked for retail data and SDK source and missed these transformations. Two of the room implementations had already appeared in the November 25 source release.
@@ -42,6 +46,8 @@ matching metadata is in `provenance/native-main.json`.
 | `VENDOR.md` | 1 | Instructions for the local upstream intake; superseded by CREDITS.md and README.md. |
 
 ## 2. Sony / Psy-Q material
+
+The project removed two overlay C files named `8012944c.c`, in `src/overlays/main_0012/` and `src/overlays/sc02_0035/`. Both encoded a complete instruction from Sony's graphics library as a literal in a game routine. The earlier public source check missed it.
 
 | Path | Files | Reason |
 |---|---:|---|
@@ -116,6 +122,7 @@ from guest memory.
 | `tests/test_bios_heap.py` | 1 | Contains 40 bytes of BIOS (SCPH-5500) code as a hex string. |
 | `tests/spu_reverb_probe.c`, `tests/spu_reverb_source_probe.c` | 2 | Contain the 32-halfword SPU reverb preset table found verbatim in the retail executable (64-byte run; see SCANS.md, found by the snapshot scan). |
 | `tests/test_spu_reverb.py`, `tests/test_spu_reverb_source.py` | 2 | Drivers for the two probes above; they cannot run without them. |
+| `tests/entry_cpu_probe.c` | 1 | The public source-exclusion check identifies this fixture as unredistributable. The public test suite omits the `entry_cpu_boundary` check. Public-source test results do not cover it. |
 | `extracted/`, disc images, `disc/`, `artifacts/`, RAM dumps, `*.png`/`*.ppm` captures, `*.log` runs | (untracked) | Game content from the owner's disc and runtime captures; ignored, never considered. |
 
 One text scrub removed a retail string rather than a whole file: the PS-X

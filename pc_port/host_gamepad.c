@@ -1,9 +1,60 @@
 #include "musashi_host_gamepad.h"
+#include "musashi_sdl_keyboard.h"
 #include "musashi_dev_menu.h"
 
 #include <SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+static MusashiSdlKeyboard keyboard;
+
+void musashi_host_keyboard_open(void) {
+    static const struct { SDL_Scancode key; unsigned bit; } mapping[] = {
+        {SDL_SCANCODE_SPACE,0}, {SDL_SCANCODE_RETURN,3},
+        {SDL_SCANCODE_UP,4}, {SDL_SCANCODE_RIGHT,5},
+        {SDL_SCANCODE_DOWN,6}, {SDL_SCANCODE_LEFT,7},
+        {SDL_SCANCODE_W,4}, {SDL_SCANCODE_D,5},
+        {SDL_SCANCODE_S,6}, {SDL_SCANCODE_A,7},
+        {SDL_SCANCODE_LCTRL,8}, {SDL_SCANCODE_RCTRL,9},
+        {SDL_SCANCODE_LSHIFT,10}, {SDL_SCANCODE_RSHIFT,11},
+        {SDL_SCANCODE_Z,12}, {SDL_SCANCODE_V,13},
+        {SDL_SCANCODE_C,14}, {SDL_SCANCODE_X,15},
+        {SDL_SCANCODE_U,12}, {SDL_SCANCODE_I,13},
+        {SDL_SCANCODE_K,14}, {SDL_SCANCODE_J,15}
+    };
+    uint16_t bindings[SDL_NUM_SCANCODES] = {0};
+    for (unsigned i = 0; i < sizeof mapping / sizeof mapping[0]; ++i)
+        bindings[mapping[i].key] = (uint16_t)(1u << mapping[i].bit);
+    musashi_sdl_keyboard_open(&keyboard, bindings);
+}
+
+void musashi_host_keyboard_close(void) {
+    musashi_sdl_keyboard_close(&keyboard);
+}
+
+void musashi_host_keyboard_suppress(int suppress) {
+    musashi_sdl_keyboard_suppress(&keyboard, suppress);
+}
+
+uint16_t musashi_host_keyboard_sample(void) {
+    uint16_t buttons = musashi_sdl_keyboard_sample(&keyboard);
+    /* Some SDL keyboard providers expose Right Shift only in the modifier
+     * state. Normal key events already carry their own press/release order. */
+    int n = 0;
+    const Uint8 *keys = SDL_GetKeyboardState(&n);
+    if (keys && n > SDL_SCANCODE_RSHIFT && !keys[SDL_SCANCODE_RSHIFT] &&
+        SDL_GetKeyboardFocus() && (SDL_GetModState() & KMOD_RSHIFT)) {
+        SDL_AtomicLock(&keyboard.lock);
+        if (!keyboard.suppressed && !keyboard.unfocused)
+            buttons |= (uint16_t)(1u << 11);
+        SDL_AtomicUnlock(&keyboard.lock);
+    }
+    return buttons;
+}
+
+void musashi_host_keyboard_complete(void) {
+    musashi_sdl_keyboard_complete(&keyboard);
+}
 
 /* Both consumers sample the same SDL controller. SDL's event queue stays
  * owned by the window. Keep references across samples so a second device can

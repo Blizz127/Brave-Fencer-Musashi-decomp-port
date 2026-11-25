@@ -81,7 +81,9 @@ static void clear_fifo(MusashiSioController *sio) {
     sio->status &= (uint16_t)~STATUS_RX_READY;
 }
 
-static void push_fifo(MusashiSioController *sio, uint8_t value) {
+enum { POLL_NONE, POLL_ID, POLL_SYNC, POLL_BUTTON_LOW, POLL_BUTTON_HIGH };
+
+static void push_fifo(MusashiSioController *sio, uint8_t value, uint8_t poll_part) {
     unsigned index;
     if (sio->rx_count < 8u) {
         index = (sio->rx_head + sio->rx_count) & 7u;
@@ -92,6 +94,7 @@ static void push_fifo(MusashiSioController *sio, uint8_t value) {
         index = (sio->rx_head + 7u) & 7u;
     }
     sio->rx_fifo[index] = value;
+    sio->rx_poll_parts[index] = poll_part;
     sio->rx_data = value;
     sio->status |= STATUS_RX_READY;
 }
@@ -112,6 +115,7 @@ static void reset_protocol(MusashiSioController *sio) {
     sio->selected_device = MUSASHI_SIO_DEVICE_NONE;
     set_pad_state(sio, MUSASHI_SIO_PAD_IDLE);
     sio->pad_cursor = 0;
+    sio->normal_poll = 0;
 }
 
 static void ignore_device(MusashiSioController *sio) {
@@ -263,10 +267,19 @@ int musashi_sio_controller_write16(void *userdata, uint32_t address,
 int musashi_sio_controller_read8(void *userdata, uint32_t address,
                                   uint8_t *value) {
     MusashiSioController *sio = userdata;
+    uint8_t part;
     if (!sio || !value || !owner_ok(sio) || !sio->disconnected_cards ||
         address != SIO_DATA)
         return 0;
+    part = sio->rx_count ? sio->rx_poll_parts[sio->rx_head] : POLL_NONE;
     *value = pop_fifo(sio); /* Selected reference's empty DATA read is FF. */
+    if (part == sio->poll_parts_read + 1u) {
+        sio->poll_parts_read = part;
+        if (part == POLL_BUTTON_HIGH && sio->poll_complete)
+            sio->poll_complete(sio->pad_device.userdata);
+    } else {
+        sio->poll_parts_read = 0;
+    }
     return 1;
 }
 
@@ -276,6 +289,7 @@ int musashi_sio_controller_write8(void *userdata, uint32_t address,
     uint8_t response = 0xffu;
     uint64_t new_due = 0;
     int schedule = 0;
+    uint8_t poll_part = POLL_NONE;
     uint16_t sampled = 0;
     if (!sio || !owner_ok(sio)) return 0;
     if (!sio->disconnected_cards || address != SIO_DATA ||
@@ -285,7 +299,7 @@ int musashi_sio_controller_write8(void *userdata, uint32_t address,
     if (!sio->pad_bound) {
         /* Retain the explicitly narrower absence-only API. */
         if (value != 0x81u || sio->protocol_ignore || sio->rx_count) return 0;
-        push_fifo(sio, 0xffu);
+        push_fifo(sio, 0xffu, POLL_NONE);
         ignore_device(sio);
         ++sio->transmitted_bytes;
         finish_transmit(sio);
@@ -315,6 +329,10 @@ int musashi_sio_controller_write8(void *userdata, uint32_t address,
         }
         sampled |= 0x0006u; /* Digital L3/R3 remain high. */
         sio->sampled_buttons = sampled;
+        /* Replies can outlive deselection. Old bytes still reach the guest
+         * but cannot acknowledge this newer sample, even if identical. */
+        memset(sio->rx_poll_parts, 0, sizeof sio->rx_poll_parts);
+        sio->poll_parts_read = 0;
         sio->selected_device = MUSASHI_SIO_DEVICE_PAD;
         set_pad_state(sio, MUSASHI_SIO_PAD_COMMAND);
         sio->pad_cursor = 0;
@@ -332,10 +350,11 @@ int musashi_sio_controller_write8(void *userdata, uint32_t address,
                 /* Config ID until TAP locks +0x46=0xFF / +0x49=2, then analog. */
                 response = 0xf3u;
                 sio->analog_mode++;
-            } else if (sio->analog_mode >= 3)
-                response = 0x73u;
-            else
-                response = 0x41u;
+            } else {
+                response = sio->analog_mode >= 3 ? 0x73u : 0x41u;
+                sio->normal_poll = 1;
+                poll_part = POLL_ID;
+            }
         } else if (value == 0x43u ||
                    (sio->analog_mode > 0 && (value & 0xf0u) == 0x40u)) {
             /* DualShock config (0x43 enter, 0x44 analog set, 0x4D motors).
@@ -353,6 +372,8 @@ int musashi_sio_controller_write8(void *userdata, uint32_t address,
             set_pad_state(sio, MUSASHI_SIO_PAD_BAD_COMMAND);
         }
     } else if (sio->pad_state == MUSASHI_SIO_PAD_DATA) {
+        if (sio->normal_poll && sio->pad_cursor <= 2)
+            poll_part = (uint8_t)(POLL_SYNC + sio->pad_cursor);
         if (sio->pad_cursor == 0) {
             schedule = (sio->control & CONTROL_ACK_IRQ_ENABLE) != 0;
             if (schedule && !schedule_ack_checked(sio, &new_due)) {
@@ -392,7 +413,7 @@ int musashi_sio_controller_write8(void *userdata, uint32_t address,
     /* Ignore and BAD_COMMAND return FF with no new acknowledgement. An
      * invalid first byte is also a synchronous FF without entering a frame. */
     sio->status &= (uint16_t)~STATUS_TX_BITS;
-    push_fifo(sio, response);
+    push_fifo(sio, response, poll_part);
     sio->transmitted_bytes++;
     finish_transmit(sio);
     if (schedule) {
