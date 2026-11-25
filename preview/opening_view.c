@@ -4,10 +4,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-enum { WIDTH = 320, HEIGHT = 240, LAST_FIELD = 114 };
+enum { WIDTH = 320, HEIGHT = 240, LAST_FIELD = 246 };
+enum { CREDIT_X = 80, CREDIT_Y = 104, CREDIT_WIDTH = 160, CREDIT_HEIGHT = 32 };
 
 typedef struct {
     uint16_t moon[HEIGHT][WIDTH];
+    uint16_t lettering[CREDIT_HEIGHT][CREDIT_WIDTH];
+    uint16_t silhouette[CREDIT_HEIGHT][CREDIT_WIDTH];
 } OpeningView;
 
 /* The opening paints the sky with screen-aligned textured quads. Nearest
@@ -65,6 +68,16 @@ int bfm_opening_load(const MusashiDiscMedia *disc, void **scene,
     for (unsigned y = 10; y < HEIGHT - 10; ++y)
         for (unsigned x = 0; x < WIDTH; ++x)
             view->moon[y][x] = sky_texel(words, x, y);
+    for (unsigned y = 0; y < CREDIT_HEIGHT; ++y) {
+        for (unsigned x = 0; x < CREDIT_WIDTH; ++x) {
+            unsigned shift = 4 * (x % 4);
+            unsigned page_x = 896 + x / 4;
+            unsigned letter = (words[256 + y][page_x] >> shift) & 15;
+            unsigned mask = (words[288 + y][page_x] >> shift) & 15;
+            view->lettering[y][x] = words[256][368 + letter];
+            view->silhouette[y][x] = words[257][368 + mask];
+        }
+    }
     free(words);
     *scene = view;
     return 1;
@@ -73,6 +86,30 @@ int bfm_opening_load(const MusashiDiscMedia *disc, void **scene,
 static uint32_t faded_channel(unsigned value, unsigned subtraction)
 {
     return value > subtraction ? (value - subtraction) * 255 / 31 : 0;
+}
+
+static unsigned credit_strength(unsigned fields)
+{
+    if (fields < 124 || fields >= 246)
+        return 0;
+    unsigned rise = (fields - 124) / 2;
+    unsigned fall = (246 - (fields & ~1u)) / 2;
+    unsigned steps = rise < fall ? rise : fall;
+    return (steps < 16 ? steps : 16) * 8;
+}
+
+static uint16_t blend_credit(uint16_t backdrop, uint16_t silhouette, uint16_t letter,
+                             unsigned strength)
+{
+    uint16_t result = 0;
+    for (unsigned shift = 0; shift <= 10; shift += 5) {
+        unsigned back = (backdrop >> shift) & 31;
+        unsigned loss = ((silhouette >> shift) & 31) * strength / 128;
+        unsigned ink = ((letter >> shift) & 31) * strength / 128;
+        unsigned value = (back > loss ? back - loss : 0) + ink;
+        result |= (uint16_t)((value < 32 ? value : 31) << shift);
+    }
+    return result;
 }
 
 int bfm_opening_frame(void *scene, unsigned fields, uint32_t *pixels,
@@ -87,9 +124,14 @@ int bfm_opening_frame(void *scene, unsigned fields, uint32_t *pixels,
     /* The original subtracts the same shade on each RGB555 channel and
      * advances it every other display field, then holds the moon fully lit. */
     unsigned darkness = fields < 34 ? 33 - 2 * (fields / 2) : 0;
+    unsigned strength = credit_strength(fields);
     for (unsigned y = 0; y < HEIGHT; ++y) {
         for (unsigned x = 0; x < WIDTH; ++x) {
             uint16_t word = view->moon[y][x];
+            if (strength && y >= CREDIT_Y && y < CREDIT_Y + CREDIT_HEIGHT &&
+                x >= CREDIT_X && x < CREDIT_X + CREDIT_WIDTH)
+                word = blend_credit(word, view->silhouette[y - CREDIT_Y][x - CREDIT_X],
+                                    view->lettering[y - CREDIT_Y][x - CREDIT_X], strength);
             uint32_t r = faded_channel(word & 31, darkness);
             uint32_t g = faded_channel((word >> 5) & 31, darkness);
             uint32_t b = faded_channel((word >> 10) & 31, darkness);
