@@ -7,6 +7,7 @@ add_executable(musashi_native_boot
     title_flow.c
     title_view.c
     opening_view.c
+    palace.c
     scene_tiles.c
     "${bfm_root}/src/overlays/main_0003/800cf104.c"
     "${bfm_root}/pc_port/disc_media.c"

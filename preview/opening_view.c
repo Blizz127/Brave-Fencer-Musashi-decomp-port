@@ -1,14 +1,17 @@
 /* SPDX-License-Identifier: MIT */
 #include "scene_views.h"
 #include "scene_tiles.h"
+#include "palace.h"
 #include <stdio.h>
 #include <stdlib.h>
 
-enum { WIDTH = 320, HEIGHT = 240, LAST_FIELD = 696 };
+enum { WIDTH = 320, HEIGHT = 240, LAST_FIELD = 957 };
 enum { TITLE_WIDTH = 256, TITLE_HEIGHT = 64 };
 enum { CREDIT_X = 80, CREDIT_Y = 104, CREDIT_WIDTH = 160, CREDIT_HEIGHT = 32 };
 
 typedef struct {
+    Palace *palace;
+    uint16_t (*tiles)[1024];
     uint16_t sky[480][320];
     uint16_t title_ink[TITLE_HEIGHT][TITLE_WIDTH];
     uint16_t title_mask[TITLE_HEIGHT][TITLE_WIDTH];
@@ -110,7 +113,15 @@ int bfm_opening_load(const MusashiDiscMedia *disc, void **scene,
             view->title_mask[y][x] = words[260][368 + mask];
         }
     }
-    free(words);
+    view->palace = bfm_palace_load(disc);
+    if (!view->palace) {
+        if (error && error_size)
+            snprintf(error, error_size, "Could not read the opening palace from SC01.CD.");
+        free(words);
+        free(view);
+        return 0;
+    }
+    view->tiles = words;
     *scene = view;
     return 1;
 }
@@ -214,10 +225,16 @@ int bfm_opening_frame(void *scene, unsigned fields, uint32_t *pixels,
             pixels[y * WIDTH + x] = UINT32_C(0xff000000) | (r << 16) | (g << 8) | b;
         }
     }
+    bfm_palace_draw(view->palace, view->tiles, fields, pixels);
     return 1;
 }
 
 void bfm_opening_free(void *scene)
 {
-    free(scene);
+    OpeningView *view = scene;
+    if (view) {
+        bfm_palace_free(view->palace);
+        free(view->tiles);
+        free(view);
+    }
 }
