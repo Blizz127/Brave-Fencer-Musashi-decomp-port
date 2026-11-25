@@ -69,7 +69,7 @@ int main(int argc, char **argv) {
     driver.write_bytes(
         b'@echo off\r\nsetlocal DisableDelayedExpansion\r\n'
         b'set "APPDATA=%CASE_APPDATA%"\r\nset "USERPROFILE=%CASE_PROFILE%"\r\n'
-        b'set "BFM_DISC=%CASE_DISC%"\r\nset "BFM_DISC_DIR="\r\n'
+        b'set "BFM_DISC=%CASE_DISC%"\r\nset "BFM_DISC_DIR=%CASE_DISC_DIR%"\r\n'
         b'"%CASE_PACKAGE%\\launch.cmd"\r\n'
     )
     env = dict(os.environ, CASE_PACKAGE=guest(install), CASE_PROFILE=guest(profile),
@@ -85,8 +85,9 @@ int main(int argc, char **argv) {
     unrelated = config / "existing-save.txt"
     unrelated.write_bytes(b"original")
 
-    def run(override=""):
-        return subprocess.run(command, env=dict(env, CASE_DISC=override), cwd=tmp_path,
+    def run(override="", directory=""):
+        run_env = dict(env, CASE_DISC=override, CASE_DISC_DIR=directory)
+        return subprocess.run(command, env=run_env, cwd=tmp_path,
                               capture_output=True, timeout=120).returncode
 
     def selected(path):
@@ -115,3 +116,25 @@ int main(int argc, char **argv) {
     assert not remembered.exists()
     assert run() == 0
     selected(nearby)
+
+    managed = tmp_path / "Disc Images (US) & 100% !"
+    managed.mkdir()
+    named_cue = managed / "Brave Fencer (US) & literal %MUSASHI_TEST_NAME%!.cue"
+    named_bin = managed / "A Track (US) 1.bin"
+    canonical = managed / "disc.cue"
+    for path in (named_cue, named_bin, canonical):
+        path.write_bytes(b"fixture")
+    assert run(guest(alternate), guest(managed)) == 0
+    selected(alternate)
+    assert run(directory=guest(managed)) == 0
+    selected(canonical)
+    canonical.unlink()
+    assert run(directory=guest(managed)) == 0
+    selected(named_cue)
+    named_cue.unlink()
+    assert run(directory=guest(managed)) == 0
+    selected(named_bin)
+    named_bin.unlink()
+    assert run(directory=guest(managed)) == 66
+    assert remembered.read_text().strip() == guest(named_bin)
+    assert unrelated.read_bytes() == b"original"

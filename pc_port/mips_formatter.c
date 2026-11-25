@@ -12652,6 +12652,8 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     const int room_reset_delay = issued_pc == ROOM_RESET_CALL + 4u && cpu->room_reset_owner &&
         cpu->room_reset_step == issued_pc && cpu->delay_slot && cpu->branch_pc == ROOM_RESET_CALL &&
         cpu->npc == ROOM_RESET_ENTRY && cpu->r[31] == ROOM_RESET_CALL + 8u;
+    const MusashiGuestIrqImage *ramp_image =
+        issued_pc >= 0x8003392cu && issued_pc <= 0x800339c0u ? cpu->irq_image : NULL;
     const MusashiGuestIrqImage *release_image = issued_pc == 0x80034310u ? cpu->irq_image : NULL;
     const MusashiGuestIrqImage *timer_image = issued_pc == 0x80031c84u ? cpu->irq_image : NULL;
     uint32_t timer_slot = timer_image ? cpu->r[18] : 0;
@@ -13363,6 +13365,14 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         if (!cpu->clock->advance || !cpu->clock->advance(cpu->clock->userdata, cost) ||
             (cpu->cd_irq_frame && cpu->cd_irq_frame->faulted))
             return formatter_refuse0(__LINE__, cpu->pc);
+    }
+    /* Advancing devices can change the mounted slot or its code before the
+     * active ramp accesses RAM, including a store in a jump delay slot. */
+    if (ramp_image) {
+        uint32_t live;
+        if (cpu->pc != issued_pc || cpu->irq_image != ramp_image ||
+            !irq_live_word(ramp_image, memory, issued_pc, &live) || live != instruction ||
+            !irq_data_access(cpu, instruction)) return formatter_refuse0(__LINE__, issued_pc);
     }
     field_scene_after_charge(root, cpu);
     if (scene_pending(cpu) && (cpu->pc != issued_pc || scene_unexpected_successor(cpu)))

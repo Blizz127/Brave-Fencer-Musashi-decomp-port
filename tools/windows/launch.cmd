@@ -17,6 +17,8 @@ if defined BFM_DISC_DIR set "LAUNCHER_DISC=1"
 set "DISC=%BFM_DISC%"
 if defined DISC if not exist "%DISC%" set "DISC="
 if not defined DISC if defined BFM_DISC_DIR if exist "%BFM_DISC_DIR%\disc.cue" set "DISC=%BFM_DISC_DIR%\disc.cue"
+set "SEARCH_DIR=%BFM_DISC_DIR%"
+if not defined DISC if defined SEARCH_DIR call :find
 if defined LAUNCHER_DISC if not defined DISC goto :missing_launcher_disc
 if not defined DISC if exist "%CONF%\disc.txt" set /p DISC=<"%CONF%\disc.txt"
 if defined DISC if not exist "%DISC%" set "DISC="

@@ -3,8 +3,8 @@
  * and last-channel release paths. */
 static int irq_level_slot_pc(uint32_t pc) {
     static const struct { uint16_t start, end; } spans[] = {
-        {0x000u, 0x044u}, {0x068u, 0x078u}, {0x07cu, 0x0a0u},
-        {0x138u, 0x15cu}, {0x190u, 0x19cu}, {0x1a8u, 0x1bcu},
+        {0x000u, 0x044u}, {0x068u, 0x078u}, {0x07cu, 0x15cu},
+        {0x190u, 0x19cu}, {0x1a8u, 0x1bcu},
         {0x1d8u, 0x380u}, {0x3c8u, 0x434u}, {0x484u, 0x49cu},
         {0x4b0u, 0x4bcu}, {0x4c0u, 0x518u}, {0x51cu, 0x5b4u},
         {0x61cu, 0x698u}, {0x6c8u, 0x75cu}, {0x764u, 0x7c4u},
@@ -222,7 +222,7 @@ static uint32_t irq_level_slot(const FormatterCpu *cpu, MusashiBootMemory *ram) 
  * Each live stream must still match the copy taken when the EXE was mapped.
  * The next entry's data address bounds File 1. The entry table bounds the
  * last stream. The slot keeps the original start at +16 and advances +12. */
-static int irq_level_note_read(const FormatterCpu *cpu, uint32_t word, uint32_t address) {
+static uint32_t irq_level_stream_at(const FormatterCpu *cpu, uint32_t address) {
     uint32_t song, cursor, entry, limit, size;
     uint16_t bank;
     const uint8_t *mapped;
@@ -243,10 +243,14 @@ static int irq_level_note_read(const FormatterCpu *cpu, uint32_t word, uint32_t 
     } else return 0;
     limit = song + size;
     if (!cd_irq_ram_word(ram, entry, song) || cursor < song || cursor >= limit ||
-        (cursor & 3u) || address != cpu->r[5] || address < song || address > limit - 4u ||
+        (cursor & 3u) || address < song || address > limit - 4u ||
         (address & 3u)) return 0;
     const uint8_t *live = musashi_boot_ram_span(ram, song, size);
-    if (!live || memcmp(live, mapped, size)) return 0;
+    return live && !memcmp(live, mapped, size) ? song : 0;
+}
+
+static int irq_level_note_read(const FormatterCpu *cpu, uint32_t word, uint32_t address) {
+    if (address != cpu->r[5] || !irq_level_stream_at(cpu, address)) return 0;
     unsigned op = word >> 26;
     switch (cpu->pc) {
     case 0x80033ad0u: case 0x80033b18u: case 0x80033b2cu:
@@ -256,6 +260,39 @@ static int irq_level_note_read(const FormatterCpu *cpu, uint32_t word, uint32_t 
         return op == 37u;
     default:
         return 0;
+    }
+}
+
+/* The active File 1 ramp uses A2 for the current level and T0 for its
+ * target. A0 indexes three eight-byte records in the caller's kind-5 slot.
+ * The mapped guest instructions perform the arithmetic and the delay stores. */
+static int irq_file_ramp_data(const FormatterCpu *cpu, unsigned op, uint32_t address) {
+    uint32_t slot = cpu->level_slot, index = cpu->r[30], lane = cpu->r[4];
+    if (index >= 8u || slot != 0x800a46e8u + index * 0x54u || lane >= 3u ||
+        cpu->r[17] != index || cpu->r[18] != slot || cpu->r[23] != slot ||
+        cpu->r[31] != 0x80031c90u || irq_level_stream_at(cpu, 0x80068960u) != 0x80068960u)
+        return 0;
+    uint32_t current = slot + 28u + lane * 8u;
+    MusashiBootMemory *ram = cpu->irq_image->memory;
+    const uint8_t *enabled = musashi_boot_ram_span(ram, current + 6u, 1);
+    const uint8_t *paused = musashi_boot_ram_span(ram, 0x800a4f17u, 1);
+    uint16_t kind;
+    if (cpu->r[6] != current || cpu->r[8] != current + 4u || !enabled || !*enabled ||
+        !paused || *paused || !musashi_boot_read16(ram, slot, &kind) || (kind & 63u) != 5u)
+        return 0;
+    switch (cpu->pc) {
+    case 0x8003392cu: case 0x8003397cu: case 0x800339acu:
+        return op == 37u && address == current;
+    case 0x80033954u: case 0x80033988u:
+        return op == 37u && address == current + 2u;
+    case 0x80033930u: case 0x80033978u: case 0x800339a8u:
+        return op == 37u && address == current + 4u;
+    case 0x80033944u:
+        return op == 40u && address == current + 6u;
+    case 0x80033960u: case 0x80033974u: case 0x800339a0u:
+    case 0x800339a4u: case 0x800339c0u:
+        return op == 41u && address == current;
+    default: return 0;
     }
 }
 
@@ -300,6 +337,8 @@ static int irq_level_slot_data(const FormatterCpu *cpu, uint32_t word, uint32_t 
                      op == 35u || op == 43u ? 4u : 0u;
     if (!slot || !width || (address & (width - 1u)) || cpu->r[29] != 0x8006c9ccu) return 0;
 
+    if (pc >= 0x8003392cu && pc <= 0x800339c0u)
+        return irq_file_ramp_data(cpu, op, address);
     uint32_t frame = cpu->r[29], width_end = address + width;
     if (width_end <= address) return 0;
     if (base == 29u && ((address >= frame + 88u && width_end <= frame + 128u) ||
