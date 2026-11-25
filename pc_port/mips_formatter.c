@@ -12656,6 +12656,9 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     uint32_t scheduled_next_pc = 0;
     uint8_t scheduled_merge_reg = 0;
     const uint32_t issued_pc = cpu->pc;
+    if (cpu->sc01_room.next && !cpu->sc01_room.callee_return &&
+        cpu->pc != cpu->sc01_room.next && sc01_room_foreground(cpu))
+        sc01_room_end(&cpu->sc01_room);
     int sc01_callee_issuing = cpu->sc01_room.callee_return && sc01_room_foreground(cpu);
     if (sc01_callee_issuing && (cpu->sc01_room.memory != memory ||
             !sc01_room_position(&cpu->sc01_room, cpu))) {
