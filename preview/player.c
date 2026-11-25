@@ -10,6 +10,8 @@
 #include <string.h>
 
 enum { TITLE_W = 640, TITLE_H = 480, OPENING_W = 320, OPENING_H = 240 };
+/* On the US disc, the first visible loading sprite spans at least 115 fields. */
+enum { LOADING_VISIBLE_FIELDS = 115 };
 enum { PAD_START = 1u << 3, PAD_UP = 1u << 4, PAD_DOWN = 1u << 6,
        PAD_CIRCLE = 1u << 13, PAD_CROSS = 1u << 14 };
 
@@ -219,6 +221,11 @@ static int play(Player *p, char *error, size_t size) {
             last_logic = tick;
         }
         fields = (unsigned)((SDL_GetTicks64() - p->phase_start) * 60u / 1001u);
+        if (p->flow.phase == BFM_TITLE_LOADING && p->opening && fields >= LOADING_VISIBLE_FIELDS) {
+            bfm_title_finish_loading(&p->flow, 1);
+            phase_changed(p);
+            fields = 0;
+        }
         int opening = p->flow.phase == BFM_TITLE_OPENING;
         if (!surface(p, opening ? OPENING_W : TITLE_W, opening ? OPENING_H : TITLE_H)) {
             snprintf(error, size, "Could not create the scene display: %s", SDL_GetError());
@@ -279,11 +286,10 @@ static int play(Player *p, char *error, size_t size) {
             snprintf(error, size, "SDL display failed: %s", SDL_GetError());
             return 2;
         }
-        if (p->flow.phase == BFM_TITLE_LOADING) {
+        if (p->flow.phase == BFM_TITLE_LOADING && !p->opening) {
+            p->phase_start = SDL_GetTicks64();
             if (p->flow.room != 0x3005 || !bfm_opening_load(p->disc, &p->opening, error, size))
                 return 2;
-            bfm_title_finish_loading(&p->flow, 1);
-            phase_changed(p);
         }
         SDL_Delay(8);
     }
