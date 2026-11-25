@@ -20,6 +20,11 @@ static int irq_level_slot_pc(uint32_t pc) {
     return 0;
 }
 
+/* Five remaining instructions of the resident File 1 end command. */
+static int irq_file_end_pc(uint32_t pc) {
+    return pc >= 0x80033d28u && pc <= 0x80033d38u && !(pc & 3u);
+}
+
 /* Four resident sound helpers called by the sequence slot's first note.
  * Each region is populated from the installed executable by irq_code. */
 static int irq_level_leaf_pc(uint32_t pc) {
@@ -351,6 +356,44 @@ static int irq_file_pan_data(const FormatterCpu *cpu, unsigned op, uint32_t addr
     case 0x8003384cu: return op == 35u && address == out + 4u;
     case 0x8003385cu: case 0x80033864u: return op == 43u && address == out + 4u;
     case 0x8003386cu: return op == 40u && address == out + 68u;
+    default: return 0;
+    }
+}
+
+/* After the first idle voice, selector 7 polls the rest of the eight flags.
+ * A1 may have advanced from the saved slot cursor across the preceding loop
+ * command. An active voice uses the existing wait path. Only an exhausted
+ * scan reaches the original halfword clear in the final jump's delay slot. */
+static int irq_file_end_issue(const FormatterCpu *cpu, uint32_t word) {
+    uint32_t slot = cpu->level_slot, index = cpu->r[30], lane = cpu->r[4];
+    if (!cpu->irq_image || index >= 8u || slot != 0x800a46e8u + index * 0x54u ||
+        cpu->r[29] != 0x8006c9ccu || lane == 0 || lane > 8u || cpu->r[3] != 7u)
+        return 0;
+    MusashiBootMemory *ram = cpu->irq_image->memory;
+    uint32_t song = 0x80068960u, last = song + sizeof cpu->irq_image->file_note - 4u;
+    uint16_t kind;
+    if (cpu->r[5] != last || cpu->r[6] >> 24 != 0x87u ||
+        irq_level_stream_at(cpu, last) != song || !cd_irq_ram_word(ram, last, cpu->r[6]) ||
+        !musashi_boot_read16(ram, slot, &kind) || (kind & 0x3fu) != 5u ||
+        !cd_irq_ram_word(ram, cpu->r[29] + 124u, 0x80031c90u) ||
+        !cd_irq_ram_word(ram, 0x80073120u + 7u * 4u, 0x80033d10u)) return 0;
+
+    /* The branch delay has incremented the index. Use the returned flag
+     * value, since a previously sampled flag can change between issues. */
+    uint32_t pc = cpu->pc;
+    int sequential = !cpu->delay_slot && !cpu->branch_pc && cpu->npc == pc + 4u;
+    switch (pc) {
+    case 0x80033d28u: return sequential && cpu->r[2] == 0;
+    case 0x80033d2cu: return sequential && cpu->r[2] == (lane < 8u);
+    case 0x80033d30u:
+        return cpu->r[2] == (lane < 8u) && cpu->delay_slot &&
+               cpu->branch_pc == 0x80033d2cu && cpu->npc == (lane < 8u ? 0x80033d18u : 0x80033d34u);
+    case 0x80033d34u: return sequential && lane == 8u && cpu->r[2] == slot + lane;
+    case 0x80033d38u:
+        return lane == 8u && !cpu->r[0] && cpu->r[2] == slot + lane && cpu->delay_slot &&
+               cpu->branch_pc == 0x80033d34u && cpu->npc == 0x800342b4u &&
+               (word >> 26) == 41u && ((word >> 21) & 31u) == 16u &&
+               ((word >> 16) & 31u) == 0u && (uint16_t)word == 0u;
     default: return 0;
     }
 }

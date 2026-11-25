@@ -12654,7 +12654,8 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         cpu->room_reset_step == issued_pc && cpu->delay_slot && cpu->branch_pc == ROOM_RESET_CALL &&
         cpu->npc == ROOM_RESET_ENTRY && cpu->r[31] == ROOM_RESET_CALL + 8u;
     const MusashiGuestIrqImage *level_image =
-        (issued_pc == 0x800338d4u || (issued_pc >= 0x8003392cu && issued_pc <= 0x800339c0u) ||
+        (issued_pc == 0x800338d4u || issued_pc == 0x80033d38u ||
+         (issued_pc >= 0x8003392cu && issued_pc <= 0x800339c0u) ||
          (issued_pc >= 0x80033ad0u && issued_pc <= 0x80033ba0u && irq_opening_note_read(cpu)))
         ? cpu->irq_image : NULL;
     const MusashiGuestIrqImage *release_image = issued_pc == 0x80034310u ? cpu->irq_image : NULL;
@@ -13370,7 +13371,7 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
             return formatter_refuse0(__LINE__, cpu->pc);
     }
     /* Advancing devices can replace the sequence bank or change its slot
-     * before the ID read or a ramp access, including delay-slot stores. */
+     * before a bank read, a ramp access or the final delay-slot clear. */
     if (level_image) {
         uint32_t live;
         if (cpu->pc != issued_pc || cpu->irq_image != level_image ||
@@ -15863,7 +15864,7 @@ static int irq_live_word(const MusashiGuestIrqImage *image, MusashiBootMemory *m
     if ((i == IRQ_CHANNEL_EXPIRY && !irq_channel_expiry_pc(pc)) ||
         (i == IRQ_CHANNEL_COND_RELEASE && !irq_channel_cond_release_pc(pc))) return 0;
     if ((i == IRQ_CHANNEL_PITCH || i == IRQ_CHANNEL_RELEASE) && !irq_channel_leaf_pc(pc)) return 0;
-    if ((i == IRQ_LEVEL_SLOT && !irq_level_slot_pc(pc)) ||
+    if ((i == IRQ_LEVEL_SLOT && !irq_level_slot_pc(pc) && !irq_file_end_pc(pc)) ||
         (i >= IRQ_LEVEL_CHOICE && i <= IRQ_LEVEL_MASK_ON && !irq_level_leaf_pc(pc) &&
          !(i == IRQ_LEVEL_MASK_ON && irq_channel_mask_pc(pc)))) return 0;
     if (i == IRQ_DRAW_SUBMIT || i == IRQ_CD_DMA || i == IRQ_SPU_TRANSFER_POLL)
@@ -16282,6 +16283,7 @@ static int irq_spu_poll_access(const FormatterCpu *cpu, uint32_t word, uint32_t 
 }
 
 static int irq_data_access(const FormatterCpu *cpu, uint32_t w) {
+    if (irq_file_end_pc(cpu->pc)) return irq_file_end_issue(cpu, w);
     unsigned op = w >> 26;
     if (op < 32) return 1;
     uint32_t address = cpu->r[(w >> 21) & 31u] + (uint32_t)(int32_t)(int16_t)w;
@@ -16951,6 +16953,9 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
         uint32_t w, origin = cpu.pc, target = 0, live;
         IrqRegion region = irq_region(origin);
         stop->pc = origin;
+        if (irq_file_end_pc(origin) &&
+            (depth != 7u || stack[6].callee != IRQ_LEVEL_SLOT ||
+             stack[6].address != 0x80031c90u || stack[6].sp != 0x8006ca4cu)) return 0;
         if (region == IRQ_SOUND_TICK && origin - MASTER_FADE_START < MASTER_FADE_LENGTH) {
             if (!master_fade_run(memory, &cpu, stack, depth, image, clock, stop)) return 0;
             continue;
