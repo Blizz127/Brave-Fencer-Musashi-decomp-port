@@ -20,7 +20,9 @@ the same interval with test providers for the graphics and subsystem calls.
 
 ## Player downloads and source builds
 
-The public match registries contain **1,059 entries totaling 152,724 bytes** of the US game. Counting each region and start address once gives **1,056 distinct ranges totaling 152,152 bytes**. This checkpoint adds ten Giant Forest routines that set bits in the player status word and ten that read those bits. All 320 bytes match the US overlay. The setters preserve the other bits, and the queries return the masked bit in its original position. The desktop player continues to execute these routines on the guest CPU to preserve memory access timing. [Giant Forest matching record](provenance/scene-objects.json)
+The public match registries contain **1,060 entries totaling 153,208 bytes** of the US game. Counting each region and start address once gives **1,057 distinct ranges totaling 152,636 bytes**. The resident sound mixer recalculates volume and pan for up to eight active sound slots. Its compiled C matches all 484 bytes of the US function. This source match adds no entry to the desktop player’s native dispatch table. [Sound matching record](provenance/sound-events.json)
+
+The preceding checkpoint added ten Giant Forest routines that set bits in the player status word and ten that read those bits. All 320 bytes match the US overlay. The setters preserve the other bits, and the queries return the masked bit in its original position. The desktop player continues to execute these routines on the guest CPU to preserve memory access timing. [Giant Forest matching record](provenance/scene-objects.json)
 
 The previous three complete routines matched all 996 original bytes. They draw text and sprite slots, request streamed data and advance the loader. The HUD and two loader routines ran on earlier Linux New Game and Continue tests. The standard desktop build still uses the guest CPU for these calls.
 

@@ -88,6 +88,17 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2"
+    },
+    {
+      "name": "func_800336A8",
+      "vram": 2147694248,
+      "size": 484,
+      "region": "main",
+      "source": "src/main/800336a8.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently re-derived from the original US executable."
     }
   ]
 }
