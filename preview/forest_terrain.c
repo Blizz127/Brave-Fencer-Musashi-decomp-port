@@ -1,0 +1,585 @@
+/* SPDX-License-Identifier: MIT */
+#include "forest_terrain.h"
+#include "scene_tiles.h"
+#include "forest_raster.h"
+
+#include <limits.h>
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
+
+enum { GRID_CELLS = 64 * 64, TABLE_BYTES = GRID_CELLS * 4 };
+typedef struct { int16_t world[3]; uint8_t u, v; } Corner;
+typedef struct {
+    Corner corners[4];
+    uint16_t clut, page;
+    uint8_t count, rgb[3], translucent;
+} Face;
+typedef struct { int x, y, z; } ScreenPoint;
+typedef struct {
+    ScreenPoint points[4];
+    unsigned depth, ordinal;
+    const MusashiForestPlayerFace *model_face;
+    uint32_t lighting[4];
+} ProjectedFace;
+
+struct BfmForestTerrain {
+    size_t count, capacity;
+    int has_lighting;
+    int direction[3][3], color[3][3], ambient[3];
+    Face *faces;
+    ProjectedFace *draw;
+    uint16_t tiles[512][1024];
+};
+
+static uint16_t le16(const uint8_t *p)
+{
+    return (uint16_t)(p[0] | (unsigned)p[1] << 8);
+}
+
+static uint32_t le32(const uint8_t *p)
+{
+    return le16(p) | (uint32_t)le16(p + 2) << 16;
+}
+
+static int decode_face(Face *face, const uint8_t *record, const uint8_t *vertices,
+                       size_t vertex_count, const uint8_t *materials, size_t material_bytes)
+{
+    uint32_t ref = le32(record);
+    size_t off = ref & 0xffffff;
+    unsigned mode = le16(record + 10) & 15;
+    if ((off & 15) || off >= material_bytes || (mode != 2 && mode != 6))
+        return 0;
+    const uint8_t *mat = materials + off;
+    face->count = mode == 2 ? 4 : 3;
+    if (mat[3] != (ref >> 24) || (mat[3] & ~2) != (face->count == 4 ? 0x2c : 0x24))
+        return 0;
+    face->translucent = (mat[3] & 2) != 0;
+    memcpy(face->rgb, mat, sizeof(face->rgb));
+    face->clut = le16(mat + 6);
+    face->page = le16(mat + 10);
+    if (((face->page >> 7) & 3) > 2)
+        return 0;
+    static const uint8_t uv_offset[] = {4, 8, 12, 14};
+    for (unsigned i = 0; i < face->count; ++i) {
+        unsigned vertex = i < 3 ? le16(record + 4 + 2*i) : (le16(record + 10) >> 4) * 8u;
+        if ((vertex & 7) || vertex / 8 >= vertex_count)
+            return 0;
+        for (unsigned axis = 0; axis < 3; ++axis)
+            face->corners[i].world[axis] = (int16_t)le16(vertices + vertex + axis * 2);
+        face->corners[i].u = mat[uv_offset[i]];
+        face->corners[i].v = mat[uv_offset[i] + 1];
+    }
+    return 1;
+}
+
+static int load_faces(BfmForestTerrain *terrain, const uint8_t *mesh, size_t bytes)
+{
+    if (bytes < 8 + TABLE_BYTES || mesh[0] != 0x42 || mesh[4])
+        return 0;
+    const uint8_t *table = mesh + 8;
+    const uint8_t *materials = table + TABLE_BYTES;
+    size_t material_bytes = (size_t)le16(mesh + 6) * 16;
+    size_t end = bytes - 8;
+    if (material_bytes > end - TABLE_BYTES)
+        return 0;
+    /* Every occupied entry owns the bytes up to the next occupied entry.
+     * Validate all spans before sizing the host's draw buffers. */
+    for (unsigned i = GRID_CELLS; i > 0; --i) {
+        size_t off = le32(table + 4 * (i-1));
+        if (!off)
+            continue;
+        if ((off & 3) || off < TABLE_BYTES + material_bytes || off > end || end - off < 28)
+            return 0;
+        const uint8_t *cell = table + off;
+        size_t v = le32(cell), n = le32(cell + 4);
+        size_t f = le32(cell + 20), count = le32(cell + 24);
+        if (v < 28 || (v & 3) || (f & 3) || v > f || f > end - off ||
+            n > (f-v)/8 || count > (end-off-f)/12)
+            return 0;
+        terrain->count += count;
+        end = off;
+    }
+    if (!terrain->count || terrain->count > UINT_MAX ||
+        terrain->count > SIZE_MAX / sizeof(*terrain->faces) ||
+        terrain->count > SIZE_MAX / sizeof(*terrain->draw))
+        return 0;
+    terrain->faces = calloc(terrain->count, sizeof(*terrain->faces));
+    terrain->capacity = terrain->count;
+    terrain->draw = malloc(terrain->capacity * sizeof(*terrain->draw));
+    if (!terrain->faces || !terrain->draw)
+        return 0;
+    size_t used = 0;
+    for (unsigned i = 0; i < GRID_CELLS; ++i) {
+        size_t off = le32(table + 4*i);
+        if (!off)
+            continue;
+        const uint8_t *cell = table + off;
+        const uint8_t *vertices = cell + le32(cell), *faces = cell + le32(cell + 20);
+        for (unsigned j = 0; j < le32(cell + 24); ++j) {
+            if (!decode_face(&terrain->faces[used++], faces + 12*j, vertices,
+                             le32(cell + 4), materials, material_bytes))
+                return 0;
+        }
+    }
+    return 1;
+}
+
+/* The field quantizes the squared length to the leading eight bits in
+ * powers of four before taking the integer square root. */
+static unsigned field_length(uint32_t squared)
+{
+    unsigned shift = 0;
+    while ((squared >> shift) > 255)
+        shift += 2;
+    return (unsigned)sqrt((double)((squared >> shift) << shift));
+}
+
+int bfm_forest_terrain_set_lighting(BfmForestTerrain *terrain, const uint8_t *room, size_t bytes)
+{
+    if (!terrain || !room || bytes < 36)
+        return 0;
+    terrain->has_lighting = 0;
+    for (unsigned i = 0; i < 3; ++i) {
+        int axis[3];
+        uint32_t squared = 0;
+        const uint8_t *light = room + 6 + i*10;
+        for (unsigned k = 0; k < 3; ++k) {
+            axis[k] = (int16_t)le16(light + k*2);
+            squared += (uint32_t)(axis[k]*axis[k]);
+        }
+        unsigned length = field_length(squared);
+        if (!length)
+            return 0;
+        for (unsigned k = 0; k < 3; ++k) {
+            terrain->direction[i][k] = -axis[k] * 4096 / (int)length;
+            terrain->color[k][i] = light[6+k] * 4096 / 255;
+        }
+        int ambient = (int16_t)le16(room + 2*i);
+        terrain->ambient[i] = ambient - ((ambient % 16 + 16) % 16);
+    }
+    terrain->has_lighting = 1;
+    return 1;
+}
+
+BfmForestTerrain *bfm_forest_terrain_load(const MusashiDiscMedia *disc,
+                                          const uint8_t *mesh, size_t bytes)
+{
+    if (!disc || !mesh)
+        return NULL;
+    BfmForestTerrain *terrain = calloc(1, sizeof(*terrain));
+    if (terrain && (!load_faces(terrain, mesh, bytes) ||
+                    !bfm_scene_read_tiles(disc, "MAIN.CD", 10, terrain->tiles) ||
+                    !bfm_scene_read_tiles(disc, "SC01.CD", 77, terrain->tiles))) {
+        bfm_forest_terrain_free(terrain);
+        return NULL;
+    }
+    return terrain;
+}
+
+const uint16_t (*bfm_forest_terrain_tiles(const BfmForestTerrain *terrain))[1024]
+{
+    return terrain ? terrain->tiles : NULL;
+}
+
+void bfm_forest_terrain_free(BfmForestTerrain *terrain)
+{
+    if (terrain) {
+        free(terrain->faces);
+        free(terrain->draw);
+        free(terrain);
+    }
+}
+
+static int smaller(int a, int b) { return a < b ? a : b; }
+static int larger(int a, int b) { return a > b ? a : b; }
+
+static int64_t floor_denom(int64_t n, int d)
+{
+    return n / d - (n % d < 0);
+}
+
+int bfm_forest_camera_look_at(const int32_t eye[3], const int32_t target[3],
+                             uint16_t projection, BfmForestCamera *out)
+{
+    if (!eye || !target || !projection || !out)
+        return 0;
+    int delta[3];
+    uint32_t total = 0;
+    for (unsigned i = 0; i < 3; ++i) {
+        int64_t difference = (int64_t)target[i] - eye[i];
+        /* This camera's short-axis path handles a subject in the field's
+         * nearby follow volume. Larger cinematics use other angle logic. */
+        if (difference < -724 || difference > 724)
+            return 0;
+        delta[i] = (int)difference;
+        total += (unsigned)(difference * difference);
+    }
+    unsigned ground_square = (unsigned)(delta[0]*delta[0] + delta[2]*delta[2]);
+    if (!ground_square || ground_square >= 524288)
+        return 0;
+    int ground = (int)field_length(ground_square), length = (int)field_length(total);
+    int cy = delta[2]*4096/ground, sy = -delta[0]*4096/ground;
+    int cp = ground*4096/length, sp = delta[1]*4096/length;
+    BfmForestCamera view = {
+        .rotation = {{(int16_t)cy, 0, (int16_t)sy},
+                     {(int16_t)floor_denom((int64_t)sp*sy,4096), (int16_t)cp,
+                      (int16_t)floor_denom(-(int64_t)sp*cy,4096)},
+                     {(int16_t)floor_denom(-(int64_t)cp*sy,4096), (int16_t)sp,
+                      (int16_t)floor_denom((int64_t)cp*cy,4096)}},
+        .projection = projection
+    };
+    for (unsigned i = 0; i < 3; ++i) {
+        int64_t position = 0;
+        for (unsigned j = 0; j < 3; ++j)
+            position -= (int64_t)eye[j] * view.rotation[i][j];
+        position = floor_denom(position,4096);
+        if (position < INT32_MIN || position > INT32_MAX)
+            return 0;
+        view.translation[i] = (int32_t)position;
+    }
+    *out = view;
+    return 1;
+}
+
+/* The perspective divider normalizes the 16-bit denominator. Its seed uses
+ * nine high bits, followed by one fixed-point reciprocal refinement. This
+ * retains the screen-space rounding at shallow and oblique terrain edges. */
+static int perspective_scale(unsigned focal, unsigned depth)
+{
+    unsigned scaled_focal = focal;
+    while (depth < 32768) {
+        depth *= 2;
+        scaled_focal *= 2;
+    }
+    unsigned slot = (depth - 32704) / 128;
+    unsigned seed = (262144 / (slot + 256) + 1) / 2;
+    if (seed < 257)
+        seed = 257;
+    unsigned error = (33554560 - depth * seed) / 256;
+    unsigned reciprocal = (128 + error * seed) / 256;
+    uint64_t result = ((uint64_t)scaled_focal * reciprocal + 32768) / 65536;
+    return result > 131071 ? 131071 : (int)result;
+}
+
+static int project(const BfmForestCamera *camera, const int16_t xyz[3], ScreenPoint *out)
+{
+    int view[3];
+    for (unsigned axis = 0; axis < 3; ++axis) {
+        int64_t dot = 0;
+        for (unsigned k = 0; k < 3; ++k)
+            dot += (int64_t)camera->rotation[axis][k] * xyz[k];
+        int64_t result = floor_denom(dot, 4096) + camera->translation[axis];
+        if (result < INT16_MIN || result > INT16_MAX)
+            return 0;
+        view[axis] = (int)result;
+    }
+    int depth = view[2];
+    if (depth < 0 || depth >= 16384)
+        return 0;
+    /* Terrain accepts the divider's saturated two-times magnification for
+     * close vertices. The actor sorter applies a separate near threshold. */
+    int multiplier = camera->projection >= 2*depth ? 131071 :
+                     perspective_scale(camera->projection, (unsigned)depth);
+    int x = (int)floor_denom((int64_t)view[0] * multiplier, 65536);
+    int y = (int)floor_denom((int64_t)view[1] * multiplier, 65536);
+    if (x < -1024 || x > 1023 || y < -1024 || y > 1023)
+        return 0;
+    *out = (ScreenPoint){160 + x, 120 + y, depth};
+    return 1;
+}
+
+static int cross(ScreenPoint a, ScreenPoint b, int x, int y)
+{
+    return (b.x-a.x) * (y-a.y) - (b.y-a.y) * (x-a.x);
+}
+
+static void draw_face(const BfmForestRaster *surface, const Face *face,
+                      const ScreenPoint *points)
+{
+    const BfmForestRasterMaterial material = {
+        .page = face->page, .clut = face->clut, .count = face->count,
+        .textured = 1, .translucent = face->translucent
+    };
+    uint32_t light = face->rgb[0] | (uint32_t)face->rgb[1] << 8 |
+                     (uint32_t)face->rgb[2] << 16;
+    BfmForestRasterVertex vertices[4];
+    for (unsigned i = 0; i < face->count; ++i) {
+        vertices[i] = (BfmForestRasterVertex){
+            points[i].x, points[i].y, face->corners[i].u, face->corners[i].v, light
+        };
+    }
+    bfm_forest_raster_face(surface, &material, vertices);
+}
+
+static int compose(const BfmForestTransform *parent, const BfmForestTransform *child,
+                   BfmForestTransform *result)
+{
+    for (unsigned i = 0; i < 3; ++i) {
+        int64_t offset = 0;
+        for (unsigned j = 0; j < 3; ++j) {
+            int64_t dot = 0;
+            offset += (int64_t)parent->rotation[i][j] * child->translation[j];
+            for (unsigned k = 0; k < 3; ++k)
+                dot += (int64_t)parent->rotation[i][k] * child->rotation[k][j];
+            int64_t v = floor_denom(dot,4096);
+            if (v < INT16_MIN || v > INT16_MAX) return 0;
+            result->rotation[i][j] = (int16_t)v;
+        }
+        offset = parent->translation[i] + floor_denom(offset,4096);
+        if (offset < INT32_MIN || offset > INT32_MAX) return 0;
+        result->translation[i] = (int32_t)offset;
+    }
+    return 1;
+}
+
+static uint32_t light_vertex(const BfmForestTerrain *terrain, const int32_t light[3][3],
+                             const MusashiForestPlayerVector *normal, const uint8_t rgb[3])
+{
+    int scale[3];
+    const int n[3] = {normal->x, normal->y, normal->z};
+    for (unsigned i = 0; i < 3; ++i) {
+        int64_t dot = 0;
+        for (unsigned k = 0; k < 3; ++k)
+            dot += (int64_t)light[i][k] * n[k];
+        scale[i] = smaller(32767, larger(0, (int)floor_denom(dot,4096)));
+    }
+    uint32_t color = 0;
+    for (unsigned i = 0; i < 3; ++i) {
+        int64_t sum = 0;
+        for (unsigned k = 0; k < 3; ++k)
+            sum += (int64_t)terrain->color[i][k] * scale[k];
+        int level = smaller(32767, larger(0, terrain->ambient[i] + (int)floor_denom(sum,4096)));
+        color |= (uint32_t)smaller(255, rgb[i] * level / 4096) << (8*i);
+    }
+    return color;
+}
+
+/* Reuse the smooth quadrilateral draw path and distinguish the effect on
+ * equal depth keys. Musashi and terrain draw before the glow at a tie. */
+static const MusashiForestPlayerFace blade_face = {.mode = 0x3a, .corners = 4, .tpage = 0x12a};
+
+static int reserve_faces(BfmForestTerrain *terrain, size_t required)
+{
+    if (required <= terrain->capacity) return 1;
+    if (required > SIZE_MAX / sizeof(*terrain->draw)) return 0;
+    ProjectedFace *faces = realloc(terrain->draw, required * sizeof(*faces));
+    if (!faces) return 0;
+    terrain->draw = faces;
+    terrain->capacity = required;
+    return 1;
+}
+
+static int collect_blade(BfmForestTerrain *terrain, const BfmForestCamera *camera,
+                         const BfmForestBlade *blade, const BfmForestBladeFrame *frame,
+                         size_t *count)
+{
+    BfmForestTransform view, eye;
+    memcpy(view.rotation, camera->rotation, sizeof(view.rotation));
+    memcpy(view.translation, camera->translation, sizeof(view.translation));
+    if (!compose(&view, &frame->world, &eye) || *count > SIZE_MAX - 8 ||
+        !reserve_faces(terrain, *count + 8)) return 0;
+    BfmForestCamera local = {.projection = camera->projection};
+    memcpy(local.rotation, eye.rotation, sizeof(local.rotation));
+    memcpy(local.translation, eye.translation, sizeof(local.translation));
+    for (unsigned id = 0; id < 8; ++id) {
+        ProjectedFace *face = &terrain->draw[*count];
+        int16_t xyz[4][3];
+        if (!bfm_forest_blade_quad(blade, id, frame->tick, xyz, face->lighting)) return 0;
+        unsigned i = 0;
+        while (i < 4 && project(&local, xyz[i], &face->points[i])) ++i;
+        if (i < 4) continue;
+        face->depth = (unsigned)face->points[3].z / 4;
+        face->ordinal = id;
+        face->model_face = &blade_face;
+        ++*count;
+    }
+    return 1;
+}
+
+static int collect_model(BfmForestTerrain *terrain, const BfmForestCamera *camera,
+                         const MusashiForestPlayerMesh *model, const BfmForestPose *pose,
+                         const BfmForestTransform *root, uint32_t mask, size_t *count)
+{
+    BfmForestTransform view, model_view;
+    memcpy(view.rotation, camera->rotation, sizeof(view.rotation));
+    memcpy(view.translation, camera->translation, sizeof(view.translation));
+    if (!compose(&view,root,&model_view))
+        return 0;
+    for (unsigned i = 0; i < MUSASHI_FOREST_PLAYER_PARTS; ++i) {
+        if (!(mask & (UINT32_C(1) << i))) continue;
+        const MusashiForestPlayerPart *part = musashi_forest_player_mesh_part(model,i);
+        size_t required = *count + part->face_count;
+        if (required < *count || !reserve_faces(terrain, required)) return 0;
+        BfmForestTransform world, eye;
+        if (!compose(root,&pose->local[i],&world) || !compose(&model_view,&pose->local[i],&eye))
+            return 0;
+        BfmForestCamera part_camera;
+        memcpy(part_camera.rotation, eye.rotation, sizeof(eye.rotation));
+        memcpy(part_camera.translation, eye.translation, sizeof(eye.translation));
+        part_camera.projection = camera->projection;
+        int32_t light[3][3];
+        for (unsigned a = 0; a < 3; ++a)
+            for (unsigned b = 0; b < 3; ++b) {
+                int64_t dot = 0;
+                for (unsigned k = 0; k < 3; ++k)
+                    dot += (int64_t)terrain->direction[a][k] * world.rotation[k][b];
+                light[a][b] = (int32_t)floor_denom(dot,4096);
+            }
+        for (size_t f = 0; f < part->face_count; ++f) {
+            const MusashiForestPlayerFace *face = &part->faces[f];
+            ProjectedFace *out = &terrain->draw[*count];
+            unsigned nearest = UINT_MAX, sum = 0, j = 0;
+            unsigned near_count = (i >= 2 && (face->mode == 0x38 || face->mode == 0x3c)) ? 3 : face->corners;
+            for (; j < face->corners; ++j) {
+                const MusashiForestPlayerVector *v = &part->vertices[face->vertex[j]];
+                const int16_t xyz[3] = {v->x,v->y,v->z};
+                if (!project(&part_camera,xyz,&out->points[j]))
+                    break;
+                unsigned depth = (unsigned)out->points[j].z;
+                if (j < near_count && depth <= 175) break;
+                if (depth < nearest) nearest = depth;
+                sum += depth;
+            }
+            if (j != face->corners ||
+                cross(out->points[0],out->points[1],out->points[2].x,out->points[2].y) <= 0)
+                continue;
+            for (unsigned k = 0; k < ((face->mode & 16) ? face->corners : 1); ++k)
+                out->lighting[k] = light_vertex(terrain,light,&part->normals[face->normal[k]],
+                                                face->rgb);
+            out->depth = i < 2 ? nearest/4-1 : (sum * (face->corners == 3 ? 341 : 256))/4096;
+            out->ordinal = (unsigned)(terrain->count + *count);
+            out->model_face = face;
+            ++*count;
+        }
+    }
+    return 1;
+}
+
+static void draw_model_face(const BfmForestRaster *surface, const ProjectedFace *out)
+{
+    const MusashiForestPlayerFace *face = out->model_face;
+    const BfmForestRasterMaterial material = {
+        .page = face->tpage, .clut = face->clut, .count = face->corners,
+        .textured = (face->mode & 4) != 0, .translucent = (face->mode & 2) != 0
+    };
+    BfmForestRasterVertex vertices[4];
+    for (unsigned i = 0; i < face->corners; ++i) {
+        vertices[i] = (BfmForestRasterVertex){
+            out->points[i].x, out->points[i].y, face->u[i], face->v[i],
+            out->lighting[(face->mode & 16) ? i : 0]
+        };
+    }
+    bfm_forest_raster_face(surface, &material, vertices);
+}
+
+static int by_depth(const void *left, const void *right)
+{
+    const ProjectedFace *a = left, *b = right;
+    if (a->depth != b->depth)
+        return a->depth > b->depth ? -1 : 1;
+    if ((a->model_face == &blade_face) != (b->model_face == &blade_face))
+        return a->model_face == &blade_face ? 1 : -1;
+    return a->ordinal > b->ordinal ? -1 : a->ordinal < b->ordinal;
+}
+
+int bfm_forest_terrain_draw_actor(BfmForestTerrain *terrain, const BfmForestCamera *camera,
+                                  const MusashiForestPlayerMesh *model, const BfmForestPose *pose,
+                                  const BfmForestTransform *root, uint32_t mask,
+                                  uint32_t pixels[240][320])
+{
+    return bfm_forest_terrain_draw_actor_buffer(terrain, camera, model, pose, root,
+                                                mask, 0, pixels);
+}
+
+/* The GPU folds screen coordinates to a signed 11-bit range after adding
+ * the draw-buffer origin. The Z and facing tests use the projected corners
+ * before the fold. */
+static int signed_screen(int coordinate)
+{
+    return (int)(((unsigned)coordinate + 1024u) & 2047u) - 1024;
+}
+
+int bfm_forest_terrain_draw_actor_buffer(BfmForestTerrain *terrain, const BfmForestCamera *camera,
+                                  const MusashiForestPlayerMesh *model, const BfmForestPose *pose,
+                                  const BfmForestTransform *root, uint32_t mask, unsigned buffer,
+                                  uint32_t pixels[240][320])
+{
+    return bfm_forest_terrain_draw_entrance(terrain, camera, model, pose, root, mask, NULL,
+                                           buffer, NULL, pixels);
+}
+
+int bfm_forest_terrain_draw_entrance(BfmForestTerrain *terrain, const BfmForestCamera *camera,
+                                  const MusashiForestPlayerMesh *model, const BfmForestPose *pose,
+                                  const BfmForestTransform *root, uint32_t mask, const BfmForestBlade *blade, unsigned buffer,
+                                  const BfmForestBladeFrame *frame,
+                                  uint32_t pixels[240][320])
+{
+    if (!terrain || !camera || !camera->projection || !pixels || buffer > 1 ||
+        (model && !terrain->has_lighting))
+        return 0;
+    /* The actor uses the 220-line gameplay viewport. Terrain diagnostics
+     * render all rows of the frame. */
+    const BfmForestRaster surface = {
+        .tiles = (const uint16_t (*)[1024])terrain->tiles, .pixels = pixels,
+        .top = model ? 10 : 0, .bottom = model ? 229 : 239
+    };
+    size_t count = 0;
+    for (unsigned i = 0; i < terrain->count; ++i) {
+        const Face *face = &terrain->faces[i];
+        ProjectedFace *out = &terrain->draw[count];
+        unsigned depth = 0, j = 0;
+        int raw_min_x = 320, raw_max_x = -1;
+        for (; j < face->count; ++j) {
+            ScreenPoint *point = &out->points[j];
+            if (!project(camera, face->corners[j].world, point))
+                break;
+            if ((unsigned)point->z > depth)
+                depth = (unsigned)point->z;
+            raw_min_x = smaller(raw_min_x, point->x);
+            raw_max_x = larger(raw_max_x, point->x);
+        }
+        /* The room contains horizontally remote cells outside the submitted
+         * doorway geometry. Keep an offscreen lateral triangle from folding
+         * back across the player once its draw offset has been added. */
+        if (j != face->count || raw_min_x >= 320 || raw_max_x < 0 ||
+            cross(out->points[0], out->points[1], out->points[2].x, out->points[2].y) <= 0)
+            continue;
+        int x0 = 320, y0 = 240, x1 = -1, y1 = -1;
+        int origin_y = (int)buffer * 240;
+        for (unsigned k = 0; k < face->count; ++k) {
+            ScreenPoint *point = &out->points[k];
+            point->x = signed_screen(point->x);
+            point->y = signed_screen(point->y + origin_y) - origin_y;
+            x0 = smaller(x0, point->x);
+            x1 = larger(x1, point->x);
+            y0 = smaller(y0, point->y);
+            y1 = larger(y1, point->y);
+        }
+        if (x0 >= 320 || x1 < 0 || y0 >= 240 || y1 < 0)
+            continue;
+        out->depth = depth / 4;
+        out->ordinal = i;
+        out->model_face = NULL;
+        ++count;
+    }
+    if (model && (!pose || !root || !collect_model(terrain,camera,model,pose,root,mask,&count)))
+        return 0;
+    if (frame && (!blade || !collect_blade(terrain, camera, blade, frame, &count))) return 0;
+    qsort(terrain->draw, count, sizeof(*terrain->draw), by_depth);
+    for (size_t i = 0; i < count; ++i) {
+        ProjectedFace *out = &terrain->draw[i];
+        if (out->model_face)
+            draw_model_face(&surface, out);
+        else
+            draw_face(&surface, &terrain->faces[out->ordinal], out->points);
+    }
+    return 1;
+}
+
+
+int bfm_forest_terrain_draw(BfmForestTerrain *terrain, const BfmForestCamera *camera,
+                            uint32_t pixels[240][320])
+{
+    return bfm_forest_terrain_draw_actor(terrain,camera,NULL,NULL,NULL,0,pixels);
+}

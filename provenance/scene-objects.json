@@ -7869,6 +7869,19 @@
       "origin": "Independently reconstructed from the owned US Giant Forest overlay. Returns bit 9 of the actor mask word in its original bit position.",
       "source_sha256": "2c69c730aa6751307d9279fc58bc9fa76fa23b29cfd10ac7f88a53bfbbce673f",
       "span_sha256": "3ecaaa7bd79b98d47420bb7e44420f1c62d0d994830f012157abf030f2fa9c8b"
+    },
+    {
+      "name": "func_80149D9C",
+      "region": "sc01_0077",
+      "vram": 2148834716,
+      "size": 60,
+      "source": "src/overlays/sc01_0077/80149d9c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from US Giant Forest overlay member 77. The player action selector tests two conditions in priority order and treats either nonzero result as true.",
+      "source_sha256": "af6a8bfe51fb720c1895ec177fa3b377dd2d12a963506932cb18698f31370cbc",
+      "span_sha256": "535bb290018d4db627f863a9000f1b09700d2f5a51d50cd3aa8c7a341ab2c88d"
     }
   ]
 }

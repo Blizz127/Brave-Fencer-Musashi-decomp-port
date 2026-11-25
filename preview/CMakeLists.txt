@@ -17,6 +17,34 @@ add_executable(musashi_native_boot
     stair_actors.c
     palace_dialogue.c
     scene_tiles.c
+    forest_blade.c
+    forest_entry.c
+    forest_field.c
+    forest_manual.c
+    forest_motion.c
+    forest_pose.c
+    forest_raster.c
+    forest_terrain.c
+    forest_speech_actor.c
+    disc_voice.c
+    forest_voice.c
+    dialogue_contour.c
+    forest_message_art.c
+    forest_message.c
+    forest_walk.c
+    scene_payload.c
+    "${bfm_root}/pc_port/forest_player_archive.c"
+    "${bfm_root}/pc_port/forest_player_mesh.c"
+    "${bfm_root}/src/overlays/sc01_0077/8012a018.c"
+    "${bfm_root}/src/overlays/sc01_0077/8012a048.c"
+    "${bfm_root}/src/overlays/sc01_0077/80134510.c"
+    "${bfm_root}/src/overlays/sc01_0077/801345f8.c"
+    "${bfm_root}/src/overlays/sc01_0077/801347a0.c"
+    "${bfm_root}/src/overlays/sc01_0077/80134a28.c"
+    "${bfm_root}/src/overlays/sc01_0077/801473ec.c"
+    "${bfm_root}/src/overlays/sc01_0077/80174e9c.c"
+    "${bfm_root}/src/overlays/sc01_0077/8017d900.c"
+    "${bfm_root}/src/overlays/sc01_0077/8017d98c.c"
     "${bfm_root}/src/overlays/main_0003/800cf104.c"
     "${bfm_root}/pc_port/disc_media.c"
     "${bfm_root}/pc_port/platform/bfm_plat_sha256.c"

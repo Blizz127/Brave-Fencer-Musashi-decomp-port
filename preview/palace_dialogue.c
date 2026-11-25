@@ -5,12 +5,14 @@
 #include <string.h>
 
 enum { CORNERS = 30, CHAR_ROWS = 12, FIRST_CHAR = 32, CHAR_COUNT = 95 };
-enum { SPEECH_COUNT = 5, ROUNDED = 2, BURST = 6, CRYSTAL_CAMERA_FIELD = 2760 };
+enum { SPEECH_COUNT = 8, ROUNDED = 2, BURST = 6, RIGHT_ROUNDED = 10 };
+enum { CRYSTAL_CAMERA_FIELD = 2760, SCRIBE_FIELD = 3316 };
 enum { PORTRAIT_W = 32, PORTRAIT_H = 40, LINE_CAPACITY = 36 };
 typedef struct { int x, y; } Point;
 
 typedef struct {
-    uint8_t character, ink, x, y, tick;
+    uint8_t character, ink, x, y;
+    unsigned tick;
 } Letter;
 
 typedef struct {
@@ -75,20 +77,32 @@ static int line_bytes(uint8_t *out, size_t *count, const uint8_t *scene,
     return 1;
 }
 
-/* The script supplies one voice duration per page. Inline palette changes
- * consume no character cell; a newline moves to the next row. */
+/* Markers begin timed phrases. A wait ends the phrase without clearing
+ * the page; later text can continue on the same line or after a newline. */
 static int read_page(Page *page, const uint8_t *scene, size_t size, size_t *position)
 {
     size_t p = *position;
-    unsigned x = 0, y = 0, ink = 1, tick = 0;
-    if (p > size || size - p < 3 || scene[p++] != 0x14) return 0;
-    page->voice_ticks = little16(scene + p);
-    p += 2;
+    unsigned x = 0, y = 0, ink = 1, tick = 0, deadline = 0;
+    if (p >= size || scene[p] != 0x14) return 0;
     while (p < size) {
         unsigned c = scene[p++];
+        if (tick > UINT_MAX - 65536u) return 0;
+        if (c == 0x14) {
+            if (size - p < 2) return 0;
+            deadline = tick + little16(scene + p);
+            p += 2;
+            continue;
+        }
         if (c == 0x15) {
-            *position = p;
-            return page->length != 0;
+            if (tick < deadline) tick = deadline;
+            if (p >= size) return 0;
+            if (scene[p] == 3 || scene[p] == 8) {
+                page->voice_ticks = tick;
+                *position = p;
+                return page->length != 0;
+            }
+            ++tick;
+            continue;
         }
         if (c == 1) {
             if (p >= size || scene[p] >= 16) return 0;
@@ -100,7 +114,7 @@ static int read_page(Page *page, const uint8_t *scene, size_t size, size_t *posi
             if (c < FIRST_CHAR || c >= FIRST_CHAR + CHAR_COUNT ||
                 x >= LINE_CAPACITY || page->length >= sizeof(page->letters) / sizeof(Letter))
                 return 0;
-            page->letters[page->length++] = (Letter){(uint8_t)c, (uint8_t)ink, (uint8_t)x++, (uint8_t)y, (uint8_t)tick++};
+            page->letters[page->length++] = (Letter){(uint8_t)c, (uint8_t)ink, (uint8_t)x++, (uint8_t)y, tick++};
         }
     }
     return 0;
@@ -111,19 +125,24 @@ static int read_script(PalaceDialogue *d, const uint8_t *scene, size_t size)
     size_t p = 0x60dfc;
     for (unsigned i = 0; i < SPEECH_COUNT; ++i) {
         Speech *speech = &d->speech[i];
+        /* The neutral court script selects the short ritual declaration. */
+        if (i == 7) p = 0x610b0;
         if (p >= size || size - p < 9 || scene[p] != 0x16 || scene[p + 5] != 2 ||
-            (scene[p + 6] != ROUNDED && scene[p + 6] != BURST) || scene[p + 7] > 6) return 0;
+            (scene[p + 6] != ROUNDED && scene[p + 6] != BURST &&
+             scene[p + 6] != RIGHT_ROUNDED) || scene[p + 7] > 6) return 0;
         speech->portrait_id = scene[p + 7];
         speech->style = scene[p + 6];
-        speech->voiced = (scene[p + 2] & 128u) != 0;
         speech->bank = scene[p + 2] & 127u;
         speech->cue = little16(scene + p + 3);
+        speech->voiced = speech->cue != 0;
         p += 8;
         if (scene[p] == 0x18) {
             ++p;
             if (!line_bytes(speech->name, &speech->name_size, scene, size, &p, '\n')) return 0;
         }
-        if (p >= size || scene[p++] != 0x19 || !read_page(&speech->lead, scene, size, &p)) return 0;
+        if (p < size && scene[p] == 0x19) ++p;
+        else if (speech->name_size) return 0;
+        if (!read_page(&speech->lead, scene, size, &p)) return 0;
         if (p < size && scene[p] == 8) {
             ++p;
             if (!read_page(&speech->continuation, scene, size, &p)) return 0;
@@ -272,8 +291,12 @@ static void draw_balloon(const PalaceDialogue *d, unsigned style, unsigned step,
             pos.x += scaled(target.x - pos.x, (int)weight * 1024);
             pos.y += scaled(target.y - pos.y, (int)weight * 1024);
         }
-        Point p = {160 + scaled(pos.x, sx), 44 + scaled(pos.y, sy)};
         Point delta = d->inset[weight >= 3][i];
+        if (style == RIGHT_ROUNDED) {
+            pos.x = -pos.x;
+            delta.x = -delta.x;
+        }
+        Point p = {160 + scaled(pos.x, sx), 44 + scaled(pos.y, sy)};
         border[i] = p;
         inset[i] = (Point){p.x + delta.x, p.y + delta.y};
         if (low > p.y) low = p.y;
@@ -318,13 +341,35 @@ static void draw_glyph(const PalaceDialogue *d, unsigned x, unsigned y, unsigned
             if (glyph[row] & (128u >> bit)) pixels[y + row][x + bit] = color;
 }
 
-static void draw_page(const PalaceDialogue *d, const Page *page, unsigned y,
+static void draw_page(const PalaceDialogue *d, const Page *page, unsigned x, unsigned y,
                       unsigned visible, uint32_t pixels[240][320])
 {
     for (unsigned i = 0; i < page->length && page->letters[i].tick < visible; ++i) {
         Letter l = page->letters[i];
-        draw_glyph(d, 72u + 6u * l.x, y + 14u * l.y, l.character, l.ink, pixels);
+        draw_glyph(d, x + 6u * l.x, y + 14u * l.y, l.character, l.ink, pixels);
     }
+}
+
+/* A reflected textured quad is split along its diagonal. The span to the
+ * right of that edge starts at the interpolated edge texel. The opposite
+ * span starts at the left vertex, which can round a half texel differently. */
+static Point reflected_texel(unsigned x, unsigned y, unsigned width, unsigned height,
+                             unsigned last_v)
+{
+    const int one = 65536;
+    int extent = (int)width - 1;
+    int du = extent * one / (int)width;
+    int diagonal = (int)((int64_t)y * width * one / height);
+    int distance = (int)x * one - diagonal;
+    int u = extent * one;
+    if (distance < 0) {
+        u -= (int)x * du;
+    } else {
+        u -= (int)y * (extent * one / (int)height);
+        u -= (int)(((int64_t)distance * du + one - 1) / one);
+    }
+    unsigned v = y * (last_v * one / height);
+    return (Point){(u + one / 2) / one, (int)(v + one / 2) / one};
 }
 
 static void draw_speech(const PalaceDialogue *d, const Speech *speech, unsigned elapsed,
@@ -332,25 +377,39 @@ static void draw_speech(const PalaceDialogue *d, const Speech *speech, unsigned 
 {
     unsigned step = elapsed < 12 ? 2 + elapsed / 2 : 8;
     draw_balloon(d, speech->style, step, 0, pixels);
-    if (step == 8 && speech->style != BURST)
-        for (unsigned y = 0; y < 11; ++y)
-            for (unsigned x = 0; x < 15; ++x) {
-                uint16_t color = d->tail[(y*15+5)/11][x];
-                if (color) pixels[76+y][160+x] = rgb(color);
+    int right = speech->style == RIGHT_ROUNDED;
+    unsigned text_x = right ? 32u : 72u;
+    if (step == 8 && speech->style != BURST) {
+        unsigned width = right ? 16u : 15u;
+        unsigned left = right ? 144u : 160u;
+        for (unsigned y = 0; y < 11; ++y) {
+            for (unsigned x = 0; x < width; ++x) {
+                Point uv = right ? reflected_texel(x, y, width, 11, 15) :
+                                   (Point){(int)x, (int)(y * 15 + 5) / 11};
+                uint16_t color = d->tail[uv.y][uv.x];
+                if (color) pixels[76+y][left+x] = rgb(color);
             }
+        }
+    }
     if (elapsed < 14) return;
-    for (unsigned y = 0; y < PORTRAIT_H; ++y)
-        for (unsigned x = 0; x < PORTRAIT_W; ++x)
-            if (speech->portrait[y][x]) pixels[24+y][32+x] = rgb(speech->portrait[y][x]);
+    unsigned left = right ? 256u : 32u;
+    for (unsigned y = 0; y < PORTRAIT_H; ++y) {
+        for (unsigned x = 0; x < PORTRAIT_W; ++x) {
+            Point uv = right ? reflected_texel(x, y, PORTRAIT_W, PORTRAIT_H, PORTRAIT_H - 1) :
+                               (Point){(int)x, (int)y};
+            uint16_t color = speech->portrait[uv.y][uv.x];
+            if (color) pixels[24+y][left+x] = rgb(color);
+        }
+    }
     if (elapsed < 16) return;
-    unsigned next = 2 * speech->lead.voice_ticks;
+    uint64_t next = 2ull * speech->lead.voice_ticks;
     if (!voice_ready || elapsed < body || !speech->continuation.length || elapsed - body < next + 2) {
         for (unsigned i = 0; i < speech->name_size; ++i)
-            draw_glyph(d, 72u + 6u * i, 24, speech->name[i], 1, pixels);
+            draw_glyph(d, text_x + 6u * i, 24, speech->name[i], 1, pixels);
         if (voice_ready && elapsed >= body)
-            draw_page(d, &speech->lead, speech->name_size ? 38 : 24, 1 + (elapsed - body) / 2, pixels);
+            draw_page(d, &speech->lead, text_x, speech->name_size ? 38 : 24, 1 + (elapsed - body) / 2, pixels);
     } else if (elapsed - body >= next + 4) {
-        draw_page(d, &speech->continuation, 24, 1 + (elapsed - body - next - 4) / 2, pixels);
+        draw_page(d, &speech->continuation, text_x, 24, 1 + (elapsed - body - next - 4) / 2, pixels);
     }
 }
 
@@ -371,6 +430,7 @@ static int speech_event(const PalaceDialogue *d, uint64_t field, SpeechEvent *ev
         /* An early stream start can finish the previous message before the
          * crystal-room camera opens the next exchange. */
         if (i == 3 && opened < CRYSTAL_CAMERA_FIELD) opened = CRYSTAL_CAMERA_FIELD;
+        if (i == 5 && opened < SCRIBE_FIELD) opened = SCRIBE_FIELD;
         uint64_t body = opened + (speech->voiced ? 32 : 16);
         int ready = !speech->voiced || speech->voice_ready || i == 0;
         if (speech->voice_ready) {
@@ -379,9 +439,11 @@ static int speech_event(const PalaceDialogue *d, uint64_t field, SpeechEvent *ev
             uint64_t display = (uint64_t)speech->ready_field + 6;
             body = display > opened + 20 ? display : opened + 20;
         }
-        uint64_t close = body + 2 * (speech->lead.voice_ticks + speech->hold_ticks) + 4;
-        if (speech->continuation.length) close += 4 + 2 * speech->continuation.voice_ticks;
-        uint64_t next = close + (i == 0 ? 12 + 2 * 31 : 14);
+        uint64_t close = body + 2ull * speech->lead.voice_ticks + 2 * speech->hold_ticks + 4;
+        if (speech->continuation.length) close += 4 + 2ull * speech->continuation.voice_ticks;
+        /* The court waits two extra script ticks before Fillet begins the ritual. */
+        unsigned pause = i == 0 ? 31u : i == 6 ? 3u : 1u;
+        uint64_t next = close + 12 + 2 * pause;
         if (!ready || field < next) {
             *event = (SpeechEvent){speech, opened, body, close, ready};
             return 1;

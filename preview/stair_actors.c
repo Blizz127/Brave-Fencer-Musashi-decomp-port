@@ -40,7 +40,8 @@ struct BfmStairActors {
     Model parts[PARTS], crystal;
     Performer actor[ACTORS];
     const uint8_t *princess_landing;
-    Journey arrival[ACTORS], step_forward[2], gathered[ACTORS];
+    Journey arrival[ACTORS], step_forward[2], gathered[ACTORS], retreat[ACTORS];
+    const uint8_t *princess_turn, *princess_speech, *princess_cast, *steward_retreat;
     Draw order[MAX_DRAW];
     size_t used, next;
 };
@@ -270,6 +271,15 @@ BfmStairActors *bfm_stair_actors_load(const uint8_t *s, size_t bytes)
     out->princess_landing = s + 0xb0a30;
     static const unsigned arrival[ACTORS] = {0xb0d54, 0xb5018, 0xbfbb0, 0xbc8fc, 0xb8724};
     static const unsigned gathered[ACTORS] = {0xb1208, 0xb54cc, 0xc0064, 0xbcdc4, 0xb874c};
+    static const unsigned retreat[ACTORS] = {0xb1b80, 0xb54f4, 0xc008c, 0xbcdec, 0xb8774};
+    if (!within(bytes, 0x7e434, 3 * 8 * 12) ||
+        !within(bytes, 0x7dcb4, 20 * 8 * 12) ||
+        !within(bytes, 0x7e914, 8 * 8 * 12) ||
+        !within(bytes, 0x81f14, 10 * 10 * 12)) goto fail;
+    out->princess_turn = s + 0x7e434;
+    out->princess_speech = s + 0x7dcb4;
+    out->princess_cast = s + 0x7e914;
+    out->steward_retreat = s + 0x81f14;
     if (!read_journey(&out->step_forward[0], s, bytes, 0xbc910) ||
         !read_journey(&out->step_forward[1], s, bytes, 0xb8738)) goto fail;
     unsigned part = 1;
@@ -281,6 +291,7 @@ BfmStairActors *bfm_stair_actors_load(const uint8_t *s, size_t bytes)
         unsigned n = layout[i].count, frames = layout[i].frames;
         if (!read_journey(&out->arrival[i], s, bytes, arrival[i]) ||
             !read_journey(&out->gathered[i], s, bytes, gathered[i]) ||
+            !read_journey(&out->retreat[i], s, bytes, retreat[i]) ||
             !within(bytes, layout[i].list, 4 * (n + 1)) ||
             !within(bytes, layout[i].bones, 12 * n * frames) ||
             !within(bytes, layout[i].landing_bones, 12 * n * layout[i].landing_frames) ||
@@ -378,7 +389,9 @@ static void prepare_model(BfmStairActors *group, const Model *m, Mat model, Vec 
             depth += z;
             if (z < near) near = z;
         }
-        if (near <= 0 || edge(d->point[0], d->point[1], d->point[2].v[0], d->point[2].v[1]) <= 0)
+        /* At a 256-unit projection distance, a vertex at 128 or closer
+         * saturates the perspective divide. The court omits those faces. */
+        if (near <= 128 || edge(d->point[0], d->point[1], d->point[2].v[0], d->point[2].v[1]) <= 0)
             continue;
         for (unsigned j = 0; j < f->count; ++j)
             for (unsigned k = 0; k < 3; ++k) {
@@ -575,6 +588,45 @@ static const uint8_t *journey_pose(Journey path, unsigned progress)
     return path.data + 8 * (progress < path.count ? progress : path.count-1);
 }
 
+static const unsigned idle_frames[ACTORS] = {0, 30, 10, 24, 25};
+
+/* Around the Princess's casting declaration the attendants step back. Their
+ * pose cycles restart before the first translation and settle independently. */
+static void retreat_keys(const BfmStairActors *a, unsigned actor, unsigned field,
+                         const uint8_t **root, const uint8_t **bones)
+{
+    const Performer *p = a->actor + actor;
+    Journey path = a->retreat[actor];
+    unsigned age = (field - 4014) / 2;
+    unsigned start = actor ? 4016 : 4018;
+    *root = field < start ? journey_pose(a->gathered[actor], a->gathered[actor].count)
+                          : journey_pose(path, (field - start) / 2);
+    const uint8_t *motion = p->bones;
+    unsigned pose;
+    if (actor == 0) {
+        if (!age) {
+            motion = a->princess_turn;
+            pose = 2;
+        } else if (field < 4146) {
+            motion = a->princess_speech;
+            pose = age < 20 ? age - 1 : 19;
+        } else {
+            motion = a->princess_cast;
+            unsigned cast = (field - 4146) / 2;
+            pose = cast < 8 ? cast : 7;
+        }
+    } else if (actor != 3 && age >= path.count) {
+        motion = p->landing_bones;
+        pose = (age - path.count) % idle_frames[actor];
+    } else if (actor == 1 || actor == 2) {
+        motion = actor == 1 ? a->steward_retreat : p->landing_bones;
+        pose = age % 10;
+    } else {
+        pose = age % p->frames;
+    }
+    *bones = motion + 12 * p->count * pose;
+}
+
 /* The court gathers beside the crystal, then the two keepers turn to speak.
  * A new movement selects the walking cycle before its first translation.
  * Attendants return to their own idle cycle at the end of a short path. */
@@ -582,7 +634,10 @@ static int crystal_keys(const BfmStairActors *a, unsigned actor, unsigned field,
                         const uint8_t **root, const uint8_t **bones)
 {
     const Performer *p = a->actor + actor;
-    const unsigned idle_frames[ACTORS] = {0,30,10,24,25};
+    if (field >= 4014) {
+        retreat_keys(a, actor, field, root, bones);
+        return 1;
+    }
     unsigned cue = 2756, start = 2758;
     Journey path = a->arrival[actor];
     if (field >= 3170) { cue = 3170; start = 3172; path = a->gathered[actor]; }
@@ -611,6 +666,8 @@ static int crystal_keys(const BfmStairActors *a, unsigned actor, unsigned field,
         if (holding && !(actor == 3 && cue == 2756)) age -= path.count;
     }
     *bones = motion + 12*p->count*(age%cycle);
+    if (!actor && field >= 4010)
+        *bones = a->princess_turn + 12 * p->count * ((field - 4010) / 2);
     return 1;
 }
 

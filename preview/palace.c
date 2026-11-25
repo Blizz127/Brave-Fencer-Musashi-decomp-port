@@ -14,7 +14,16 @@ typedef struct { uint16_t u, v; } Texel;
 typedef struct { Point eye, aim; } Pose;
 typedef struct { Point right, down, forward; } Basis;
 enum { INWARD_POSES = 100, STAIR_POSES = 504, LANDING_POSES = 98,
-       CRYSTAL_WIDE_POSES = 50, ALCHEMIST_POSES = 2, GATHERED_POSES = 70 };
+       CRYSTAL_WIDE_POSES = 50, STILL_POSES = 2, GATHERED_POSES = 70 };
+static const struct { unsigned start, count; size_t offset; } court_shots[] = {
+    {1512, STAIR_POSES, 0x9b424}, {2520, LANDING_POSES, 0x9d504},
+    {2760, CRYSTAL_WIDE_POSES, 0x9da70}, {2854, STILL_POSES, 0x9dd3c},
+    {3172, GATHERED_POSES, 0x9dd68},
+    /* Frontal cut, Fillet overhead, then opposite sides of the ritual circle. */
+    {4012, STILL_POSES, 0xa46e0}, {4016, STILL_POSES, 0x9e14c},
+    {4148, STILL_POSES, 0xa470c}, {4212, STILL_POSES, 0xa4738}
+};
+enum { COURT_SHOT_COUNT = sizeof(court_shots) / sizeof(court_shots[0]) };
 typedef struct {
     Texel uv[4];
     uint16_t vertices[4], page_x, page_y, palette_x, palette_y;
@@ -24,7 +33,7 @@ typedef struct { int depth; size_t index; } Draw;
 
 struct Palace {
     size_t vertex_count, face_count;
-    Pose track[STAIR_POSES + LANDING_POSES + CRYSTAL_WIDE_POSES + ALCHEMIST_POSES + GATHERED_POSES];
+    Pose track[STAIR_POSES + LANDING_POSES + CRYSTAL_WIDE_POSES + GATHERED_POSES + 5 * STILL_POSES];
     BfmStairActors *actors;
     PalaceDialogue *dialogue;
     uint8_t *scene;
@@ -183,8 +192,8 @@ static int load_mesh(Palace *palace, const uint8_t *scene, size_t size)
     return palace->face_count != 0;
 }
 
-/* Each authored camera record holds signed XYZ eye and aim positions, then
- * a roll value. These two opening shots use an unrolled camera. */
+/* Each mounted shot holds signed XYZ eye and aim positions followed by roll.
+ * All shots supported here use an unrolled camera. */
 static int read_poses(Pose *out, const uint8_t *scene, size_t bytes, size_t begin, unsigned count)
 {
     if (begin > bytes || count > (bytes - begin) / 14) return 0;
@@ -202,14 +211,12 @@ static int read_poses(Pose *out, const uint8_t *scene, size_t bytes, size_t begi
 static int read_track(Palace *palace, const uint8_t *scene, size_t bytes)
 {
     if (!palace->member) return read_poses(palace->track, scene, bytes, 0x7a618, INWARD_POSES);
-    const struct { size_t offset; unsigned count; } shots[] = {
-        {0x9b424, STAIR_POSES}, {0x9d504, LANDING_POSES}, {0x9da70, CRYSTAL_WIDE_POSES},
-        {0x9dd3c, ALCHEMIST_POSES}, {0x9dd68, GATHERED_POSES}
-    };
     size_t first = 0;
-    for (unsigned i = 0; i < sizeof(shots)/sizeof(*shots); ++i) {
-        if (!read_poses(palace->track + first, scene, bytes, shots[i].offset, shots[i].count)) return 0;
-        first += shots[i].count;
+    for (unsigned i = 0; i < COURT_SHOT_COUNT; ++i) {
+        unsigned count = court_shots[i].count;
+        if (count > sizeof(palace->track) / sizeof(*palace->track) - first ||
+            !read_poses(palace->track + first, scene, bytes, court_shots[i].offset, count)) return 0;
+        first += count;
     }
     return 1;
 }
@@ -343,17 +350,14 @@ static void project_mesh(Palace *palace, unsigned field)
     Point eye;
     int focal = palace->member ? 256 : 400;
     if (palace->member) {
-        const struct { unsigned start, count; } shots[] = {
-            {1512, STAIR_POSES}, {2520, LANDING_POSES}, {2760, CRYSTAL_WIDE_POSES},
-            {2854, ALCHEMIST_POSES}, {3172, GATHERED_POSES}
-        };
         unsigned shot = 0, first = 0;
-        while (shot+1 < sizeof(shots)/sizeof(*shots) && field >= shots[shot+1].start) {
-            first += shots[shot].count;
+        while (shot + 1 < COURT_SHOT_COUNT && field >= court_shots[shot + 1].start) {
+            first += court_shots[shot].count;
             ++shot;
         }
-        unsigned since = field > shots[shot].start ? (field-shots[shot].start)/2 : 0;
-        unsigned tick = first + (since < shots[shot].count ? since : shots[shot].count-1);
+        unsigned start = court_shots[shot].start, count = court_shots[shot].count;
+        unsigned since = field > start ? (field - start) / 2 : 0;
+        unsigned tick = first + (since < count ? since : count - 1);
         Pose pose = palace->track[tick];
         eye = pose.eye;
         axes = look_at(pose, 1);

@@ -6,6 +6,8 @@
 #include "bfm_plat_font.h"
 #include "title_flow.h"
 #include "save_menu.h"
+#include "forest_walk.h"
+#include "scene_payload.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,6 +24,10 @@ typedef struct Player {
     MusashiDiscMedia *disc;
     void *title, *opening;
     DesktopVoice *voice;
+    BfmForestWalk *forest;
+    uint64_t forest_start;
+    unsigned forest_updates;
+    int forest_confirm, control_message;
     SDL_Window *window;
     SDL_Renderer *renderer;
     SDL_Texture *texture;
@@ -49,7 +55,7 @@ static const char usage[] =
     "a CUE with all its BIN tracks alongside is supported.\n"
     "Continue displays files on a supplied raw 128 KiB card. Saved gameplay cannot yet resume.\n"
     "Enter/Start: start. Space/Cross: confirm or skip the opening. Arrows: select. "
-    "T/Triangle: back from files. Escape: quit.\n";
+    "D-pad, arrows or left stick: move in Giant Forest. T/Triangle: back from files. Escape: quit.\n";
 
 static uint16_t button_mask(unsigned int button) {
     switch (button) {
@@ -216,6 +222,59 @@ static int present(Player *p) {
     return 1;
 }
 
+/* Only the ordinary opening event supplies the source member. Its two
+ * supported rooms queue distinct authored transfers to the same forest. */
+static int start_forest(Player *p)
+{
+    unsigned member;
+    size_t size;
+    RoomTransferDescriptor entry;
+    if (!bfm_opening_skip_member(p->opening, &member)) return 0;
+    uint8_t *scene = bfm_scene_unpack_pac0(p->disc, "SC01.CD", member,
+                                            1u << 20, 1u << 20, &size);
+    if (!scene) return 0;
+    int selected = bfm_forest_entry_from_scene(scene, size, member, &entry);
+    free(scene);
+    if (!selected) return 0;
+    p->forest = bfm_forest_walk_open(p->disc, &entry);
+    if (!p->forest) return 0;
+    bfm_opening_free(p->opening);
+    p->opening = NULL;
+    p->forest_start = SDL_GetTicks64();
+    p->forest_updates = 0;
+    p->forest_confirm = p->control_message = 0;
+    SDL_SetWindowTitle(p->window, "Brave Fencer Musashi - Giant Forest");
+    return 1;
+}
+
+static int forest_frame(Player *p)
+{
+    uint64_t wanted = (SDL_GetTicks64() - p->forest_start) * 30u / 1001u;
+    int running = 1;
+    while (p->forest_updates < wanted) {
+        int x = !!(p->held & PAD_RIGHT) - !!(p->held & PAD_LEFT);
+        int y = !!(p->held & PAD_DOWN) - !!(p->held & PAD_UP);
+        running = bfm_forest_walk_tick_axes(p->forest, x, y, p->forest_confirm);
+        p->forest_confirm = 0;
+        if (running < 0) return -1;
+        if (!running) break;
+        ++p->forest_updates;
+    }
+    int control = bfm_forest_walk_control(p->forest);
+    if (control != p->control_message) {
+        if (control == 2)
+            SDL_SetWindowTitle(p->window, "Brave Fencer Musashi - Forest preview boundary");
+        else if (control == 1)
+            SDL_SetWindowTitle(p->window, "Brave Fencer Musashi - Giant Forest movement");
+        p->control_message = control;
+    }
+    unsigned generation = 0;
+    struct ForestVoice *source = bfm_forest_walk_voice(p->forest, &generation);
+    bfm_desktop_voice_forest(p->voice, source, generation);
+    if (!bfm_forest_walk_draw(p->forest, (uint32_t (*)[OPENING_W])p->pixels)) return -1;
+    return running ? BFM_OPENING_FRAME : BFM_OPENING_END;
+}
+
 static int play(Player *p, char *error, size_t size) {
     uint64_t last_logic = SDL_GetTicks64() * 30u / 1001u;
     int last_phase = -1, last_choice = -1, last_prompt = -1, last_save_view = -1;
@@ -243,6 +302,8 @@ static int play(Player *p, char *error, size_t size) {
                 }
             } else if (p->opening_finished && (p->pressed & (PAD_START | PAD_CROSS | PAD_CIRCLE))) {
                 bfm_desktop_voice_stop(p->voice);
+                bfm_forest_walk_free(p->forest);
+                p->forest = NULL;
                 bfm_opening_free(p->opening);
                 p->opening = NULL;
                 p->opening_finished = 0;
@@ -260,6 +321,8 @@ static int play(Player *p, char *error, size_t size) {
                     }
                 }
                 p->flow.held = p->held | p->pressed;
+            } else if (p->forest) {
+                if (p->pressed & PAD_CROSS) p->forest_confirm = 1;
             } else {
                 bfm_title_input(&p->flow, p->held | p->pressed);
             }
@@ -306,36 +369,52 @@ static int play(Player *p, char *error, size_t size) {
         last_field = fields;
         p->redraw = 0;
         if (opening) {
-            unsigned bank, cue;
-            if (p->voice_stop_field && fields >= p->voice_stop_field) {
-                bfm_desktop_voice_stop(p->voice);
-                p->voice_stop_field = 0;
+            if (p->forest) {
+                frame = forest_frame(p);
+            } else {
+                unsigned bank, cue;
+                if (p->voice_stop_field && fields >= p->voice_stop_field) {
+                    bfm_desktop_voice_stop(p->voice);
+                    p->voice_stop_field = 0;
+                }
+                if (bfm_opening_voice_due(p->opening, fields, &bank, &cue) &&
+                    bfm_desktop_voice_request(p->voice, bank, cue, fields))
+                    fprintf(stderr, "Palace voice %u/%u requested at field %u\n", bank, cue, fields);
+                int voice_events = bfm_desktop_voice_pump(p->voice, fields, &bank, &cue);
+                if (voice_events & BFM_VOICE_MESSAGE_READY) {
+                    bfm_opening_voice_started(p->opening, bank, cue, fields);
+                    fprintf(stderr, "Palace voice %u/%u ready for the message at field %u\n", bank, cue, fields);
+                }
+                if (voice_events & BFM_VOICE_OUTPUT_STARTED) {
+                    fprintf(stderr, "Palace voice %u/%u reached SDL output at field %u\n", bank, cue, fields);
+                }
+                frame = bfm_opening_frame(p->opening, fields, p->pixels, p->width, p->height);
+                if (frame == BFM_OPENING_FOREST_PENDING) {
+                    if (!start_forest(p)) {
+                        snprintf(error, size, "Could not load the selected forest entrance from your disc.");
+                        return 2;
+                    }
+                    frame = forest_frame(p);
+                }
             }
-            if (bfm_opening_voice_due(p->opening, fields, &bank, &cue) &&
-                bfm_desktop_voice_request(p->voice, bank, cue))
-                fprintf(stderr, "Palace voice %u/%u requested at field %u\n", bank, cue, fields);
-            if (bfm_desktop_voice_pump(p->voice, &bank, &cue)) {
-                bfm_opening_voice_started(p->opening, bank, cue, fields);
-                fprintf(stderr, "Palace voice %u/%u reached SDL output at field %u\n", bank, cue, fields);
-            }
-            frame = bfm_opening_frame(p->opening, fields, p->pixels, p->width, p->height);
             if (frame == BFM_OPENING_FRAME) p->opening_seen = 1;
-            if (frame == BFM_OPENING_END || frame == BFM_OPENING_FOREST_PENDING) {
+            if (frame == BFM_OPENING_END) {
                 if (!p->opening_seen) {
                     snprintf(error, size, "The opening ended before it produced its first frame.");
                     return 2;
                 }
-                if (frame == BFM_OPENING_END &&
+                if (!p->forest &&
                     bfm_opening_final_frame(p->opening, p->pixels, p->width, p->height) <= 0) {
                     snprintf(error, size, "Could not render the final opening frame.");
                     return 2;
                 }
-                bfm_desktop_voice_stop(p->voice);
+                if (!p->forest) bfm_desktop_voice_stop(p->voice);
                 p->opening_finished = 1;
-                SDL_SetWindowTitle(p->window, "Brave Fencer Musashi - End of opening preview");
-                fputs("End of the implemented opening. Gameplay control and saving are unavailable.\n", stderr);
-                if (frame == BFM_OPENING_FOREST_PENDING)
-                    status_line(p, "Chapter 1 card complete. Start returns.");
+                SDL_SetWindowTitle(p->window, p->forest ? "Brave Fencer Musashi - Giant Forest preview" :
+                                                      "Brave Fencer Musashi - End of opening preview");
+                fputs("End of the implemented opening scene. Press Start to return.\n", stderr);
+                if (p->forest)
+                    status_line(p, "Forest dialogue complete. Start returns.");
                 else
                     status_line(p, "End of preview. Press Start to return.");
                 if (!present(p)) {
@@ -391,8 +470,9 @@ static int run(const char *disc_path, const char *card_path, int windowed) {
     SDL_SetMainReady();
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) < 0) goto sdl_error;
     sdl_ready = 1;
-    if (SDL_InitSubSystem(SDL_INIT_AUDIO) == 0) p->voice = bfm_desktop_voice_open(p->disc);
-    else SDL_LogWarn(SDL_LOG_CATEGORY_AUDIO, "Dialogue output unavailable: %s", SDL_GetError());
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0)
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Dialogue will continue without sound: %s", SDL_GetError());
+    p->voice = bfm_desktop_voice_open(p->disc);
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
     p->window = SDL_CreateWindow("Brave Fencer Musashi", SDL_WINDOWPOS_CENTERED,
                                   SDL_WINDOWPOS_CENTERED, TITLE_W, TITLE_H,
@@ -417,6 +497,7 @@ done:
     if (p->window) SDL_DestroyWindow(p->window);
     bfm_desktop_voice_free(p->voice);
     if (sdl_ready) SDL_Quit();
+    bfm_forest_walk_free(p->forest);
     if (p->opening) bfm_opening_free(p->opening);
     free(p->save_art);
     if (p->title) bfm_title_free(p->title);

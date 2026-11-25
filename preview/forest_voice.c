@@ -1,0 +1,99 @@
+/* SPDX-License-Identifier: MIT */
+#include "forest_voice.h"
+#include "disc_voice.h"
+#include <stdlib.h>
+#include <string.h>
+
+enum {
+    /* Two room updates enqueue and dispatch the optical request. The
+     * warm-mode seek then takes thirteen service intervals to reach ReadS. */
+    FIRST_READ_UPDATE = 2 + 13,
+    /* The drive reads all eight interleaved channels at double speed. */
+    SECTORS_PER_SECOND = 150
+};
+
+struct ForestVoice {
+    DiscVoice *source;
+    unsigned status, until_read, remaining_ticks;
+    size_t frames_left, lead_in;
+};
+
+ForestVoice *bfm_forest_voice_load(const MusashiDiscMedia *disc)
+{
+    ForestVoice *v = calloc(1, sizeof(*v));
+    if (!v) return NULL;
+    v->source = bfm_disc_voice_load(disc, BFM_VOICE_ST01);
+    if (!v->source) {
+        free(v);
+        return NULL;
+    }
+    return v;
+}
+
+int bfm_forest_voice_request(ForestVoice *v, unsigned bank, unsigned cue)
+{
+    BfmDiscVoiceCue selected;
+    if (!v || !bfm_disc_voice_request(v->source, bank, cue, &selected)) return 0;
+    v->status = BFM_FOREST_VOICE_PENDING;
+    v->until_read = FIRST_READ_UPDATE;
+    v->lead_in = selected.channel_offset * BFM_FOREST_VOICE_RATE / SECTORS_PER_SECOND;
+    v->remaining_ticks = selected.sound_ticks;
+    v->frames_left = (size_t)((uint64_t)selected.sound_ticks * BFM_FOREST_VOICE_RATE * 1001 / 60000);
+    return 1;
+}
+
+void bfm_forest_voice_step(ForestVoice *v)
+{
+    if (!v || v->status == BFM_FOREST_VOICE_IDLE) return;
+    if (v->status == BFM_FOREST_VOICE_PENDING) {
+        if (!v->until_read) {
+            bfm_forest_voice_stop(v);
+        } else if (!--v->until_read) {
+            if (v->remaining_ticks && bfm_disc_voice_prime(v->source))
+                v->status = BFM_FOREST_VOICE_PLAYING;
+            else
+                bfm_forest_voice_stop(v);
+        }
+    } else if (v->remaining_ticks <= 2) {
+        /* Mute immediately, then retire the acknowledged pause on the next
+         * service opportunity. The foreground sees a pending pause here. */
+        v->status = BFM_FOREST_VOICE_PENDING;
+        v->frames_left = 0;
+    } else {
+        v->remaining_ticks -= 2;
+    }
+}
+
+unsigned bfm_forest_voice_status(const ForestVoice *v)
+{
+    return v ? v->status : BFM_FOREST_VOICE_IDLE;
+}
+
+size_t bfm_forest_voice_read(ForestVoice *v, int16_t *stereo, size_t frames)
+{
+    if (!v || !stereo || v->status != BFM_FOREST_VOICE_PLAYING) return 0;
+    if (frames > v->frames_left) frames = v->frames_left;
+    size_t silence = v->lead_in < frames ? v->lead_in : frames;
+    /* Reading status is visible before the first matching channel sector. */
+    memset(stereo, 0, silence * 2 * sizeof(*stereo));
+    v->lead_in -= silence;
+    size_t written = silence + bfm_disc_voice_read(v->source, stereo + 2 * silence, frames - silence);
+    v->frames_left -= written;
+    return written;
+}
+
+void bfm_forest_voice_stop(ForestVoice *v)
+{
+    if (!v) return;
+    bfm_disc_voice_stop(v->source);
+    v->status = BFM_FOREST_VOICE_IDLE;
+    v->until_read = v->remaining_ticks = 0;
+    v->frames_left = v->lead_in = 0;
+}
+
+void bfm_forest_voice_free(ForestVoice *v)
+{
+    if (!v) return;
+    bfm_disc_voice_free(v->source);
+    free(v);
+}
