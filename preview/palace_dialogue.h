@@ -8,7 +8,7 @@
 
 typedef struct PalaceDialogue PalaceDialogue;
 
-/* Load the three speakers on the palace staircase from the mounted scene.
+/* Load the staircase and crystal chamber messages from the mounted scene.
  * Their script and drawing resources can be released after this call. */
 PalaceDialogue *bfm_palace_dialogue_load(const MusashiDiscMedia *disc,
                                          const uint8_t *scene, size_t scene_size,

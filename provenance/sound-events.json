@@ -99,6 +99,19 @@
       "extent": "function",
       "optimization": "-O2",
       "origin": "Independently re-derived from the original US executable."
+    },
+    {
+      "name": "func_800383A4",
+      "vram": 2147713956,
+      "size": 260,
+      "region": "main",
+      "source": "src/matching/main/800383a4.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independent C reconstruction of the USA game executable sequence channel reset from the owned disc.",
+      "source_sha256": "f11e7a4f0169aa96a2867fb34873201febffd3d687927c55d1b7654b67cce149",
+      "span_sha256": "3df39bc9bc1c171fcbf5436659602d041fdf87330c5b6253d569c7478507b636"
     }
   ]
 }

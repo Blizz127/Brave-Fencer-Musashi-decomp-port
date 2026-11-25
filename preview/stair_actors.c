@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { ACTORS = 3, PARTS = 26, MAX_VERTS = 128, MAX_FACES = 128,
+enum { ACTORS = 5, PARTS = 41, MAX_VERTS = 128, MAX_FACES = 128,
        MAX_DRAW = 2048, ROOT_POSES = 601, W = 320, H = 240 };
 typedef struct { int v[3]; } Vec;
 typedef struct { int a[3][3]; } Mat;
@@ -17,6 +17,7 @@ typedef struct {
     unsigned nv, nn, nf;
     Face faces[MAX_FACES];
 } Model;
+typedef struct { const uint8_t *data; unsigned count; } Journey;
 typedef struct {
     const uint8_t *bones, *roots, *landing_bones;
     unsigned first, count, frames;
@@ -30,14 +31,16 @@ typedef struct {
 typedef struct { Vec normal; int32_t offset; } Plane;
 typedef struct { Plane side[5]; unsigned count; } FloorSurface;
 struct BfmStairActors {
+    Mat lights[2], selected_light;
     FloorSurface floor[512];
     size_t floor_count;
     Vec spawn[3];
     Face shadow;
     int shadow_left, shadow_top;
-    Model parts[PARTS];
+    Model parts[PARTS], crystal;
     Performer actor[ACTORS];
     const uint8_t *princess_landing;
+    Journey arrival[ACTORS], step_forward[2], gathered[ACTORS];
     Draw order[MAX_DRAW];
     size_t used, next;
 };
@@ -202,6 +205,15 @@ static int read_effects(BfmStairActors *a, const uint8_t *s, size_t bytes)
 {
     const size_t locations = 0x60ba0, card = 0x5d018;
     if (!within(bytes, locations, 24) || !within(bytes, card, 12) || !read_floor(a,s,bytes)) return 0;
+    const size_t light_tables[] = {0x609bc, 0x609dc};
+    for (unsigned profile = 0; profile < 2; ++profile) {
+        if (!within(bytes, light_tables[profile], 30)) return 0;
+        for (unsigned lamp = 0; lamp < 3; ++lamp) {
+            const uint8_t *color = s + light_tables[profile] + 10*lamp;
+            for (unsigned component = 0; component < 3; ++component)
+                a->lights[profile].a[component][lamp] = color[component] * 4096 / 255;
+        }
+    }
     for (unsigned i = 0; i < 3; ++i) a->spawn[i] = triple(s + locations + 8*i);
     const uint8_t *desc = s + card;
     unsigned w = desc[2], h = desc[3];
@@ -218,6 +230,24 @@ static int read_effects(BfmStairActors *a, const uint8_t *s, size_t bytes)
     return 1;
 }
 
+/* A new scene event selects a fresh world track. Its signed X terminator
+ * ends movement; subsequent animation keeps the final position. */
+static int read_journey(Journey *out, const uint8_t *scene, size_t bytes, size_t offset)
+{
+    if (!within(bytes, offset, 8)) return 0;
+    for (unsigned i = 0; i <= 600; ++i) {
+        size_t pos = offset + 8*i;
+        if (!within(bytes, pos, 2)) return 0;
+        if (signed_word(scene + pos) == -32768) {
+            if (!i) return 0;
+            *out = (Journey){scene + offset, i};
+            return 1;
+        }
+        if (!within(bytes, pos, 8)) return 0;
+    }
+    return 0;
+}
+
 BfmStairActors *bfm_stair_actors_load(const uint8_t *s, size_t bytes)
 {
     /* The US stairwell has one loose rock and three entering models.
@@ -226,8 +256,10 @@ BfmStairActors *bfm_stair_actors_load(const uint8_t *s, size_t bytes)
      * the scene track which moves the whole figure. */
     static const struct { unsigned list, bones, root, count, frames, landing_bones, landing_frames; } layout[ACTORS] = {
         {0x73be0, 0x7cff4, 0xaf764, 8, 20, 0x7d774, 14},
-        {0x7634c, 0x823c4, 0xb3d4c, 10, 12, 0x82964, 23},
-        {0x7848c, 0x86b7c, 0xbe8e4, 7, 12, 0x86834, 10}
+        {0x7634c, 0x823c4, 0xb3d4c, 10, 12, 0x82964, 30},
+        {0x7848c, 0x86b7c, 0xbe8e4, 7, 12, 0x86834, 10},
+        {0x7a2a4, 0x8774c, 0, 8, 12, 0x881cc, 24},
+        {0x7cfd4, 0x88acc, 0, 7, 32, 0x8954c, 25}
     };
     const uint32_t load_address = UINT32_C(0x80128158);
     const unsigned rock = 0x71604u;
@@ -236,17 +268,26 @@ BfmStairActors *bfm_stair_actors_load(const uint8_t *s, size_t bytes)
     if (!out || !read_effects(out, s, bytes) || !load_model(&out->parts[0], s + rock, bytes - rock)) goto fail;
     if (!within(bytes, 0xb0a30, 100*8)) goto fail;
     out->princess_landing = s + 0xb0a30;
+    static const unsigned arrival[ACTORS] = {0xb0d54, 0xb5018, 0xbfbb0, 0xbc8fc, 0xb8724};
+    static const unsigned gathered[ACTORS] = {0xb1208, 0xb54cc, 0xc0064, 0xbcdc4, 0xb874c};
+    if (!read_journey(&out->step_forward[0], s, bytes, 0xbc910) ||
+        !read_journey(&out->step_forward[1], s, bytes, 0xb8738)) goto fail;
     unsigned part = 1;
-    unsigned total_faces = 3 * out->parts[0].nf + ACTORS;
+    const size_t crystal_model = 0x711d4;
+    if (!within(bytes, crystal_model, 40) ||
+        !load_model(&out->crystal, s + crystal_model, bytes - crystal_model)) goto fail;
+    unsigned total_faces = 3 * out->parts[0].nf + ACTORS + out->crystal.nf;
     for (unsigned i = 0; i < ACTORS; ++i) {
         unsigned n = layout[i].count, frames = layout[i].frames;
-        if (!within(bytes, layout[i].list, 4 * (n + 1)) ||
+        if (!read_journey(&out->arrival[i], s, bytes, arrival[i]) ||
+            !read_journey(&out->gathered[i], s, bytes, gathered[i]) ||
+            !within(bytes, layout[i].list, 4 * (n + 1)) ||
             !within(bytes, layout[i].bones, 12 * n * frames) ||
             !within(bytes, layout[i].landing_bones, 12 * n * layout[i].landing_frames) ||
-            !within(bytes, layout[i].root, ROOT_POSES * 8)) goto fail;
+            (i < 3 && !within(bytes, layout[i].root, ROOT_POSES * 8))) goto fail;
         const uint8_t *list = s + layout[i].list;
         if (longword(list + 4 * n)) goto fail;
-        out->actor[i] = (Performer){s + layout[i].bones, s + layout[i].root, s + layout[i].landing_bones, part, n, frames};
+        out->actor[i] = (Performer){s + layout[i].bones, i < 3 ? s + layout[i].root : NULL, s + layout[i].landing_bones, part, n, frames};
         for (unsigned j = 0; j < n; ++j, ++part) {
             uint32_t pointer = longword(list + 4 * j);
             if (pointer < load_address) goto fail;
@@ -315,7 +356,6 @@ static Vec project(Vec p)
     return p;
 }
 static const Mat stage_directions = {{{0, -4267, 0}, {0, -1861, 3723}, {0, 4096, 0}}};
-static const Mat stage_colors = {{{2457, 1317, 1236}, {819, 1558, 819}, {417, 1317, 1638}}};
 
 static void prepare_model(BfmStairActors *group, const Model *m, Mat model, Vec origin, Mat local)
 {
@@ -326,7 +366,7 @@ static void prepare_model(BfmStairActors *group, const Model *m, Mat model, Vec 
     for (unsigned i = 0; i < m->nn; ++i) {
         Vec energy = transform(lighting, triple(m->normals + 8 * i));
         for (unsigned j = 0; j < 3; ++j) energy.v[j] = clamp(energy.v[j], 0, 32767);
-        intensity[i] = add((Vec){{2048,2048,2048}}, transform(stage_colors, energy));
+        intensity[i] = add((Vec){{2048,2048,2048}}, transform(group->selected_light, energy));
     }
     for (unsigned i = 0; i < m->nf && group->used < MAX_DRAW; ++i) {
         const Face *f = m->faces + i;
@@ -454,7 +494,7 @@ static void shoe_shadow(BfmStairActors *a, Vec root, int yaw, Mat view, Vec tran
     Vec opposite = {{-n.v[0],-n.v[1],-n.v[2]}};
     Vec light = transform(stage_directions, opposite);
     for (unsigned k = 0; k < 3; ++k) light.v[k] = clamp(light.v[k], 0, 32767);
-    Vec shade = add((Vec){{2048,2048,2048}}, transform(stage_colors, light));
+    Vec shade = add((Vec){{2048,2048,2048}}, transform(a->selected_light, light));
     for (unsigned k = 0; k < 3; ++k) shade.v[k] = clamp(shade.v[k] / 32, 0, 255);
     Draw *d = a->order + a->used;
     for (unsigned j = 0; j < 4; ++j) {
@@ -530,20 +570,75 @@ static void actor_keys(const BfmStairActors *a, unsigned actor, unsigned tick,
     *bones = poses + 12*p->count*pose;
 }
 
+static const uint8_t *journey_pose(Journey path, unsigned progress)
+{
+    return path.data + 8 * (progress < path.count ? progress : path.count-1);
+}
+
+/* The court gathers beside the crystal, then the two keepers turn to speak.
+ * A new movement selects the walking cycle before its first translation.
+ * Attendants return to their own idle cycle at the end of a short path. */
+static int crystal_keys(const BfmStairActors *a, unsigned actor, unsigned field,
+                        const uint8_t **root, const uint8_t **bones)
+{
+    const Performer *p = a->actor + actor;
+    const unsigned idle_frames[ACTORS] = {0,30,10,24,25};
+    unsigned cue = 2756, start = 2758;
+    Journey path = a->arrival[actor];
+    if (field >= 3170) { cue = 3170; start = 3172; path = a->gathered[actor]; }
+    else if (actor >= 3 && field >= 2852) {
+        cue = 2852; start = 2854; path = a->step_forward[actor-3];
+    }
+    /* Fillet leaves the old camera before the first crystal-wide draw. */
+    if (actor == 0 && field >= 2758 && field < 2760) return 0;
+    if (field < start) {
+        if (cue == 2756) {
+            if (actor >= 3) return 0;
+            if (actor == 0) *root = a->princess_landing + 8*99;
+            else *root = p->roots + 8*600;
+        } else {
+            Journey previous = actor >= 3 && cue == 3170 ? a->step_forward[actor-3] : a->arrival[actor];
+            *root = journey_pose(previous, previous.count);
+        }
+    } else *root = journey_pose(path, (field-start)/2);
+    unsigned age = (field-cue)/2;
+    const uint8_t *motion = p->bones;
+    unsigned cycle = p->frames;
+    int holding = age >= path.count;
+    if (actor && (actor != 3 || cue == 2756) && (holding || (actor >= 3 && cue == 2756))) {
+        motion = p->landing_bones;
+        cycle = idle_frames[actor];
+        if (holding && !(actor == 3 && cue == 2756)) age -= path.count;
+    }
+    *bones = motion + 12*p->count*(age%cycle);
+    return 1;
+}
+
 void bfm_stair_actors_prepare(BfmStairActors *a, unsigned field,
                               const int axes[3][3], const int origin[3])
 {
     if (!a) return;
     a->used = 0; a->next = 0;
+    a->selected_light = a->lights[field >= 2758 ? 1 : 0];
     Mat view; memcpy(view.a, axes, sizeof(view.a));
     Vec translation = {{origin[0],origin[1],origin[2]}};
     masonry(a, field, view, translation);
+    if (field >= 2760) {
+        unsigned turns = (1280u + ((field-2760u)/2u)*8u) & 4095u;
+        Mat spin = rotation(1, (int)turns);
+        prepare_model(a, &a->crystal, multiply(view, spin), translation, spin);
+    }
     if (field >= 1510) {
         unsigned tick = (field - 1510) / 2;
         if (tick) for (unsigned i = 0; i < ACTORS; ++i) {
             const Performer *p = a->actor + i;
             const uint8_t *root, *frame;
-            actor_keys(a, i, tick, &root, &frame);
+            if (field >= 2756) {
+                if (!crystal_keys(a, i, field, &root, &frame)) continue;
+            } else {
+                if (i >= 3) continue;
+                actor_keys(a, i, tick, &root, &frame);
+            }
             int heading = signed_word(root + 6);
             shoe_shadow(a, triple(root), heading, view, translation);
             Mat yaw = rotation(1, heading), turned = multiply(view, yaw);
