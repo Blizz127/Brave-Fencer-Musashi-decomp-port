@@ -31,6 +31,8 @@ int bfm_opening_frame(void *scene, unsigned int fields, uint32_t *pixels,
 /* Render the final supported field, even when the display clock skipped it. */
 int bfm_opening_final_frame(void *scene, uint32_t *pixels, int width, int height);
 int bfm_opening_voice_due(void *scene, unsigned field, unsigned *bank, unsigned *cue);
+int bfm_opening_voice_schedule(void *scene, unsigned field, unsigned *bank, unsigned *cue,
+                              unsigned *issue_field);
 int bfm_opening_voice_started(void *scene, unsigned bank, unsigned cue, unsigned field);
 void bfm_opening_free(void *scene);
 

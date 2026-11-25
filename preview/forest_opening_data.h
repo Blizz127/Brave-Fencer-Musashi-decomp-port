@@ -15,4 +15,6 @@ const uint8_t *bfm_forest_room_bytes(const BfmForestField *field, uint32_t addre
 struct BfmForestMessageArt;
 struct BfmForestMessageArt *bfm_forest_open_message_art(const BfmForestField *field,
                                                        const MusashiDiscMedia *disc);
+struct BfmForestHud;
+struct BfmForestHud *bfm_forest_open_hud(const BfmForestField *field, const MusashiDiscMedia *disc);
 #endif

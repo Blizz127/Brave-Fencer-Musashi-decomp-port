@@ -372,18 +372,21 @@ static int play(Player *p, char *error, size_t size) {
             if (p->forest) {
                 frame = forest_frame(p);
             } else {
-                unsigned bank, cue;
+                unsigned bank, cue, issue_field;
                 if (p->voice_stop_field && fields >= p->voice_stop_field) {
                     bfm_desktop_voice_stop(p->voice);
                     p->voice_stop_field = 0;
                 }
-                if (bfm_opening_voice_due(p->opening, fields, &bank, &cue) &&
-                    bfm_desktop_voice_request(p->voice, bank, cue, fields))
-                    fprintf(stderr, "Palace voice %u/%u requested at field %u\n", bank, cue, fields);
+                if (bfm_opening_voice_schedule(p->opening, fields, &bank, &cue, &issue_field) &&
+                    bfm_desktop_voice_request(p->voice, bank, cue, issue_field))
+                    fprintf(stderr, "Palace voice %u/%u requested at field %u (handled at %u)\n",
+                            bank, cue, issue_field, fields);
                 int voice_events = bfm_desktop_voice_pump(p->voice, fields, &bank, &cue);
                 if (voice_events & BFM_VOICE_MESSAGE_READY) {
-                    bfm_opening_voice_started(p->opening, bank, cue, fields);
-                    fprintf(stderr, "Palace voice %u/%u ready for the message at field %u\n", bank, cue, fields);
+                    unsigned ready = bfm_desktop_voice_ready_field(p->voice);
+                    bfm_opening_voice_started(p->opening, bank, cue, ready);
+                    fprintf(stderr, "Palace voice %u/%u ready for the message at field %u (handled at %u)\n",
+                            bank, cue, ready, fields);
                 }
                 if (voice_events & BFM_VOICE_OUTPUT_STARTED) {
                     fprintf(stderr, "Palace voice %u/%u reached SDL output at field %u\n", bank, cue, fields);

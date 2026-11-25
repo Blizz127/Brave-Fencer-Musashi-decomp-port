@@ -18,6 +18,8 @@ void bfm_palace_dialogue_free(PalaceDialogue *dialogue);
  * The request remains visible until it starts or the room moves on. */
 int bfm_palace_dialogue_voice_due(const PalaceDialogue *dialogue, unsigned opening_field,
                                  unsigned *bank, unsigned *cue);
+int bfm_palace_dialogue_voice_schedule(const PalaceDialogue *dialogue, unsigned opening_field,
+                                      unsigned *bank, unsigned *cue, unsigned *issue_field);
 /* Called on the game thread when the mounted voice stream becomes ready.
  * Bank and cue identify the script's request. opening_field uses the same
  * clock as draw. A duplicate notification preserves the first start. */

@@ -20,6 +20,8 @@ add_executable(musashi_native_boot
     forest_blade.c
     forest_entry.c
     forest_field.c
+    forest_hud.c
+    forest_status.c
     forest_manual.c
     forest_motion.c
     forest_pose.c

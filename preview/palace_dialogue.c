@@ -453,8 +453,8 @@ static int speech_event(const PalaceDialogue *d, uint64_t field, SpeechEvent *ev
     return 0;
 }
 
-int bfm_palace_dialogue_voice_due(const PalaceDialogue *d, unsigned field,
-                                 unsigned *bank, unsigned *cue)
+int bfm_palace_dialogue_voice_schedule(const PalaceDialogue *d, unsigned field,
+                                      unsigned *bank, unsigned *cue, unsigned *issue_field)
 {
     SpeechEvent event;
     uint64_t display = (uint64_t)field + 6;
@@ -463,7 +463,14 @@ int bfm_palace_dialogue_voice_due(const PalaceDialogue *d, unsigned field,
         (event.voice_ready && display >= event.closing)) return 0;
     *bank = event.speech->bank;
     *cue = event.speech->cue;
+    if (issue_field) *issue_field = (unsigned)(event.opened - 6);
     return 1;
+}
+
+int bfm_palace_dialogue_voice_due(const PalaceDialogue *d, unsigned field,
+                                 unsigned *bank, unsigned *cue)
+{
+    return bfm_palace_dialogue_voice_schedule(d, field, bank, cue, NULL);
 }
 
 void bfm_palace_dialogue_draw(const PalaceDialogue *d, unsigned field,

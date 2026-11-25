@@ -3,6 +3,7 @@
 #include "forest_opening_data.h"
 #include "forest_motion.h"
 #include "forest_manual.h"
+#include "forest_hud.h"
 #include "forest_message.h"
 #include "forest_message_art.h"
 #include "forest_speech_actor.h"
@@ -35,6 +36,8 @@ struct BfmForestWalk {
     Motion idle, walk, run;
     BfmForestSpeechActor speaker;
     BfmForestManual manual;
+    BfmForestStatus status;
+    BfmForestHud *hud;
     int player_control, input_x, input_y;
     int at_boundary, blocked_x, blocked_y;
     BfmForestMessage *message;
@@ -183,7 +186,8 @@ BfmForestWalk *bfm_forest_walk_open(const MusashiDiscMedia *disc,const RoomTrans
     w->look_x = -(int)lround(sin(w->yaw * radians) * 4096) / 64;
     w->look_z = -(int)lround(cos(w->yaw * radians) * 4096) / 32;
     ForestPlayerArchive archive;
-    if (!w->field || !bfm_forest_opening_data(w->field,&w->data) ||
+    w->hud = bfm_forest_open_hud(w->field, disc);
+    if (!w->hud || !bfm_forest_status_load(disc, &w->status) || !bfm_forest_opening_data(w->field,&w->data) ||
         !forest_player_archive_open(disc,&archive) || !setup_cameras(w) ||
         !load_motion(&archive,w->data.animation_table,IDLE,&w->idle) ||
         !load_motion(&archive,w->data.animation_table,WALK,&w->walk) ||
@@ -197,6 +201,7 @@ fail:
 void bfm_forest_walk_free(BfmForestWalk *w)
 {
     if (w) {
+        bfm_forest_hud_free(w->hud);
         bfm_forest_message_free(w->message);
         bfm_forest_message_art_free(w->message_art);
         bfm_forest_voice_free(w->voice);
@@ -248,6 +253,7 @@ static int tick_message(BfmForestWalk *w, int confirm_edge)
         w->actor.state = 0;
         w->actor.phase = 1;
         w->player_control = 1;
+        bfm_forest_hud_show(w->hud);
     }
     w->frame = w->speaker.frame;
     w->visible = w->speaker.visible;
@@ -260,6 +266,7 @@ static int tick_message(BfmForestWalk *w, int confirm_edge)
  * velocity and contact in world space. */
 static int tick_player(BfmForestWalk *w, int x, int y)
 {
+    bfm_forest_hud_tick(w->hud);
     if (w->at_boundary && (x != w->blocked_x || y != w->blocked_y))
         w->at_boundary = 0;
     BfmForestManualResult result = bfm_forest_manual_tick(&w->manual, w->field, &w->actor,
@@ -365,6 +372,7 @@ int bfm_forest_walk_draw(BfmForestWalk *w,uint32_t pixels[240][320])
         }
         pixels[y][x]=result;
     }
+    if (w->player_control) bfm_forest_hud_draw(w->hud, &w->status, pixels);
     if (w->message && !w->player_control)
         bfm_forest_message_art_draw(w->message_art, bfm_forest_message_frame(w->message), pixels);
     return 1;

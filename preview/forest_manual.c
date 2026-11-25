@@ -44,7 +44,8 @@ BfmForestManualResult bfm_forest_manual_tick(BfmForestManual *state,
         actor->field_2c.word = 0;
         actor->state = 0;
         actor->phase = 1;
-        *state = (BfmForestManual){0};
+        state->moving = 0;
+        state->motion = state->elapsed = 0;
         return moving ? BFM_FOREST_MANUAL_STOPPED : BFM_FOREST_MANUAL_IDLE;
     }
 
@@ -59,7 +60,13 @@ BfmForestManualResult bfm_forest_manual_tick(BfmForestManual *state,
         actor->field_24.word = actor->local_y.word = 0;
         actor->field_2c.word = data.initial_velocity;
         actor->state = actor->phase = 1;
-        *state = (BfmForestManual){.moving = 1, .motion = WALK};
+        if (!state->have_origin) {
+            memcpy(state->origin, cached, sizeof state->origin);
+            state->have_origin = 1;
+        }
+        state->moving = 1;
+        state->motion = WALK;
+        state->elapsed = 0;
         return BFM_FOREST_MANUAL_STARTED;
     }
 
@@ -74,19 +81,23 @@ BfmForestManualResult bfm_forest_manual_tick(BfmForestManual *state,
     if (!bfm_forest_level_velocity(&next, 0, next_yaw, 0))
         return BFM_FOREST_MANUAL_ERROR;
     func_801473EC(&next);
-    int16_t x = (int16_t)(next.position[0] >> 16);
-    int16_t z = (int16_t)(next.position[2] >> 16);
+    int16_t end[3] = {(int16_t)(next.position[0] >> 16), cached[1],
+                      (int16_t)(next.position[2] >> 16)};
     BfmForestContact ground;
-    if (!bfm_forest_clear_flat_step(field, cached, x, z) ||
-        !bfm_forest_ground(field, x, cached[1], z, &ground) || ground.normal[0] ||
-        ground.normal[2] || ground.height != cached[1])
+    if (!bfm_forest_doorway_step(field, state->origin, cached, end) ||
+        !bfm_forest_ground(field, end[0], end[1], end[2], &ground) ||
+        ground.normal[0] || ground.normal[2] || ground.height != end[1])
         return BFM_FOREST_MANUAL_BOUNDARY;
+
+    for (unsigned axis = 0; axis < 3; axis += 2)
+        next.position[axis] = ((uint32_t)(uint16_t)end[axis] << 16) |
+                              (next.position[axis] & 0xffff);
 
     unsigned motion = speed < -(9 * Q16 + Q16 / 4) ? RUN : WALK;
     state->elapsed = motion == state->motion ? state->elapsed + 1 : 0;
     state->motion = motion;
-    cached[0] = x;
-    cached[2] = z;
+    cached[0] = end[0];
+    cached[2] = end[2];
     *actor = next;
     *yaw = next_yaw;
     return BFM_FOREST_MANUAL_MOVING;

@@ -7,6 +7,8 @@
 typedef struct {
     int moving;
     unsigned motion, elapsed;
+    int have_origin;
+    int16_t origin[3];
 } BfmForestManual;
 
 typedef enum {
@@ -18,7 +20,7 @@ typedef enum {
     BFM_FOREST_MANUAL_STOPPED
 } BfmForestManualResult;
 
-/* One effective player update on the flat doorway cell. Start with zeroed
+/* One effective player update on the flat doorway floor. Start with zeroed
  * state. Screen axes are digital -1, 0 or 1, with right and down positive.
  * While moving, motion and elapsed select the mounted locomotion pose.
  * A boundary or error preserves the last complete actor and animation state. */

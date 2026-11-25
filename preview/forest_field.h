@@ -50,6 +50,12 @@ int bfm_forest_place_player(const BfmForestField *field, unsigned entrance,
 int bfm_forest_clear_flat_step(const BfmForestField *field, const int16_t from[3],
                                int16_t x, int16_t z);
 
+/* Walk on the mounted flat floor polygons surrounding the released actor.
+ * An axis-aligned wall can clip the horizontal endpoint. Unsupported contacts
+ * leave the endpoint untouched. */
+int bfm_forest_doorway_step(const BfmForestField *field, const int16_t origin[3],
+                            const int16_t from[3], int16_t to[3]);
+
 /* Run the original player's vertical terrain probe, on the field thread.
  * Pass signed game-world units. No hit leaves contact untouched. */
 int bfm_forest_ground(const BfmForestField *field, int16_t x, int16_t y,

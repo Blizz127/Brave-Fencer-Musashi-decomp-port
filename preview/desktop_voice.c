@@ -3,25 +3,78 @@
 #include "palace_voice.h"
 #include "forest_voice.h"
 #include <stdlib.h>
+#include <string.h>
 
-/* Rendering and reading the mounted image share the game thread. Keep enough
- * speech queued to cover a slow frame; cue changes discard this lookahead. */
-enum { BLOCK_FRAMES = 1024, QUEUE_BLOCKS = 16 };
-/* A mounted image can decode long before the original opening's drive was
- * ready. Model its startup separately from the delay to digital output. */
+/* Model the mounted drive's startup separately from its digital output. */
 enum { MESSAGE_READY_FIELDS = 32, STREAM_CHANGE_FIELDS = 10, OUTPUT_LEAD_FIELDS = 12 };
+enum { FRAME_BYTES = BFM_PALACE_VOICE_CHANNELS * sizeof(int16_t) };
+typedef struct {
+    size_t frames, signal_end;
+    int16_t pcm[];
+} VoiceClip;
+typedef struct {
+    VoiceClip *clip;
+    size_t cursor, end;
+} Playback;
+
 struct DesktopVoice {
-    PalaceVoice *source, *upcoming;
-    int16_t first[BLOCK_FRAMES * BFM_PALACE_VOICE_CHANNELS];
-    size_t first_frames;
+    PalaceVoice *decoder;
+    VoiceClip *pending;
     SDL_AudioDeviceID device;
-    unsigned bank, cue, request_field, ready_delay, active_field;
-    int selected, reading, message_ready, playing, reported;
-    unsigned forest_generation;
-    int silent;
-    Uint64 decoded_frames;
-    Uint32 submitted_before_start;
+    unsigned bank, cue, request_field, ready_delay, active_field, forest_generation;
+    int selected, message_ready, playing, reported;
+    /* Only these spans are visible to SDL. Its device lock guards their
+     * ownership and cursors. The callback never allocates or touches the disc. */
+    Playback outgoing, active;
 };
+
+static VoiceClip *read_clip(PalaceVoice *palace, ForestVoice *forest)
+{
+    size_t capacity = 8192, used = 0;
+    VoiceClip *clip = NULL;
+    const size_t max_frames = (SIZE_MAX - sizeof *clip) / FRAME_BYTES;
+    while (capacity <= max_frames) {
+        VoiceClip *grown = realloc(clip, sizeof *clip + capacity * FRAME_BYTES);
+        if (!grown) break;
+        clip = grown;
+        size_t available = capacity - used;
+        int16_t *out = clip->pcm + used * BFM_PALACE_VOICE_CHANNELS;
+        size_t read = forest ? bfm_forest_voice_read(forest, out, available) :
+                               bfm_palace_voice_read(palace, out, available);
+        used += read;
+        if (read < available) {
+            if (!used) break;
+            clip->frames = used;
+            while (used && !clip->pcm[2 * used - 2] && !clip->pcm[2 * used - 1]) --used;
+            clip->signal_end = used;
+            return clip;
+        }
+        if (capacity > max_frames / 2) break;
+        capacity *= 2;
+    }
+    free(clip);
+    return NULL;
+}
+
+static size_t copy_frames(Playback *p, Uint8 *out, size_t wanted)
+{
+    size_t count = p->end - p->cursor;
+    if (count > wanted) count = wanted;
+    if (count) {
+        memcpy(out, p->clip->pcm + p->cursor * BFM_PALACE_VOICE_CHANNELS, count * FRAME_BYTES);
+        p->cursor += count;
+    }
+    return count;
+}
+
+static void SDLCALL render_voice(void *userdata, Uint8 *stream, int bytes)
+{
+    DesktopVoice *v = userdata;
+    size_t frames = (size_t)bytes / FRAME_BYTES;
+    size_t n = copy_frames(&v->outgoing, stream, frames);
+    n += copy_frames(&v->active, stream + n * FRAME_BYTES, frames - n);
+    memset(stream + n * FRAME_BYTES, 0, (size_t)bytes - n * FRAME_BYTES);
+}
 
 static void open_device(DesktopVoice *v)
 {
@@ -30,8 +83,8 @@ static void open_device(DesktopVoice *v)
     want.format = AUDIO_S16SYS;
     want.channels = BFM_PALACE_VOICE_CHANNELS;
     want.samples = 512;
-    /* SDL converts this application format to the device format as necessary.
-     * A new queued-output device starts paused. */
+    want.callback = render_voice;
+    want.userdata = v;
     const char *driver = SDL_GetCurrentAudioDriver();
     if (!driver || SDL_strcmp(driver, "dummy") == 0) return;
     v->device = SDL_OpenAudioDevice(NULL, 0, &want, NULL, 0);
@@ -42,12 +95,9 @@ DesktopVoice *bfm_desktop_voice_open(const MusashiDiscMedia *disc)
 {
     DesktopVoice *v = calloc(1, sizeof *v);
     if (!v) return NULL;
-    v->source = bfm_palace_voice_load(disc);
-    v->upcoming = bfm_palace_voice_load(disc);
-    if (!v->source || !v->upcoming) {
+    v->decoder = bfm_palace_voice_load(disc);
+    if (!v->decoder) {
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Could not open the mounted palace voice data");
-        bfm_palace_voice_free(v->source);
-        bfm_palace_voice_free(v->upcoming);
         free(v);
         return NULL;
     }
@@ -55,72 +105,53 @@ DesktopVoice *bfm_desktop_voice_open(const MusashiDiscMedia *disc)
     return v;
 }
 
-static void clear_output(DesktopVoice *v)
-{
-    /* Invalidate the cue before clearing: a cleared queue never signals start. */
-    v->selected = v->reading = v->reported = 0;
-    v->message_ready = v->playing = 0;
-    v->first_frames = 0;
-    v->forest_generation = 0;
-    v->decoded_frames = 0;
-    v->submitted_before_start = 0;
-    if (v->device) {
-        SDL_PauseAudioDevice(v->device, 1);
-        SDL_ClearQueuedAudio(v->device);
-    }
-}
-
 void bfm_desktop_voice_stop(DesktopVoice *v)
 {
     if (!v) return;
-    clear_output(v);
-    bfm_palace_voice_stop(v->source);
-    bfm_palace_voice_stop(v->upcoming);
-}
-
-/* Keep the decoder and message clock alive when a device disappears. A new
- * output starts with the next cue, so already consumed words never repeat. */
-static void lose_device(DesktopVoice *v)
-{
-    SDL_CloseAudioDevice(v->device);
-    v->device = 0;
-    v->silent = 1;
-    v->playing = 0;
+    /* Pausing waits for the in-flight callback and keeps it suspended until
+     * a new digital start. */
+    if (v->device) SDL_PauseAudioDevice(v->device, 1);
+    free(v->outgoing.clip);
+    free(v->active.clip);
+    free(v->pending);
+    v->outgoing = (Playback){0};
+    v->active = (Playback){0};
+    v->pending = NULL;
+    v->forest_generation = 0;
+    v->selected = v->message_ready = v->playing = v->reported = 0;
+    bfm_palace_voice_stop(v->decoder);
 }
 
 void bfm_desktop_voice_event(DesktopVoice *v, const SDL_AudioDeviceEvent *e)
 {
     if (!v || !e || e->iscapture) return;
     if (e->type == SDL_AUDIODEVICEREMOVED && v->device && e->which == v->device) {
-        lose_device(v);
+        SDL_CloseAudioDevice(v->device);
+        v->device = 0;
+        v->playing = 0;
     } else if (e->type == SDL_AUDIODEVICEADDED && !v->device) {
+        /* A replacement device stays paused until the next cue. */
         open_device(v);
     }
 }
 
-/* The opening runs at 60000/1001 fields per second. A silent cue consumes
- * decoded stereo frames on that clock, even across an output-device change. */
-static Sint64 queued_frames(const DesktopVoice *v, unsigned field)
+static Uint64 elapsed_frames(unsigned fields)
 {
-    if (!v->silent && v->device)
-        return SDL_GetQueuedAudioSize(v->device) / (BFM_PALACE_VOICE_CHANNELS * sizeof(int16_t));
-    unsigned age = field - v->active_field;
-    Uint64 elapsed = (Uint64)age * BFM_PALACE_VOICE_RATE * 1001 / 60000;
-    return (Sint64)v->decoded_frames - (Sint64)elapsed;
+    return (Uint64)fields * BFM_PALACE_VOICE_RATE * 1001 / 60000;
 }
 
 int bfm_desktop_voice_request(DesktopVoice *v, unsigned bank, unsigned cue, unsigned field)
 {
     if (!v || (v->selected && v->bank == bank && v->cue == cue)) return 0;
-    /* Interrupting an active XA stream takes longer than starting from idle. */
-    int interrupted = v->selected && (v->reading || queued_frames(v, field) > 0);
-    if (!bfm_palace_voice_request(v->upcoming, bank, cue)) return 0;
-    size_t frames = bfm_palace_voice_read(v->upcoming, v->first, BLOCK_FRAMES);
-    if (!frames) {
-        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Could not decode mounted palace voice %u/%u", bank, cue);
-        return 0;
-    }
-    v->first_frames = frames;
+    /* Disc readiness follows the scene clock even if the host device runs
+     * slowly, disappears, or is completely silent. */
+    int interrupted = !v->forest_generation && v->active.clip &&
+        elapsed_frames(field - v->active_field) < v->active.end;
+    if (!bfm_palace_voice_request(v->decoder, bank, cue)) return 0;
+    VoiceClip *next = read_clip(v->decoder, NULL);
+    if (!next) return 0;
+    free(v->pending);
+    v->pending = next;
     v->message_ready = v->reported = 0;
     v->bank = bank;
     v->cue = cue;
@@ -130,65 +161,57 @@ int bfm_desktop_voice_request(DesktopVoice *v, unsigned bank, unsigned cue, unsi
     return 1;
 }
 
+unsigned bfm_desktop_voice_ready_field(const DesktopVoice *v)
+{
+    return v && v->selected ? v->request_field + v->ready_delay : 0;
+}
+
+static void start_clip(DesktopVoice *v, unsigned due, unsigned forest_generation)
+{
+    if (v->device) SDL_LockAudioDevice(v->device);
+    VoiceClip *retired = v->outgoing.clip;
+    VoiceClip *old = v->active.clip;
+    v->outgoing = (Playback){0};
+    /* If the outgoing line fits its scene interval, retain any audible tail
+     * the device has yet to consume. Truly interrupted lines switch at once. */
+    if (!forest_generation && !v->forest_generation && old && v->playing &&
+        v->active.cursor < old->signal_end &&
+        old->signal_end <= elapsed_frames(due - v->active_field)) {
+        v->outgoing = (Playback){old, v->active.cursor, old->signal_end};
+        old = NULL;
+    }
+    v->active = (Playback){v->pending, 0, v->pending->frames};
+    v->pending = NULL;
+    v->active_field = due;
+    v->forest_generation = forest_generation;
+    v->playing = v->device != 0;
+    if (v->device) {
+        SDL_UnlockAudioDevice(v->device);
+        SDL_PauseAudioDevice(v->device, 0);
+    }
+    free(retired);
+    free(old);
+}
+
 int bfm_desktop_voice_pump(DesktopVoice *v, unsigned field, unsigned *bank, unsigned *cue)
 {
     if (!v || !bank || !cue || !v->selected) return 0;
-    const Uint32 frame_bytes = BFM_PALACE_VOICE_CHANNELS * sizeof(int16_t);
     unsigned age = field - v->request_field;
-    Sint64 queued = queued_frames(v, field);
     int events = 0;
     if (!v->message_ready && age >= v->ready_delay) {
         v->message_ready = 1;
         events |= BFM_VOICE_MESSAGE_READY;
     }
-    int start = v->first_frames && age >= v->ready_delay + OUTPUT_LEAD_FIELDS;
-    if (start) {
-        /* Continue feeding the old decoder until the new voice starts. A
-         * queue cleared on request would cut off a word in mid-sentence. */
-        PalaceVoice *old = v->source;
-        v->source = v->upcoming;
-        v->upcoming = old;
-        v->active_field = field;
-        v->silent = !v->device;
-        v->playing = 0;
-        v->decoded_frames = v->first_frames;
-        v->submitted_before_start = 0;
-        v->reading = v->first_frames == BLOCK_FRAMES;
-        if (v->device) {
-            SDL_PauseAudioDevice(v->device, 1);
-            SDL_ClearQueuedAudio(v->device);
-            Uint32 bytes = (Uint32)v->first_frames * frame_bytes;
-            if (SDL_QueueAudio(v->device, v->first, bytes) < 0)
-                lose_device(v);
-            else
-                v->submitted_before_start = bytes;
+    if (v->pending && age >= v->ready_delay + OUTPUT_LEAD_FIELDS) {
+        start_clip(v, bfm_desktop_voice_ready_field(v) + OUTPUT_LEAD_FIELDS, 0);
+    } else if (!v->pending && v->playing && !v->reported) {
+        SDL_LockAudioDevice(v->device);
+        int started = v->active.cursor != 0;
+        SDL_UnlockAudioDevice(v->device);
+        if (started && SDL_GetAudioDeviceStatus(v->device) == SDL_AUDIO_PLAYING) {
+            v->reported = 1;
+            events |= BFM_VOICE_OUTPUT_STARTED;
         }
-        queued = (Sint64)v->first_frames;
-        v->first_frames = 0;
-    } else if (!v->first_frames && v->playing && !v->reported &&
-               queued < v->submitted_before_start / frame_bytes &&
-               SDL_GetAudioDeviceStatus(v->device) == SDL_AUDIO_PLAYING) {
-        events |= BFM_VOICE_OUTPUT_STARTED;
-        v->reported = 1;
-    }
-    while (v->reading && queued < BLOCK_FRAMES * QUEUE_BLOCKS) {
-        int16_t pcm[BLOCK_FRAMES * BFM_PALACE_VOICE_CHANNELS];
-        size_t frames = bfm_palace_voice_read(v->source, pcm, BLOCK_FRAMES);
-        if (frames < BLOCK_FRAMES) v->reading = 0;
-        if (!frames) break;
-        Uint32 bytes = (Uint32)frames * frame_bytes;
-        if (!v->silent && SDL_QueueAudio(v->device, pcm, bytes) < 0) {
-            SDL_LogWarn(SDL_LOG_CATEGORY_AUDIO, "Could not queue palace voice: %s", SDL_GetError());
-            lose_device(v);
-            queued = queued_frames(v, field);
-        }
-        if (!v->silent && !v->first_frames && !v->reported) v->submitted_before_start += bytes;
-        v->decoded_frames += frames;
-        queued += (Sint64)frames;
-    }
-    if (start && !v->silent) {
-        SDL_PauseAudioDevice(v->device, 0);
-        v->playing = 1;
     }
     if (events) {
         *bank = v->bank;
@@ -202,27 +225,22 @@ void bfm_desktop_voice_forest(DesktopVoice *v, ForestVoice *source, unsigned gen
     if (!v || !v->device || !source || !generation ||
         bfm_forest_voice_status(source) != BFM_FOREST_VOICE_PLAYING)
         return;
-    /* A new request spends several updates seeking. Let the queued end of
-     * the previous line play until the incoming stream is ready. */
-    if (v->forest_generation != generation) {
-        clear_output(v);
-        v->forest_generation = generation;
-    }
-    const Uint32 frame_bytes = 2 * sizeof(int16_t);
-    Uint32 queued = SDL_GetQueuedAudioSize(v->device);
-    while (queued < BLOCK_FRAMES * QUEUE_BLOCKS * frame_bytes) {
-        int16_t pcm[BLOCK_FRAMES * 2];
-        size_t frames = bfm_forest_voice_read(source, pcm, BLOCK_FRAMES);
-        if (!frames) break;
-        Uint32 bytes = (Uint32)frames * frame_bytes;
-        if (SDL_QueueAudio(v->device, pcm, bytes) < 0) {
-            SDL_LogWarn(SDL_LOG_CATEGORY_AUDIO, "Could not queue forest voice: %s", SDL_GetError());
-            break;
+    if (generation == v->forest_generation) {
+        if (!v->playing) {
+            /* Resume the unconsumed part on a replacement output device. */
+            v->playing = 1;
+            SDL_PauseAudioDevice(v->device, 0);
         }
-        queued += bytes;
+        return;
     }
-    if (queued && SDL_GetAudioDeviceStatus(v->device) == SDL_AUDIO_PAUSED)
-        SDL_PauseAudioDevice(v->device, 0);
+    /* The forest transport owns the seek, channel lead-in and sound deadline.
+     * Keep the outgoing line until the new generation really starts playing. */
+    VoiceClip *next = read_clip(NULL, source);
+    if (!next) return;
+    free(v->pending);
+    v->pending = next;
+    v->selected = v->message_ready = v->reported = 0;
+    start_clip(v, 0, generation);
 }
 
 void bfm_desktop_voice_free(DesktopVoice *v)
@@ -230,7 +248,6 @@ void bfm_desktop_voice_free(DesktopVoice *v)
     if (!v) return;
     bfm_desktop_voice_stop(v);
     if (v->device) SDL_CloseAudioDevice(v->device);
-    bfm_palace_voice_free(v->source);
-    bfm_palace_voice_free(v->upcoming);
+    bfm_palace_voice_free(v->decoder);
     free(v);
 }

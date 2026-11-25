@@ -3,6 +3,7 @@
 #include "forest_opening_data.h"
 #include "forest_message_art.h"
 #include "forest_floor.h"
+#include "forest_hud.h"
 #include "scene_payload.h"
 
 #include <stdlib.h>
@@ -92,6 +93,12 @@ BfmForestMessageArt *bfm_forest_open_message_art(const BfmForestField *field,
 {
     return field ? bfm_forest_message_art_load(disc, field->scene, field->scene_size,
                                                field->terrain) : NULL;
+}
+
+BfmForestHud *bfm_forest_open_hud(const BfmForestField *field, const MusashiDiscMedia *disc)
+{
+    if (!field) return NULL;
+    return bfm_forest_hud_load(disc, field->scene, field->scene_size, field->terrain);
 }
 
 static int load_entrances(BfmForestField *field, const uint8_t *scene, size_t size,
@@ -344,41 +351,168 @@ int bfm_forest_ground(const BfmForestField *field, int16_t x, int16_t y,
     return 1;
 }
 
+typedef struct {
+    const u16 *tokens;
+    unsigned count;
+} ContactCell;
+
+static ContactCell contact_cell(const FloorGrid *grid, const int16_t p[3])
+{
+    unsigned col = (p[0] + 32768) / 128, row = (p[2] + 32768) / 128;
+    if (col < grid->x0 || col - grid->x0 >= grid->w ||
+        row < grid->z0 || row - grid->z0 >= grid->h)
+        return (ContactCell){0};
+    const u16 *cell = grid->cells + 2 * ((row - grid->z0) * grid->w + col - grid->x0);
+    return (ContactCell){(const u16 *)(grid->ids + cell[0]), cell[1]};
+}
+
+static const FloorFace *contact_face(const FloorGrid *grid, u16 token)
+{
+    unsigned index = token & 0x7fff;
+    return (const FloorFace *)((token & 0x8000) ?
+        grid->faces22 + 22 * index : grid->faces18 + 18 * index);
+}
+
+static int64_t signed_distance(const FloorGrid *grid, FloorPlane plane, const int16_t p[3])
+{
+    const FloorPoint *n = &grid->verts[plane.v];
+    return (int64_t)(s16)n->x * p[0] + (int64_t)(s16)n->y * p[1] +
+           (int64_t)(s16)n->z * p[2] + grid->dist[plane.d];
+}
+
+static int same_grid_index(int16_t a, int16_t b)
+{
+    return (a + 32768) / 128 == (b + 32768) / 128;
+}
+
+static int flat_floor(const FloorFace *face, const FloorPoint *n)
+{
+    return !face->flags && !n->x && !n->z && (s16)n->y < 0;
+}
+
 int bfm_forest_clear_flat_step(const BfmForestField *field, const int16_t from[3],
                                int16_t x, int16_t z)
 {
-    if (!field || !from)
+    if (!field || !from || !same_grid_index(from[0], x) || !same_grid_index(from[2], z))
         return 0;
     const FloorGrid *grid = &field->grid;
-    unsigned cx = (x + 32768) / 128, cz = (z + 32768) / 128;
-    if (cx != (unsigned)(from[0] + 32768) / 128 ||
-        cz != (unsigned)(from[2] + 32768) / 128 ||
-        cx < grid->x0 || cx - grid->x0 >= grid->w ||
-        cz < grid->z0 || cz - grid->z0 >= grid->h)
-        return 0;
-    size_t slot = (cz - grid->z0) * grid->w + cx - grid->x0;
-    const u16 *cell = grid->cells + 2 * slot;
-    const u16 *tokens = (const u16 *)(grid->ids + cell[0]);
+    const int16_t to[3] = {x, from[1], z};
+    ContactCell cell = contact_cell(grid, from);
     int have_floor = 0;
-    for (unsigned i = 0; i < cell[1]; ++i) {
-        unsigned token = tokens[i], id = token & 0x7fff;
-        const FloorFace *face = (const FloorFace *)((token & 0x8000) ?
-            grid->faces22 + 22 * id : grid->faces18 + 18 * id);
-        const FloorPoint *n = &grid->verts[face->e[0].v];
-        if (!face->flags && !n->x && !n->z && (s16)n->y < 0) {
+    for (unsigned i = 0; i < cell.count; ++i) {
+        const FloorFace *face = contact_face(grid, cell.tokens[i]);
+        const FloorPoint *normal = &grid->verts[face->e[0].v];
+        if (flat_floor(face, normal)) {
             have_floor = 1;
             continue;
         }
-        if (face->flags != 0x100 || n->y)
-            return 0;
-        /* Only the clear side is qualified. A small approach margin leaves
-         * wall contact and sliding to the full field collision routine. */
-        int64_t bias = grid->dist[face->e[0].d];
-        int64_t nx = (s16)n->x, nz = (s16)n->z;
-        int64_t margin = 4 * 4096;
-        if (nx * from[0] + nz * from[2] + bias <= margin ||
-            nx * x + nz * z + bias <= margin)
+        if (face->flags != 0x100 || normal->y ||
+            signed_distance(grid, face->e[0], from) <= 4 * 4096 ||
+            signed_distance(grid, face->e[0], to) <= 4 * 4096)
             return 0;
     }
     return have_floor;
+}
+
+enum { EDGE_TOLERANCE = 0x2f00 };
+
+/* A cell seam can pass through a single floor polygon. Keep the route on
+ * the actual flat polygons indexed by the original doorway cell. */
+static int on_doorway_floor(const FloorGrid *grid, ContactCell doorway, const int16_t p[3])
+{
+    for (unsigned i = 0; i < doorway.count; ++i) {
+        u16 token = doorway.tokens[i];
+        const FloorFace *face = contact_face(grid, token);
+        const FloorPoint *n = &grid->verts[face->e[0].v];
+        if (!flat_floor(face, n) ||
+            llabs(signed_distance(grid, face->e[0], p)) > 4 * 4096)
+            continue;
+        unsigned sides = (token & 0x8000) ? 4 : 3;
+        unsigned j = 1;
+        while (j <= sides && signed_distance(grid, face->e[j], p) >= -EDGE_TOLERANCE)
+            ++j;
+        if (j > sides)
+            return 1;
+    }
+    return 0;
+}
+
+/* Intersect the segment with the actual bounded wall polygon. Signed edge
+ * distances interpolate linearly, so no division or rounded point is needed. */
+static int crosses_face(const FloorGrid *grid, const FloorFace *face, unsigned sides,
+                        const int16_t from[3], const int16_t to[3])
+{
+    int64_t start = signed_distance(grid, face->e[0], from);
+    int64_t end = signed_distance(grid, face->e[0], to);
+    if (start < 0 || end >= 0)
+        return 0;
+    for (unsigned j = 1; j <= sides; ++j) {
+        int64_t a = signed_distance(grid, face->e[j], from) + EDGE_TOLERANCE;
+        int64_t b = signed_distance(grid, face->e[j], to) + EDGE_TOLERANCE;
+        if (a * -end + b * start < 0)
+            return 0;
+    }
+    return 1;
+}
+
+static int resolve_cell(const FloorGrid *grid, ContactCell cell, int oblique,
+                        const int16_t from[3], const int16_t to[3], int16_t clipped[3])
+{
+    if (!cell.count)
+        return 0;
+    for (unsigned i = 0; i < cell.count; ++i) {
+        u16 token = cell.tokens[i];
+        const FloorFace *face = contact_face(grid, token);
+        const FloorPoint *n = &grid->verts[face->e[0].v];
+        if (flat_floor(face, n))
+            continue;
+        if (face->flags != 0x100 || n->y || (!n->x && !n->z))
+            return 0;
+        if ((n->x && n->z) != oblique ||
+            !crosses_face(grid, face, (token & 0x8000) ? 4 : 3, from, to))
+            continue;
+        if (oblique)
+            return 0;
+        unsigned axis = n->x ? 0 : 2;
+        int coefficient = n->x ? (s16)n->x : (s16)n->z;
+        int64_t bias = grid->dist[face->e[0].d];
+        if (coefficient != 4095 || bias % coefficient)
+            return 0;
+        /* The two measured perpendicular doorway walls hold the integer
+         * actor origin three world units inside their mounted planes. */
+        int64_t stop = -bias / coefficient + 3;
+        if (stop < INT16_MIN || stop > INT16_MAX)
+            return 0;
+        if (clipped[axis] < stop)
+            clipped[axis] = (int16_t)stop;
+    }
+    return 1;
+}
+
+int bfm_forest_doorway_step(const BfmForestField *field, const int16_t origin[3],
+                            const int16_t from[3], int16_t to[3])
+{
+    if (!field || !origin || !from || !to || origin[1] != from[1] || from[1] != to[1] ||
+        abs(to[0] - from[0]) > 16 || abs(to[2] - from[2]) > 16)
+        return 0;
+    const FloorGrid *grid = &field->grid;
+    ContactCell doorway = contact_cell(grid, origin), start = contact_cell(grid, from);
+    ContactCell end = contact_cell(grid, to);
+    int same_x = same_grid_index(from[0], to[0]), same_z = same_grid_index(from[2], to[2]);
+    if (!same_x && !same_z)
+        return 0;
+    int16_t clipped[3] = {to[0], to[1], to[2]};
+    if (!on_doorway_floor(grid, doorway, from) ||
+        !resolve_cell(grid, start, 0, from, to, clipped) ||
+        ((!same_x || !same_z) && !resolve_cell(grid, end, 0, from, to, clipped)))
+        return 0;
+    end = contact_cell(grid, clipped);
+    if (!resolve_cell(grid, start, 1, from, clipped, clipped) ||
+        ((!same_grid_index(from[0], clipped[0]) || !same_grid_index(from[2], clipped[2])) &&
+         !resolve_cell(grid, end, 1, from, clipped, clipped)) ||
+        !on_doorway_floor(grid, doorway, clipped))
+        return 0;
+    to[0] = clipped[0];
+    to[2] = clipped[2];
+    return 1;
 }

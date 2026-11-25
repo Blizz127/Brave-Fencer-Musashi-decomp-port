@@ -307,11 +307,18 @@ int bfm_opening_frame(void *scene, unsigned fields, uint32_t *pixels, int width,
     return result;
 }
 
-int bfm_opening_voice_due(void *scene, unsigned field, unsigned *bank, unsigned *cue)
+int bfm_opening_voice_schedule(void *scene, unsigned field, unsigned *bank, unsigned *cue,
+                              unsigned *issue_field)
 {
     OpeningView *view = scene;
     return view && !view->chapter && field <= LAST_FIELD &&
-           bfm_palace_dialogue_voice_due(bfm_palace_speech(view->stairs), field, bank, cue);
+           bfm_palace_dialogue_voice_schedule(bfm_palace_speech(view->stairs), field,
+                                            bank, cue, issue_field);
+}
+
+int bfm_opening_voice_due(void *scene, unsigned field, unsigned *bank, unsigned *cue)
+{
+    return bfm_opening_voice_schedule(scene, field, bank, cue, NULL);
 }
 
 int bfm_opening_voice_started(void *scene, unsigned bank, unsigned cue, unsigned field)
