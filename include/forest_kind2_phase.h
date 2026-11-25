@@ -13,7 +13,6 @@ void func_80147078(ForestPlayerState *actor, u16 kind);
 s32 func_8015A264(ForestPlayerState *actor);
 s32 func_80159B70(ForestPlayerState *actor);
 void func_80161CD0(ForestPlayerState *actor, u32 value);
-s32 func_801725A4(ForestPlayerState *actor);
 void func_8015B950(ForestPlayerState *actor);
 
 #if defined(__mips__) && !defined(__LP64__)

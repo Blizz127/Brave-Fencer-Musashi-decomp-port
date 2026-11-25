@@ -1,6 +1,6 @@
 #ifndef MUSASHI_FOREST_ACTION_H
 #define MUSASHI_FOREST_ACTION_H
-#include "forest_player_state.h"
+#include "forest_actor_mask.h"
 
 typedef ForestPlayerState ForestActionPlayer;
 
@@ -61,5 +61,4 @@ s32 func_80161B18(ForestActionPlayer *);
 s32 func_80161B84(ForestActionPlayer *);
 s32 func_80161BE0(ForestActionPlayer *);
 u32 func_8016F1AC(void);
-s32 func_80172590(ForestActionPlayer *);
 #endif

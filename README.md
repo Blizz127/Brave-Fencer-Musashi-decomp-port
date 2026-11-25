@@ -20,7 +20,9 @@ the same interval with test providers for the graphics and subsystem calls.
 
 ## Player downloads and source builds
 
-The matching decompilation covers **1,039 functions and 152,404 bytes** of the US game. Three more complete routines matched all 996 original bytes. They draw text and sprite slots, request streamed data and advance the loader. The HUD and two loader routines ran on earlier Linux New Game and Continue tests. The standard desktop build still uses the guest CPU for these calls.
+The public match registries contain **1,059 entries totaling 152,724 bytes** of the US game. Counting each region and start address once gives **1,056 distinct ranges totaling 152,152 bytes**. This checkpoint adds ten Giant Forest routines that set bits in the player status word and ten that read those bits. All 320 bytes match the US overlay. The setters preserve the other bits, and the queries return the masked bit in its original position. The desktop player continues to execute these routines on the guest CPU to preserve memory access timing. [Giant Forest matching record](provenance/scene-objects.json)
+
+The previous three complete routines matched all 996 original bytes. They draw text and sprite slots, request streamed data and advance the loader. The HUD and two loader routines ran on earlier Linux New Game and Continue tests. The standard desktop build still uses the guest CPU for these calls.
 
 The previous checkpoint covered 1,036 functions and 151,408 bytes. Four newly verified functions store the vertical sync result for the current display buffer, test controller and scene flags before a scene callback, flush queued VRAM transfers, and add two full-screen packets to the GPU ordering table. Their 1,020 bytes matched the complete US functions. Earlier ordinary Linux New Game and File 1 runs reached all four entries. The standard desktop build keeps these routines on the guest CPU.
 

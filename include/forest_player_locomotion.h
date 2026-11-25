@@ -1,6 +1,6 @@
 #ifndef MUSASHI_FOREST_PLAYER_LOCOMOTION_H
 #define MUSASHI_FOREST_PLAYER_LOCOMOTION_H
-#include "forest_player_state.h"
+#include "forest_actor_mask.h"
 
 /* The published controller type is the byte between the input timer and held buttons. */
 #define FOREST_MOVEMENT_CONTROLLER(actor) (((const u8 *)(actor))[0xa9])
@@ -67,7 +67,6 @@ void func_80155440(ForestPlayerState *);
 void func_801553C0(ForestPlayerState *);
 s32 func_80161278(ForestPlayerState *);
 s32 func_80161C24(ForestPlayerState *, u32);
-void func_80172608(ForestPlayerState *);
 s32 func_801483E8(ForestPlayerState *);
 s32 func_8015A3C8(ForestPlayerState *);
 #endif

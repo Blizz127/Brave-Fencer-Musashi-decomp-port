@@ -1086,6 +1086,8 @@ def test_forest_effect_and_steam_knight_extents(tmp_path, monkeypatch, member):
     ("main_0012", 0x8013A860, 80),
     ("sc03_0006", 0x8014BCEC, 56),
     ("sc03_0006", 0x8014BD24, 60),
+    *[("sc01_0077", 0x80172590 + 20 * bit, 20) for bit in range(10)],
+    *[("sc01_0077", 0x80172658 + 12 * bit, 12) for bit in range(10)],
     ("sc03_0054", 0x801F0048, 80),
 ])
 def test_timed_source_keeps_other_room_implementations_selectable(tmp_path, member, pc, size):
@@ -1107,6 +1109,20 @@ def test_timed_source_keeps_other_room_implementations_selectable(tmp_path, memb
     assert lane.build_one(other, tmp_path, {}, {}, "clang", timed_member)["rule"] == "timing"
     assert lane.build_one(dict(other, region=member), tmp_path, {}, {}, "clang", info)["rule"] == "timing"
     assert lane.build_one(other, tmp_path, {}, {}, "clang", info)["admitted"]
+
+
+@pytest.mark.parametrize("bit", range(10))
+def test_forest_actor_mask_prior_sources_keep_their_timing(tmp_path, bit):
+    mask = 1 << bit
+    for setter in (True, False):
+        pc = 0x80172590 + 20 * bit if setter else 0x80172658 + 12 * bit
+        argument = "ForestActorMask *actor" if setter else "const ForestActorMask *actor"
+        body = (f"    actor->mask |= {mask:#x}u;\n    return actor->mask;"
+                if setter else f"    return actor->mask & {mask:#x}u;")
+        previous = tmp_path / f"{pc:08x}.c"
+        previous.write_text(f'#include "actor_mask.h"\n\nu32 func_{pc:08X}({argument})\n{{\n{body}\n}}\n')
+        entry = dict(name=f"func_{pc:08X}", vram=pc, size=4, region="other", source=str(previous))
+        assert lane.build_one(entry, tmp_path, {}, {}, "clang")["rule"] == "timing"
 
 
 @pytest.mark.parametrize("pc,size", [

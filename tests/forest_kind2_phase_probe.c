@@ -47,7 +47,7 @@ s32 func_80148AFC(ForestPlayerState *a) { assert(a == &actor); return low_byte; 
 s32 func_80146D90(ForestPlayerState *a) { assert(a == &actor); record(RESET); return 0; }
 s32 func_801488A8(ForestPlayerState *a) { assert(a == &actor); return sample_distance; }
 s32 func_80161208(ForestPlayerState *a) { assert(a == &actor); record(KEEP); return 1; }
-s32 func_801725A4(ForestPlayerState *a) { (void)a; assert(0); return 0; }
+u32 func_801725A4(ForestPlayerState *a) { (void)a; assert(0); return 0; }
 
 u32 bfm_forest_player_table_word(u32 table, u32 index)
 {

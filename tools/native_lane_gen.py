@@ -1145,7 +1145,59 @@ STEAMWOOD_REPAIR_EXTENTS = {
 }
 
 
+# The mask setters store in the return delay slot. Each query loads the full
+# word before testing its bit. The generic host gate charges both at return.
+FOREST_ACTOR_MASK_EXTENTS = {
+    0x80172590: (20, 0x0A7F5EB89154241F),
+    0x801725A4: (20, 0xC57340C2D85D9B48),
+    0x801725B8: (20, 0x6DA252BAA82228A6),
+    0x801725CC: (20, 0xD193F492439E8AE2),
+    0x801725E0: (20, 0x2ED51904A520EC4A),
+    0x801725F4: (20, 0xEA59C81DE1D7C99A),
+    0x80172608: (20, 0x8C912DA85BD080BA),
+    0x8017261C: (20, 0x511746F0B1E9E67A),
+    0x80172630: (20, 0x30A7313F7D19C03D),
+    0x80172644: (20, 0x9D6040488FF45424),
+    0x80172658: (12, 0x02375081BF9FDC62),
+    0x80172664: (12, 0xE066DC9AC0C42751),
+    0x80172670: (12, 0x20698CAB6D3AC057),
+    0x8017267C: (12, 0xA0545CCCC611E8FB),
+    0x80172688: (12, 0xA1DCFD0F7931CEC3),
+    0x80172694: (12, 0x9FD45D94DB1B6033),
+    0x801726A0: (12, 0x9F2A1E9FA1D35F13),
+    0x801726AC: (12, 0x9F8820B530B417D3),
+    0x801726B8: (12, 0x97C8098A0F70AF84),
+    0x801726C4: (12, 0x8F1E4E8A0A884419),
+}
+
+# Earlier matching sources used a partial actor type. Custom registries may
+# carry them under another room name without providing original code bytes.
+FOREST_ACTOR_MASK_PRIOR_SOURCES = {
+    0x80172590: "af7037905c2374c57050d9ed1594d6e9aedddd26bd423038dbe591fc2d73e951",
+    0x801725A4: "484a46f422bca93b95df3e467515c7b45cf38f180b3c223fac341e3016d4bf95",
+    0x801725B8: "79577c91a1d08b59036a6592c7066aaa3e1f7088bc5215df4b5ec388b67f4883",
+    0x801725CC: "287d85955e2b52c8f93ef0949fa7b54196c51d6956b1b1c1c9584a612886c947",
+    0x801725E0: "3be27f0d5fc4b932a948b7911841b559bd997940f730d37fadc7b3f7bc177971",
+    0x801725F4: "1ea3018f6c06b8960194398f3b0ea14b37a1b95cc4d34248be73e6823580e1d0",
+    0x80172608: "464af9b9071888f9c9fc86088c0e0897db7e7d192bd7bc02b25cb71876eb27af",
+    0x8017261C: "22f5898c0c9d43cb34bcb1e84879cd37236270d4b830b9b25b25907929ef25c4",
+    0x80172630: "50df91242831c181c53460da38577b6799096ea4cce13d2a6f7560984f78941c",
+    0x80172644: "258013d2f9882955a8a15258840ac4c4fc368f56508d3825c6939a27d2360e62",
+    0x80172658: "4859db4e99f39c2a87ae448ad46854f95e303fddcea6bab03412777ce69fdec2",
+    0x80172664: "27302cfe62f4b2be5585b0db395410f8cec1711832c9b69cf836a0bbfe71d32e",
+    0x80172670: "755b932ce6eb54d8757ba44b24ccf2b0bf56640ddc51a9fb68c5f395211f7db9",
+    0x8017267C: "6a22a01d63508054e5f8bdfafee622762a76e395c09b1d62a3bd81cf2fac3f19",
+    0x80172688: "711f2c19f5590f9b576ed0402e229de542c6ab29dffd84247c1770cad9635436",
+    0x80172694: "2cc5215025fea4ac7bca63c909cbb3c90333d04190c5f32b6a8000b1a6e01761",
+    0x801726A0: "7410e73227b94508de4bce123abe0d3e7728ee74ad9d9586bf482a55f93d17f8",
+    0x801726AC: "e54b83ec9790f9f37966f445ae296fa48638483b5d38d4ea19b3ff40333d1b17",
+    0x801726B8: "f286a611d0b4373ab4955e098402ad369afcaf638e580160a2b431aea5682b44",
+    0x801726C4: "763c194f0d5acc10e2452ba7fcee3eb4ce06dd65795ce45de38834547a531ab6",
+}
+
+
 SCENE_PHASE_EXTENTS = {
+    **{pc: {"sc01_0077": extent} for pc, extent in FOREST_ACTOR_MASK_EXTENTS.items()},
     **STEAMWOOD_REPAIR_EXTENTS,
     **{pc: {"sc03_0010": extent} for pc, extent in STEAMWOOD_SCRIPT_EXTENTS.items()},
     **{pc: {"sc03_0010": extent} for pc, extent in STEAMWOOD_TIMER_EXTENTS.items()},
@@ -1522,7 +1574,7 @@ def overlay_extent_source_only(entry, src, info, extents):
             return True
     # Compare these room callbacks at their complete original extent even when the
     # supplied registry reports only a prefix or includes the following function.
-    if (pc in STEAMWOOD_TIMER_EXTENTS or pc in (0x8017D2E0, 0x8017D384, 0x8017F07C, 0x8017F120, 0x8017D3C0, 0x8017F15C, 0x8017D828,
+    if (pc in FOREST_ACTOR_MASK_EXTENTS or pc in STEAMWOOD_TIMER_EXTENTS or pc in (0x8017D2E0, 0x8017D384, 0x8017F07C, 0x8017F120, 0x8017D3C0, 0x8017F15C, 0x8017D828,
               0x8017E414, 0x8017E524, 0x8017EC30, 0x80181894, 0x801818D0, 0x801CBB54, 0x801CBB80,
               0x801CBBDC, 0x801CBC08, 0x801816F0, 0x8017C454, 0x8017C4C4, 0x8017C528,
               0x8017C5D8, 0x8017C6B8, 0x8017C6F4, 0x8017D790, 0x8017D7CC, 0x8017D888,
@@ -1580,6 +1632,9 @@ def overlay_extent_source_only(entry, src, info, extents):
             if member_digest(info, pc, size) == digest:
                 return True
     elif info and any(variants.values()) and (entry["size"], member_digest(info, pc, entry["size"])) in variants.values():
+        return True
+    prior_mask_source = FOREST_ACTOR_MASK_PRIOR_SOURCES.get(pc)
+    if prior_mask_source and hashlib.sha256(src.read_bytes()).hexdigest() == prior_mask_source:
         return True
     # The earlier source declared the terrain mode as a halfword.
     if pc == 0x8012CEB0 and hashlib.sha256(src.read_bytes()).hexdigest() == (

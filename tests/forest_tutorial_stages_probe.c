@@ -1,8 +1,9 @@
 #include <assert.h>
 #include <stddef.h>
-#include "forest_player_state.h"
+#include "forest_actor_mask.h"
 #include "player_direction.h"
 
+_Static_assert(offsetof(ForestPlayerState, status_mask) == 0x1f4, "player status mask offset");
 _Static_assert(offsetof(ForestPlayerState, scene_countdown) == 0x204, "scene countdown offset");
 _Static_assert(offsetof(ForestPlayerState, scene_stage) == 0x214, "scene stage offset");
 _Static_assert(offsetof(ForestPlayerState, step) == 0x234, "player step offset");
@@ -18,9 +19,9 @@ static u32 flags;
 static s16 heading;
 static int direction_ready, counter_resets, close_calls;
 
-u32 func_80172658(u8 *actor)
+u32 func_80172658(const ForestPlayerState *actor)
 {
-    assert(actor == (u8 *)&player);
+    assert(actor == &player);
     return flags & 1;
 }
 
@@ -42,9 +43,9 @@ s32 func_80171B4C(ScenePlayer *actor, s32 frames)
     return direction_ready;
 }
 
-u32 func_80172664(u8 *actor)
+u32 func_80172664(const ForestPlayerState *actor)
 {
-    assert(actor == (u8 *)&player);
+    assert(actor == &player);
     return flags & 2;
 }
 
