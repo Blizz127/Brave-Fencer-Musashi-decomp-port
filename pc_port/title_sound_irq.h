@@ -4,7 +4,7 @@
 static int irq_level_slot_pc(uint32_t pc) {
     static const struct { uint16_t start, end; } spans[] = {
         {0x000u, 0x058u}, {0x068u, 0x078u}, {0x07cu, 0x15cu},
-        {0x190u, 0x19cu}, {0x1a8u, 0x1bcu},
+        {0x190u, 0x1bcu},
         {0x1d8u, 0x380u}, {0x3c8u, 0x434u}, {0x484u, 0x49cu},
         {0x4b0u, 0x4bcu}, {0x4c0u, 0x518u}, {0x51cu, 0x5b4u},
         {0x61cu, 0x698u}, {0x6c8u, 0x75cu}, {0x764u, 0x7c4u},
@@ -247,6 +247,112 @@ static uint32_t irq_level_stream_at(const FormatterCpu *cpu, uint32_t address) {
         (address & 3u)) return 0;
     const uint8_t *live = musashi_boot_ram_span(ram, song, size);
     return live && !memcmp(live, mapped, size) ? song : 0;
+}
+
+/* The first levels call belongs to the current kind-5 File 1 slot. S0 and
+ * S7 hold that slot; the levels iterator supplied S1/S2 and the saved link. */
+static int irq_file_pan_frame(const FormatterCpu *cpu) {
+    unsigned slot_index = cpu->r[30];
+    uint32_t slot = cpu->level_slot;
+    if (!cpu->irq_image || slot_index >= 8u || slot != 0x800a46e8u + slot_index * 0x54u ||
+        cpu->r[16] != slot || cpu->r[17] != slot_index || cpu->r[18] != slot ||
+        cpu->r[23] != slot || cpu->r[29] != 0x8006c9ccu) return 0;
+    MusashiBootMemory *ram = cpu->irq_image->memory;
+    uint16_t kind;
+    const uint8_t *paused = musashi_boot_ram_span(ram, 0x800a4f17u, 1);
+    return paused && !*paused && musashi_boot_read16(ram, slot, &kind) && (kind & 63u) == 5u &&
+           cd_irq_ram_word(ram, cpu->r[29] + 124u, 0x80031c90u) &&
+           irq_level_stream_at(cpu, 0x80068960u) == 0x80068960u;
+}
+
+static int irq_file_pan_inputs(const FormatterCpu *cpu) {
+    const MusashiGuestIrqImage *image = cpu->irq_image;
+    MusashiBootMemory *ram = image->memory;
+    const uint8_t *code = musashi_boot_ram_span(ram, 0x800336a8u, sizeof image->file_pan_code);
+    const uint8_t *masks = musashi_boot_ram_span(ram, 0x80073140u, sizeof image->file_voice_masks);
+    const uint8_t *gains = musashi_boot_ram_span(ram, 0x8006aa30u, sizeof image->file_gain_table);
+    const uint8_t *pan = musashi_boot_ram_span(ram, 0x800731a0u, sizeof image->file_pan_table);
+    const uint8_t *job = musashi_boot_ram_span(ram, cpu->level_slot, 0x54u);
+    if (!code || !masks || !gains || !pan || !job || job[56] > 127u ||
+        memcmp(code, image->file_pan_code, sizeof image->file_pan_code) ||
+        memcmp(masks, image->file_voice_masks, sizeof image->file_voice_masks) ||
+        memcmp(gains, image->file_gain_table, sizeof image->file_gain_table) ||
+        memcmp(pan, image->file_pan_table, sizeof image->file_pan_table)) return 0;
+    for (unsigned i = 0; i < 8u; ++i) {
+        uint32_t voice = 0x800a4988u + i * 0x54u;
+        uint16_t id;
+        const uint8_t *pair;
+        if (!job[58u + i]) continue;
+        pair = musashi_boot_ram_span(ram, voice + 52u, 2);
+        if (!pair || pair[0] > 127u || pair[1] > 127u ||
+            !musashi_boot_read16(ram, voice + 10u, &id) || id >= 24u) return 0;
+    }
+    return 1;
+}
+
+static int irq_file_table_matches(MusashiBootMemory *ram, uint32_t address, uint32_t base,
+                                  unsigned offset, const uint8_t *snapshot, unsigned width) {
+    if (address != base + offset) return 0;
+    const uint8_t *live = musashi_boot_ram_span(ram, address, width);
+    return live && !memcmp(live, snapshot + offset, width);
+}
+
+/* Data permissions for the mounted leaf. T2 indexes eight voice records
+ * and T3 walks their separate output records. The guest computes the mix. */
+static int irq_file_pan_data(const FormatterCpu *cpu, unsigned op, uint32_t address) {
+    uint32_t i = cpu->r[10], job = cpu->level_slot;
+    if (!irq_file_pan_frame(cpu) || cpu->r[4] != job || cpu->r[31] != 0x80033a30u ||
+        i >= 8u || cpu->r[9] != 0x800a4988u + i * 0x54u || cpu->r[11] != i * 0x48u)
+        return 0;
+    uint32_t voice = cpu->r[9], out = 0x800a4c28u + i * 0x48u;
+    MusashiBootMemory *ram = cpu->irq_image->memory;
+    if (cpu->pc == 0x800336ccu) return op == 36u && address == job + 58u + i;
+    const uint8_t *enabled = musashi_boot_ram_span(ram, job + 58u + i, 1);
+    if (!enabled || !*enabled) return 0;
+    switch (cpu->pc) {
+    case 0x800336dcu: case 0x80033838u:
+        return op == 37u && address == voice + 10u;
+    case 0x800336f0u: {
+        uint16_t id;
+        return op == 35u && musashi_boot_read16(ram, voice + 10u, &id) &&
+               id < 24u && irq_file_table_matches(ram, address, 0x80073140u, 4u * id,
+                                                   cpu->irq_image->file_voice_masks, 4u);
+    }
+    case 0x800336f8u: return op == 43u && address == out;
+    case 0x800336fcu: return op == 36u && address == voice + 52u;
+    case 0x80033710u: {
+        const uint8_t *gain = musashi_boot_ram_span(ram, voice + 52u, 1);
+        return op == 37u && gain && *gain < 128u &&
+               irq_file_table_matches(ram, address, 0x8006aa30u, 2u * *gain, cpu->irq_image->file_gain_table, 2u);
+    }
+    case 0x80033714u: return op == 33u && address == 0x800a4efau;
+    case 0x80033724u: return op == 36u && address == job + 22u;
+    case 0x80033734u: return op == 37u && address == job + 24u;
+    case 0x80033750u:
+        return op == 37u && cpu->r[3] <= 2u && address == job + 28u + (2u - cpu->r[3]) * 8u;
+    case 0x80033770u: return op == 36u && address == voice + 53u;
+    case 0x80033780u: return op == 36u && address == job + 56u;
+    case 0x800337b8u: return op == 40u && address == voice + 82u && cpu->r[3] <= 127u;
+    case 0x800337c0u: return op == 36u && address == 0x800a4f19u;
+    case 0x800337d8u: case 0x800337f8u: {
+        const uint8_t *p = musashi_boot_ram_span(ram, voice + 82u, 1);
+        if (!p || !*p || *p > 127u) return 0;
+        unsigned coefficient = cpu->pc == 0x800337d8u ? *p - 1u : 127u - *p;
+        return op == 37u && irq_file_table_matches(ram, address, 0x800731a0u, 2u * coefficient,
+                                                   cpu->irq_image->file_pan_table, 2u);
+    }
+    case 0x8003381cu:
+        return op == 37u && irq_file_table_matches(ram, address, 0x800731a0u, 2u * 63u,
+                                                   cpu->irq_image->file_pan_table, 2u);
+    case 0x80033808u: case 0x80033830u: return op == 41u && address == out + 10u;
+    case 0x80033834u: return op == 41u && address == out + 8u;
+    case 0x8003383cu: return op == 36u && address == out + 68u;
+    case 0x80033848u: return op == 43u && address == out + 64u;
+    case 0x8003384cu: return op == 35u && address == out + 4u;
+    case 0x8003385cu: case 0x80033864u: return op == 43u && address == out + 4u;
+    case 0x8003386cu: return op == 40u && address == out + 68u;
+    default: return 0;
+    }
 }
 
 /* Bank one's last sequence row precedes the entry table. Its opening five

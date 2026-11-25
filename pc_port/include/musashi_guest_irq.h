@@ -44,6 +44,8 @@ typedef struct MusashiGuestIrqImage {
     uint8_t level_slot_tick[0xa5c], level_voice_choice[0xdc], level_voice_command[0x290];
     uint8_t level_motion_mask[0x6c], level_voice_mask[0x6c];
     uint8_t title_note[0x34], file_note[0x68];
+    uint8_t file_pan_code[0x1e4];
+    uint8_t file_voice_masks[24 * 4], file_gain_table[128 * 2], file_pan_table[128 * 2];
     uint8_t channel_pitch[0x21c], channel_release[0x2c];
     uint8_t channel_expiry[0x110], channel_cond_release[0x74];
     /* Packed source ranges admitted by the CD frame. Populated from this

@@ -15705,7 +15705,7 @@ typedef enum {
     IRQ_CARD_CLEAR_RESULT, IRQ_CARD_RESET_EVENTS, IRQ_CARD_POLL_EVENTS, IRQ_CARD_FLAGS,
     IRQ_CARD_TEST_EVENT, IRQ_CARD_INFO_BIOS, IRQ_CARD_LOAD_BIOS,
     IRQ_CARD_READ, IRQ_CARD_SEEK_BIOS, IRQ_CARD_READ_BIOS,
-    IRQ_DRAW_COMPLETE, IRQ_DRAW_MASK, IRQ_DRAW_FRAME, IRQ_DRAW_TIME, IRQ_DRAW_SUBMIT, IRQ_CD_DMA, IRQ_LEVEL_SLOT, IRQ_LEVEL_CHOICE, IRQ_LEVEL_COMMAND, IRQ_LEVEL_MASK_OFF, IRQ_LEVEL_MASK_ON, IRQ_CHANNEL_PITCH, IRQ_CHANNEL_RELEASE, IRQ_CHANNEL_EXPIRY, IRQ_CHANNEL_COND_RELEASE, IRQ_SPU_TRANSFER_POLL, IRQ_OUTSIDE
+    IRQ_DRAW_COMPLETE, IRQ_DRAW_MASK, IRQ_DRAW_FRAME, IRQ_DRAW_TIME, IRQ_DRAW_SUBMIT, IRQ_CD_DMA, IRQ_LEVEL_SLOT, IRQ_LEVEL_CHOICE, IRQ_LEVEL_COMMAND, IRQ_LEVEL_MASK_OFF, IRQ_LEVEL_MASK_ON, IRQ_CHANNEL_PITCH, IRQ_CHANNEL_RELEASE, IRQ_CHANNEL_EXPIRY, IRQ_CHANNEL_COND_RELEASE, IRQ_SPU_TRANSFER_POLL, IRQ_FILE_PAN, IRQ_OUTSIDE
 } IrqRegion;
 typedef struct { uint32_t start; size_t offset, length; } IrqCodeRegion;
 #define IRQ_REGION(address, field) {address, offsetof(MusashiGuestIrqImage, field), sizeof(((MusashiGuestIrqImage *)0)->field)}
@@ -15755,7 +15755,8 @@ static const IrqCodeRegion irq_code[] = {
     IRQ_REGION(0x80031988u, channel_expiry),
     IRQ_REGION(0x80033324u, channel_cond_release),
     /* The same installed function is already mapped in the CD frame. */
-    {0x8003c4f0u, 0, 0xa8u}
+    {0x8003c4f0u, 0, 0xa8u},
+    IRQ_REGION(0x800336a8u, file_pan_code)
 };
 #undef IRQ_REGION
 
@@ -15813,6 +15814,13 @@ int musashi_boot_map_irq_exe(MusashiGuestIrqImage *image, MusashiBootMemory *mem
     if (!note || !file_note) return 0;
     memcpy(image->title_note, note, sizeof image->title_note);
     memcpy(image->file_note, file_note, sizeof image->file_note);
+    const uint8_t *masks = musashi_boot_ram_span(memory, 0x80073140u, sizeof image->file_voice_masks);
+    const uint8_t *gains = musashi_boot_ram_span(memory, 0x8006aa30u, sizeof image->file_gain_table);
+    const uint8_t *pan = musashi_boot_ram_span(memory, 0x800731a0u, sizeof image->file_pan_table);
+    if (!masks || !gains || !pan) return 0;
+    memcpy(image->file_voice_masks, masks, sizeof image->file_voice_masks);
+    memcpy(image->file_gain_table, gains, sizeof image->file_gain_table);
+    memcpy(image->file_pan_table, pan, sizeof image->file_pan_table);
     if (!cd_parent_map(image,memory)) return 0;
 #ifdef MUSASHI_COMPILED_STREAM
     for (unsigned i = 0; i < MUSASHI_STREAM_STATE_COUNT; ++i)
@@ -16330,6 +16338,7 @@ static int irq_data_access(const FormatterCpu *cpu, uint32_t w) {
         return irq_channel_command_data(cpu, w, address);
     if (region == IRQ_CHANNEL_PITCH || region == IRQ_CHANNEL_RELEASE)
         return irq_channel_leaf_data(cpu, w, address, irq_channel_record(cpu));
+    if (region == IRQ_FILE_PAN) return irq_file_pan_data(cpu, op, address);
     if (region == IRQ_LEVEL_SLOT) return irq_level_slot_data(cpu, w, address);
     if (region == IRQ_LEVEL_MASK_ON && !cpu->level_slot)
         return irq_channel_mask_data(cpu, w, address, irq_channel_record(cpu));
@@ -16391,6 +16400,24 @@ static int irq_data_access(const FormatterCpu *cpu, uint32_t w) {
 }
 
 typedef struct { uint32_t address, sp; IrqRegion callee; } IrqGuestReturn;
+
+static int irq_file_pan_call(const FormatterCpu *cpu, unsigned op, uint32_t target,
+                             const IrqGuestReturn *stack, unsigned depth) {
+    return cpu->pc == 0x80033a28u && op == 3u && target == irq_code[IRQ_FILE_PAN].start &&
+           depth == 7u && stack[6].callee == IRQ_LEVEL_SLOT && stack[6].address == 0x80031c90u &&
+           stack[6].sp == 0x8006ca4cu && cpu->r[31] == stack[6].address &&
+           irq_file_pan_frame(cpu) && irq_file_pan_inputs(cpu);
+}
+
+static int irq_file_pan_return(const FormatterCpu *cpu, uint32_t target,
+                               const IrqGuestReturn *stack, unsigned depth) {
+    return cpu->pc == 0x80033884u && target == 0x80033a30u && depth == 8u &&
+           stack[6].callee == IRQ_LEVEL_SLOT && stack[7].callee == IRQ_FILE_PAN &&
+           stack[7].address == target && stack[7].sp == cpu->r[29] && cpu->r[31] == target &&
+           irq_file_pan_frame(cpu) && cpu->r[4] == cpu->level_slot &&
+           cpu->r[10] == 8u && cpu->r[11] == 8u * 0x48u && cpu->r[9] == 0x800a4988u + 8u * 0x54u;
+}
+
 
 /* Direct calls have fixed destinations in the per-machine instruction image.
  * Callback-table branches additionally bind the selected queue/table word. */
@@ -16989,6 +17016,7 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
                 } else if (region >= IRQ_LEVEL_CHOICE && region <= IRQ_LEVEL_MASK_ON &&
                     (depth != 8u || stack[6].callee != IRQ_LEVEL_SLOT ||
                      !irq_level_leaf_return(&cpu, target))) return 0;
+                if (region == IRQ_FILE_PAN && !irq_file_pan_return(&cpu, target, stack, depth)) return 0;
                 if (region == IRQ_LEVEL_SLOT) {
                     if (origin != 0x800342e0u || target != 0x80031c90u ||
                         cpu.r[29] != 0x8006ca4cu || !cpu.level_slot) return 0;
@@ -17072,6 +17100,9 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
                 uint32_t selector = cpu.r[3], expected = irq_level_case_target(selector);
                 if (!expected || target != expected || !cpu.level_slot ||
                     !cd_irq_ram_word(memory, 0x80073120u + 4u * selector, target)) return 0;
+            } else if (region == IRQ_LEVEL_SLOT && dest == IRQ_FILE_PAN) {
+                if (!irq_file_pan_call(&cpu, op, target, stack, depth)) return 0;
+                stack[depth++] = (IrqGuestReturn){origin + 8u, cpu.r[29], dest};
             } else if (region == IRQ_LEVEL_SLOT && dest >= IRQ_LEVEL_CHOICE && dest <= IRQ_LEVEL_MASK_ON) {
                 if (depth != 7u || stack[6].callee != IRQ_LEVEL_SLOT || stack[6].address != 0x80031c90u ||
                     !irq_level_leaf_call(&cpu, w, target)) return 0;
@@ -17214,6 +17245,9 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
                 !irq_channel_leaf_entry(&cpu, irq_channel_record(&cpu))) return 0;
             if (region == IRQ_CHANNEL_UPDATE && irq_channel_mask_site(origin) &&
                 !irq_channel_mask_entry(&cpu, irq_channel_record(&cpu))) return 0;
+            if (origin == 0x80033a28u &&
+                (cpu.pc != irq_code[IRQ_FILE_PAN].start || cpu.r[31] != origin + 8u ||
+                 cpu.r[4] != cpu.level_slot || !irq_file_pan_frame(&cpu))) return 0;
             if (irq_level_leaf_target(origin) && !irq_level_leaf_entry(&cpu, memory)) return 0;
             if (origin == 0x80031c88u &&
                 (cpu.r[31] != 0x80031c90u || cpu.r[5] != cpu.r[17] ||
