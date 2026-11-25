@@ -20,3 +20,6 @@ bfm_screen_observe_3aa24 = 0x8013aa24;
 // Caller-specific names for the SC03/0001 field transition.
 bfm_village_transition_2a828 = 0x8012A828;
 bfm_village_transition_87750 = 0x80187750;
+
+// Resident copy routine emitted for the SC01 room-point structure assignment.
+memcpy = 0x8005C324;

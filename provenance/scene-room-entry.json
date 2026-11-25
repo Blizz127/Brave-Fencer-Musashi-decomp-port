@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "note": "Room-entry C recovered for the USA scene overlays.",
+  "targets": {
+    "sc01_0005": {
+      "kind": "blob",
+      "file": "extracted/overlays/sc01/0005.pac0.bin",
+      "base": 2148696408,
+      "sha256": "9682107587bbf42655db9b8c8f53bc0fd388234ad5678632341c3874cf79f772"
+    },
+    "sc01_0006": {
+      "kind": "blob",
+      "file": "extracted/overlays/sc01/0006.pac0.bin",
+      "base": 2148696408,
+      "sha256": "9682107587bbf42655db9b8c8f53bc0fd388234ad5678632341c3874cf79f772"
+    }
+  },
+  "matches": [
+    {
+      "name": "func_80144B9C",
+      "region": "sc01_0005",
+      "vram": 2148813724,
+      "size": 3080,
+      "source": "src/overlays/sc01_0005/80144b9c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O0",
+      "origin": "Independently reconstructed from the owned USA scene overlay. Selects a room point, restores or initializes scene state, and submits room lighting.",
+      "source_sha256": "2086b75026503fecfa94c9f5559977de63012bb39b4cc5bc7754be56ee3ced71",
+      "span_sha256": "2c5643a101f044996bd8abddf7146b7d85dff8944c0cb1bd423c3daae1f9e186"
+    },
+    {
+      "name": "func_80144B9C",
+      "region": "sc01_0006",
+      "vram": 2148813724,
+      "size": 3080,
+      "source": "src/overlays/sc01_0005/80144b9c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O0",
+      "origin": "Independently reconstructed from the owned USA scene overlay. Selects a room point, restores or initializes scene state, and submits room lighting.",
+      "source_sha256": "2086b75026503fecfa94c9f5559977de63012bb39b4cc5bc7754be56ee3ced71",
+      "span_sha256": "2c5643a101f044996bd8abddf7146b7d85dff8944c0cb1bd423c3daae1f9e186"
+    }
+  ]
+}
