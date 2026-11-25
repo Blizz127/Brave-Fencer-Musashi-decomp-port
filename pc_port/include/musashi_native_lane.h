@@ -91,10 +91,6 @@ int musashi_native_lane_install(const MusashiNativeLaneEntry *entries,
  * MUSASHI_NATIVE_LANE_GUEST_BASE for this memory. */
 int musashi_native_lane_usable(const MusashiBootMemory *memory);
 
-/* Registered host step for the resident game angle subtraction. Runs with
- * the active formatter CPU so its return delay slot remains observable. */
-int musashi_native_lane_wrapped_angle(MusashiNativeLaneCall *call);
-
 /* The compiled script-variable helpers use the guest's byte index directly.
  * Defer to the CPU for unaligned, aliased, device or shadow-owned memory. */
 int musashi_native_lane_script_var_direct(uint32_t index, unsigned width);

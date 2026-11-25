@@ -1324,8 +1324,26 @@ static int fill_rect(MusashiGpuController *controller,
     return 1;
 }
 
+static uint16_t color15(uint32_t word) {
+    return (uint16_t)(((word >> 3) & 0x1fu) | ((word >> 6) & 0x3e0u) | ((word >> 9) & 0x7c00u));
+}
+
+static uint16_t line_color(uint32_t start, uint32_t end, int step, int length) {
+    uint16_t color = 0;
+    for (unsigned channel = 0; channel < 3; ++channel) {
+        int a = (start >> (channel * 8)) & 255u;
+        int b = (end >> (channel * 8)) & 255u;
+        /* Start at the center of the 8-bit level and truncate the signed
+         * step before advancing. The fraction matters at RGB555 boundaries. */
+        int increment = (b - a) * 65536 / length;
+        int fixed = a * 65536 + 32768 + step * increment;
+        color |= (uint16_t)((fixed >> 19) << (channel * 5));
+    }
+    return color;
+}
+
 static int draw_line(MusashiGpuController *controller,
-                     int x0, int y0, int x1, int y1, uint16_t color,
+                     int x0, int y0, int x1, int y1, uint32_t start, uint32_t end,
                      int opaque_flat_segment) {
     /* The opaque two-point command covers the same samples in either
      * direction. Its half-step bias is measured from the left endpoint. */
@@ -1352,9 +1370,16 @@ static int draw_line(MusashiGpuController *controller,
      * vertically (psx-spx), and clips to the drawing area like polygons. */
     if (dx >= 1024 || dy >= 512) return 1;
     if (!clip_box(controller, &left, &top, &right, &bottom)) return 1;
-    for (;;) {
-        if (x0 >= left && x0 <= right && y0 >= top && y0 <= bottom &&
-            !plot_drawn(controller, x0, y0, color)) return 0;
+    int length = dx > dy ? dx : dy;
+    int shaded = length && ((start ^ end) & 0xffffffu);
+    uint16_t color = color15(start);
+    /* Advance from the original endpoints even when the drawing area clips
+     * the line. Each iteration moves one sample along its major axis. */
+    for (int step = 0;; ++step) {
+        if (x0 >= left && x0 <= right && y0 >= top && y0 <= bottom) {
+            if (shaded) color = line_color(start, end, step, length);
+            if (!plot_drawn(controller, x0, y0, color)) return 0;
+        }
         if (x0 == x1 && y0 == y1) break;
         e2 = 2 * err;
         if (e2 > -dy) { err -= dy; x0 += sx; }
@@ -1376,9 +1401,8 @@ static int prim_commit(MusashiGpuController *controller) {
         controller->semi_mode = (uint8_t)((controller->prim_data[(opcode & 0x10u) ? 5 : 4] >> 21) & 3u);
     else
         controller->semi_mode = (uint8_t)((controller->draw_mode >> 5) & 3u);
-    uint16_t color = (uint16_t)(((controller->prim_data[0] >> 3) & 0x1fu) |
-        ((controller->prim_data[0] >> 6) & 0x3e0u) |
-        ((controller->prim_data[0] >> 9) & 0x7c00u));
+    uint32_t command = controller->prim_data[0];
+    uint16_t color = color15(command);
     int ox = signed11(controller->drawing_offset, 0);
     int oy = signed11(controller->drawing_offset, 11);
     int x[4], y[4];
@@ -1404,14 +1428,14 @@ static int prim_commit(MusashiGpuController *controller) {
         int ly0 = signed11(controller->prim_data[1], 16) + oy;
         int lx1 = signed11(controller->prim_data[2], 0) + ox;
         int ly1 = signed11(controller->prim_data[2], 16) + oy;
-        return draw_line(controller, lx0, ly0, lx1, ly1, color, opcode == 0x40u);
+        return draw_line(controller, lx0, ly0, lx1, ly1, command, command, opcode == 0x40u);
     }
     if (opcode >= 0x50u && opcode <= 0x57u) {
         int lx0 = signed11(controller->prim_data[1], 0) + ox;
         int ly0 = signed11(controller->prim_data[1], 16) + oy;
         int lx1 = signed11(controller->prim_data[3], 0) + ox;
         int ly1 = signed11(controller->prim_data[3], 16) + oy;
-        return draw_line(controller, lx0, ly0, lx1, ly1, color, 0);
+        return draw_line(controller, lx0, ly0, lx1, ly1, command, controller->prim_data[2], 0);
     }
 
     if (opcode >= 0x60u && opcode <= 0x7fu && !(opcode & 4u)) {
@@ -1642,12 +1666,7 @@ static int prim_commit(MusashiGpuController *controller) {
     return 0;
 }
 
-static uint16_t color15(uint32_t word) {
-    return (uint16_t)(((word >> 3) & 0x1fu) | ((word >> 6) & 0x3e0u) | ((word >> 9) & 0x7c00u));
-}
-
-/* One polyline word. Segments are drawn as each vertex arrives, with the
- * start vertex's colour like the two-point lines (no gouraud shading yet). */
+/* One polyline word. Each new vertex completes the preceding segment. */
 static int poly_word(MusashiGpuController *controller, uint32_t word) {
     const uint32_t index = controller->poly_words + 1u;  /* position in the packet */
     const int is_color = controller->poly_gouraud && (index & 1u) == 0u;
@@ -1675,7 +1694,7 @@ static int poly_word(MusashiGpuController *controller, uint32_t word) {
             controller->semi_textured = 0;
             controller->semi_mode = (uint8_t)((controller->draw_mode >> 5) & 3u);
             if (!draw_line(controller, controller->poly_x, controller->poly_y, x, y,
-                           color15(controller->poly_prev_color), 0))
+                           controller->poly_prev_color, controller->poly_color, 0))
                 return 0;
         }
         controller->poly_x = x;

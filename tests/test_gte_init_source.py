@@ -77,7 +77,7 @@ def _run_gte_source_probe(tmp_path, variant, probe_file="gte_init_source_probe.c
     cc, cxx = ("clang", "clang++") if sanitize else ("cc", "g++")
     flags = ["-Wall", "-Wextra", "-Werror", "-Wno-parentheses", "-ffunction-sections", "-fdata-sections"]
     flags += ["-O1", "-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"] if sanitize else ["-O2"]
-    includes = ["-I", str(ROOT / "include"), "-I", str(ROOT / "pc_port/include"),
+    includes = ["-I", str(ROOT / "pc_port"), "-I", str(ROOT / "include"), "-I", str(ROOT / "pc_port/include"),
                 "-I", str(ROOT / "tools/third_party/psycross/include"), "-I", str(generated)]
     owner, inline, probe = tmp_path / "gte_owner.o", tmp_path / "inline.o", tmp_path / "probe"
     subprocess.run([cc, "-std=c99", *flags, *includes, "-c", str(ROOT / "pc_port/gte_owner.c"), "-o", str(owner)], check=True, timeout=40)

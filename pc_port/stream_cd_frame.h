@@ -61,10 +61,10 @@ static MusashiStreamCallResult stream_cd_try(MusashiBootMemory *memory, Formatte
         !musashi_boot_read32(memory, 0x800747b0u, &cursor) || (phase >= 2 && phase <= 4 && cursor >= 1024) ||
         !image->owns_stream_clock(image->stream_machine, memory, cpu->clock,
             cpu->cd_register_device, cpu->cd_irq_frame, g_entry_hook)) return MUSASHI_STREAM_DEFER;
+    /* A CD worker entered while the foreground is in the constructor or
+     * graphics setup keeps the ordinary instruction clock for this call. */
     if (g_lane_run_frames && (g_lane_run_frames->field_scene.phase != FIELD_IDLE ||
-        g_lane_run_frames->main_entry.return_stage == 2u ||
-        (g_lane_run_frames->main_entry.follow_constructor &&
-         g_lane_run_frames->main_entry.next - GAME_CTOR < GAME_CTOR_END - GAME_CTOR)))
+        (g_lane_run_frames->cpu && startup_constructor_or_graphics(g_lane_run_frames->cpu->pc))))
         return MUSASHI_STREAM_DEFER;
     for (unsigned i = 0; i < MUSASHI_STREAM_STATE_COUNT; ++i)
         if (!cd_irq_ram_word(memory, 0x80072a38u + i * 4u, image->stream_targets[i])) return MUSASHI_STREAM_DEFER;

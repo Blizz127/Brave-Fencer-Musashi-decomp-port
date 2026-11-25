@@ -133,7 +133,7 @@ class NativeLaneSourceTest(unittest.TestCase):
         step = source[source.index(
             "static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {"):]
         self.assertLess(step.index("lane_try(memory, cpu)"),
-                        step.index("formatter_fetch(memory, cpu, &instruction)"))
+                        step.index("if (!formatter_fetch(memory, cpu, &instruction)) return formatter_refuse0"))
         # Tracing is opt-in and only observes.
         self.assertIn('getenv("MUSASHI_TRACE_FUNCS")', source)
 

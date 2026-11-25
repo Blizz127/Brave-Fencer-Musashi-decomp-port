@@ -2034,10 +2034,10 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
                 hashlib.sha256(src.read_bytes()).hexdigest() ==
                 "2fd11caf58aeb355272b2a004fb88769a8df9fc93eda9e54149f6f7388fd606d"):
             raise Reject("timing", "resident flag read requires guest load and interrupt timing")
-        wrapped_angle = member is None and vram == 0x80012AB0
-        if wrapped_angle and (size != 12 or hashlib.sha256(src.read_bytes()).hexdigest() !=
-                "7e1d58c1eca9742e5c025641f349f594066b5cadd3b4eb1c4a64f8706bb7ace2"):
-            raise Reject("source", "wrapped-angle step requires the verified clean source")
+        # Generated callers must cross the guest bridge so the scheduler and
+        # memory owner can observe each instruction of the resident angle call.
+        if member is None and vram == 0x80012AB0:
+            raise Reject("timing", "wrapped angle uses timed guest execution")
         # Use the forest's guest call sequence for each MoveImage record.
         # The SC02 and MAIN versions already share its bytes and address.
         if vram == 0x80146014 and (entry.get("region") == "sc01_0077" or
@@ -2269,12 +2269,9 @@ def build_one(entry, out, symbols, hooks, clang, info=None):
         digest = member_digest(info, vram, size) if info else None
         if info and digest is None:
             raise Reject("overlay", "extent outside the member file")
-        result = dict(name=name, qname=qualify(member, name), member=member, vram=vram, size=size,
-                      source=entry["source"], admitted=True, obj=str(obj), defs=sigs, stubs=stubs,
-                      icalls=icalls, digest=digest)
-        if wrapped_angle:
-            result["step_handler"] = "musashi_native_lane_wrapped_angle"
-        return result
+        return dict(name=name, qname=qualify(member, name), member=member, vram=vram, size=size,
+                    source=entry["source"], admitted=True, obj=str(obj), defs=sigs, stubs=stubs,
+                    icalls=icalls, digest=digest)
     except Reject as e:
         return dict(name=name, qname=qualify(member, name), member=member, vram=vram, size=size,
                     source=entry["source"], admitted=False, rule=e.rule, detail=e.detail)
@@ -2351,8 +2348,7 @@ def script_var_guard(target, index):
 def emit_table(admitted, out):
     defs = {}
     for a in admitted:
-        if not a.get("step_handler"):
-            defs.update(a["defs"])
+        defs.update(a["defs"])
     stubs = {}
     for a in admitted:
         stubs.update(a["stubs"])
@@ -2463,10 +2459,6 @@ def emit_table(admitted, out):
         d = "lane_" + a["qname"]
         wrap = f"wrap_{a['member']}_{a['vram']:08x}" if a.get("member") else f"wrap_{a['vram']:08x}"
         ret, rext, params = a["defs"][d]
-        if a.get("step_handler"):
-            entries.append(f'    {{0x{a["vram"]:08x}u, 0u, {a["step_handler"]}, "{a["qname"]}", '
-                           f'{len(params)}u, 1u}},')
-            continue
         args = ", ".join(from_guest(f"musashi_native_lane_arg(call, {i}u)", t, e)
                          for i, (t, e) in enumerate(params))
         lines.append(f"static int {wrap}(MusashiNativeLaneCall *call) {{")

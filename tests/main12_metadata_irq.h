@@ -215,7 +215,7 @@ static void metadata_close(FormatterCpu cpu, MetadataFile *file, enum MetadataCl
     cpu.callback_device = &pause;
     MusashiResetGraphPrefixStop stop = {0};
     int32_t result = 0;
-    CHECK(run_startup_cpu_loop(&machine, &cpu, NULL, NULL, &result, &stop, NULL, NULL, NULL) ==
+    CHECK(run_startup_cpu(&machine, &cpu, NULL, NULL, &result, &stop, NULL, NULL, NULL, 0) ==
           MUSASHI_RESETGRAPH_PREFIX_INVALID_INPUT);
     CHECK(stop.call_address == 0x800603e8u && cpu.pc == stop.call_address && file->closes == 1);
     CHECK(cpu.r[2] == (which == CLOSE_FAILED ? UINT32_MAX : 2u) && !owner->directory_fd_token);

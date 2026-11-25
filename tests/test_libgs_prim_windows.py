@@ -25,11 +25,28 @@ def test_windows_match_licensed_exe():
         assert len(re.findall(r"0x[0-9a-f]{16}ull", table)) == -(-(int(hi, 16) - int(lo, 16)) // 256)
 
 
-def test_delayed_branch_sites_are_cfc2_bltz_pairs():
-    words = {int(a, 16): w for a, w in re.findall(
-        r"/\* [0-9A-F]+ ([0-9A-F]{8}) ([0-9A-F]{8}) \*/", (ROOT / "asm/main.s").read_text())}
-    for pc in (0x8004B710, 0x8004B8DC, 0x8004CD38, 0x8004CF18):
-        cfc2 = int.from_bytes(bytes.fromhex(words[pc - 4]), "little")
-        bltz = int.from_bytes(bytes.fromhex(words[pc]), "little")
-        assert cfc2 == 0x4842F800            # cfc2 $v0, $31 (FLAG)
-        assert bltz >> 16 == 0x0440          # bltz $v0
+@pytest.mark.parametrize("address", (0x8004B710, 0x8004B8DC, 0x8004CD38, 0x8004CF18))
+def test_changed_byte_invalidates_only_its_primitive_window(address):
+    from runpy import run_path
+
+    if not EXE.exists():
+        pytest.skip("pinned licensed EXE unavailable")
+    image = EXE.read_bytes()
+    image_digest = hashlib.sha256(image).hexdigest()
+    assert image_digest == "66371c3a7517e9eabd7cb6cf0c5abffe7296bd4bac29c85b8bf7bb9db349714a"
+
+    windows = run_path(str(ROOT / "tools/gen_libgs_prim_windows.py"))["windows"]
+
+    def digests(data):
+        return {(start, index): digest
+                for start, _, values in windows(data)
+                for index, digest in enumerate(values)}
+
+    text_base = int.from_bytes(image[24:28], "little")
+    modified = bytearray(image)
+    modified[2048 + address - text_base] ^= 1
+    before, after = digests(image), digests(modified)
+    assert before.keys() == after.keys()
+    changed = {key for key in before if before[key] != after[key]}
+    first_span = 0x8004A27C
+    assert changed == {(first_span, (address - first_span) // 256)}

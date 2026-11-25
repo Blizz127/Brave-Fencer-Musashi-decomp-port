@@ -20,23 +20,33 @@ static void frame_pad_capture(LaneRunFrame *root, MusashiBootMemory *memory, For
     }
 }
 
-static int frame_pad_offer(LaneRunFrame *nested, MusashiBootMemory *memory, FormatterCpu *cpu) {
-    LaneRunFrame *root = nested->prev;
+static int frame_pad_child_bound(LaneRunFrame *nested, MusashiBootMemory *memory,
+                                 const FormatterCpu *cpu) {
+    LaneRunFrame *root = nested ? nested->prev : NULL;
     const LaneActive *caller = g_lane_active;
-    uint8_t digest[32];
-    if (!root || !root->pad_latch.pay || nested != g_lane_run_frames || nested->cpu != cpu ||
+    if (!root || !cpu->clock || !cpu->callback_device || !root->pad_latch.pay ||
+        nested != g_lane_run_frames || nested->cpu != cpu ||
         nested->mounted_call.step || !game_main_bound(root, memory, cpu) || !field_scene_bus(cpu) ||
         root->pad_latch.generation != g_lane_generation || !caller || caller->provider != g_installed_frame_poll ||
         caller->cpu != cpu || caller->memory != memory || caller->guest_pc != FRAME_PAD_POLL ||
         cpu->callback_device->charge_quiet != root->pad_latch.pay ||
-        cpu->npc != PAD_LATCH + 4u || cpu->pc != PAD_LATCH || cpu->delay_slot || cpu->branch_pc ||
-        cpu->r[4] != PAD_FIRST || cpu->r[31] != UINT32_MAX || cpu->field_load.reg || cpu->scene_load.reg ||
+        cpu->field_load.reg || cpu->scene_load.reg ||
         cpu->irq_dma || cpu->irq_draw || cpu->movie_output || cpu->title_mixer || cpu->main12_callback_frame ||
         cpu->main12_foreground_owner || cpu->main12_card_service || cpu->main12_row_pc ||
         cpu->main12_clearing_file || cpu->main12_building_row || cpu->main12_room_resuming ||
         cpu->main12_payload_pc || cpu->main12_copy_pending || cpu->room_reset_owner ||
         cpu->room_scene.owner || cpu->room_latch.owner || root->field_scene.phase != FIELD_IDLE ||
         root->scene.phase != SCENE_IDLE) return 0;
+    return 1;
+}
+
+static int frame_pad_offer(LaneRunFrame *nested, MusashiBootMemory *memory, FormatterCpu *cpu) {
+    LaneRunFrame *root = nested->prev;
+    const LaneActive *caller = g_lane_active;
+    uint8_t digest[32];
+    if (!frame_pad_child_bound(nested, memory, cpu) || cpu->npc != PAD_LATCH + 4u ||
+        cpu->pc != PAD_LATCH || cpu->delay_slot || cpu->branch_pc ||
+        cpu->r[4] != PAD_FIRST || cpu->r[31] != UINT32_MAX) return 0;
 
     const MusashiNativeLaneEntry *poll = lane_find(FRAME_PAD_POLL);
     if (!poll || poll->fn != caller->provider ||

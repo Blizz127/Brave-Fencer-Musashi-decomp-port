@@ -6171,6 +6171,7 @@ typedef struct FormatterCpu {
     MusashiBiosCallbackFrame *bios_frame;
     MusashiCdIrqFrame *cd_irq_frame;
     struct TitleMixerRun *title_mixer;
+    const struct MasterFadeRun *master_fade;
     const MusashiGuestIrqImage *irq_image;
     const MusashiGuestIrqImage *cd_parent_image;
     const MusashiDmaCallbackRegistrationDevice *irq_dma;
@@ -6232,7 +6233,7 @@ typedef struct FormatterCpu {
     uint8_t main12_copy_pending;
     uint8_t main12_directory_found;
     MusashiMain12Owner *room_reset_owner;
-    uint32_t room_reset_step;
+    uint32_t room_reset_step, room_reset_npc, room_reset_branch, room_reset_regs[32];
     unsigned room_reset_slot;
     RoomSceneFrame room_scene;
     Sc01RoomFrame sc01_room;
@@ -6272,7 +6273,9 @@ static int irq_draw_bound(const MusashiGuestIrqImage *image, const MusashiGuestI
 
 static int title_mixer_word(MusashiBootMemory *,const FormatterCpu *,uint32_t *);
 static int title_mixer_access(MusashiBootMemory *,const FormatterCpu *,uint32_t,unsigned,unsigned,uint32_t);
+static int master_fade_issuer(MusashiBootMemory *, const FormatterCpu *, uint32_t);
 static int title_mixer_after_clock(MusashiBootMemory *,FormatterCpu *,uint32_t);
+static void title_mixer_charged(FormatterCpu *, uint32_t);
 static void title_mixer_spu_result(const FormatterCpu *,uint32_t,uint16_t,int);
 
 static int callback_read16(const FormatterCpu *cpu, uint32_t address, uint16_t *value) {
@@ -7417,13 +7420,14 @@ static int intrinsic_string(MusashiBootMemory *memory, const FormatterCpu *cpu,
 
 static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu);
 static int room_scene_active(const FormatterCpu *cpu);
+static int room_reset_active(const FormatterCpu *cpu);
 static int lane_try(MusashiBootMemory *memory, FormatterCpu *cpu);
 static size_t g_lane_count;
 
 static int formatter_call(MusashiBootMemory *memory, FormatterCpu *cpu,
                            MusashiConsoleSink sink, void *userdata) {
     uint32_t address = cpu->pc;
-    if (room_scene_active(cpu) || cpu->main12_clearing_file || main12_payload_copy_pc(cpu) || main12_menu_exit_pc(cpu))
+    if (room_scene_active(cpu) || room_reset_active(cpu) || cpu->main12_clearing_file || main12_payload_copy_pc(cpu) || main12_menu_exit_pc(cpu))
         return formatter_step(memory, cpu);
     if (cpu->gte_load_pending) return 0;
     /* A host intrinsic whose matched C the lane admitted runs as that C
@@ -9243,6 +9247,11 @@ static int card_vblank_helper_word(MusashiBootMemory *memory, uint32_t pc, uint3
 static int irq_live_word(const MusashiGuestIrqImage *, MusashiBootMemory *, uint32_t, uint32_t *);
 static int irq_data_access(const FormatterCpu *, uint32_t);
 static int irq_opening_note_read(const FormatterCpu *cpu);
+
+static int irq_slot_mixer_issuing(const FormatterCpu *cpu) {
+    return cpu->irq_image && cpu->pc - 0x800336a8u < sizeof cpu->irq_image->file_pan_code;
+}
+
 /* These two return addresses belong to the two observed reset calls into the
  * byte fill. Other callers keep the existing host binding. The reset needs
  * instruction checkpoints during its clears while interrupt sources advance. */
@@ -9275,9 +9284,9 @@ static int movie_callback_word(const MusashiGuestIrqImage *, MusashiBootMemory *
 static int sc01_opening_callback_slot(MusashiBootMemory *memory, const FormatterCpu *cpu);
 static int room_reset_guest_scene(MusashiBootMemory *memory);
 
-#include "main12_room_slot_reset.h"
+#include "room_reset_guest.h"
 #include "main12_scene_setup.h"
-#include "main10_room_latch.h"
+#include "room_latch_guest.h"
 #include "sc01_room_command.h"
 
 static int formatter_fetch(MusashiBootMemory *memory, const FormatterCpu *cpu, uint32_t *out) {
@@ -9287,7 +9296,7 @@ static int formatter_fetch(MusashiBootMemory *memory, const FormatterCpu *cpu, u
     if (room_latch_active(cpu)) return room_latch_fetch(memory, cpu, out);
     if (room_scene_active(cpu)) return room_scene_word(memory, cpu, out);
     if (room_reset_active(cpu))
-        return room_reset_valid(memory, cpu) && musashi_boot_read32(memory, cpu->pc, out);
+        return room_reset_word(memory, cpu, out);
     if (main12_menu_exit_pc(cpu)) return main12_menu_exit_word(memory, cpu, out);
     if (cpu->main12_clearing_file) return main12_clear_word(memory, cpu, out);
     if (cpu->main12_row_pc) return main12_row_word(memory, cpu, out);
@@ -11694,7 +11703,7 @@ static TraceOther g_trace_other[TRACE_OTHER_MAX];
 static unsigned g_trace_other_n;
 static const MusashiNativeLaneEntry *lane_find(uint32_t pc);
 static unsigned long long g_wrapped_angle_trace_steps[3];
-static unsigned long long g_scene_native_issues, g_scene_scalar_issues, g_scene_calls;
+static unsigned long long g_scene_scalar_issues, g_scene_calls;
 static unsigned long long g_scene_child_returns, g_scene_returns, g_scene_aggregate_returns;
 static unsigned long long g_scene_delayed_loads, g_scene_equal_loads, g_scene_eager_loads;
 static unsigned long long g_room_latch_trace_steps, g_room_latch_trace_returns;
@@ -11742,12 +11751,12 @@ static void trace_dump(void) {
             fprintf(out, "# wrapped_angle_native_steps subtract=%llu return=%llu mask=%llu\n",
                     g_wrapped_angle_trace_steps[0], g_wrapped_angle_trace_steps[1],
                     g_wrapped_angle_trace_steps[2]);
-        if (g_scene_native_issues)
-            fprintf(out, "# mounted_scene_dispatch native_issues=%llu scalar_load_window=%llu calls=%llu child_returns=%llu returns=%llu aggregate_returns=%llu\n",
-                    g_scene_native_issues, g_scene_scalar_issues, g_scene_calls, g_scene_child_returns, g_scene_returns,
+        if (g_scene_scalar_issues)
+            fprintf(out, "# mounted_scene_dispatch guest_issues=%llu calls=%llu child_returns=%llu returns=%llu aggregate_returns=%llu\n",
+                    g_scene_scalar_issues, g_scene_calls, g_scene_child_returns, g_scene_returns,
                     g_scene_aggregate_returns);
         if (g_room_latch_trace_steps)
-            fprintf(out, "# room_latch_native steps=%llu returns=%llu\n",
+            fprintf(out, "# room_latch_guest steps=%llu returns=%llu\n",
                     g_room_latch_trace_steps, g_room_latch_trace_returns);
 #ifdef MUSASHI_COMPILED_STREAM
         fprintf(out, "# pac_stream_native returns=%llu output=%llu literals=%llu copied=%llu issues=%llu cycles=%llu deferred=%llu scalar_resumes=%llu faults=%llu\n",
@@ -11880,19 +11889,14 @@ static MusashiNativeLaneFn g_installed_frame_poll;
 static uint32_t g_lane_min = UINT32_MAX, g_lane_max;
 static int g_lane_env = -1;
 
-/* A cold root can own the game caller only across a directly observed CRT call. */
+/* Devices captured by the cold root's verified mounted executable. */
 typedef struct GameMainEntry {
-    uint32_t next;
     MusashiBootMemory *memory;
     const MusashiExecutionClock *clock;
     MusashiExecutionClock charge;
     const MusashiCallbackDevice *callback;
     int (*checkpoint)(void *, const void *);
     void *worker;
-    uint8_t call[8], game[32], constructor[112], resume[28];
-    unsigned follow_constructor, follow_graphics;
-    uint8_t post_exchange[20], graphics[16], graphics_return[8], cd_start[12];
-    unsigned capture_return, return_stage;
 } GameMainEntry;
 
 enum SceneDispatchPhase {
@@ -11916,20 +11920,19 @@ typedef struct SceneDispatchFrame {
     const FormatterRange *service;
 } SceneDispatchFrame;
 typedef enum FieldScenePhase {
-    FIELD_IDLE, FIELD_CALLING, FIELD_BODY, FIELD_RESTORING,
+    FIELD_IDLE, FIELD_CALLING, FIELD_BODY,
     FIELD_SERVICE_ENTRY, FIELD_SERVING, FIELD_SERVICE_DELAY
 } FieldScenePhase;
 
 typedef struct FieldSceneCounters {
-    uint64_t issues, clocks, delegated_issues, delegated_clocks, flag_clears;
-    uint64_t calls, guest_returns, native_returns, completed;
-    uint64_t restore_issues, restore_clocks, complete_19, irq_writebacks, provider_handoffs;
+    uint64_t issues, calls, guest_returns, native_returns, completed;
+    uint64_t delayed_loads, irq_writebacks, provider_handoffs;
 } FieldSceneCounters;
 
 typedef struct FieldScene {
     uint8_t caller[8], body[76];
     uint32_t stack, pc, npc, branch;
-    unsigned mounted, delay, restores;
+    unsigned mounted, delay;
     FieldScenePhase phase;
     FieldSceneCounters counters;
 } FieldScene;
@@ -11938,7 +11941,7 @@ enum { FRAME_PAD_POLL = 0x800189a8u, PAD_LATCH = 0x80018ce8u, PAD_FIRST = 0x8007
 
 typedef struct LaneRunFrame {
     SceneDispatchFrame scene;
-    struct { unsigned long long native, scalar, calls, children, returns, aggregate, delayed, equal, eager; } scene_baseline;
+    struct { unsigned long long scalar, calls, children, returns, aggregate, delayed, equal, eager; } scene_baseline;
     GameMainEntry main_entry;
     struct {
         int (*pay)(void *, const void *, uint32_t);
@@ -12403,59 +12406,6 @@ void musashi_native_frame_pad(uint32_t record) {
     (void)lane_guest_call(PAD_LATCH, 1u, &record, NULL, 1);
 }
 
-#define WRAPPED_ANGLE_ENTRY UINT32_C(0x80012ab0)
-
-/* Staged host implementation of the game's (a - b) & 4095. Each caller
- * checkpoint still sees the intermediate difference, return branch or mask.
- * A changed fetch source retains the normal CPU path. */
-static int wrapped_angle_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
-    uint32_t offset = cpu->pc - WRAPPED_ANGLE_ENTRY, next;
-    uint64_t digest;
-    if (offset >= 12u || (offset & 3u) || cpu->merge_pending || cpu->gte_load_pending ||
-        !musashi_native_lane_usable(memory))
-        return 0;
-    if (offset == 8u) {
-        if (!cpu->delay_slot || cpu->branch_pc != WRAPPED_ANGLE_ENTRY + 4u) return 0;
-    } else if (cpu->delay_slot || cpu->branch_pc || cpu->npc != cpu->pc + 4u) return 0;
-
-    /* code_word reads the immutable EXE first, then the bus. Do not probe
-     * arbitrary owners ahead of a fetch; the ordinary CPU must call them. */
-    if (code_image()) {
-        if (g_code_image_state != 1) return 0;
-    } else {
-        if (cpu->bios_image) {
-#ifdef MUSASHI_LINKED_BIOS_EXCEPTION
-            if (cpu->bios_image->intersects != musashi_bios_exception_intersects ||
-                musashi_bios_exception_intersects(WRAPPED_ANGLE_ENTRY, 12u)) return 0;
-#else
-            return 0;
-#endif
-        }
-        if (!lane_ram_digest(memory, WRAPPED_ANGLE_ENTRY, 12u, &digest) ||
-            digest != UINT64_C(0xfa67b35cecb0ac4e)) return 0;
-    }
-    if (cpu->clock && (!cpu->clock->advance ||
-        !cpu->clock->advance(cpu->clock->userdata, 2u) ||
-        (cpu->cd_irq_frame && cpu->cd_irq_frame->faulted))) return -1;
-
-    next = cpu->npc;
-    if (offset == 0u) cpu->r[2] = cpu->r[4] - cpu->r[5];
-    if (offset == 8u) cpu->r[2] &= 4095u;
-    cpu->r[0] = 0;
-    cpu->delay_slot = offset == 4u;
-    cpu->branch_pc = cpu->delay_slot ? cpu->pc : 0u;
-    cpu->pc = next;
-    cpu->npc = cpu->delay_slot ? cpu->r[31] : next + 4u;
-    if (g_trace_state > 0) ++g_wrapped_angle_trace_steps[offset / 4u];
-    return 1;
-}
-
-int musashi_native_lane_wrapped_angle(MusashiNativeLaneCall *call) {
-    if (!g_lane_active || !call || call->memory != g_lane_active->memory ||
-        call->r != g_lane_active->cpu->r) return 0;
-    return wrapped_angle_step(call->memory, g_lane_active->cpu);
-}
-
 /* The value belongs to the CPU that issued this one field restore. Nested
  * CPUs can copy the register bank but cannot retire their parent's load. */
 static int field_scene_pending(const FormatterCpu *cpu) {
@@ -12519,19 +12469,12 @@ static int lane_try(MusashiBootMemory *memory, FormatterCpu *cpu) {
     MusashiNativeLaneCall call;
     uint32_t ra, sp;
     volatile int outcome;
-    int staged;
     if (scene_pending(cpu)) return 0; /* Its successor must issue individually. */
     entry = g_lane_count && cpu->pc != SCENE_SETUP && cpu->pc != SCENE_CHILD ?
             lane_find(cpu->pc) : NULL;
-    if (!entry && cpu->pc - WRAPPED_ANGLE_ENTRY < 12u) {
-        const MusashiNativeLaneEntry *body = lane_find(WRAPPED_ANGLE_ENTRY);
-        if (body && body->fn == musashi_native_lane_wrapped_angle) entry = body;
-    }
     if (!entry && lane_ovl_first(cpu->pc) == g_lane_ovl_count) return 0;
-    staged = entry && entry->guest_pc == WRAPPED_ANGLE_ENTRY &&
-             entry->fn == musashi_native_lane_wrapped_angle;
-    if ((!staged && (cpu->merge_pending || cpu->gte_load_pending || cpu->delay_slot ||
-                    cpu->npc != cpu->pc + 4u)) || !musashi_native_lane_usable(memory))
+    if (cpu->merge_pending || cpu->gte_load_pending || cpu->delay_slot ||
+        cpu->npc != cpu->pc + 4u || !musashi_native_lane_usable(memory))
         return 0;
     /* Overlay PCs: only the member whose bytes are resident, checked now. */
     if (!entry && !(entry = lane_find_overlay(memory, cpu->pc))) return 0;
@@ -12559,7 +12502,7 @@ static int lane_try(MusashiBootMemory *memory, FormatterCpu *cpu) {
     const MusashiNativeLaneEntry selected = *entry;
     const uint64_t generation = g_lane_generation;
     const unsigned long long invocation = g_scene_calls;
-    const int selected_outer = !staged && !active.prev && saved_frames && saved_frames->cpu == cpu &&
+    const int selected_outer = !active.prev && saved_frames && saved_frames->cpu == cpu &&
         saved_frames->scene.phase == SCENE_SERVICE_ENTRY && saved_frames->scene.target == cpu->pc;
     uint32_t output[32], output_hi = 0, output_lo = 0;
     int aggregate = !handoff.reg && selected_outer && entry == lane_find(cpu->pc) &&
@@ -12570,7 +12513,7 @@ static int lane_try(MusashiBootMemory *memory, FormatterCpu *cpu) {
         int code = setjmp(active.abort);
         if (code == 0) {
             int status = selected.fn(&call);
-            outcome = staged ? status : status != 0;
+            outcome = status != 0;
             if (status <= 0) aggregate = 0;
         } else {
             outcome = -1;
@@ -12591,7 +12534,6 @@ static int lane_try(MusashiBootMemory *memory, FormatterCpu *cpu) {
             saved_frames->field_scene.phase = FIELD_IDLE;
         }
     }
-    if (staged) return outcome; /* The step preserved its own PC, registers and clock. */
     if (outcome < 0) {
         fprintf(stderr, "native_boot: NATIVE_LANE_ABORT pc=%08x fn=%s\n",
                 selected.guest_pc, selected.name ? selected.name : "?");
@@ -12631,13 +12573,12 @@ static int lane_try(MusashiBootMemory *memory, FormatterCpu *cpu) {
 }
 
 #include "game_main_entry.h"
-#include "game_graphics_entry.h"
 #include "field_scene_callback.h"
 #include "scene_counter_call.h"
 #include "story_word_call.h"
 #include "frame_pad_latch.h"
 #include "controller_mask_map.h"
-#include "controller_disconnect.h"
+#include "controller_disconnect_guard.h"
 
 static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     uint32_t instruction, opcode, rs, rt, rd, immediate, old_npc;
@@ -12669,7 +12610,6 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     const int sc01_room_issuing = sc01_room_expected(cpu);
     const uint32_t sc01_room_branch = cpu->branch_pc;
     LaneRunFrame *root = g_lane_run_frames;
-    int scene_prepaid = 0;
     int mounted_link = 0;
     const int mounted_delay = cpu->delay_slot && mounted_leaf_target(cpu->npc) && mounted_leaf_delay(root, memory, cpu);
     const int room_reset_call = issued_pc == ROOM_RESET_CALL && !cpu->delay_slot &&
@@ -12678,7 +12618,8 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         cpu->room_reset_step == issued_pc && cpu->delay_slot && cpu->branch_pc == ROOM_RESET_CALL &&
         cpu->npc == ROOM_RESET_ENTRY && cpu->r[31] == ROOM_RESET_CALL + 8u;
     const MusashiGuestIrqImage *level_image =
-        (cpu->opening_motion_eight || issued_pc == 0x800338d4u || issued_pc == 0x80033d38u ||
+        (cpu->opening_motion_eight || irq_slot_mixer_issuing(cpu) ||
+         issued_pc == 0x800338d4u || issued_pc == 0x80033d38u ||
          (issued_pc >= 0x8003392cu && issued_pc <= 0x800339c0u) ||
          issued_pc == 0x80033d98u || issued_pc == 0x80033e04u ||
          issued_pc == 0x80033e10u || issued_pc == 0x80033e1cu ||
@@ -12701,19 +12642,15 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     if (root && root->field_scene.mounted &&
         (root->field_scene.phase != FIELD_IDLE || issued_pc == FIELD_SCENE_CALLER))
         field_scene_before(root, memory, cpu);
+    const struct MasterFadeRun *fade_at_issue = cpu->master_fade;
     const struct TitleMixerRun *mixer_at_issue=cpu->title_mixer;
-    if (g_lane_run_frames && g_lane_run_frames->main_entry.return_stage == 2u &&
-        issued_pc != GRAPHICS_RETURN_JR+4u)
-        g_lane_run_frames->main_entry.return_stage = 0;
-    if (g_lane_run_frames && g_lane_run_frames->main_entry.follow_constructor &&
-        (uint32_t)(g_lane_run_frames->main_entry.next-GAME_CTOR) < GAME_CTOR_END-GAME_CTOR &&
-        g_lane_run_frames->main_entry.next != issued_pc)
-        g_lane_run_frames->main_entry.next = 0;
     if ((cpu->pc & 3u) || !spu_source_guard(memory, cpu))
         return formatter_refuse0(__LINE__, cpu->pc);
     const int latching_room = room_latch_active(cpu);
     const int setting_scene = room_scene_active(cpu);
     const int resetting_slots = room_reset_active(cpu);
+    const int clearing_scene = setting_scene && issued_pc - SCENE_CLEAR < 164u;
+    const MusashiExecutionClock *room_clock = cpu->clock;
     const int copying_payload = main12_payload_copy_pc(cpu);
     if ((latching_room || setting_scene || resetting_slots || copying_payload || main12_menu_exit_pc(cpu) || cpu->main12_clearing_file || cpu->main12_row_pc || main12_owns_fetch(cpu) || main12_service_pc(cpu) || main12_copy_pc(cpu)) && publish_flow && g_entry_hook &&
         cpu->pc == g_entry_pending && !formatter_fetch(memory, cpu, &instruction))
@@ -12752,25 +12689,6 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         }
         if (lane < 0) return formatter_refuse0(__LINE__, cpu->pc);
     }
-    if (issued_pc - PAD_DISCONNECT < PAD_DISCONNECT_SIZE) {
-        int reset = controller_disconnect_issue(root, memory, cpu);
-        if (reset > 0) return 1;
-        if (reset < 0) return formatter_refuse0(__LINE__, issued_pc);
-        if (root && root->cpu == cpu && root->prev && root->prev->cpu == cpu &&
-            !root->prev->prev && root->prev->entry_stop)
-            ++root->prev->pad_latch.reset_declined_issues;
-    }
-    if (game_graphics_pc(cpu->pc) && g_lane_run_frames && g_lane_run_frames->main_entry.next) {
-        const int issue = game_graphics_issue(g_lane_run_frames,memory,cpu);
-        if (issue > 0) return 1;
-        if (issue < 0) return formatter_refuse0(__LINE__,cpu->pc);
-    }
-    if ((uint32_t)(cpu->pc-GAME_MAIN_ENTRY) < 60u && g_lane_run_frames &&
-        g_lane_run_frames->main_entry.next) {
-        const int issue = game_main_issue(g_lane_run_frames,memory,cpu);
-        if (issue > 0) return 1;
-        if (issue < 0) return formatter_refuse0(__LINE__,cpu->pc);
-    }
     if (cpu->pc == 0x80128158u) {
         g_overlay_sc02_0031_words = sc02_entry_matches(memory);
         g_overlay_sc01_0000_words = sc01_entry_matches(memory);
@@ -12780,52 +12698,16 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         g_fetch_memory = memory;
         code_sites_invalidate();
     }
-    if (latching_room) {
-        uint32_t target = 0;
-        if (!room_latch_issue(memory, cpu, &target)) return formatter_refuse0(__LINE__, cpu->pc);
-        if (g_trace_state > 0) {
-            ++g_room_latch_trace_steps;
-            if (issued_pc == ROOM_RESET_CALLER + 108u) ++g_room_latch_trace_returns;
-        }
-        if (target && publish_flow) {
-            if (g_trace_state >= 0) musashi_trace_function_entry(target, issued_pc, issued_pc == ROOM_RESET_CALLER + 104u ? 'r' : 'j');
-            if (g_entry_hook) g_entry_pending = target;
-        }
-        return 1;
-    }
-    if (setting_scene) {
-        uint32_t target = 0;
-        if (!room_scene_issue(memory, cpu, &target)) return formatter_refuse0(__LINE__, cpu->pc);
-        if (cpu->room_latch.returning) room_latch_child_returned(cpu, issued_pc, 0);
-        if (target && publish_flow) {
-            if (g_trace_state >= 0) musashi_trace_function_entry(target, issued_pc, 'j');
-            if (g_entry_hook) g_entry_pending = target;
-        }
-        return 1;
-    }
-    if (resetting_slots) {
-        MusashiMain12Owner *owner = cpu->room_reset_owner;
-        if (!room_reset_issue(memory, cpu)) return formatter_refuse0(__LINE__, cpu->pc);
-        if (issued_pc == ROOM_RESET_ENTRY + 32u && cpu->main12_foreground_owner == owner) {
-            room_latch_child_returned(cpu, issued_pc, 0);
-            room_scene_begin(cpu, owner);
-        }
-        return 1;
-    }
     if (!formatter_fetch(memory, cpu, &instruction)) return formatter_refuse0(__LINE__, cpu->pc);
-    if (root && root->cpu == cpu && root->scene.phase == SCENE_WRAPPER) {
-        int native = scene_native_issue(root, memory, cpu, &scene_prepaid);
-        if (native < 0) return formatter_refuse0(__LINE__, issued_pc);
-        if (native > 0) {
-            if (root->field_scene.phase == FIELD_CALLING)
-                field_scene_retired(root, memory, cpu, issued_pc, instruction);
-            return 1;
+    int issuing_field = root && root->cpu == cpu && root->field_scene.phase == FIELD_BODY;
+    FieldIssue field_issue;
+    if (issuing_field) {
+        if (field_scene_owned_issue(root, memory, cpu))
+            field_scene_remember_issue(&field_issue, cpu);
+        else {
+            root->field_scene.phase = FIELD_IDLE;
+            issuing_field = 0;
         }
-    }
-    if (!scene_prepaid && root && root->cpu == cpu && root->field_scene.phase == FIELD_BODY) {
-        int native = field_scene_issue(root, memory, cpu, instruction, &scene_prepaid);
-        if (native < 0) return formatter_refuse0(__LINE__, issued_pc);
-        if (native > 0) return 1;
     }
     if (cpu->gte_load_pending &&
         (cpu->merge_pending || cpu->gte_load_next_pc != cpu->pc ||
@@ -13386,10 +13268,35 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     const int sc01_access = sc01_room_issuing && opcode >= 32u && opcode <= 43u;
     const uint32_t sc01_base = sc01_access ? cpu->r[rs] : 0;
     const uint32_t sc01_value = sc01_access && opcode >= 40u ? cpu->r[rt] : 0;
+    const int pad_reset_issue = issued_pc - PAD_DISCONNECT < PAD_DISCONNECT_LENGTH &&
+        pad_disconnect_bound(root, memory, cpu) && pad_disconnect_data(cpu, instruction);
+    const uint32_t pad_record = pad_reset_issue ? cpu->r[4] : 0;
+    const uint32_t pad_next = pad_reset_issue ? cpu->npc : 0;
+    const uint32_t pad_branch = pad_reset_issue ? cpu->branch_pc : 0;
+    const int pad_delay = pad_reset_issue && cpu->delay_slot;
     enum SceneWitness witness = SCENE_NO_WITNESS;
+    const uint32_t scene_issue_npc = cpu->npc, scene_issue_branch = cpu->branch_pc;
     if (root && root->cpu == cpu && (root->scene.phase || issued_pc == SCENE_PARENT_CALL))
         witness = scene_before_issue(root, memory, cpu, instruction);
-    if (cpu->clock && !scene_prepaid) {
+    RoomLatchFrame latch_frame;
+    const MusashiExecutionClock *latch_clock = NULL;
+    MusashiExecutionClock latch_binding = {0};
+    if (latching_room) {
+        latch_frame = cpu->room_latch;
+        latch_clock = cpu->clock;
+        if (latch_clock) latch_binding = *latch_clock;
+    }
+    /* A checkpointed cold boot issues the mounted instruction normally. If a
+     * clock callback changes its code, machine or input registers, stop before
+     * that instruction changes the new state. */
+    uint32_t startup_word;
+    const int startup_issue = root && startup_clocked_pc(issued_pc) && game_main_owner(root, memory, cpu) &&
+        intrinsic_span(cpu, issued_pc, 4u) && musashi_boot_read32(memory, issued_pc, &startup_word) &&
+        startup_word == instruction;
+    uint32_t startup_regs[32], startup_npc = cpu->npc, startup_branch = cpu->branch_pc;
+    uint8_t startup_delay = cpu->delay_slot;
+    if (startup_issue) memcpy(startup_regs, cpu->r, sizeof startup_regs);
+    if (cpu->clock) {
         /* PCSX-Redux psxinterpreter.cc execBlock: BIAS=2. Its memory
          * read/write entry points add one cycle for an actual data access.
          * Count source delay slots normally. Host intrinsics are outside
@@ -13402,6 +13309,43 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         if (!cpu->clock->advance || !cpu->clock->advance(cpu->clock->userdata, cost) ||
             (cpu->cd_irq_frame && cpu->cd_irq_frame->faulted))
             return formatter_refuse0(__LINE__, cpu->pc);
+        if (mixer_at_issue && cpu->title_mixer == mixer_at_issue)
+            title_mixer_charged(cpu, cost);
+    }
+    if (resetting_slots || setting_scene) {
+        uint32_t current;
+        if (cpu->clock != room_clock || cpu->pc != issued_pc ||
+            !(resetting_slots ? room_reset_word(memory, cpu, &current)
+                              : room_scene_word(memory, cpu, &current)) || current != instruction)
+            return formatter_refuse0(__LINE__, issued_pc);
+    }
+    if (latching_room) {
+        uint32_t current;
+        if (cpu->pc != issued_pc || cpu->hi != display_hi || cpu->lo != display_lo ||
+            cpu->clock != latch_clock || (latch_clock &&
+            (latch_clock->advance != latch_binding.advance || latch_clock->userdata != latch_binding.userdata)) ||
+            cpu->room_latch.owner != latch_frame.owner || cpu->room_latch.top != latch_frame.top ||
+            memcmp(latch_frame.regs, cpu->r, sizeof latch_frame.regs) ||
+            !room_latch_fetch(memory, cpu, &current) || current != instruction)
+            return formatter_refuse0(__LINE__, issued_pc);
+    }
+    if (pad_reset_issue) {
+        uint32_t live;
+        if (cpu->pc != issued_pc || cpu->npc != pad_next || cpu->branch_pc != pad_branch ||
+            cpu->delay_slot != pad_delay || cpu->r[4] != pad_record ||
+            !pad_disconnect_bound(root, memory, cpu) ||
+            !musashi_boot_read32(memory, issued_pc, &live) || live != instruction ||
+            !pad_disconnect_data(cpu, instruction))
+            return formatter_refuse0(__LINE__, issued_pc);
+    }
+    if (startup_issue) {
+        uint32_t live, mounted;
+        if (cpu->pc != issued_pc || cpu->npc != startup_npc || cpu->branch_pc != startup_branch ||
+            cpu->delay_slot != startup_delay || !game_main_owner(root, memory, cpu) ||
+            memcmp(startup_regs, cpu->r, sizeof startup_regs) || !intrinsic_span(cpu, issued_pc, 4u) ||
+            !formatter_fetch(memory, cpu, &live) || live != instruction ||
+            !musashi_boot_read32(memory, issued_pc, &mounted) || mounted != instruction)
+            return formatter_refuse0(__LINE__, issued_pc);
     }
     if (sc01_room_issuing) {
         uint32_t live;
@@ -13418,6 +13362,8 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
             !irq_live_word(level_image, memory, issued_pc, &live) || live != instruction ||
             !irq_data_access(cpu, instruction)) return formatter_refuse0(__LINE__, issued_pc);
     }
+    if (issuing_field && !field_scene_same_issue(root, memory, cpu, instruction, &field_issue))
+        return formatter_refuse0(__LINE__, issued_pc);
     field_scene_after_charge(root, cpu);
     if (scene_pending(cpu) && (cpu->pc != issued_pc || scene_unexpected_successor(cpu)))
         return formatter_refuse0(__LINE__, issued_pc);
@@ -13431,7 +13377,19 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
                !main12_menu_exit_word(memory, cpu, &current)) || current != instruction)
             return formatter_refuse0(__LINE__, cpu->pc);
     }
+    if (witness == SCENE_WRAPPER_WORD) {
+        uint32_t live;
+        if (!scene_flow(cpu, issued_pc, scene_issue_branch, scene_issue_npc) || !scene_registers(&root->scene, cpu) ||
+            !formatter_fetch(memory, cpu, &live) || live != instruction)
+            return formatter_refuse0(__LINE__, issued_pc);
+    }
     witness = scene_after_charge(root, memory, cpu, witness);
+    if (cpu->master_fade != fade_at_issue ||
+        (fade_at_issue && !master_fade_issuer(memory, cpu, instruction))) return 0;
+    if (witness == SCENE_WRAPPER_WORD && !scene_access_owned(root, memory, cpu, instruction)) {
+        root->scene.phase = SCENE_IDLE;
+        witness = SCENE_NO_WITNESS;
+    }
     if (cpu->title_mixer!=mixer_at_issue ||
         (mixer_at_issue && !title_mixer_after_clock(memory,cpu,instruction))) return 0;
     if (publishing_metadata &&
@@ -13480,13 +13438,33 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         /* At a libgs delayed branch the epilogue retires the load after
          * the branch has read the old register. */
     }
-    uint32_t scene_prior_rt = 0;
-    int scene_ram_load = 0;
-    if (scene_pending(cpu) && issued_pc - SCENE_ENTRY < SCENE_LENGTH) {
+    FieldSceneLoad next_field_load = {0};
+    uint32_t scene_prior_rt = 0, scene_address = 0, scene_loaded = 0;
+    int scene_ram_load = 0, scene_delay_load = 0;
+    if ((witness == SCENE_WRAPPER_WORD || scene_pending(cpu)) &&
+        issued_pc - SCENE_ENTRY < SCENE_LENGTH) {
         unsigned width = opcode == 35u ? 4u : (opcode == 33u || opcode == 37u) ? 2u :
             (opcode == 32u || opcode == 36u) ? 1u : 0u;
-        scene_prior_rt = cpu->r[rt];
-        scene_ram_load = width && intrinsic_span(cpu, cpu->r[rs] + (int32_t)signed_immediate, width);
+        if (width) {
+            scene_address = cpu->r[rs] + (uint32_t)(int32_t)signed_immediate;
+            scene_ram_load = intrinsic_span(cpu, scene_address, width);
+            if (scene_ram_load && !lane_find(cpu->npc) && cpu->callback_device &&
+                (!scene_pending(cpu) || (cpu->callback_device == cpu->scene_load.device &&
+                 cpu->callback_device->field_restore_quiet == cpu->scene_load.quiet &&
+                 cpu->callback_device->checkpoint == cpu->scene_load.checkpoint &&
+                 cpu->callback_device->userdata == cpu->scene_load.worker))) {
+                scene_delay_load = scene_quiet(cpu);
+                if (!scene_flow(cpu, issued_pc, scene_issue_branch, scene_issue_npc))
+                    return formatter_refuse0(__LINE__, issued_pc);
+                if (scene_pending(cpu) && cpu->callback_device != cpu->scene_load.device)
+                    scene_delay_load = 0;
+                if (witness == SCENE_WRAPPER_WORD &&
+                    (!scene_body_owned(root, memory, cpu) ||
+                     !scene_access_owned(root, memory, cpu, instruction)))
+                    return formatter_refuse0(__LINE__, issued_pc);
+            }
+            scene_prior_rt = cpu->r[rt];
+        }
     }
     old_npc = cpu->npc;
     target_npc = old_npc + 4u;
@@ -13641,9 +13619,33 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     case 33:
         if (!cpu_read16(memory, cpu, cpu->r[rs] + (int32_t)signed_immediate, &half)) return access_refuse0(cpu->pc, cpu->r[rs] + (int32_t)signed_immediate, 2, 0);
         cpu->r[rt] = (uint32_t)(int32_t)(int16_t)half; break;
-    case 35:
-        if (!cpu_read32(memory, cpu, cpu->r[rs] + (int32_t)signed_immediate, &cpu->r[rt])) return access_refuse0(cpu->pc, cpu->r[rs] + (int32_t)signed_immediate, 4, 0);
+    case 35: {
+        uint32_t address = cpu->r[rs] + (int32_t)signed_immediate;
+        uint32_t value;
+        if (!cpu_read32(memory, cpu, address, &value))
+            return access_refuse0(cpu->pc, address, 4, 0);
+        if (issuing_field && rt && field_scene_restoring(issued_pc) &&
+            address - root->field_scene.stack <= 28u && field_scene_restore_available(cpu)) {
+            const MusashiCallbackDevice *device = cpu->callback_device;
+            uint32_t old_value = cpu->r[rt];
+            int delay = old_value == value;
+            if (!delay && device->field_restore_quiet) {
+                delay = device->field_restore_quiet(device->userdata, cpu);
+                if (!field_scene_same_issue(root, memory, cpu, instruction, &field_issue) ||
+                    !field_scene_restore_available(cpu))
+                    return formatter_refuse0(__LINE__, issued_pc);
+            }
+            if (delay) {
+                next_field_load = (FieldSceneLoad){.owner=cpu, .device=device,
+                    .irq=device->field_restore_irq, .quiet=device->field_restore_quiet,
+                    .worker=device->userdata, .checkpoint=device->checkpoint,
+                    .successor=old_npc, .value=value, .old_value=old_value, .reg=rt};
+                break;
+            }
+        }
+        cpu->r[rt] = value;
         break;
+    }
     case 36:
         if (!cpu_read8(memory, cpu, cpu->r[rs] + (int32_t)signed_immediate, &byte)) return access_refuse0(cpu->pc, cpu->r[rs] + (int32_t)signed_immediate, 1, 0);
         cpu->r[rt] = byte; break;
@@ -13791,6 +13793,10 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         cpu->merge_kind = MERGE_NONE;
     }
     if (cpu->field_load.reg) field_scene_scalar_successor(cpu, instruction);
+    if (next_field_load.reg) {
+        cpu->field_load = next_field_load;
+        ++root->field_scene.counters.delayed_loads;
+    }
     cpu->r[0] = 0;
     if (building_row && (opcode == 40u || opcode == 41u || opcode == 43u)) {
         unsigned width = opcode == 40u ? 1u : opcode == 41u ? 2u : 4u;
@@ -13854,10 +13860,25 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
             cpu->main12_card_service = 0;
         }
     }
-    if (scene_pending(cpu))
-        scene_scalar_retired(cpu, instruction, scene_prior_rt, scene_ram_load);
+    if (scene_ram_load || scene_pending(cpu)) {
+        scene_loaded = cpu->r[rt];
+        scene_scalar_retired(cpu, instruction, scene_prior_rt, scene_delay_load, scene_ram_load);
+    }
     cpu->pc = old_npc;
     cpu->npc = target_npc;
+    if (pad_reset_issue) {
+        LaneRunFrame *poll = root->prev;
+        ++poll->pad_latch.reset_issues;
+        if (opcode == 40u) ++poll->pad_latch.reset_writes;
+        if (pad_delay && cpu->pc == PAD_DISCONNECT_CALL + 8u) {
+            ++poll->pad_latch.reset_returns;
+            ++poll->pad_latch.reset_port_returns[pad_record != PAD_FIRST];
+        }
+    } else if (issued_pc - PAD_DISCONNECT < PAD_DISCONNECT_LENGTH && root &&
+               root->cpu == cpu && root->prev && root->prev->cpu == cpu &&
+               !root->prev->prev && root->prev->entry_stop) {
+        ++root->prev->pad_latch.reset_declined_issues;
+    }
     if (sc01_room_issuing || issued_pc == SC01_ROOM_CALL)
         sc01_room_retired(memory, cpu, issued_pc, sc01_room_issuing, sc01_room_branch);
     else if (sc01_callee_issuing)
@@ -13867,11 +13888,48 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         cpu->pc == root->mounted_call.target && cpu->npc == cpu->pc + 4u &&
         !cpu->delay_slot && !cpu->branch_pc && cpu->r[31] == root->mounted_call.origin + 8u)
         root->mounted_call.entry_step = root->mounted_call.step + 1u;
+    if (witness == SCENE_WRAPPER_WORD && scene_address == SCENE_MODE) {
+        SceneDispatchFrame *s = &root->scene;
+        s->cell = SCENE_TABLE + 4u * scene_loaded;
+        if (scene_loaded >= SCENE_SLOTS || !scene_selection(s, memory, cpu, s->cell, &s->target, &s->service)) {
+            s->phase = SCENE_IDLE;
+            witness = SCENE_NO_WITNESS;
+        }
+    }
     if (witness) scene_retired(root, memory, cpu, witness, issued_pc);
+    if (latching_room) {
+        room_latch_retired(cpu, issued_pc);
+        if (publish_flow && cpu->delay_slot && cpu->npc == ROOM_LATCH_RETURN) {
+            if (g_trace_state >= 0)
+                musashi_trace_function_entry(cpu->npc, issued_pc, 'r');
+            if (g_entry_hook) g_entry_pending = cpu->npc;
+        }
+        if (g_trace_state > 0) {
+            ++g_room_latch_trace_steps;
+            if (cpu->pc == ROOM_LATCH_RETURN) ++g_room_latch_trace_returns;
+        }
+    }
     if (cpu->room_latch.returning && menu_exit_delay && menu_exit_branch == issued_pc - 4u)
         room_latch_child_returned(cpu, issued_pc, 0);
     if (exiting_menu && (issued_pc == MAIN12_ROOM_RETURN || issued_pc == MAIN12_ROOM_RETURN + 4u))
         room_latch_menu_retired(memory, cpu, issued_pc, instruction, menu_exit_branch, menu_exit_delay);
+    if (setting_scene) {
+        room_scene_retired(cpu, clearing_scene);
+        if (cpu->room_latch.returning) room_latch_child_returned(cpu, issued_pc, 0);
+    }
+    if (resetting_slots) {
+        MusashiMain12Owner *owner = cpu->room_reset_owner;
+        if (cpu->pc == ROOM_RESET_CALL + 8u) {
+            cpu->room_reset_owner = NULL;
+            cpu->room_reset_step = 0;
+            if (cpu->main12_foreground_owner == owner) {
+                room_latch_child_returned(cpu, issued_pc, 0);
+                room_scene_begin(cpu, owner);
+            }
+        } else {
+            room_reset_position(cpu);
+        }
+    }
     if (room_reset_call && instruction == MIPS_JAL(ROOM_RESET_ENTRY) &&
         cpu->pc == ROOM_RESET_CALL + 4u && cpu->npc == ROOM_RESET_ENTRY) {
         cpu->room_reset_owner = room_reset_images(memory, cpu);
@@ -13880,7 +13938,7 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     } else if (issued_pc == ROOM_RESET_CALL + 4u && cpu->room_reset_owner) {
         if (room_reset_delay && !instruction && cpu->pc == ROOM_RESET_ENTRY &&
             room_reset_images(memory, cpu) == cpu->room_reset_owner) {
-            cpu->room_reset_step = ROOM_RESET_ENTRY;
+            room_reset_position(cpu);
         } else {
             cpu->room_reset_owner = NULL;
             cpu->room_reset_step = 0;
@@ -13888,14 +13946,6 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     }
     if (root && root->field_scene.phase != FIELD_IDLE)
         field_scene_retired(root, memory, cpu, issued_pc, instruction);
-    if (issued_pc == CRT_GAME_CALL || issued_pc == CRT_GAME_CALL+4u)
-        game_main_crt_retired(g_lane_run_frames,memory,cpu,issued_pc);
-    else if ((uint32_t)(issued_pc-GAME_CTOR) < GAME_CTOR_END-GAME_CTOR)
-        game_main_constructor_retired(g_lane_run_frames,memory,cpu,issued_pc);
-    else if (startup_exchange_pc(issued_pc))
-        game_exchange_retired(g_lane_run_frames,memory,cpu,issued_pc);
-    else if (issued_pc == GRAPHICS_RETURN_JR || issued_pc == GRAPHICS_RETURN_JR+4u)
-        game_graphics_return_retired(g_lane_run_frames,memory,cpu,issued_pc);
     return 1;
 
 gte_transfer_refused:
@@ -14298,7 +14348,6 @@ static MusashiResetGraphPrefixStatus run_startup_cpu(
     MusashiResetGraphPrefixStatus status;
     frame.pad_latch.entry = pad_entry;
     frame.scene = (SceneDispatchFrame){0};
-    frame.scene_baseline.native = g_scene_native_issues;
     frame.scene_baseline.scalar = g_scene_scalar_issues;
     frame.scene_baseline.delayed = g_scene_delayed_loads;
     frame.scene_baseline.equal = g_scene_equal_loads;
@@ -14312,19 +14361,12 @@ static MusashiResetGraphPrefixStatus run_startup_cpu(
         /* A nested run cannot witness two consecutive scalar issues on this root. */
         if (frame.prev->scene.phase != SCENE_SERVICE)
             frame.prev->scene.phase = SCENE_IDLE;
-        frame.prev->main_entry.next = 0;
         frame.prev->mounted_call.delay_step = frame.prev->mounted_call.entry_step = 0;
         FieldScene *field = &frame.prev->field_scene;
         if (field->phase == FIELD_CALLING || field->phase == FIELD_SERVICE_DELAY ||
             (field->phase == FIELD_BODY && field->delay))
             field->phase = FIELD_IDLE;
-        /* A nested CPU between JR and its delay slot breaks the return witness. */
-        if (frame.prev->main_entry.return_stage == 2u)
-            frame.prev->main_entry.return_stage = 0;
     }
-    frame.main_entry.next = 0;
-    frame.main_entry.capture_return = frame.main_entry.return_stage = 0;
-    frame.main_entry.follow_constructor = frame.main_entry.follow_graphics = 0;
     frame.cpu = cpu;
     frame.sink = sink;
     frame.userdata = userdata;
@@ -14348,7 +14390,7 @@ static MusashiResetGraphPrefixStatus run_startup_cpu(
     if (g_trace_state >= 0) musashi_trace_function_entry(cpu->pc, cpu->r[31], 'd');
     status = run_startup_cpu_loop(memory, cpu, sink, userdata, result, stop,
                                   entry_stop, observer, observer_userdata);
-    if (!frame.prev && g_scene_native_issues != frame.scene_baseline.native)
+    if (!frame.prev && g_scene_scalar_issues != frame.scene_baseline.scalar)
         scene_report(&frame, "exit");
     if (frame.field_scene.mounted) field_scene_report(&frame.field_scene);
     frame_pad_report(&frame);
@@ -16332,7 +16374,9 @@ static int irq_data_access(const FormatterCpu *cpu, uint32_t w) {
     if (irq_file_end_pc(cpu->pc)) return irq_file_end_issue(cpu, w);
     if (cpu->pc >= 0x800340f4u && cpu->pc < 0x8003417cu) return irq_opening_pan(cpu, w);
     unsigned op = w >> 26;
-    if (op < 32) return 1;
+    /* The caller's live sequence owns this calculation until its delay slot
+     * completes. A device tick can replace the slot even during register work. */
+    if (op < 32) return !irq_slot_mixer_issuing(cpu) || irq_file_pan_frame(cpu);
     uint32_t address = cpu->r[(w >> 21) & 31u] + (uint32_t)(int32_t)(int16_t)w;
     IrqRegion region = irq_region(cpu->pc);
     if (region==IRQ_CD_DMA) return irq_movie_access(cpu,op,address);

@@ -87,6 +87,14 @@ static int music_track_range(MusashiBootMemory *mem, uint32_t player, MusicDataT
     if (!size || size > MUSIC_INSTRUMENTS-start ||
         (id == 0x91u && (start != MUSIC_EVENTS || size != MUSIC_EVENTS_END-MUSIC_EVENTS)))
         return 0;
+    if (id == 0x55u) {
+        /* This compact score ends at the next same-bank MIDI header. Its
+         * nominal track length includes 250 bytes from that second score. */
+        if (player != MUSIC_PLAYERS || bank_slot != 4u || sequence != 0u ||
+            start != MUSIC_BANK+0x26u || size != 0xa44u ||
+            !music_data_equals(mem,MUSIC_BANK+4u,4,0x96cu)) return 0;
+        size = MUSIC_BANK+0x970u - start;
+    }
     track->start = start;
     track->end = start+size;
     return 1;

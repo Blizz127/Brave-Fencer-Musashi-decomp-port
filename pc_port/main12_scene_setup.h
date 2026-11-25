@@ -7,9 +7,6 @@ enum {
     SCENE_VALUES = 0x8017e934u, SCENE_CHILD_ROWS = 0x8011da80u
 };
 
-#include "main12_scene_ops.h"
-#include "main12_scene_clear.h"
-
 static int room_scene_overlay_pc(uint32_t pc)
 {
     return pc - SCENE_SETUP < 232u || pc - SCENE_CHILD < 80u;
@@ -126,39 +123,17 @@ static int room_scene_word(MusashiBootMemory *ram, const FormatterCpu *cpu, uint
     return 1;
 }
 
-static int room_scene_issue(MusashiBootMemory *ram, FormatterCpu *cpu, uint32_t *call)
+/* The guest CPU has already issued the instruction. Preserve the actual
+ * child entry registers for stack validation and release the scene owner
+ * only when its outer call returns to MAIN/0010. */
+static void room_scene_retired(FormatterCpu *cpu, int clearing)
 {
-    RoomSceneFrame *f = &cpu->room_scene;
-    const uint32_t pc = cpu->pc, next = cpu->npc;
-    uint32_t word, after = next + 4u;
-    int branch = 0;
-    if (!room_scene_word(ram, cpu, &word)) return 0;
-    if (cpu->clock) {
-        const MusashiExecutionClock *clock = cpu->clock;
-        uint32_t current;
-        unsigned clocks = (word >> 26) >= 32u ? 3u : 2u;
-        if (!clock->advance || !clock->advance(clock->userdata, clocks) || cpu->clock != clock ||
-            cpu->pc != pc || cpu->npc != next || !room_scene_word(ram, cpu, &current) || current != word)
-            return 0;
-    }
-    if (pc == SCENE_CALL) {
-        cpu->r[31] = SCENE_RETURN;
-        *call = after = SCENE_SETUP;
-        branch = 1;
-    } else if (pc == SCENE_CALL + 4u) {
-        /* The mounted JAL's delay slot is a NOP. */
-    } else if (pc - SCENE_CLEAR < 164u) {
-        if (!scene_clear_op(ram, cpu, &after, &branch, call)) return 0;
-        if (pc == 0x800167b4u) ++f->clears;
-    } else {
-        if (pc == 0x801379b0u) memcpy(f->saved_child, cpu->r + 16, sizeof f->saved_child);
-        if (!scene_overlay_op(ram, cpu, &after, &branch, call)) return 0;
-    }
-    cpu->branch_pc = branch ? pc : 0;
-    cpu->delay_slot = (uint8_t)branch;
-    cpu->pc = next;
-    cpu->npc = after;
-    if (pc == 0x801379d4u) f->owner = NULL;
-    else room_scene_position(cpu);
-    return 1;
+    RoomSceneFrame *frame = &cpu->room_scene;
+    if (clearing && cpu->pc == cpu->r[31]) ++frame->clears;
+    if (cpu->pc == SCENE_CHILD)
+        memcpy(frame->saved_child, cpu->r + 16, sizeof frame->saved_child);
+    if (cpu->pc == SCENE_RETURN)
+        frame->owner = NULL;
+    else
+        room_scene_position(cpu);
 }

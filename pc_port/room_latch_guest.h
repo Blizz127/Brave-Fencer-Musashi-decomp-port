@@ -1,6 +1,6 @@
-/* MAIN/0010's room-mode latch, compiled from the published owner C.
- * Its native steps run in the main foreground CPU. Each child keeps its own
- * entry, clock and return path, including the MAIN/0012 slot and scene frames. */
+/* The loaded File 1 room owns this invocation of MAIN member 10.
+ * The formatter executes the mounted guest code. These checks bind its
+ * memory accesses and its four ordinary child calls to the menu frame. */
 enum {
     ROOM_LATCH_RETURN = MAIN12_ROOM_RETURN + 8u,
     ROOM_PENDING_MODE = 0x80078e50u, ROOM_CURRENT_MODE = 0x800b9a08u,
@@ -35,8 +35,6 @@ static int room_latch_mount(MusashiBootMemory *ram, const FormatterCpu *cpu,
         span_digest(ram, MAIN12_BASE, 128u, &digest) && digest == UINT64_C(0x9a19614adcf31a2b);
 }
 
-/* Only the mounted menu's actual JAL can authorize its delay slot. The
- * continuation must survive both retirements before entering MAIN/0010. */
 static void room_latch_menu_retired(MusashiBootMemory *ram, FormatterCpu *cpu,
                                     uint32_t pc, uint32_t word, uint32_t branch, int delay)
 {
@@ -99,8 +97,6 @@ static int room_latch_valid(MusashiBootMemory *ram, const FormatterCpu *cpu)
                   : !cpu->delay_slot && !cpu->branch_pc && cpu->npc == cpu->pc + 4u;
 }
 
-/* Child execution owns its volatile registers. Resume only when its own
- * checked return has retired. A copied PC, SP and RA alone cannot resume. */
 static void room_latch_child_returned(FormatterCpu *cpu, uint32_t from, int native_entry)
 {
     RoomLatchFrame *f = &cpu->room_latch;
@@ -120,77 +116,38 @@ static void room_latch_child_returned(FormatterCpu *cpu, uint32_t from, int nati
 
 static int room_latch_fetch(MusashiBootMemory *ram, const FormatterCpu *cpu, uint32_t *word)
 {
-    return room_latch_valid(ram, cpu) && musashi_boot_read32(ram, cpu->pc, word);
+    if (!room_latch_valid(ram, cpu) || !musashi_boot_read32(ram, cpu->pc, word)) return 0;
+    unsigned op = *word >> 26;
+    if (op < 32u) return 1;
+
+    uint32_t address = cpu->r[(*word >> 21) & 31u] + (int32_t)(int16_t)*word;
+    uint32_t value = cpu->r[(*word >> 16) & 31u];
+    if (op == 35u || op == 43u)
+        return address == cpu->room_latch.top - 32u && intrinsic_span(cpu, address, 4u) &&
+            (op == 35u || value == ROOM_LATCH_RETURN);
+    if (op == 33u || op == 37u)
+        return (address == ROOM_PENDING_MODE || address == ROOM_TRANSITION) && intrinsic_span(cpu, address, 2u);
+    if (op == 41u)
+        return (address == ROOM_TRANSITION || address == ROOM_CURRENT_MODE || address == ROOM_PREVIOUS) &&
+            intrinsic_span(cpu, address, 2u);
+    return op == 40u && address == ROOM_FLAG && intrinsic_span(cpu, address, 1u);
 }
 
-static int room_latch_issue(MusashiBootMemory *ram, FormatterCpu *cpu, uint32_t *flow)
+/* Only the actual call delay slot can yield this frame to its child.
+ * Recording the retired state also makes a vetoed device clock retryable. */
+static void room_latch_retired(FormatterCpu *cpu, uint32_t issued)
 {
-    RoomLatchFrame *f = &cpu->room_latch;
-    const uint32_t pc = cpu->pc, offset = pc - ROOM_RESET_CALLER;
-    uint32_t next = cpu->npc, after = next + 4u, target = room_latch_call(pc);
-    uint16_t half;
-    const int scene_call = pc == SCENE_CALL || pc == SCENE_CALL + 4u;
-    if (!room_latch_valid(ram, cpu)) return 0;
-    if (cpu->clock) {
-        const MusashiExecutionClock *clock = cpu->clock;
-        MusashiMain12Owner *owner = f->owner;
-        const uint32_t hi = cpu->hi, lo = cpu->lo;
-        uint32_t regs[32];
-        const int memory_op = offset == 8u || offset == 16u || offset == 24u ||
-            offset == 32u || offset == 40u || offset == 52u || offset == 60u || offset == 96u;
-        memcpy(regs, cpu->r, sizeof regs);
-        if (!clock->advance || !clock->advance(clock->userdata, memory_op ? 3u : 2u) ||
-            cpu->clock != clock || cpu->pc != pc || cpu->npc != next || f->owner != owner ||
-            cpu->hi != hi || cpu->lo != lo || memcmp(regs, cpu->r, sizeof regs) ||
-            !room_latch_valid(ram, cpu)) return 0;
+    RoomLatchFrame *frame = &cpu->room_latch;
+    if (cpu->pc == ROOM_LATCH_RETURN) {
+        *frame = (RoomLatchFrame){0};
+        return;
     }
-    switch (offset) {
-    case 0:  cpu->r[29] -= 24u; break;
-    case 4:  cpu->r[2] = 0x80080000u; break;
-    case 8:
-        if (!intrinsic_span(cpu, ROOM_PENDING_MODE, 2u) || !cpu_read16(ram, cpu, ROOM_PENDING_MODE, &half)) return 0;
-        cpu->r[2] = half; break;
-    case 12: cpu->r[4] = 0x800c0000u; break;
-    case 16:
-        if (!intrinsic_span(cpu, ROOM_TRANSITION, 2u) || !cpu_read16(ram, cpu, ROOM_TRANSITION, &half)) return 0;
-        cpu->r[4] = half; break;
-    case 20: cpu->r[3] = 1u; break;
-    case 24: if (!cpu_write32(ram, cpu, cpu->r[29] + 16u, cpu->r[31])) return 0; break;
-    case 28: case 36: case 48: case 56: cpu->r[1] = 0x800c0000u; break;
-    case 32: if (!intrinsic_span(cpu, ROOM_FLAG, 1u) || !cpu_write8(ram, cpu, ROOM_FLAG, (uint8_t)cpu->r[3])) return 0; break;
-    case 40: if (!intrinsic_span(cpu, ROOM_CURRENT_MODE, 2u) || !cpu_write16(ram, cpu, ROOM_CURRENT_MODE, (uint16_t)cpu->r[2])) return 0; break;
-    case 44: cpu->r[2] &= 0xf000u; break;
-    case 52: if (!intrinsic_span(cpu, ROOM_PREVIOUS, 2u) || !cpu_write16(ram, cpu, ROOM_PREVIOUS, (uint16_t)cpu->r[4])) return 0; break;
-    case 60: if (!intrinsic_span(cpu, ROOM_TRANSITION, 2u) || !cpu_write16(ram, cpu, ROOM_TRANSITION, (uint16_t)cpu->r[2])) return 0; break;
-    case 64: case 72: case 80: case 88:
-        cpu->r[31] = pc + 8u;
-        after = target;
-        break;
-    case 68: case 76: case 84: case 92: case 108: break;
-    case 96:
-        if (!cpu_read32(ram, cpu, cpu->r[29] + 16u, &cpu->r[31])) return 0;
-        break;
-    case 100: cpu->r[29] += 24u; break;
-    case 104: target = after = cpu->r[31]; break;
-    default: return 0;
-    }
-    cpu->branch_pc = target ? pc : 0u;
-    cpu->delay_slot = (uint8_t)(target != 0);
-    cpu->pc = next;
-    cpu->npc = after;
-    *flow = target;
-    if (pc == ROOM_RESET_CALL || pc == ROOM_RESET_CALL + 4u) {
-        cpu->room_reset_owner = f->owner;
-        cpu->room_reset_step = next;
-        cpu->room_reset_slot = 0;
-    }
-    if (scene_call) room_scene_position(cpu);
-    if (offset == 108u) {
-        memset(f, 0, sizeof *f);
+    const uint32_t child = room_latch_call(issued - 4u);
+    if (child && cpu->pc == child) {
+        frame->returning = 1;
+        frame->next = issued + 4u;
     } else {
-        f->returning = room_latch_call(pc - 4u) != 0;
-        f->next = f->returning ? pc + 4u : next;
-        memcpy(f->regs, cpu->r, sizeof f->regs);
+        frame->next = cpu->pc;
     }
-    return 1;
+    memcpy(frame->regs, cpu->r, sizeof frame->regs);
 }

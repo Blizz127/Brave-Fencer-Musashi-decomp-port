@@ -4,23 +4,13 @@ An experimental PC port of *Brave Fencer Musashi* for the USA PlayStation disc
 (SLUS-00726). The player reads your own disc. Its hybrid runtime runs part of
 the game as compiled host code and uses a CPU interpreter for the rest.
 
-With the native lane active, the game can set up its first stack frame and
-call the constructor on the host. A cold-start test follows the original CRT
-call through all eight game instructions. It checks the saved registers and
-the 20 elapsed source cycles at constructor entry. The constructor runs on
-the guest CPU. After its observed return, the game sets up two pointers and
-calls the startup exchange in seven more host instructions. Both original
-constructor paths reached that call in 14 cycles from the return. The startup
-exchange itself still runs on the guest CPU. Nine compiled game instructions
-then store the startup setting and enter the first graphics library call.
-After the graphics wrapper returns on its original stack, three host
-instructions clear the argument and call the CD library. The original game
-took six cycles between that return and CD entry. A cold caller test checks
-the same interval with test providers for the graphics and subsystem calls.
+Startup, the first graphics calls, the mounted room reset, controller disconnect and several sound and scene handlers execute instructions supplied by your disc. The guest CPU advances the same device clock used for rendering and sound. An original US trace and a controlled startup run both measured 111 modeled clocks from main entry to the first graphics wrapper. The controlled test exercised the graphics return with supplied child results.
+
+In ordinary Linux and Windows x64 testing under Wine, test build `7becc625` drew the complete opening title and stopped in the sound interrupt before the palace. Build `328f8faa` loaded an earned File 1, displayed **Loaded data** and **Now Loading**, then stopped before the Chapter 2 bedroom. On the original US game, the same save restored Musashi in the bedroom. Playable New Game, an inn save and Continue from a fresh process are still open on both platforms. Native Windows and handheld checks have yet to be observed on these builds.
 
 ## Player downloads and source builds
 
-The public match registries contain **1,060 entries totaling 153,208 bytes** of the US game. Counting each region and start address once gives **1,057 distinct ranges totaling 152,636 bytes**. The resident sound mixer recalculates volume and pan for up to eight active sound slots. Its compiled C matches all 484 bytes of the US function. This source match adds no entry to the desktop player’s native dispatch table. [Sound matching record](provenance/sound-events.json)
+The public match registries contain **1,067 entries totaling 159,600 bytes** of the US game. Counting each region and start address once gives **1,064 distinct ranges totaling 159,028 bytes**. The room registry includes the 3,080-byte room-entry routine in two scene members, their shared scene command and music picker, and the music caller in the MAIN overlay. These matched sources can be checked against the US disc. [Room matching record](provenance/scene-room-entry.json) The resident sound mixer recalculates volume and pan for up to eight active sound slots. Its compiled C matches all 484 bytes of the US function. This source match adds no entry to the desktop player’s native dispatch table. [Sound matching record](provenance/sound-events.json)
 
 The preceding checkpoint added ten Giant Forest routines that set bits in the player status word and ten that read those bits. All 320 bytes match the US overlay. The setters preserve the other bits, and the queries return the masked bit in its original position. The desktop player continues to execute these routines on the guest CPU to preserve memory access timing. [Giant Forest matching record](provenance/scene-objects.json)
 
@@ -166,13 +156,7 @@ the bedroom (room 3001, entrance 0). Both stopped at the room-object reset,
 `0x80129258`, with a black screen before the room became active. The Windows
 run used Wine 10. The original US game restored the bedroom from this card.
 
-The room-change routine, the 128-slot reset and the two following scene setup
-functions have matching C source. On the mounted File 1 path, compiled host
-code latches the pending room mode, saves the previous mode and calls all four
-reset services. The two setup functions clear the room
-workspace, initialize three records from scene data and clear two smaller
-records. A playable start, an inn save and a successful Continue after
-restarting still need verification on replacement downloads.
+The room-change routine, the 128-slot reset and the two following scene setup functions have matching C source. On the mounted File 1 path, the guest CPU latches the pending room mode, saves the previous mode and executes the reset services. The setup functions clear the room workspace and initialize records from scene data. Focused tests observed the room-latch return with two mounted overlay configurations. The ordinary File 1 test above stopped before the bedroom appeared.
 
 A Linux player built from the anonymous source archive at `9a45e853` read a
 card with four occupied files. After **Continue**, it displayed **Loading
@@ -222,8 +206,8 @@ changelog.
 
 ### Verify the scene-object matches
 
-The scene registry covers 701 regional function matches across 21 overlay members,
-totaling 105,072 bytes. The recent Steamwood source includes Fores’s cottage
+The scene registry covers 723 regional function matches across 21 overlay members,
+totaling 105,680 bytes. The recent Steamwood source includes Fores’s cottage
 initializer and six functions that run the outdoor practice gauge. Four more C
 functions reproduce 336 bytes of the US game. One records when the emergency
 timer starts. The other three select the outdoor door’s current action, start
@@ -974,8 +958,8 @@ from unpublished port sources (windows-port `c427ee546`); this recipe does
 not build it. The packaged menu and save instructions above describe the historical binaries.
 
 The public build uses a curated main-executable registry at
-`provenance/native-main.json`. It records 265 owner-authored C sources totaling
-29,036 matched bytes. The registry includes three motion routines used by the
+`provenance/native-main.json`. It records 288 match entries totaling
+37,036 bytes. The registry includes three motion routines used by the
 no-disc smoke test. The existing native-lane allowlist and compiler checks
 decide which routines the player can run as host code. Other paths use the
 interpreter. See [EXCLUDED.md](EXCLUDED.md) for the source inclusion criteria.

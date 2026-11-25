@@ -367,6 +367,8 @@ if(MUSASHI_BUILD_PC_PORT)
 
     add_executable(musashi_game_graphics_return_probe tests/game_graphics_return_probe.c)
     target_compile_features(musashi_game_graphics_return_probe PRIVATE c_std_99)
+    target_include_directories(musashi_game_graphics_return_probe PRIVATE "${MUSASHI_GENERATED_DIR}")
+    target_compile_definitions(musashi_game_graphics_return_probe PRIVATE MUSASHI_LINKED_BIOS_EXCEPTION=1)
     target_link_libraries(musashi_game_graphics_return_probe PRIVATE musashi_pc_port)
     add_test(NAME game_graphics_return COMMAND musashi_game_graphics_return_probe
         ${CMAKE_CURRENT_SOURCE_DIR}/extracted/disc/files/SLUS_007.26)

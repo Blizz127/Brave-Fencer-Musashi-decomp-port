@@ -87,18 +87,62 @@ int main(int argc,char **argv) {
     for(unsigned i=0;i<9;i++)assert(read_word(PACKET+4*i)==0xcccccccc);
     assert(read_word(OT+512*4)==0x00abcdef);
     close_fixture();
-    setup(exe,(size_t)n);
-    /* A flag read with a one-instruction load delay: BLTZ must consume
-     * old negative v0, even though the newly loaded flag is zero. */
-    gteRegs.CP2C.p[31].d=0;f.cpu.r[2]=0x80000000;
-    f.cpu.pc=0x8004b70c;f.cpu.npc=f.cpu.pc+4;
-    assert(formatter_step(&f.memory,&f.cpu));
-    assert(f.cpu.gte_load_pending && f.cpu.r[2]==0x80000000);
-    assert(formatter_step(&f.memory,&f.cpu));
-    assert(f.cpu.pc==0x8004b714 && f.cpu.npc==0x8004b7c0);
-    assert(f.cpu.r[2]==0 && !f.cpu.gte_load_pending);
-    assert(formatter_step(&f.memory,&f.cpu));assert(f.cpu.pc==0x8004b7c0);
+    /* Find a live sign branch that consumes a pending transfer. The image
+     * supplies the instruction and displacement, and the CPU supplies the GPR. */
+    uint32_t issue = 0, branch = 0, observed_value = 0;
+    unsigned destination = 0;
+    setup(exe, (size_t)n);
+    for (unsigned step = 0; step < 130 && f.cpu.pc != f.cpu.r[31]; ++step) {
+        uint32_t previous_pc = f.cpu.pc;
+        assert(formatter_step(&f.memory, &f.cpu));
+        if (!f.cpu.gte_load_pending)
+            continue;
+        size_t offset = CODE_IMAGE_TEXT + (f.cpu.pc - CODE_IMAGE_BASE);
+        assert(offset + 4 <= (size_t)n);
+        branch = 0;
+        for (unsigned i = 0; i < 4; ++i)
+            branch |= (uint32_t)exe[offset + i] << (8 * i);
+        unsigned op = branch >> 26;
+        unsigned kind = (branch >> 16) & 31;
+        unsigned source = (branch >> 21) & 31;
+        if (source == 0 || source != f.cpu.gte_load_reg)
+            continue;
+        if (!((op == 1 && kind <= 1) || ((op == 6 || op == 7) && kind == 0)))
+            continue;
+        issue = previous_pc;
+        observed_value = f.cpu.gte_load_value;
+        destination = source;
+        break;
+    }
+    assert(issue != 0);
     close_fixture();
+
+    for (unsigned negative = 0; negative < 2; ++negative) {
+        setup(exe, (size_t)n);
+        for (unsigned step = 0; step < 130 && f.cpu.pc != issue; ++step)
+            assert(formatter_step(&f.memory, &f.cpu));
+        assert(f.cpu.pc == issue);
+        uint32_t before = negative ? (uint32_t)-1 : 1;
+        if (before == observed_value)
+            before = negative ? (uint32_t)-2 : 2;
+        f.cpu.r[destination] = before;
+        assert(formatter_step(&f.memory, &f.cpu));
+        assert(f.cpu.gte_load_pending && f.cpu.gte_load_reg == destination);
+        assert(f.cpu.r[destination] == before && f.cpu.gte_load_value == observed_value);
+
+        /* With nonzero test operands, the signed predicates distinguish the two signs. */
+        int takes_negative = branch >> 26 == 6 ||
+                             (branch >> 26 == 1 && ((branch >> 16) & 31) == 0);
+        uint32_t delay_slot = f.cpu.pc + 4;
+        uint32_t target = delay_slot + (int16_t)(branch & 0xffffu) * 4;
+        uint32_t expected = !!negative == takes_negative ? target : delay_slot + 4;
+        assert(formatter_step(&f.memory, &f.cpu));
+        assert(!f.cpu.gte_load_pending && f.cpu.r[destination] == observed_value);
+        assert(f.cpu.pc == delay_slot && f.cpu.npc == expected);
+        assert(formatter_step(&f.memory, &f.cpu));
+        assert(f.cpu.pc == expected);
+        close_fixture();
+    }
     setup(exe,(size_t)n);
     f.cpu.pc=0x8004b644;f.cpu.npc=f.cpu.pc+4;
     /* The fixture fetches from its licensed image seam, not the mutable

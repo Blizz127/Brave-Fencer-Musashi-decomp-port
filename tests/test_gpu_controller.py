@@ -1204,7 +1204,45 @@ class GpuControllerTests(unittest.TestCase):
         self.assertFalse(self.controller.poly_active)
         expected = {(i, i) for i in range(17)} | {(x, 16) for x in range(17)}
         self.assertEqual({(x, y) for x, y, _ in stored}, expected)
+        pixels = {(x, y): p for x, y, p in stored}
+        self.assertEqual(pixels[8, 8], (15 << 10) | (15 << 5))
+        self.assertEqual(pixels[16, 16], 31 << 10)
+        self.assertEqual(pixels[8, 16], (15 << 10) | 15)
         self.assertEqual(self.write(0xE1000000), 1)
+
+    def test_shaded_line_interpolates_before_rgb555_conversion_and_clipping(self):
+        start = 5 | (249 << 8) | (37 << 16)
+        end = 29 | (21 << 8) | (197 << 16)
+        expected = [(0, 31, 4), (1, 24, 9), (2, 16, 14), (2, 9, 19), (3, 2, 24)]
+        for first, last, colors in ((3, 7, (start, end)), (7, 3, (end, start))):
+            for low, high in ((3, 7), (4, 6)):
+                with self.subTest(first=first, low=low):
+                    writes, _ = self._geometry_probe(area=(5, low, 5, high))
+                    for word in (0x50000000 | colors[0], (first << 16) | 5,
+                                 colors[1], (last << 16) | 5):
+                        self.assertEqual(self.write(word), 1)
+                    self.assertEqual(writes, {
+                        (5, y): r | (g << 5) | (b << 10)
+                        for y, (r, g, b) in enumerate(expected, 3) if low <= y <= high
+                    })
+
+    def test_shaded_line_tracks_packet_colors_and_fractional_steps(self):
+        # At half distance an exact 127.5 becomes level 16. On a 14-step
+        # path, truncating the positive increment leaves it just below that
+        # boundary, and truncating the negative increment leaves it above.
+        for dx, dy, rising_midpoint in ((32, 0, 16), (14, -5, 15), (5, -14, 15)):
+            endpoints = ((40, 40), (40 + dx, 40 + dy))
+            for first, last in (endpoints, endpoints[::-1]):
+                writes, _ = self._geometry_probe(area=(0, 0, 80, 80))
+                for word in (0x5000FF00, first[0] | (first[1] << 16),
+                             0x000000FF, last[0] | (last[1] << 16)):
+                    self.assertEqual(self.write(word), 1)
+                self.assertEqual(writes[first], 31 << 5)
+                self.assertEqual(writes[last], 31)
+                axis = int(abs(dy) > abs(dx))
+                middle = (first[axis] + last[axis]) // 2
+                self.assertEqual([v for xy, v in writes.items() if xy[axis] == middle],
+                                 [rising_midpoint | (16 << 5)])
 
     def test_opaque_flat_line_covers_shallow_and_steep_ties_in_both_directions(self):
         # Synthetic segments translated to (12, 12). Each entry lists the

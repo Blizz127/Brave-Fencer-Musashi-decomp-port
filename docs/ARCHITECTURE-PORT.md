@@ -51,16 +51,7 @@ at run time. The repository holds no retail bytes (see the retail guard,
 
 ### Measuring it
 
-`tools/port_matched_ratio.py` classifies every guest function a run
-executes into three classes:
-- byte-matched C (the native lane runs a registry entry);
-- hand-written port code (PsyQ HLE/PsyCross shims, BIOS HLE, and guest
-  functions the host skips);
-- interpreted retail instructions from the disc, split by whether matched
-  C exists but isn't run yet.
-
-It reports the share by distinct functions, calls and instructions. It
-also lists the shims that shadow a registered matched-C function.
+`tools/port_matched_ratio.py` compares a trace recorded with the native lane off against the set of candidate host routines in the build report. It counts functions, calls and instructions that map to matched C, host shims, or guest execution. It also identifies shims that take precedence over a matched C entry. The resulting shares estimate how much of that trace the build could execute on the host. To measure actual execution, run the same route with the native lane enabled and record completed host calls and guest CPU activity.
 
 ```sh
 # lane-ON build; the trace runs with the lane off so it records every

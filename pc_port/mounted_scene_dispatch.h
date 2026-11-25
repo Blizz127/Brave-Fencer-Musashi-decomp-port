@@ -1,6 +1,5 @@
-/* The game selects a no-argument service from its mounted executable.
- * src/main/80010b40.c supplies the game operation. The checkpoints below
- * preserve the scratch registers, caller frame and bus issues in that call. */
+/* Observe the call selected by the mounted game's foreground dispatcher.
+ * The shared guest CPU issues every instruction in the wrapper. */
 enum {
     SCENE_PARENT_CALL = 0x800105e4u, SCENE_PARENT_RESUME = SCENE_PARENT_CALL + 8u,
     SCENE_ENTRY = 0x80010b40u, SCENE_LENGTH = 116u,
@@ -11,7 +10,7 @@ enum {
 };
 
 enum SceneWitness {
-    SCENE_NO_WITNESS, SCENE_PARENT_JAL, SCENE_PARENT_SLOT, SCENE_LOAD_WINDOW,
+    SCENE_NO_WITNESS, SCENE_PARENT_JAL, SCENE_PARENT_SLOT, SCENE_WRAPPER_WORD,
     SCENE_CHILD_ENTRY, SCENE_CHILD_JR, SCENE_CHILD_SLOT
 };
 
@@ -139,12 +138,25 @@ static int scene_body_owned(const LaneRunFrame *f, MusashiBootMemory *m, const F
         (i < 19u || i > 20u || cpu->r[17] == s->target);
 }
 
-/* Six RAM loads and their successors occupy nine wrapper instructions. */
-static int scene_load_window(unsigned i) {
-    return i == 10u || i == 11u || i == 17u || i == 18u || (i >= 22u && i <= 26u);
+/* The wrapper owns four saved registers, the scene mode and the selected
+ * entry in the mounted service table. Check the real instruction's effective
+ * address before using its retirement as evidence of a service call. */
+static int scene_access_owned(const LaneRunFrame *f, MusashiBootMemory *m,
+                              const FormatterCpu *cpu, uint32_t word) {
+    unsigned op = word >> 26;
+    if (op < 32u) return 1;
+    const SceneDispatchFrame *s = &f->scene;
+    uint32_t addr = cpu->r[(word >> 21) & 31u] + (uint32_t)(int32_t)(int16_t)word;
+    if (op == 33u || op == 37u) return addr == SCENE_MODE;
+    if (op == 35u && addr == s->cell) return scene_selected(s, m, cpu);
+    if ((op != 35u && op != 43u) || (addr & 3u) || addr < s->top - 16u || addr >= s->top)
+        return 0;
+    unsigned slot = (s->top - addr) / 4u - 1u;
+    uint32_t value;
+    if (op == 43u) return cpu->r[(word >> 16) & 31u] == s->parent[slot];
+    return musashi_boot_read32(m, addr, &value) && value == s->parent[slot];
 }
 
-/* Only called after a successful ordinary issue in a released window. */
 static unsigned scene_scalar_destination(uint32_t word) {
     unsigned op = word >> 26, fn = word & 63u;
     if (!op && (fn <= 7u || fn == 9u || fn == 16u || fn == 18u ||
@@ -154,10 +166,6 @@ static unsigned scene_scalar_destination(uint32_t word) {
         op == 36u || op == 37u || (op == 16u && ((word >> 21) & 31u) == 0u))
         return (word >> 16) & 31u;
     return 0;
-}
-
-static int scene_load_issue(unsigned i) {
-    return i == 10u || i == 17u || (i >= 22u && i <= 25u);
 }
 
 static int scene_quiet(const FormatterCpu *cpu) {
@@ -181,139 +189,33 @@ static void scene_queue_load(FormatterCpu *cpu, unsigned reg, uint32_t value) {
 /* If custody changes, the ordinary decoder still consumes the old bank.
  * In a chain, the first load becomes visible after the second has sampled
  * its operands, including when both loads name the same register. */
-static void scene_scalar_retired(FormatterCpu *cpu, uint32_t word, uint32_t prior_rt,
-                                 int scalar_ram_load) {
+static void scene_scalar_retired(FormatterCpu *cpu, uint32_t word, uint32_t prior,
+                                 int delay_load, int observed_load) {
     unsigned rt = (word >> 16) & 31u;
-    uint32_t value = cpu->r[rt];
-    if (scalar_ram_load && rt && !lane_find(cpu->npc) && cpu->callback_device == cpu->scene_load.device &&
-        cpu->callback_device->field_restore_quiet == cpu->scene_load.quiet &&
-        cpu->callback_device->userdata == cpu->scene_load.worker &&
-        cpu->callback_device->checkpoint == cpu->scene_load.checkpoint && scene_quiet(cpu)) {
-        cpu->r[rt] = prior_rt;
-        scene_writeback(cpu, 0);
-        scene_queue_load(cpu, rt, value);
-    } else scene_writeback(cpu, scene_scalar_destination(word));
-}
-
-/* Sample live, authorized RAM after its original bus charge. The foreground
- * checkpoint sees the prior value. A possible IRQ can consume its first
- * vector instruction with that value before writeback; the high-level BIOS
- * service cannot retire that instruction. Leave that case to the scalar CPU. */
-static int scene_read_load(SceneDispatchFrame *s, MusashiBootMemory *m, FormatterCpu *cpu, unsigned i) {
-    unsigned reg;
-    uint32_t value;
-    if (i == 10u) {
-        uint16_t mode;
-        if (cpu->r[1] - 0x5c52u != SCENE_MODE || !cpu_read16(m, cpu, SCENE_MODE, &mode)) return -1;
-        uint32_t cell = SCENE_TABLE + 4u * mode;
-        if (mode >= SCENE_SLOTS || !scene_selection(s, m, cpu, cell, &s->target, &s->service)) return 0;
-        s->cell = cell;
-        reg = 2u;
-        value = mode;
-    } else if (i == 17u) {
-        if (!cpu_read32(m, cpu, cpu->r[2], &value)) return -1;
-        if (value != s->target) return 0;
-        reg = 17u;
+    uint32_t loaded = cpu->r[rt];
+    if (delay_load && rt) {
+        cpu->r[rt] = prior;
+        scene_writeback(cpu, 0u);
+        if (loaded != cpu->r[rt]) ++g_scene_delayed_loads;
+        else ++g_scene_equal_loads;
+        scene_queue_load(cpu, rt, loaded);
     } else {
-        static const unsigned restored[] = {31u, 30u, 17u, 16u};
-        unsigned slot = i - 22u;
-        reg = restored[slot];
-        if (!cpu_read32(m, cpu, cpu->r[29] + 28u - 4u * slot, &value)) return -1;
-        if (value != s->parent[slot]) return 0;
+        scene_writeback(cpu, scene_scalar_destination(word));
+        if (observed_load) ++g_scene_eager_loads;
     }
-    /* These consecutive stack loads all have distinct destinations. */
-    if (value != cpu->r[reg] && (lane_find(cpu->npc) || !scene_quiet(cpu))) return 0;
-    scene_writeback(cpu, 0);
-    scene_queue_load(cpu, reg, value);
-    if (scene_pending(cpu)) ++g_scene_delayed_loads;
-    else ++g_scene_equal_loads;
-    return 1;
 }
 
 /* Totals belong to the single foreground CPU runner. Its root baseline
  * separates successive boots; nested guest calls cannot acquire this frame. */
 static void scene_report(const LaneRunFrame *f, const char *point) {
-    fprintf(stderr, "native_boot: MOUNTED_SCENE_DISPATCH point=%s native_issues=%llu "
-            "scalar_load_window=%llu calls=%llu child_returns=%llu returns=%llu aggregate_returns=%llu "
-            "native_delayed_loads=%llu native_equal_loads=%llu scalar_eager_loads=%llu\n", point,
-            g_scene_native_issues - f->scene_baseline.native, g_scene_scalar_issues - f->scene_baseline.scalar,
+    fprintf(stderr, "native_boot: MOUNTED_SCENE_DISPATCH point=%s guest_issues=%llu "
+            "calls=%llu child_returns=%llu returns=%llu aggregate_returns=%llu "
+            "delayed_loads=%llu equal_loads=%llu scalar_eager_loads=%llu\n", point,
+            g_scene_scalar_issues - f->scene_baseline.scalar,
             g_scene_calls - f->scene_baseline.calls, g_scene_child_returns - f->scene_baseline.children,
             g_scene_returns - f->scene_baseline.returns, g_scene_aggregate_returns - f->scene_baseline.aggregate,
             g_scene_delayed_loads - f->scene_baseline.delayed,
             g_scene_equal_loads - f->scene_baseline.equal, g_scene_eager_loads - f->scene_baseline.eager);
-}
-
-static int scene_native_issue(LaneRunFrame *f, MusashiBootMemory *m, FormatterCpu *cpu, int *prepaid) {
-    SceneDispatchFrame *s = &f->scene;
-    const uint32_t pc = cpu->pc;
-    if (!scene_body_owned(f, m, cpu)) {
-        s->phase = SCENE_IDLE;
-        return 0;
-    }
-    unsigned i = (pc - SCENE_ENTRY) / 4u;
-    const int load = scene_load_issue(i);
-    const int store = i >= 1u && i <= 4u;
-    if (!s->charge.advance(s->charge.userdata, (load || store) ? 3u : 2u)) return -1;
-    field_scene_after_charge(f, cpu);
-    if (scene_pending(cpu) && (cpu->pc != pc || scene_unexpected_successor(cpu))) return -1;
-    if (!scene_body_owned(f, m, cpu)) {
-        /* The ordinary issue already fetched its word. Let it finish using
-         * this event charge, even if an event invalidated our source/frame. */
-        s->phase = SCENE_IDLE;
-        *prepaid = 1;
-        return 0;
-    }
-    uint32_t branch = 0, next = cpu->npc + 4u;
-    if (load) {
-        int loaded = scene_read_load(s, m, cpu, i);
-        if (!loaded) *prepaid = 1;
-        if (loaded <= 0) return loaded;
-    } else switch (i) {
-    case 0: cpu->r[29] -= 32u; break;
-    case 1: case 2: case 3: case 4:
-        if (!cpu_write32(m, cpu, s->top - 4u * i, s->parent[i-1u])) return -1;
-        break;
-    case 5: cpu->r[30] = cpu->r[29]; break;
-    case 6: cpu->r[16] = 0x800b0000u; break;
-    case 7: cpu->r[16] -= 0x9d0u; break;
-    case 8: cpu->r[1] = 0x10000u; break;
-    case 9: cpu->r[1] += cpu->r[16]; break;
-    case 11: case 18: break; /* load delay NOP */
-    case 12: cpu->r[3] = cpu->r[2]; break;
-    case 13: cpu->r[2] = cpu->r[3] << 2; break;
-    case 14: cpu->r[3] = 0x80060000u; break;
-    case 15: cpu->r[3] += SCENE_TABLE & 0xffffu; break;
-    case 16: cpu->r[2] += cpu->r[3]; break;
-    case 19:
-        cpu->r[31] = SCENE_RESUME;
-        branch = pc;
-        next = s->target;
-        if (g_trace_state >= 0) musashi_trace_function_entry(next, pc, 'r');
-        if (g_entry_hook) g_entry_pending = next;
-        break;
-    case 20: case 28: break; /* the indirect branch's delay slot */
-    case 21: cpu->r[29] = cpu->r[30]; break;
-    case 26: cpu->r[29] += 32u; break;
-    case 27: branch = pc; next = cpu->r[31]; break;
-    }
-    if (!load) scene_writeback(cpu, 0);
-    cpu->pc = cpu->npc;
-    cpu->npc = next;
-    cpu->branch_pc = branch;
-    cpu->delay_slot = branch != 0u;
-    s->next = cpu->pc;
-    scene_remember(s, cpu);
-    ++g_scene_native_issues;
-    if (i == 20u) {
-        s->phase = SCENE_SERVICE_ENTRY;
-        ++g_scene_calls;
-    } else if (i == 28u) {
-        s->phase = SCENE_IDLE;
-        ++g_scene_returns;
-        unsigned long long completed = g_scene_returns - f->scene_baseline.returns;
-        if (completed == 1u || completed % 512u == 0u) scene_report(f, "return");
-    }
-    return 1;
 }
 
 static int scene_bind_parent(LaneRunFrame *f, MusashiBootMemory *m, FormatterCpu *cpu) {
@@ -355,8 +257,8 @@ static enum SceneWitness scene_before_issue(LaneRunFrame *f, MusashiBootMemory *
         if (!word && scene_flow(cpu, SCENE_PARENT_CALL + 4u, SCENE_PARENT_CALL, SCENE_ENTRY) &&
             scene_registers(s, cpu)) return SCENE_PARENT_SLOT;
     } else if (s->phase == SCENE_WRAPPER) {
-        if (scene_body_owned(f, m, cpu) && scene_load_window((pc - SCENE_ENTRY) / 4u))
-            return SCENE_LOAD_WINDOW;
+        if (scene_body_owned(f, m, cpu) && scene_access_owned(f, m, cpu, word))
+            return SCENE_WRAPPER_WORD;
     } else if (s->phase == SCENE_SERVICE || s->phase == SCENE_SERVICE_ENTRY) {
         if (s->phase == SCENE_SERVICE_ENTRY) {
             if (!scene_flow(cpu, s->target, 0u, s->target + 4u) || !scene_registers(s, cpu)) {
@@ -396,7 +298,7 @@ static int scene_witness_owned(const LaneRunFrame *f, MusashiBootMemory *m,
     case SCENE_PARENT_SLOT:
         return s->phase == SCENE_PARENT_DELAY &&
             scene_flow(cpu, SCENE_PARENT_CALL + 4u, SCENE_PARENT_CALL, SCENE_ENTRY);
-    case SCENE_LOAD_WINDOW: return scene_body_owned(f, m, cpu);
+    case SCENE_WRAPPER_WORD: return scene_body_owned(f, m, cpu);
     case SCENE_CHILD_ENTRY:
         return s->phase == SCENE_SERVICE_ENTRY && scene_flow(cpu, s->target, 0u, s->target + 4u) &&
             scene_selected(s, m, cpu) && scene_saved(s, m, 4u);
@@ -456,24 +358,28 @@ static void scene_retired(LaneRunFrame *f, MusashiBootMemory *m, FormatterCpu *c
             cpu->r[30] == cpu->r[29] && cpu->r[16] == SCENE_STATE && cpu->r[17] == s->target &&
             scene_saved(s, m, 4u);
         if (ok) ++g_scene_child_returns;
-    } else if (w == SCENE_LOAD_WINDOW) {
-        unsigned i = (pc - SCENE_ENTRY) / 4u;
-        ok = scene_flow(cpu, pc + 4u, 0u, pc + 8u);
-        if (ok && i == 10u) {
-            ok = cpu->r[2] < SCENE_SLOTS;
-            if (ok) {
-                s->cell = SCENE_TABLE + 4u * cpu->r[2];
-                ok = scene_selection(s, m, cpu, s->cell, &s->target, &s->service);
-            }
-        }
-        if (i == 17u) ok = ok && cpu->r[17] == s->target;
-        if (i >= 22u && i <= 25u) {
-            static const unsigned restored[] = {31, 30, 17, 16};
-            ok = ok && cpu->r[restored[i - 22u]] == s->parent[i - 22u];
-        }
-        if (i == 26u) ok = ok && cpu->r[29] == s->top;
+    } else if (w == SCENE_WRAPPER_WORD) {
         ++g_scene_scalar_issues;
-        if (scene_load_issue(i)) ++g_scene_eager_loads;
+        if (pc == SCENE_INDIRECT_CALL + 4u) {
+            ok = scene_flow(cpu, s->target, 0u, s->target + 4u) && cpu->r[31] == SCENE_RESUME &&
+                scene_selected(s, m, cpu) && scene_saved(s, m, 4u);
+            s->phase = ok ? SCENE_SERVICE_ENTRY : SCENE_IDLE;
+            if (ok) {
+                ++g_scene_calls;
+                s->next = cpu->pc;
+                scene_remember(s, cpu);
+            }
+            return;
+        }
+        if (pc == SCENE_JR + 4u) {
+            if (scene_flow(cpu, SCENE_PARENT_RESUME, 0u, SCENE_PARENT_RESUME + 4u) &&
+                cpu->r[29] == s->top && cpu->r[31] == s->parent[0] && cpu->r[30] == s->parent[1] &&
+                cpu->r[17] == s->parent[2] && cpu->r[16] == s->parent[3])
+                ++g_scene_returns;
+            s->phase = SCENE_IDLE;
+            return;
+        }
+        ok = cpu->pc == pc + 4u;
     }
     s->phase = ok ? SCENE_WRAPPER : SCENE_IDLE;
     s->next = cpu->pc;

@@ -1,5 +1,11 @@
 # Excluded from this public snapshot
 
+## November 25, 2026 source correction
+
+Earlier public snapshots included fixed sequences of actions from the original executable expressed as C operations on guest registers and memory. The initial scan checked for retail data and SDK source and missed these transformations. Two of the room implementations had already appeared in the November 25 source release.
+
+The startup, graphics, room-reset, controller, field and opening-audio routes now fetch their instructions from the user's mounted US game and advance the guest CPU and devices together. The independently authored matching C remains available where its origin and extent have been verified. Downstream builds should use this corrected source for the affected runtime paths.
+
 This snapshot was assembled from the project's private working tree:
 the decompilation/tooling branch `main` at `f59d74798` and the native port
 branch `port/native-lane` at `fe4a59820` (merge base `f0299da37`), both taken
@@ -270,10 +276,10 @@ the historical body listed in section 1. The September 30 independent
 recovery first appeared publicly in `e0b1822` on October 29. On November 21,
 `b2cc54a` made the subtraction explicitly unsigned. Its source and matching
 12-byte USA executable extent are identified by SHA-256 in
-`provenance/native-main.json`. With native-lane builds enabled, this entry
-uses compiled host arithmetic at each of its three guest clock boundaries.
-For live RAM, a change to the routine or an external bus owner returns its
-fetches to the CPU.
+`provenance/native-main.json`. The matching C supplies the standalone
+host smoke test. The game and generated native callers execute the difference
+on the guest CPU. The CPU fetches each instruction from the active memory
+owner and advances its execution clock at each instruction boundary.
 
 These two files complete the source set used by the existing host smoke test.
 On Linux, the following commands build and exercise it without a disc.

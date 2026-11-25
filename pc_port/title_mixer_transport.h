@@ -25,6 +25,7 @@ typedef struct TitleMixerRun {
     int (*spu_write)(void *,uint32_t,uint16_t);
     int (*advance)(void *,uint32_t);
     int (*reverb_mask)(const MusashiCdSpuDevice *,uint32_t *);
+    struct OpeningEvent *event;
     const TitleMixerSymbol *symbol;
     uint32_t root_sp, frame_sp, voices, record, direction, mask_cell, emitted_key;
     uint32_t issued_pc, issued_word, issued_npc, issued_branch, issued_hi, issued_lo;
@@ -34,6 +35,7 @@ typedef struct TitleMixerRun {
     unsigned reverb_seen, key_seen, gain_written;
     uint16_t gain[2];
     int music, reusing_voice;
+    int (*sequence_issuer)(MusashiBootMemory *, const FormatterCpu *);
 } TitleMixerRun;
 
 #include "opening_music_service.h"
@@ -204,10 +206,15 @@ static int title_mixer_access(MusashiBootMemory *m,const FormatterCpu *cpu,
                                                           (uint16_t)(before & (uint16_t)~change));
 }
 
+#include "opening_event_dispatch.h"
+
 /* The formatter executes all guest arithmetic/control flow. Check the
  * addresses of ordinary integer accesses at issue, after advancing the
  * device clock, and where the real RAM or MMIO access takes place. */
 static int title_mixer_issue(MusashiBootMemory *m,FormatterCpu *cpu,uint32_t word) {
+    const TitleMixerRun *run = cpu->title_mixer;
+    if (run && run->sequence_issuer && !run->sequence_issuer(m, cpu)) return 0;
+    if (cpu->title_mixer->event && !music_event_issue(m, cpu, word)) return 0;
     unsigned op=word>>26,fn=word&63u;
     if (!op) return fn==0u || fn==2u || fn==3u || fn==4u || fn==6u || fn==7u ||
         fn==8u || fn==9u || fn==16u || fn==18u || (fn>=24u && fn<=27u) ||
@@ -234,6 +241,13 @@ static int title_mixer_unchanged(const TitleMixerRun *r, const FormatterCpu *cpu
         r->issued_hi==cpu->hi && r->issued_lo==cpu->lo && !memcmp(r->issued_gpr,cpu->r,sizeof r->issued_gpr);
 }
 
+static void title_mixer_charged(FormatterCpu *cpu, uint32_t cost) {
+    if (cpu->title_mixer->event) {
+        ++cpu->title_mixer->event->issued;
+        cpu->title_mixer->event->clocks += cost;
+    }
+}
+
 static int title_mixer_after_clock(MusashiBootMemory *m,FormatterCpu *cpu,uint32_t word) {
     uint32_t live;
     return title_mixer_unchanged(cpu->title_mixer,cpu,word) &&
@@ -257,10 +271,89 @@ static int title_mixer_step(MusashiBootMemory *m,FormatterCpu *cpu,MusashiGuestI
     return !(cpu->r[29]&3u) && cpu->r[29]<=r->root_sp && r->root_sp-cpu->r[29]<=(r->music ? 0x400u : 0x70u);
 }
 
-#include "opening_player_status.h"
-#include "opening_sequence_delta.h"
-#include "opening_voice_reuse.h"
-#include "opening_event_dispatch.h"
+/* Only authenticate the bounded calls here. Their arithmetic, branches and
+ * accesses retire from the mounted program through title_mixer_step. */
+enum {
+    MUSIC_STATUS_START = 0x8003836cu,
+    MUSIC_DELTA_START = 0x80038fc4u, MUSIC_DELTA_RETURN = 0x80038c14u,
+    MUSIC_CACHE_COMPARE = 0x80039568u, MUSIC_CACHE_RELOAD = 0x800395acu,
+    MUSIC_CACHE_READY = 0x80039604u
+};
+static int music_status_image(MusashiBootMemory *m, const FormatterCpu *cpu)
+{
+    const TitleMixerRun *run = cpu->title_mixer;
+    uint32_t mounted_word;
+    uint64_t fingerprint;
+    return run && run->music && run->symbol == music_game_symbol(MUSIC_STATUS_START) &&
+        title_mixer_word(m, cpu, &mounted_word) &&
+        span_digest(m, MUSIC_STATUS_START, 14u, &fingerprint) &&
+        fingerprint == UINT64_C(0xf9160474c0017a5a);
+}
+
+static int music_delta_image(MusashiBootMemory *memory, const FormatterCpu *cpu)
+{
+    const TitleMixerRun *run = cpu->title_mixer;
+    uint32_t word;
+    uint64_t digest;
+    return run && run->music && run->symbol == music_game_symbol(MUSIC_DELTA_START) &&
+        title_mixer_word(memory, cpu, &word) &&
+        span_digest(memory, MUSIC_DELTA_START, 14u, &digest) &&
+        digest == UINT64_C(0x87738257df5139e3);
+}
+
+static int music_cache_image(MusashiBootMemory *m, const FormatterCpu *cpu)
+{
+    uint32_t word;
+    uint64_t digest;
+    return cpu->title_mixer && cpu->title_mixer->music &&
+        cpu->title_mixer->symbol == music_game_symbol(0x80039308u) &&
+        title_mixer_word(m, cpu, &word) &&
+        span_digest(m, MUSIC_CACHE_COMPARE, 17u, &digest) &&
+        digest == UINT64_C(0x88906846e5a04f09);
+}
+
+static int music_cache_owner(MusashiBootMemory *m, const FormatterCpu *cpu)
+{
+    const uint32_t player = cpu->r[14], voice = cpu->r[6], slot = cpu->r[15];
+    const uint32_t program = cpu->r[20], tone = cpu->r[24];
+    uint32_t channel, cursor, tones;
+    MusicDataTrack track;
+    if (!music_cache_image(m, cpu) || slot >= 16u ||
+        voice != MUSIC_VOICES + MUSIC_VOICE_BYTES * slot || cpu->r[7] != voice + 0x10u ||
+        player != MUSIC_PLAYERS || program >= 128u || tone >= 16u ||
+        cpu->r[31] != 0x8003907cu || cpu->r[29] != 0x8006c9f4u ||
+        cpu->title_mixer->frame_sp != cpu->r[29] + 0x40u ||
+        !music_data_read(m, cpu->r[29], 2u, &channel) || channel >= 16u ||
+        cpu->r[16] != player + 0x1au + channel * 0x1au ||
+        !music_data_equals(m, cpu->r[16], 1u, program) ||
+        !music_data_equals(m, player+0x1f7u, 1u, 0x90u + channel) ||
+        !music_data_equals(m, player+0x1fau, 1u, 1u) ||
+        !music_data_equals(m, 0x800a4e8cu, 2u, 0x91u) ||
+        !music_track_range(m, player, &track) || !music_data_read(m, player, 4u, &cursor) ||
+        cursor < track.start+2u || cursor > track.end ||
+        cpu->r[21] > 127u || !cpu->r[30] || cpu->r[30] > 127u ||
+        !music_data_equals(m, cursor-2u, 1u, cpu->r[21]) ||
+        !music_data_equals(m, cursor-1u, 1u, cpu->r[30]) ||
+        !music_data_equals(m, player+0x1dcu, 4u, MUSIC_INSTRUMENTS + 0x20u) ||
+        !music_data_equals(m, player+0x1e0u, 4u, MUSIC_INSTRUMENTS + 0x820u) ||
+        !music_data_read(m, MUSIC_INSTRUMENTS+0x20u+16u*program, 1u, &tones) ||
+        tones > 16u || tone >= tones ||
+        cpu->r[25] != MUSIC_INSTRUMENTS+0x820u + program*512u + tone*32u ||
+        cpu->r[12] != cpu->r[25] + 1u ||
+        !music_data_access(m, cpu->title_mixer->root_sp, cpu->r[29], cpu->r[25], 1u, 0, 0u))
+        return 0;
+    return music_data_equals(m, voice+0x10u, 4u, 1u << slot) &&
+        music_data_equals(m, voice+0x50u, 4u, player) &&
+        music_data_equals(m, voice+0x5cu, 1u, 1u);
+}
+
+static int music_cache_store(MusashiBootMemory *m, const FormatterCpu *cpu, uint32_t address)
+{
+    return cpu->pc == MUSIC_CACHE_COMPARE + 64u && cpu->delay_slot &&
+        cpu->branch_pc == MUSIC_CACHE_COMPARE + 60u && cpu->npc == MUSIC_CACHE_READY &&
+        cpu->r[2] == 0x13u && address == cpu->r[6]+0x14u && music_cache_owner(m, cpu);
+}
+
 
 static int title_mixer_guest_call(MusashiBootMemory *m,FormatterCpu *cpu,
     const MusashiGuestIrqServices *services,const MusashiExecutionClock *clock,
@@ -302,13 +395,7 @@ static int title_mixer_guest_call(MusashiBootMemory *m,FormatterCpu *cpu,
     uint32_t table_address=0,table_value=0;
     cpu->title_mixer=&run;
     if (music && entry == MUSIC_STATUS_START && music_status_image(m, cpu)) {
-        music_observe_entry(run.symbol, caller);
-        if (music_status_native(m, cpu, &run, stop))
-            n = 0;
-        else {
-            cpu->title_mixer = NULL;
-            return 0;
-        }
+        run.sequence_issuer = music_status_image;
     }
     while (n) {
         run.symbol=frames[n-1].symbol;
@@ -325,44 +412,26 @@ static int title_mixer_guest_call(MusashiBootMemory *m,FormatterCpu *cpu,
         if (music && n == 3u && frames[0].symbol->start == 0x80037fc4u &&
             frames[1].symbol->start == 0x80038a58u && frames[2].symbol->start == MUSIC_EVENT_START &&
             frames[2].ret == MUSIC_EVENT_PARENT_RETURN) {
-            if (pc == MUSIC_EVENT_START && music_event_select(m, cpu, &event)) {
-                if (!music_event_segment(m, cpu, &run, stop, &event, 0)) break;
-                const TitleMixerSymbol *handler = music_callee(MUSIC_EVENT_START, event.call, cpu->pc);
-                if (!handler || cpu->r[31] != event.call + 8u ||
-                    !music_child_entry(m, cpu, &run, handler, run.frame_sp - 24u)) break;
-                frames[n].ret = cpu->r[31]; frames[n].sp = cpu->r[29]; frames[n].symbol = handler;
-                ++n;
-                table_address = 0;
-                continue;
-            }
-            if (event.target && pc == event.call + 8u) {
-                if (!music_event_segment(m, cpu, &run, stop, &event, 1)) break;
-                music_event_observed(&event, &completed);
-                event = (OpeningEvent){0};
-                --n;
-                table_address = 0;
-                continue;
-            }
+            if (pc == MUSIC_EVENT_START) music_event_select(m, cpu, &event);
+            run.event = event.target ? &event : NULL;
+        } else {
+            run.event = NULL;
         }
         if (music && pc == MUSIC_CACHE_COMPARE && n == 4u &&
             frames[0].symbol->start == 0x80037fc4u && frames[1].symbol->start == 0x80038a58u &&
             frames[2].symbol->start == 0x80038ffcu && frames[3].ret == 0x8003907cu &&
             music_cache_owner(m, cpu)) {
             run.reusing_voice = 1;
-            int finished = music_cache_native(m, cpu, &run, stop);
+            run.sequence_issuer = music_cache_owner;
+        } else if (run.reusing_voice && (pc < MUSIC_CACHE_COMPARE || pc >= MUSIC_CACHE_RELOAD)) {
             run.reusing_voice = 0;
-            if (!finished) break;
-            table_address = 0;
-            continue;
+            run.sequence_issuer = NULL;
         }
         if (music && pc == MUSIC_DELTA_START && n == 3u &&
             frames[0].symbol->start == 0x80037fc4u && frames[1].symbol->start == 0x80038a58u &&
             frames[2].ret == MUSIC_DELTA_RETURN && cpu->r[4] == MUSIC_PLAYERS &&
             music_delta_image(m, cpu)) {
-            if (!music_delta_native(m, cpu, &run, stop)) break;
-            --n;
-            table_address = 0;
-            continue;
+            run.sequence_issuer = music_delta_image;
         }
         if (!op && fn==9u && (!music || family!=MUSIC_SEQUENCE || ((w>>11)&31u)!=31u)) break;
         uint32_t dest=0,sp=cpu->r[29],load_cell=0,loaded=0;
@@ -412,10 +481,20 @@ static int title_mixer_guest_call(MusashiBootMemory *m,FormatterCpu *cpu,
             cpu->npc!=dest+4u || cpu->delay_slot || cpu->branch_pc) break;
         if (ret) {
             if (cpu->r[29]!=frames[n-1].sp) break;
+            if (run.sequence_issuer == music_delta_image) run.sequence_issuer = NULL;
+            if (run.event) {
+                music_event_observed(&event, &completed);
+                event = (OpeningEvent){0};
+                run.event = NULL;
+            } else if (event.target && n == 4u && frames[n-1].symbol->start == event.target &&
+                       dest == event.call + 8u) {
+                event.returned = 1;
+            }
             --n;
         }
         if (link) {
-            if (cpu->r[29]!=sp) break;
+            if (cpu->r[29]!=sp || (run.event && (sp != run.frame_sp - 24u ||
+                child->start != event.target || pc != event.call))) break;
             if (music && family==MUSIC_SEQUENCE &&
                 !music_child_entry(m,cpu,&run,child,sp)) break;
             frames[n].ret=pc+8u;frames[n].sp=sp;frames[n].symbol=child;++n;

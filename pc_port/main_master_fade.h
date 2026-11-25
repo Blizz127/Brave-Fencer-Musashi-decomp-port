@@ -1,5 +1,5 @@
-/* Sound-tick master fade from src/main/8002cdd8.c. The registered callback
- * keeps its surrounding command, voice-status and channel services. */
+/* The VBlank sound tick owns this range while its installed IRQ stack is
+ * live. The scalar formatter issues each operation from the mounted image. */
 enum {
     MASTER_FADE_START = 0x8002ce1cu, MASTER_FADE_END = 0x8002cec0u,
     MASTER_FADE_LENGTH = MASTER_FADE_END - MASTER_FADE_START,
@@ -8,8 +8,6 @@ enum {
     MASTER_FADE_DIRTY = 0x800a4f16u
 };
 
-/* Bind only the fade instructions. The digest is from the public game C
- * compiled with GCC 2.7.2 -O2 -G0, with the public symbol addresses. */
 static int master_fade_image(const MusashiGuestIrqImage *image, uint8_t reference[MASTER_FADE_LENGTH])
 {
     uint64_t hash = UINT64_C(0xcbf29ce484222325);
@@ -35,114 +33,66 @@ static int master_fade_issue_bound(MusashiBootMemory *memory, const FormatterCpu
     return live && !memcmp(live, reference + offset, 4);
 }
 
-static unsigned master_fade_cost(uint32_t pc)
-{
-    switch (pc) {
-    case 0x8002ce20u: case 0x8002ce38u: case 0x8002ce40u: case 0x8002ce48u:
-    case 0x8002ce60u: case 0x8002ce70u: case 0x8002ce84u: case 0x8002ce94u:
-    case 0x8002ceb0u: case 0x8002ceb8u: return 3u;
-    default: return 2u;
-    }
-}
+typedef struct MasterFadeRun {
+    const MusashiGuestIrqImage *image;
+    const MusashiExecutionClock *clock;
+    MusashiExecutionClock charge;
+    uint8_t reference[MASTER_FADE_LENGTH];
+    uint32_t pc, npc, branch, delay, hi, lo, regs[32];
+} MasterFadeRun;
 
-static int master_fade_op(MusashiBootMemory *memory, FormatterCpu *cpu)
+static int master_fade_issuer(MusashiBootMemory *memory, const FormatterCpu *cpu, uint32_t word)
 {
-    uint32_t *r = cpu->r, pc = cpu->pc, next = cpu->npc, after = next + 4u;
-    uint16_t half;
-    uint8_t byte;
-    int branch = 0;
-    switch (pc) {
-    case 0x8002ce1cu: r[6] = 0x800a0000u; break;
-    case 0x8002ce20u:
-        if (!cpu_read8(memory, cpu, MASTER_FADE_FLAGS, &byte)) return 0;
-        r[6] = byte;
-        break;
-    case 0x8002ce24u: case 0x8002ce58u: case 0x8002ce64u: case 0x8002ce88u: break;
-    case 0x8002ce28u: r[2] = r[6] & 1u; break;
-    case 0x8002ce2cu:
-        branch = 1;
-        if (!r[2]) after = 0x8002cebcu;
-        break;
-    case 0x8002ce30u: r[2] = 1; break;
-    case 0x8002ce34u: r[5] = 0x800a0000u; break;
-    case 0x8002ce38u:
-        if (!cpu_read16(memory, cpu, MASTER_FADE_TARGET, &half)) return 0;
-        r[5] = half;
-        break;
-    case 0x8002ce3cu: r[3] = 0x800a0000u; break;
-    case 0x8002ce40u:
-        if (!cpu_read16(memory, cpu, MASTER_FADE_LEVEL, &half)) return 0;
-        r[3] = half;
-        break;
-    case 0x8002ce44u: case 0x8002ce6cu: case 0x8002ce90u:
-    case 0x8002ceacu: case 0x8002ceb4u: r[1] = 0x800a0000u; break;
-    case 0x8002ce48u:
-        if (!cpu_write8(memory, cpu, MASTER_FADE_DIRTY, (uint8_t)r[2])) return 0;
-        break;
-    case 0x8002ce4cu: r[4] = (uint16_t)r[5]; break;
-    case 0x8002ce50u: r[2] = r[4] < r[3]; break;
-    case 0x8002ce54u:
-        branch = 1;
-        if (!r[2]) after = 0x8002ce80u;
-        break;
-    case 0x8002ce5cu: case 0x8002ce80u: r[2] = 0x800a0000u; break;
-    case 0x8002ce60u: case 0x8002ce84u:
-        if (!cpu_read16(memory, cpu, MASTER_FADE_STEP, &half)) return 0;
-        r[2] = half;
-        break;
-    case 0x8002ce68u: r[2] = r[3] - r[2]; break;
-    case 0x8002ce8cu: r[2] = r[3] + r[2]; break;
-    case 0x8002ce70u: case 0x8002ce94u:
-        if (!cpu_write16(memory, cpu, MASTER_FADE_LEVEL, (uint16_t)r[2])) return 0;
-        break;
-    case 0x8002ce74u: case 0x8002ce98u: r[2] = (uint16_t)r[2]; break;
-    case 0x8002ce78u: branch = 1; after = 0x8002cea0u; break;
-    case 0x8002ce7cu: r[2] = r[4] < r[2]; break;
-    case 0x8002ce9cu: r[2] = r[2] < r[4]; break;
-    case 0x8002cea0u:
-        branch = 1;
-        if (r[2]) after = MASTER_FADE_END;
-        break;
-    case 0x8002cea4u: case 0x8002cebcu: r[4] = 0; break;
-    case 0x8002cea8u: r[2] = r[6] & 0xfeu; break;
-    case 0x8002ceb0u:
-        if (!cpu_write16(memory, cpu, MASTER_FADE_LEVEL, (uint16_t)r[5])) return 0;
-        break;
-    case 0x8002ceb8u:
-        if (!cpu_write8(memory, cpu, MASTER_FADE_FLAGS, (uint8_t)r[2])) return 0;
-        break;
-    default: return 0;
-    }
-    cpu->pc = next;
-    cpu->npc = after;
-    cpu->branch_pc = branch ? pc : 0;
-    cpu->delay_slot = (uint8_t)branch;
-    return 1;
+    const MasterFadeRun *run = cpu->master_fade;
+    if (!run || cpu->pc != run->pc || cpu->npc != run->npc ||
+        cpu->branch_pc != run->branch || cpu->delay_slot != run->delay ||
+        cpu->hi != run->hi || cpu->lo != run->lo || memcmp(cpu->r, run->regs, sizeof run->regs) ||
+        cpu->clock != run->clock || cpu->clock->advance != run->charge.advance ||
+        cpu->clock->userdata != run->charge.userdata ||
+        !master_fade_issue_bound(memory, cpu, run->image, run->reference)) return 0;
+
+    unsigned op = word >> 26;
+    if (op < 32u) return 1;
+    uint32_t address = cpu->r[(word >> 21) & 31u] + (uint32_t)(int32_t)(int16_t)word;
+    if (address == MASTER_FADE_LEVEL) return op == 33u || op == 37u || op == 41u;
+    if (address == MASTER_FADE_STEP || address == MASTER_FADE_TARGET)
+        return op == 33u || op == 37u;
+    if (address == MASTER_FADE_FLAGS) return op == 32u || op == 36u || op == 40u;
+    return address == MASTER_FADE_DIRTY && op == 40u;
 }
 
 static int master_fade_run(MusashiBootMemory *memory, FormatterCpu *cpu, const IrqGuestReturn *stack,
     unsigned depth, const MusashiGuestIrqImage *image, const MusashiExecutionClock *clock,
     MusashiGuestIrqStop *stop)
 {
-    uint8_t reference[MASTER_FADE_LENGTH];
     if (depth != 4u || stack[0].callee != IRQ_DISPATCH || stack[1].callee != IRQ_VBLANK ||
         stack[2].callee != IRQ_GAME_VBLANK || stack[3].callee != IRQ_SOUND_TICK ||
         stack[3].address != 0x80010984u || stack[3].sp != 0x8006cab4u ||
-        cpu->pc != MASTER_FADE_START || cpu->npc != cpu->pc + 4u || cpu->delay_slot ||
-        cpu->branch_pc || !clock || !clock->advance || !master_fade_image(image, reference)) return 0;
-    do {
-        uint32_t pc = cpu->pc, npc = cpu->npc, branch = cpu->branch_pc, regs[32];
-        unsigned delay = cpu->delay_slot;
-        stop->pc = pc;
-        if (stop->instructions >= 8192 || cpu->clock != clock ||
-            !master_fade_issue_bound(memory, cpu, image, reference)) return 0;
-        memcpy(regs, cpu->r, sizeof regs);
-        if (!clock->advance(clock->userdata, master_fade_cost(pc)) ||
-            cpu->pc != pc || cpu->npc != npc || cpu->branch_pc != branch || cpu->delay_slot != delay ||
-            cpu->clock != clock || memcmp(cpu->r, regs, sizeof regs) ||
-            !master_fade_issue_bound(memory, cpu, image, reference) ||
-            !master_fade_op(memory, cpu)) return 0;
+        cpu->master_fade || cpu->clock != clock || !clock || !clock->advance ||
+        cpu->pc != MASTER_FADE_START || cpu->npc != cpu->pc + 4u ||
+        cpu->delay_slot || cpu->branch_pc) return 0;
+
+    MasterFadeRun run = {.image = image, .clock = clock, .charge = *clock};
+    if (!master_fade_image(image, run.reference)) return 0;
+    cpu->master_fade = &run;
+    int ok = 0;
+    while (cpu->pc - MASTER_FADE_START < MASTER_FADE_LENGTH) {
+        uint32_t word;
+        stop->pc = cpu->pc;
+        run.pc = cpu->pc;
+        run.npc = cpu->npc;
+        run.delay = cpu->delay_slot;
+        run.branch = cpu->branch_pc;
+        run.hi = cpu->hi;
+        run.lo = cpu->lo;
+        memcpy(run.regs, cpu->r, sizeof run.regs);
+        if (stop->instructions >= 8192u || !irq_live_word(image, memory, cpu->pc, &word) ||
+            !master_fade_issuer(memory, cpu, word) || !formatter_step(memory, cpu)) goto done;
         ++stop->instructions;
-    } while (cpu->pc != MASTER_FADE_END);
-    return cpu->npc == MASTER_FADE_END + 4u && !cpu->branch_pc && !cpu->delay_slot;
+    }
+    ok = cpu->pc == MASTER_FADE_END && cpu->npc == cpu->pc + 4u &&
+        !cpu->delay_slot && !cpu->branch_pc;
+done:
+    cpu->master_fade = NULL;
+    return ok;
 }

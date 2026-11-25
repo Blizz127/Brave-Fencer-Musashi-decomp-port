@@ -1,5 +1,5 @@
-/* Resident field callback. Its service address is overlaid: only the regular
- * CPU or the currently installed lane provider may execute the callee. */
+/* Follow the mounted field invocation at the guest CPU's own issue boundaries.
+ * The formatter fetches and executes the caller, body, service and return. */
 enum {
     FIELD_SCENE_CALLER = 0x80010b8cu, FIELD_SCENE_ENTRY = 0x8001125cu,
     FIELD_SCENE_SERVICE_CALL = FIELD_SCENE_ENTRY + 40u,
@@ -76,8 +76,6 @@ static void field_scene_before(LaneRunFrame *frame, MusashiBootMemory *memory, F
     if (field->phase == FIELD_SERVICE_ENTRY &&
         (!field_scene_service_frame(field, cpu) || !field_scene_owner(frame, memory, cpu)))
         field->phase = FIELD_IDLE;
-    /* A previously delegated restore must pass admission again on retry. */
-    if (field->phase == FIELD_RESTORING) field->phase = FIELD_BODY;
     if (field->phase != FIELD_IDLE || cpu->pc != FIELD_SCENE_CALLER ||
         cpu->npc != cpu->pc + 4u || cpu->delay_slot || cpu->branch_pc ||
         cpu->r[17] != FIELD_SCENE_ENTRY || (cpu->r[29] & 3u)) return;
@@ -87,7 +85,6 @@ static void field_scene_before(LaneRunFrame *frame, MusashiBootMemory *memory, F
     for (unsigned i = 0; i < sizeof field->body; i += 4u)
         if (field_scene_reserved(FIELD_SCENE_ENTRY + i)) return;
     if (!field_scene_reserved(FIELD_SCENE_CALLER) && !field_scene_reserved(FIELD_SCENE_CALLER + 4u)) {
-        field->restores = 0;
         field_scene_follow(field, cpu, FIELD_CALLING);
     }
 }
@@ -142,13 +139,25 @@ static void field_scene_retired(LaneRunFrame *frame, MusashiBootMemory *memory, 
         else field->phase = FIELD_IDLE;
         return;
     }
-    if (phase == FIELD_RESTORING) {
-        ++field->counters.delegated_issues;
-        field->counters.delegated_clocks += issued == FIELD_SCENE_RETURN - 4u ? 2u : 3u;
-        if (cpu->pc == issued + 4u && cpu->npc == issued + 8u &&
-            !cpu->delay_slot && !cpu->branch_pc && field_scene_owner(frame, memory, cpu))
-            field_scene_follow(field, cpu, FIELD_BODY);
-        else field->phase = FIELD_IDLE;
+    if (phase != FIELD_BODY) return;
+    if (!field_scene_owner(frame, memory, cpu)) {
+        field->phase = FIELD_IDLE;
+        return;
+    }
+    ++field->counters.issues;
+    if (cpu->pc - FIELD_SCENE_ENTRY < sizeof field->body) {
+        field_scene_follow(field, cpu, FIELD_BODY);
+    } else if (cpu->pc == FIELD_SCENE_SERVICE && field->delay &&
+               field->branch == FIELD_SCENE_SERVICE_CALL && field_scene_service_frame(field, cpu) &&
+               !cpu->delay_slot && !cpu->branch_pc && cpu->npc == cpu->pc + 4u) {
+        ++field->counters.calls;
+        field_scene_follow(field, cpu, FIELD_SERVICE_ENTRY);
+    } else {
+        if (field->delay && field->branch == FIELD_SCENE_RETURN &&
+            cpu->pc == FIELD_SCENE_CALLER + 8u && !cpu->delay_slot && !cpu->branch_pc &&
+            cpu->npc == cpu->pc + 4u && cpu->r[29] == field->stack + 32u)
+            ++field->counters.completed;
+        field->phase = FIELD_IDLE;
     }
 }
 
@@ -304,128 +313,44 @@ static int field_scene_restore_available(const FormatterCpu *cpu) {
     return 1;
 }
 
-static int field_scene_restore(MusashiBootMemory *memory, FormatterCpu *cpu, uint32_t pc) {
-    if (pc == FIELD_SCENE_RETURN - 4u) {
-        cpu->r[29] += 32u;
-        field_scene_writeback(cpu, 0);
-        return 1;
-    }
-    unsigned offset = pc - (FIELD_SCENE_CONTINUE + 4u);
-    unsigned reg = offset == 0u ? 31u : offset == 4u ? 30u : 16u;
-    uint32_t value;
-    /* Admission already authenticated the entire ordinary RAM stack frame.
-     * A declined load goes through the scalar bus using its existing charge. */
-    if (!musashi_boot_read32(memory, cpu->r[29] + 24u - offset, &value)) return -1;
-    if (value != cpu->r[reg] && (!cpu->callback_device->field_restore_quiet ||
-        !cpu->callback_device->field_restore_quiet(cpu->callback_device->userdata, cpu))) return 0;
-    field_scene_writeback(cpu, 0);
-    cpu->field_load = (FieldSceneLoad){
-        .owner = cpu, .device = cpu->callback_device, .irq = cpu->callback_device->field_restore_irq,
-        .quiet = cpu->callback_device->field_restore_quiet,
-        .worker = cpu->callback_device->userdata, .checkpoint = cpu->callback_device->checkpoint,
-        .successor = pc + 4u, .value = value, .old_value = cpu->r[reg], .reg = reg
-    };
-    return 1;
-}
-
 static int field_scene_owned_issue(LaneRunFrame *frame, MusashiBootMemory *memory, FormatterCpu *cpu) {
     return frame->field_scene.phase == FIELD_BODY && field_scene_frame(&frame->field_scene, cpu) &&
         field_scene_owner(frame, memory, cpu) && !field_scene_reserved(cpu->pc);
 }
 
-static int field_scene_issue(LaneRunFrame *frame, MusashiBootMemory *memory, FormatterCpu *cpu,
-                             uint32_t instruction, int *paid) {
-    FieldScene *field = &frame->field_scene;
-    uint32_t pc = cpu->pc;
-    if (!field_scene_owned_issue(frame, memory, cpu)) {
-        field->phase = FIELD_IDLE;
-        return 0;
-    }
-    const int restoring = field_scene_restoring(pc);
-    if (restoring && !field_scene_restore_available(cpu)) {
-        field->phase = FIELD_RESTORING;
-        return 0;
-    }
-    unsigned offset = pc - FIELD_SCENE_ENTRY;
-    int save = offset >= 4u && offset <= 12u;
-    unsigned cost = save || offset == 36u || (restoring && pc < FIELD_SCENE_RETURN - 4u) ? 3u : 2u;
-    enum SceneWitness witness = SCENE_NO_WITNESS;
-    if (frame->scene.phase != SCENE_IDLE)
-        witness = scene_before_issue(frame, memory, cpu, instruction);
-    uint32_t registers[32];
-    memcpy(registers, cpu->r, sizeof registers);
-    if (!cpu->clock->advance(cpu->clock->userdata, cost) ||
-        (cpu->cd_irq_frame && cpu->cd_irq_frame->faulted)) {
-        if (!restoring) field->phase = FIELD_IDLE;
-        return -1;
-    }
-    *paid = 1;
-    witness = scene_after_charge(frame, memory, cpu, witness);
-    if (cpu->pc != pc || !field_scene_owned_issue(frame, memory, cpu) ||
-        memcmp(registers, cpu->r, sizeof registers) || (restoring && !field_scene_restore_available(cpu))) {
-        field->phase = FIELD_IDLE;
-        if (witness) frame->scene.phase = SCENE_IDLE;
-        return 0; /* The ordinary CPU retires its original fetched word once. */
-    }
-    if (restoring) {
-        int restored = field_scene_restore(memory, cpu, pc);
-        if (restored < 0) return -1;
-        if (!restored) {
-            field->phase = FIELD_RESTORING;
-            return 0;
-        }
-        ++field->restores;
-        ++field->counters.restore_issues;
-        field->counters.restore_clocks += cost;
-    } else if (save) {
-        const unsigned reg = offset == 4u ? 31u : offset == 8u ? 30u : 16u;
-        if (!cpu_write32(memory, cpu, field->stack + 28u - offset, cpu->r[reg])) return -1;
-    } else switch (offset) {
-        case 0u: cpu->r[29] -= 32u; break;
-        case 16u: cpu->r[30] = cpu->r[29]; break;
-        case 20u: cpu->r[16] = (FIELD_SCENE_STATE + 0x8000u) & 0xffff0000u; break;
-        case 24u: cpu->r[16] -= 0x9d0u; break;
-        case 28u: cpu->r[1] = 0x10000u; break;
-        case 32u: cpu->r[1] += cpu->r[16]; break;
-        case 36u:
-            if (!cpu_write8(memory, cpu, FIELD_SCENE_FLAG, 0u)) return -1;
-            ++field->counters.flag_clears;
-            break;
-        case 40u:
-            cpu->r[31] = FIELD_SCENE_CONTINUE;
-            if (g_trace_state >= 0) musashi_trace_function_entry(FIELD_SCENE_SERVICE, pc, 'j');
-            if (g_entry_hook) g_entry_pending = FIELD_SCENE_SERVICE;
-            break;
-        case 48u: cpu->r[29] = cpu->r[30]; break;
-    }
-    ++field->counters.issues;
-    field->counters.clocks += cost;
-    cpu->pc = cpu->npc;
-    cpu->npc = pc == FIELD_SCENE_SERVICE_CALL ? FIELD_SCENE_SERVICE :
-               pc == FIELD_SCENE_RETURN ? cpu->r[31] : cpu->pc + 4u;
-    cpu->delay_slot = pc == FIELD_SCENE_SERVICE_CALL || pc == FIELD_SCENE_RETURN;
-    cpu->branch_pc = cpu->delay_slot ? pc : 0;
-    if (pc == FIELD_SCENE_SERVICE_CALL + 4u) {
-        ++field->counters.calls;
-        field_scene_follow(field, cpu, FIELD_SERVICE_ENTRY);
-    } else if (pc == FIELD_SCENE_RETURN + 4u) {
-        ++field->counters.completed;
-        if (field->restores == 4u) ++field->counters.complete_19;
-        field->phase = FIELD_IDLE;
-    } else field_scene_follow(field, cpu, FIELD_BODY);
-    if (witness) scene_retired(frame, memory, cpu, witness, pc);
-    return 1;
+typedef struct FieldIssue {
+    uint32_t regs[32], hi, lo;
+    const MusashiCallbackDevice *device;
+    MusashiFieldRestoreIrq irq;
+    MusashiFieldRestoreQuiet quiet;
+} FieldIssue;
+
+static void field_scene_remember_issue(FieldIssue *issue, const FormatterCpu *cpu) {
+    memcpy(issue->regs, cpu->r, sizeof issue->regs);
+    issue->hi = cpu->hi;
+    issue->lo = cpu->lo;
+    issue->device = cpu->callback_device;
+    issue->irq = issue->device->field_restore_irq;
+    issue->quiet = issue->device->field_restore_quiet;
+}
+
+static int field_scene_same_issue(LaneRunFrame *frame, MusashiBootMemory *memory,
+                                  FormatterCpu *cpu, uint32_t word, const FieldIssue *issue) {
+    uint32_t live;
+    return frame == g_lane_run_frames && frame->cpu == cpu && cpu->callback_device == issue->device &&
+        issue->device->field_restore_irq == issue->irq && issue->device->field_restore_quiet == issue->quiet &&
+        field_scene_owned_issue(frame, memory, cpu) && !memcmp(issue->regs, cpu->r, sizeof cpu->r) &&
+        issue->hi == cpu->hi && issue->lo == cpu->lo && formatter_fetch(memory, cpu, &live) && live == word;
 }
 
 static void field_scene_report(const FieldScene *field) {
-    const FieldSceneCounters *count = &field->counters;
-    if (count->issues)
-        fprintf(stderr, "native_boot: SCENE_FIELD_CALLBACK issues=%llu clocks=%llu delegated_issues=%llu delegated_clocks=%llu flag_clears=%llu calls=%llu guest_returns=%llu native_returns=%llu completed=%llu restore_issues=%llu restore_clocks=%llu complete_19=%llu irq_writebacks=%llu provider_handoffs=%llu\n",
-                (unsigned long long)count->issues, (unsigned long long)count->clocks,
-                (unsigned long long)count->delegated_issues, (unsigned long long)count->delegated_clocks,
-                (unsigned long long)count->flag_clears, (unsigned long long)count->calls,
-                (unsigned long long)count->guest_returns, (unsigned long long)count->native_returns,
-                (unsigned long long)count->completed, (unsigned long long)count->restore_issues,
-                (unsigned long long)count->restore_clocks, (unsigned long long)count->complete_19,
-                (unsigned long long)count->irq_writebacks, (unsigned long long)count->provider_handoffs);
+    const FieldSceneCounters *c = &field->counters;
+    if (c->issues)
+        fprintf(stderr, "native_boot: SCENE_FIELD_CALLBACK guest_issues=%llu calls=%llu "
+                "guest_returns=%llu native_returns=%llu completed=%llu delayed_loads=%llu "
+                "irq_writebacks=%llu provider_handoffs=%llu\n",
+                (unsigned long long)c->issues, (unsigned long long)c->calls,
+                (unsigned long long)c->guest_returns, (unsigned long long)c->native_returns,
+                (unsigned long long)c->completed, (unsigned long long)c->delayed_loads,
+                (unsigned long long)c->irq_writebacks, (unsigned long long)c->provider_handoffs);
 }

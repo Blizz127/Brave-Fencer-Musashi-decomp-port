@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "note": "Room-entry C recovered for the USA scene overlays.",
+  "note": "File 1 room-entry and music functions recovered for the USA scene and MAIN overlays.",
   "targets": {
     "sc01_0005": {
       "kind": "blob",
@@ -13,6 +13,12 @@
       "file": "extracted/overlays/sc01/0006.pac0.bin",
       "base": 2148696408,
       "sha256": "9682107587bbf42655db9b8c8f53bc0fd388234ad5678632341c3874cf79f772"
+    },
+    "main_0010": {
+      "kind": "blob",
+      "file": "extracted/overlays/main/0010.bin",
+      "base": 2148199928,
+      "sha256": "97933aae35fd27e3917866e4f9c7ef5716850c7efda3f96719496c9ba5b86246"
     }
   },
   "matches": [
@@ -41,6 +47,71 @@
       "origin": "Independently reconstructed from the owned USA scene overlay. Selects a room point, restores or initializes scene state, and submits room lighting.",
       "source_sha256": "2086b75026503fecfa94c9f5559977de63012bb39b4cc5bc7754be56ee3ced71",
       "span_sha256": "2c5643a101f044996bd8abddf7146b7d85dff8944c0cb1bd423c3daae1f9e186"
+    },
+    {
+      "name": "func_801284B8",
+      "region": "sc01_0005",
+      "vram": 2148697272,
+      "size": 56,
+      "source": "src/overlays/sc02_0035/801284b8.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Owner clean-room scene command. SC01 members 5 and 6 share this complete function with SC02 member 35. Calls two handlers in order when the predicate succeeds.",
+      "source_sha256": "54c29653515530541ff9c06f4655ea460cd41846ee0ff6beb086d7d585d200fc",
+      "span_sha256": "72df937302ffb4d520a067b7c6e3c044105e646158dd63af6559af34a146e90f"
+    },
+    {
+      "name": "func_801284B8",
+      "region": "sc01_0006",
+      "vram": 2148697272,
+      "size": 56,
+      "source": "src/overlays/sc02_0035/801284b8.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Owner clean-room scene command. SC01 members 5 and 6 share this complete function with SC02 member 35. Calls two handlers in order when the predicate succeeds.",
+      "source_sha256": "54c29653515530541ff9c06f4655ea460cd41846ee0ff6beb086d7d585d200fc",
+      "span_sha256": "72df937302ffb4d520a067b7c6e3c044105e646158dd63af6559af34a146e90f"
+    },
+    {
+      "name": "func_8017DA84",
+      "region": "sc01_0005",
+      "vram": 2149046916,
+      "size": 24,
+      "source": "src/overlays/sc01_0005/8017da84.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently recovered from the owned USA scene overlay. Selects one of two music IDs according to the signed story argument.",
+      "source_sha256": "a770bbe82a9f8c2da1b5c7896e3763594af96b59b885f315aa0d54b2110b3edf",
+      "span_sha256": "94fa6e7ea8255bc2d75f1cc4ca84317f6b6c37e1e8a01b0779ce6f9b475ae0fb"
+    },
+    {
+      "name": "func_8017DA84",
+      "region": "sc01_0006",
+      "vram": 2149046916,
+      "size": 24,
+      "source": "src/overlays/sc01_0005/8017da84.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently recovered from the owned USA scene overlay. Selects one of two music IDs according to the signed story argument.",
+      "source_sha256": "a770bbe82a9f8c2da1b5c7896e3763594af96b59b885f315aa0d54b2110b3edf",
+      "span_sha256": "94fa6e7ea8255bc2d75f1cc4ca84317f6b6c37e1e8a01b0779ce6f9b475ae0fb"
+    },
+    {
+      "name": "func_800D05E8",
+      "region": "main_0010",
+      "vram": 2148337128,
+      "size": 72,
+      "source": "src/overlays/main_0010/800d05e8.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently recovered from owned USA MAIN overlay member 10. Passes the current story value to the registered music picker, or returns zero if no picker is installed.",
+      "source_sha256": "78adc0c27c0bff70f270905a87c1d73d4b9caa3254e521c8121ab447ce54576f",
+      "span_sha256": "64d2fdb466d8342b3a9987e7e1fdf39fc69e203025c2e4b18bd511d32a958bca"
     }
   ]
 }

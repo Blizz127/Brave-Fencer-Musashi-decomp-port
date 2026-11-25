@@ -53,12 +53,6 @@ int musashi_boot_call_80029044(MusashiBootMemory *memory) {
 int musashi_boot_call_8002906c(MusashiBootMemory *memory) {
     (void)memory; return 0;
 }
-int musashi_boot_call_800425b0(MusashiBootMemory *memory, const MusashiCallbackRegistrationDevice *device,
-                               int32_t index, uint32_t callback,
-                               uint32_t *previous) {
-    (void)memory; (void)device; (void)index; (void)callback; (void)previous;
-    return 0;
-}
 void func_8005C388_native(int32_t value, uint8_t *classification,
                           int32_t *column, void *userdata) {
     (void)value; (void)classification; (void)column; (void)userdata; abort();
@@ -71,6 +65,8 @@ int musashi_boot_call_80043060(MusashiBootMemory *m,int32_t a,int32_t *v) {(void
 int musashi_boot_call_8005bd7c(MusashiBootMemory *m,const MusashiGpuDevice *d,int32_t a,int32_t *v) {(void)m;(void)d;(void)a;(void)v;abort();}
 int musashi_boot_call_8005b684(MusashiBootMemory *m,const MusashiGpuDevice *d,uint32_t a) {(void)m;(void)d;(void)a;abort();}
 int musashi_boot_console_string(MusashiBootMemory *m,uint32_t a,MusashiConsoleSink s,void *u) {(void)m;(void)a;(void)s;(void)u;abort();}
+int musashi_boot_console_char(MusashiBootMemory *m,int32_t c,MusashiConsoleSink s,void *u) {(void)m;(void)c;(void)s;(void)u;abort();}
+int musashi_gpu_dma2_get_state(const MusashiGpuDma2 *d,MusashiGpuDma2State *s) {(void)d;(void)s;abort();}
 
 enum { STACK=0x801ff000u };
 typedef struct Fixture {
@@ -170,7 +166,7 @@ static void init(const uint8_t *exe,size_t size) {
 }
 static MusashiResetGraphPrefixStatus run(void) {
     MusashiResetGraphPrefixStop stop={0};MusashiEntryRunStop entry={0};int32_t result=0;
-    return run_startup_cpu(&f.memory,&f.cpu,NULL,NULL,&result,&stop,&entry,NULL,NULL);
+    return run_startup_cpu(&f.memory,&f.cpu,NULL,NULL,&result,&stop,&entry,NULL,NULL,0);
 }
 static void close_fixture(void) {
     assert(musashi_gte_owner_close(&f.gte));

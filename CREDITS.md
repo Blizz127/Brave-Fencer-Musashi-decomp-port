@@ -25,9 +25,9 @@ example `vendor/bfm-decomp/src/ov_SC01_000`, are attributions and not copies.
 are Druthulu's research. They are used here with thanks and credit.
 The upstream work remains its author's. This project is re-deriving the game
 code independently, from the game's own instructions checked against the
-retail bytes. The release binary's native lane is built with
-`MUSASHI_LANE_OWN_CODE_ONLY`, so it compiles only code written for this
-project.
+retail bytes. The public build uses `MUSASHI_LANE_OWN_CODE_ONLY` to
+restrict the generator's matched-source selection to project-authored entries.
+The packaged player also uses the separately licensed libraries below.
 
 ## Port, tools and documentation
 
@@ -41,9 +41,9 @@ decompilations is included here.
 ## Libraries used by the port
 
 None of these is included in this repository. Each one is fetched or
-installed by the user. The release bundle ships SDL2, OpenAL Soft (dynamically
+installed by the user. The historical Linux binary bundle shipped SDL2, OpenAL Soft (dynamically
 linked), libcrypto and zlib in `lib/`, with their license texts in
-`licenses/`, and links PsyCross statically.
+`licenses/`, and linked PsyCross statically. Each release lists its own downloadable files.
 
 | Component | Use | License |
 |---|---|---|
