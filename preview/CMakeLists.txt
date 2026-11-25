@@ -6,6 +6,9 @@ add_executable(musashi_native_boot
     player.c
     desktop_voice.c
     palace_voice.c
+    save_menu.c
+    save_view.c
+    "${bfm_root}/pc_port/card/card_image.c"
     title_flow.c
     title_view.c
     opening_view.c
@@ -20,6 +23,7 @@ add_executable(musashi_native_boot
     "${bfm_root}/pc_port/platform/bfm_plat_font.c")
 target_compile_features(musashi_native_boot PRIVATE c_std_99)
 target_include_directories(musashi_native_boot PRIVATE
+    "${bfm_root}/pc_port/card"
     "${bfm_root}/pc_port/include"
     "${bfm_root}/pc_port/platform"
     "${bfm_root}/include")

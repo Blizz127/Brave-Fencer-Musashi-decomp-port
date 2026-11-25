@@ -5,6 +5,7 @@
 #include "desktop_voice.h"
 #include "bfm_plat_font.h"
 #include "title_flow.h"
+#include "save_menu.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,7 +14,8 @@
 enum { TITLE_W = 640, TITLE_H = 480, OPENING_W = 320, OPENING_H = 240 };
 /* On the US disc, the first visible loading sprite spans at least 115 fields. */
 enum { LOADING_VISIBLE_FIELDS = 115 };
-enum { PAD_START = 1u << 3, PAD_UP = 1u << 4, PAD_DOWN = 1u << 6,
+enum { PAD_START = 1u << 3, PAD_UP = 1u << 4, PAD_RIGHT = 1u << 5, PAD_DOWN = 1u << 6,
+       PAD_LEFT = 1u << 7, PAD_TRIANGLE = 1u << 12,
        PAD_CIRCLE = 1u << 13, PAD_CROSS = 1u << 14 };
 
 typedef struct Player {
@@ -27,7 +29,10 @@ typedef struct Player {
     SDL_JoystickID controller_id;
     unsigned char keys[SDL_NUM_SCANCODES];
     uint16_t digital, held, pressed;
-    int axis_y;
+    int axis_x, axis_y;
+    const char *card_path;
+    BfmSaveMenu saves;
+    BfmSaveArt *save_art;
     uint64_t phase_start;
     BfmTitleFlow flow;
     int width, height;
@@ -39,10 +44,12 @@ typedef struct Player {
 
 static const char usage[] =
     "Brave Fencer Musashi - native preview\n"
-    "Usage: musashi_native_boot --disc path/to/game.cue [--windowed]\n"
+    "Usage: musashi_native_boot --disc path/to/game.cue [--card path/to/card.mcd] [--windowed]\n"
     "Use your own US PlayStation disc image (SLUS-00726). A complete raw BIN or "
     "a CUE with all its BIN tracks alongside is supported.\n"
-    "Enter/Start: start. Space/Cross: confirm or skip the opening. Up/Down: select. Escape: quit.\n";
+    "Continue displays files on a supplied raw 128 KiB card. Saved gameplay cannot yet resume.\n"
+    "Enter/Start: start. Space/Cross: confirm or skip the opening. Arrows: select. "
+    "T/Triangle: back from files. Escape: quit.\n";
 
 static uint16_t button_mask(unsigned int button) {
     switch (button) {
@@ -51,6 +58,9 @@ static uint16_t button_mask(unsigned int button) {
     case SDL_CONTROLLER_BUTTON_B: return PAD_CIRCLE;
     case SDL_CONTROLLER_BUTTON_DPAD_UP: return PAD_UP;
     case SDL_CONTROLLER_BUTTON_DPAD_DOWN: return PAD_DOWN;
+    case SDL_CONTROLLER_BUTTON_DPAD_LEFT: return PAD_LEFT;
+    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: return PAD_RIGHT;
+    case SDL_CONTROLLER_BUTTON_Y: return PAD_TRIANGLE;
     default: return 0;
     }
 }
@@ -62,6 +72,9 @@ static void update_input(Player *p) {
     if (p->keys[SDL_SCANCODE_Z] || p->keys[SDL_SCANCODE_BACKSPACE]) current |= PAD_CIRCLE;
     if (p->keys[SDL_SCANCODE_UP] || p->axis_y < -16384) current |= PAD_UP;
     if (p->keys[SDL_SCANCODE_DOWN] || p->axis_y > 16384) current |= PAD_DOWN;
+    if (p->keys[SDL_SCANCODE_LEFT] || p->axis_x < -16384) current |= PAD_LEFT;
+    if (p->keys[SDL_SCANCODE_RIGHT] || p->axis_x > 16384) current |= PAD_RIGHT;
+    if (p->keys[SDL_SCANCODE_T]) current |= PAD_TRIANGLE;
     p->pressed |= current & (uint16_t)~p->held;
     p->held = current;
 }
@@ -77,6 +90,7 @@ static void find_controller(Player *p) {
             if (SDL_GameControllerGetButton(p->controller, (SDL_GameControllerButton)i))
                 p->digital |= button_mask((unsigned int)i);
         }
+        p->axis_x = SDL_GameControllerGetAxis(p->controller, SDL_CONTROLLER_AXIS_LEFTX);
         p->axis_y = SDL_GameControllerGetAxis(p->controller, SDL_CONTROLLER_AXIS_LEFTY);
         update_input(p);
     }
@@ -89,8 +103,9 @@ static void phase_changed(Player *p) {
     case BFM_TITLE_MENU: caption = "Brave Fencer Musashi - Start / Continue"; break;
     case BFM_TITLE_LOADING: caption = "Brave Fencer Musashi - Loading New Game"; break;
     case BFM_TITLE_OPENING: caption = "Brave Fencer Musashi - Opening"; break;
-    case BFM_TITLE_CONTINUE_UNAVAILABLE:
-        caption = "Brave Fencer Musashi - Continue unavailable in this preview"; break;
+    case BFM_TITLE_FILES:
+        bfm_save_menu_open(&p->saves, p->card_path);
+        caption = "Brave Fencer Musashi - Saved files"; break;
     default: return;
     }
     p->phase_start = SDL_GetTicks64();
@@ -136,14 +151,16 @@ static int events(Player *p) {
                 p->controller = NULL;
                 p->controller_id = -1;
                 p->digital = 0;
-                p->axis_y = 0;
+                p->axis_x = p->axis_y = 0;
                 p->pressed = 0;
                 find_controller(p);
             }
             break;
         case SDL_CONTROLLERAXISMOTION:
-            if (p->controller && e.caxis.which == p->controller_id &&
-                e.caxis.axis == SDL_CONTROLLER_AXIS_LEFTY) p->axis_y = e.caxis.value;
+            if (p->controller && e.caxis.which == p->controller_id) {
+                if (e.caxis.axis == SDL_CONTROLLER_AXIS_LEFTY) p->axis_y = e.caxis.value;
+                if (e.caxis.axis == SDL_CONTROLLER_AXIS_LEFTX) p->axis_x = e.caxis.value;
+            }
             break;
         case SDL_CONTROLLERBUTTONDOWN:
         case SDL_CONTROLLERBUTTONUP:
@@ -171,8 +188,7 @@ static int surface(Player *p, int width, int height) {
     return 1;
 }
 
-/* Status belongs to the preview. Add it only after the game scene stops or
- * when the player explicitly selects the unavailable Continue operation. */
+/* Draw the desktop status when mounting a scene or reaching the opening endpoint. */
 static void status_line(Player *p, const char *text) {
     int scale = p->width / OPENING_W;
     int left = (p->width - (int)strlen(text) * BFM_FONT_CELL_W * scale) / 2;
@@ -202,7 +218,7 @@ static int present(Player *p) {
 
 static int play(Player *p, char *error, size_t size) {
     uint64_t last_logic = SDL_GetTicks64() * 30u / 1001u;
-    int last_phase = -1, last_choice = -1, last_prompt = -1;
+    int last_phase = -1, last_choice = -1, last_prompt = -1, last_save_view = -1;
     unsigned last_field = 0;
     bfm_title_begin(&p->flow, p->held);
     p->pressed = 0;
@@ -234,6 +250,16 @@ static int play(Player *p, char *error, size_t size) {
                 p->opening_skip = 0;
                 p->voice_stop_field = 0;
                 bfm_title_begin(&p->flow, p->held | p->pressed);
+            } else if (p->flow.phase == BFM_TITLE_FILES) {
+                if (bfm_save_menu_input(&p->saves, p->pressed)) {
+                    if (p->saves.issue) {
+                        p->flow.phase = BFM_TITLE_MENU;
+                        p->flow.idle_ticks = 0;
+                    } else {
+                        bfm_title_begin(&p->flow, p->held | p->pressed);
+                    }
+                }
+                p->flow.held = p->held | p->pressed;
             } else {
                 bfm_title_input(&p->flow, p->held | p->pressed);
             }
@@ -248,12 +274,22 @@ static int play(Player *p, char *error, size_t size) {
             fields = 0;
         }
         int opening = p->flow.phase == BFM_TITLE_OPENING;
-        if (!surface(p, opening ? OPENING_W : TITLE_W, opening ? OPENING_H : TITLE_H)) {
+        int files = p->flow.phase == BFM_TITLE_FILES;
+        if (files && !p->save_art) {
+            p->save_art = bfm_save_art_load(p->disc);
+            if (!p->save_art) {
+                snprintf(error, size, "Could not read file-selection artwork from your disc.");
+                return 2;
+            }
+        }
+        int save_view = files ? (int)p->saves.selected + 4 * (int)p->saves.page : -1;
+        if (!surface(p, opening || files ? OPENING_W : TITLE_W, opening || files ? OPENING_H : TITLE_H)) {
             snprintf(error, size, "Could not create the scene display: %s", SDL_GetError());
             return 2;
         }
         int unchanged = last_phase == (int)p->flow.phase && last_choice == (int)p->flow.choice &&
-                        last_prompt == p->flow.prompt_visible && (!opening || fields == last_field);
+                        last_prompt == p->flow.prompt_visible && last_save_view == save_view &&
+                        (!files || fields / 2 == last_field / 2) && (!opening || fields == last_field);
         if (unchanged || p->opening_finished) {
             if (p->redraw && !present(p)) {
                 snprintf(error, size, "Could not refresh the display: %s", SDL_GetError());
@@ -263,6 +299,7 @@ static int play(Player *p, char *error, size_t size) {
             SDL_Delay(8);
             continue;
         }
+        last_save_view = save_view;
         last_phase = p->flow.phase;
         last_choice = p->flow.choice;
         last_prompt = p->flow.prompt_visible;
@@ -307,6 +344,9 @@ static int play(Player *p, char *error, size_t size) {
                 }
                 continue;
             }
+        } else if (files) {
+            bfm_save_menu_draw(p->save_art, &p->saves, fields, (uint32_t (*)[320])p->pixels);
+            frame = 1;
         } else {
             frame = bfm_title_frame(p->title, fields, p->flow.phase, p->flow.choice,
                                     p->flow.prompt_visible, p->pixels, p->width, p->height);
@@ -314,10 +354,6 @@ static int play(Player *p, char *error, size_t size) {
         if (p->flow.phase == BFM_TITLE_LOADING && frame == 0) {
             memset(p->pixels, 0, (size_t)p->width * p->height * sizeof *p->pixels);
             status_line(p, "Loading New Game...");
-            frame = 1;
-        }
-        if (p->flow.phase == BFM_TITLE_CONTINUE_UNAVAILABLE && frame >= 0) {
-            status_line(p, "Continue unavailable. Press Start to return.");
             frame = 1;
         }
         if (frame <= 0) {
@@ -338,12 +374,13 @@ static int play(Player *p, char *error, size_t size) {
     return 0;
 }
 
-static int run(const char *disc_path, int windowed) {
+static int run(const char *disc_path, const char *card_path, int windowed) {
     char error[512] = {0};
     int status = 2;
     Player *p = calloc(1, sizeof *p);
     int sdl_ready = 0;
     if (!p) { fputs("Not enough memory to start.\n", stderr); return 2; }
+    p->card_path = card_path;
     p->disc = musashi_disc_media_open_image(disc_path, error, sizeof error);
     if (!p->disc) {
         fprintf(stderr, "could not start from your disc image: %s\n", error);
@@ -381,6 +418,7 @@ done:
     bfm_desktop_voice_free(p->voice);
     if (sdl_ready) SDL_Quit();
     if (p->opening) bfm_opening_free(p->opening);
+    free(p->save_art);
     if (p->title) bfm_title_free(p->title);
     musashi_disc_media_close(p->disc);
     free(p);
@@ -388,7 +426,7 @@ done:
 }
 
 int main(int argc, char **argv) {
-    const char *disc = NULL;
+    const char *disc = NULL, *card = NULL;
     int i, windowed = 0;
     for (i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
@@ -396,11 +434,12 @@ int main(int argc, char **argv) {
             return 0;
         }
         if (!strcmp(argv[i], "--windowed")) windowed = 1;
+        else if (!strcmp(argv[i], "--card") && i + 1 < argc && !card) card = argv[++i];
         else if (!strcmp(argv[i], "--disc") && i + 1 < argc && !disc) disc = argv[++i];
         else if (argv[i][0] != '-' && !disc) disc = argv[i];
         else { fputs(usage, stderr); return 2; }
     }
     if (!disc) disc = getenv("BFM_DISC");
     if (!disc || !*disc) { fputs(usage, stderr); return 2; }
-    return run(disc, windowed);
+    return run(disc, card, windowed);
 }

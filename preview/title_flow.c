@@ -53,13 +53,6 @@ void bfm_title_input(BfmTitleFlow *flow, uint16_t held)
 {
     uint16_t edges = (uint16_t)(held & ~flow->held);
     flow->held = held;
-    if (flow->phase == BFM_TITLE_CONTINUE_UNAVAILABLE) {
-        if (edges & ((1u << 3) | (1u << 13) | (1u << 14))) {
-            flow->phase = BFM_TITLE_MENU;
-            flow->idle_ticks = 0;
-        }
-        return;
-    }
     if (flow->phase != BFM_TITLE_MENU && flow->phase != BFM_TITLE_PROMPT)
         return;
 
@@ -84,7 +77,7 @@ void bfm_title_input(BfmTitleFlow *flow, uint16_t held)
             flow->room = 0x3005;
             flow->phase = BFM_TITLE_LOADING;
         } else if (D_800EC680 == BFM_CHOICE_CONTINUE) {
-            flow->phase = BFM_TITLE_CONTINUE_UNAVAILABLE;
+            flow->phase = BFM_TITLE_FILES;
         } else {
             /* Retail returns to an attract sequence. This preview reopens
              * the title without starting a new game or accepting held input. */
