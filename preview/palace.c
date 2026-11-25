@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "palace.h"
+#include "stair_actors.h"
+#include "palace_dialogue.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,7 +13,7 @@ typedef struct { int x, y, z; } Point;
 typedef struct { uint16_t u, v; } Texel;
 typedef struct { Point eye, aim; } Pose;
 typedef struct { Point right, down, forward; } Basis;
-enum { INWARD_POSES = 100 };
+enum { INWARD_POSES = 100, INTERIOR_POSES = 224 };
 typedef struct {
     Texel uv[4];
     uint16_t vertices[4], page_x, page_y, palette_x, palette_y;
@@ -21,7 +23,10 @@ typedef struct { int depth; size_t index; } Draw;
 
 struct Palace {
     size_t vertex_count, face_count;
-    Pose track[INWARD_POSES];
+    Pose track[INTERIOR_POSES];
+    BfmStairActors *actors;
+    PalaceDialogue *dialogue;
+    uint8_t *scene;
     unsigned member;
     Point vertices[MAX_VERTICES], projected[MAX_VERTICES];
     Face faces[MAX_FACES];
@@ -182,7 +187,7 @@ static int load_mesh(Palace *palace, const uint8_t *scene, size_t size)
 static int read_track(Palace *palace, const uint8_t *scene, size_t bytes)
 {
     size_t begin = palace->member ? 0x9b424 : 0x7a618;
-    unsigned count = palace->member ? 1 : INWARD_POSES;
+    unsigned count = palace->member ? INTERIOR_POSES : INWARD_POSES;
     if (begin > bytes || count > (bytes - begin) / 14) return 0;
     for (unsigned i = 0; i < count; ++i) {
         const uint8_t *p = scene + begin + 14 * i;
@@ -195,7 +200,8 @@ static int read_track(Palace *palace, const uint8_t *scene, size_t bytes)
     return 1;
 }
 
-Palace *bfm_palace_load(const MusashiDiscMedia *disc, unsigned member)
+Palace *bfm_palace_load(const MusashiDiscMedia *disc, unsigned member,
+                        const uint16_t tiles[512][1024])
 {
     uint8_t *scene = malloc(MAX_SCENE);
     Palace *palace = calloc(1, sizeof(*palace));
@@ -205,12 +211,30 @@ Palace *bfm_palace_load(const MusashiDiscMedia *disc, unsigned member)
         free(palace);
         palace = NULL;
     }
+    if (palace && member) {
+        palace->actors = bfm_stair_actors_load(scene, bytes);
+        palace->dialogue = bfm_palace_dialogue_load(disc, scene, bytes, tiles);
+        if (!palace->actors || !palace->dialogue) {
+            bfm_stair_actors_free(palace->actors);
+            bfm_palace_dialogue_free(palace->dialogue);
+            free(palace);
+            palace = NULL;
+        } else {
+            palace->scene = scene;
+            scene = NULL;
+        }
+    }
     free(scene);
     return palace;
 }
 
 void bfm_palace_free(Palace *palace)
 {
+    if (palace) {
+        bfm_palace_dialogue_free(palace->dialogue);
+        bfm_stair_actors_free(palace->actors);
+        free(palace->scene);
+    }
     free(palace);
 }
 
@@ -293,9 +317,19 @@ static void project_mesh(Palace *palace, unsigned field)
     Point eye;
     int focal = palace->member ? 256 : 400;
     if (palace->member) {
-        eye = palace->track[0].eye;
-        /* Fixed opening staircase view. */
-        axes = (Basis){{-1130, 0, 3946}, {388, 4074, 111}, {-3925, 403, -1124}};
+        unsigned tick = field >= 1512 ? (field - 1512) / 2 : 0;
+        Pose pose = palace->track[tick < INTERIOR_POSES ? tick : INTERIOR_POSES - 1];
+        eye = pose.eye;
+        /* The wide stairwell view changes yaw by one scene unit as the
+         * group descends. An impact shakes the camera, then decays. */
+        axes = pose.aim.x == palace->track[0].aim.x
+                   ? (Basis){{-1130,0,3946},{388,4074,111},{-3925,403,-1124}}
+                   : (Basis){{-1124,0,3947},{388,4096,110},{-3947,403,-1124}};
+        if (field >= 1480 && field < 1544) {
+            unsigned wave = (field - 1480) / 4;
+            int amplitude = 8 - (int)(wave / 2);
+            eye.y += wave % 2 ? amplitude : -amplitude;
+        }
     } else if (field >= 958) {
         unsigned tick = (field - 952) / 2;
         Pose pose = palace->track[tick < INWARD_POSES ? tick : INWARD_POSES - 1];
@@ -314,6 +348,13 @@ static void project_mesh(Palace *palace, unsigned field)
     int tx = camera_axis(reverse, axes.right.x, axes.right.y, axes.right.z);
     int ty = camera_axis(reverse, axes.down.x, axes.down.y, axes.down.z);
     int tz = camera_axis(reverse, axes.forward.x, axes.forward.y, axes.forward.z);
+    if (palace->actors) {
+        const int matrix[3][3] = {{axes.right.x, axes.right.y, axes.right.z},
+                                  {axes.down.x, axes.down.y, axes.down.z},
+                                  {axes.forward.x, axes.forward.y, axes.forward.z}};
+        const int position[3] = {tx, ty, tz};
+        bfm_stair_actors_prepare(palace->actors, field, matrix, position);
+    }
     for (size_t i = 0; i < palace->vertex_count; ++i) {
         Point v = palace->vertices[i];
         int x = camera_axis(v, axes.right.x, axes.right.y, axes.right.z) + tx;
@@ -415,6 +456,7 @@ void bfm_palace_draw(Palace *palace, const uint16_t tiles[512][1024],
     }
     qsort(palace->visible, drawn, sizeof(*palace->visible), far_first);
     for (size_t i = 0; i < drawn; ++i) {
+        bfm_stair_actors_draw_to(palace->actors, palace->visible[i].depth, tiles, pixels);
         const Face *face = &palace->faces[palace->visible[i].index];
         Point p[4];
         for (unsigned j = 0; j < face->count; ++j)
@@ -426,6 +468,8 @@ void bfm_palace_draw(Palace *palace, const uint16_t tiles[512][1024],
             triangle(tiles, face, back, uv, pixels);
         }
     }
+    bfm_stair_actors_draw_to(palace->actors, INT_MIN, tiles, pixels);
+    if (palace->dialogue) bfm_palace_dialogue_draw(palace->dialogue, field, (uint32_t (*)[320])pixels);
     if (field >= 832 && field < 952)
         place_name(tiles, pixels);
 }

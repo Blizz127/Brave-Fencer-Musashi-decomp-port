@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-enum { WIDTH = 320, HEIGHT = 240, LAST_FIELD = 1477 };
+enum { WIDTH = 320, HEIGHT = 240, LAST_FIELD = 1908 };
 enum { TITLE_WIDTH = 256, TITLE_HEIGHT = 64 };
 enum { CREDIT_X = 80, CREDIT_Y = 104, CREDIT_WIDTH = 160, CREDIT_HEIGHT = 32 };
 
@@ -113,11 +113,12 @@ int bfm_opening_load(const MusashiDiscMedia *disc, void **scene,
             view->title_mask[y][x] = words[260][368 + mask];
         }
     }
-    view->palace = bfm_palace_load(disc, 0);
-    view->stairs = bfm_palace_load(disc, 1);
+    view->palace = bfm_palace_load(disc, 0, words);
     view->stair_tiles = calloc(512, sizeof(*view->stair_tiles));
-    if (!view->palace || !view->stairs || !view->stair_tiles ||
-        !bfm_scene_read_tiles(disc, "SC01.CD", 1, view->stair_tiles)) {
+    if (view->stair_tiles && bfm_scene_read_tiles(disc, "MAIN.CD", 10, view->stair_tiles) &&
+        bfm_scene_read_tiles(disc, "SC01.CD", 1, view->stair_tiles))
+        view->stairs = bfm_palace_load(disc, 1, view->stair_tiles);
+    if (!view->palace || !view->stairs) {
         if (error && error_size)
             snprintf(error, error_size, "Could not read the opening palace from SC01.CD.");
         bfm_palace_free(view->stairs);

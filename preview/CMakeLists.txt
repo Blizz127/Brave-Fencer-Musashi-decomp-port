@@ -8,6 +8,8 @@ add_executable(musashi_native_boot
     title_view.c
     opening_view.c
     palace.c
+    stair_actors.c
+    palace_dialogue.c
     scene_tiles.c
     "${bfm_root}/src/overlays/main_0003/800cf104.c"
     "${bfm_root}/pc_port/disc_media.c"
@@ -20,3 +22,7 @@ target_include_directories(musashi_native_boot PRIVATE
     "${bfm_root}/include")
 target_link_libraries(musashi_native_boot PRIVATE SDL2::SDL2)
 target_compile_definitions(musashi_native_boot PRIVATE MUSASHI_STANDALONE_SHA256=1)
+
+if(NOT MSVC)
+    target_link_libraries(musashi_native_boot PRIVATE m)
+endif()
