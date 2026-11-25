@@ -18,8 +18,14 @@ void bfm_title_free(void *scene);
 
 int bfm_opening_load(const MusashiDiscMedia *disc, void **scene, char *error,
                      size_t error_size);
-/* Positive produces a frame, zero ends the opening segment, and negative
- * reports a render failure. A clock step can skip the last display field. */
+enum { BFM_OPENING_END, BFM_OPENING_FRAME, BFM_OPENING_FOREST_PENDING };
+/* A fresh Cross edge selects the authored chapter transition. Returns one
+ * when accepted, zero for an already selected route and negative on failure. */
+int bfm_opening_request_skip(void *scene, const MusashiDiscMedia *disc, unsigned fields,
+                             char *error, size_t error_size);
+int bfm_opening_skip_member(const void *scene, unsigned *member);
+/* FRAME produces an image. On END, render the final opening field.
+ * FOREST_PENDING has already painted the black end of the chapter card. */
 int bfm_opening_frame(void *scene, unsigned int fields, uint32_t *pixels,
                       int width, int height);
 /* Render the final supported field, even when the display clock skipped it. */

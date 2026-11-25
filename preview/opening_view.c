@@ -1,17 +1,21 @@
 /* SPDX-License-Identifier: MIT */
 #include "scene_views.h"
+#include "chapter_card.h"
 #include "scene_tiles.h"
 #include "palace.h"
 #include "palace_dialogue.h"
 #include <stdio.h>
 #include <stdlib.h>
 
-enum { WIDTH = 320, HEIGHT = 240, LAST_FIELD = 2755 };
+enum { WIDTH = 320, HEIGHT = 240, INTERIOR_START_FIELD = 1188, LAST_FIELD = 2755 };
 enum { TITLE_WIDTH = 256, TITLE_HEIGHT = 64 };
 enum { CREDIT_X = 80, CREDIT_Y = 104, CREDIT_WIDTH = 160, CREDIT_HEIGHT = 32 };
 
 typedef struct {
     Palace *palace, *stairs;
+    BfmChapterCard *chapter;
+    unsigned skip_field, skip_pose;
+    unsigned skip_member;
     uint16_t (*tiles)[1024], (*stair_tiles)[1024];
     uint16_t sky[480][320];
     uint16_t title_ink[TITLE_HEIGHT][TITLE_WIDTH];
@@ -218,16 +222,9 @@ static void shade_scene(uint32_t *pixels, unsigned shade)
     }
 }
 
-int bfm_opening_frame(void *scene, unsigned fields, uint32_t *pixels,
-                      int width, int height)
+static int draw_opening(const OpeningView *view, unsigned fields, uint32_t *pixels)
 {
-    const OpeningView *view = scene;
-    if (!view || !pixels || width != WIDTH || height != HEIGHT)
-        return -1;
-    if (fields > LAST_FIELD)
-        return 0;
-
-    if (fields >= 1188) {
+    if (fields >= INTERIOR_START_FIELD) {
         for (unsigned i = 0; i < WIDTH * HEIGHT; ++i)
             pixels[i] = UINT32_C(0xff000000);
         if (fields >= 1418) {
@@ -265,17 +262,62 @@ int bfm_opening_frame(void *scene, unsigned fields, uint32_t *pixels,
     return 1;
 }
 
+int bfm_opening_request_skip(void *scene, const MusashiDiscMedia *disc, unsigned fields,
+                             char *error, size_t error_size)
+{
+    OpeningView *view = scene;
+    if (!view || !disc) return -1;
+    if (view->chapter) return 0;
+    view->chapter = bfm_chapter_card_load(disc);
+    if (!view->chapter) {
+        if (error && error_size)
+            snprintf(error, error_size, "Could not read the Chapter 1 card from SC01.CD.");
+        return -1;
+    }
+    view->skip_member = fields < INTERIOR_START_FIELD ? 0u : 1u;
+    view->skip_field = fields;
+    view->skip_pose = fields < LAST_FIELD ? fields : LAST_FIELD;
+    return 1;
+}
+
+int bfm_opening_skip_member(const void *scene, unsigned *member)
+{
+    const OpeningView *view = scene;
+    if (!view || !view->chapter || !member) return 0;
+    *member = view->skip_member;
+    return 1;
+}
+
+int bfm_opening_frame(void *scene, unsigned fields, uint32_t *pixels, int width, int height)
+{
+    const OpeningView *view = scene;
+    if (!view || !pixels || width != WIDTH || height != HEIGHT) return -1;
+    if (!view->chapter) {
+        if (fields > LAST_FIELD) return BFM_OPENING_END;
+        return draw_opening(view, fields, pixels);
+    }
+    unsigned age = fields >= view->skip_field ? fields - view->skip_field : 0;
+    if (age >= (view->skip_member ? 68u : 6u)) {
+        int result = bfm_chapter_card_draw(view->chapter, age, view->skip_member, pixels);
+        return result == 0 ? BFM_OPENING_FOREST_PENDING : result;
+    }
+    unsigned active = view->skip_pose + age;
+    int result = draw_opening(view, active, pixels);
+    if (age > 36) shade_scene(pixels, (age & ~1u) - 36);
+    return result;
+}
+
 int bfm_opening_voice_due(void *scene, unsigned field, unsigned *bank, unsigned *cue)
 {
     OpeningView *view = scene;
-    return view && field <= LAST_FIELD &&
+    return view && !view->chapter && field <= LAST_FIELD &&
            bfm_palace_dialogue_voice_due(bfm_palace_speech(view->stairs), field, bank, cue);
 }
 
 int bfm_opening_voice_started(void *scene, unsigned bank, unsigned cue, unsigned field)
 {
     OpeningView *view = scene;
-    return view && field <= LAST_FIELD &&
+    return view && !view->chapter && field <= LAST_FIELD &&
            bfm_palace_dialogue_voice_started(bfm_palace_speech(view->stairs), bank, cue, field);
 }
 
@@ -288,6 +330,7 @@ void bfm_opening_free(void *scene)
 {
     OpeningView *view = scene;
     if (view) {
+        bfm_chapter_card_free(view->chapter);
         bfm_palace_free(view->palace);
         free(view->tiles);
         bfm_palace_free(view->stairs);

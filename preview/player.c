@@ -32,7 +32,8 @@ typedef struct Player {
     BfmTitleFlow flow;
     int width, height;
     uint32_t pixels[TITLE_W * TITLE_H];
-    int opening_finished, opening_seen;
+    int opening_finished, opening_seen, opening_skip;
+    uint64_t voice_stop_field;
     int redraw;
 } Player;
 
@@ -41,7 +42,7 @@ static const char usage[] =
     "Usage: musashi_native_boot --disc path/to/game.cue [--windowed]\n"
     "Use your own US PlayStation disc image (SLUS-00726). A complete raw BIN or "
     "a CUE with all its BIN tracks alongside is supported.\n"
-    "Enter/Start: start. Space/Cross: confirm. Up/Down: select. Escape: quit.\n";
+    "Enter/Start: start. Space/Cross: confirm or skip the opening. Up/Down: select. Escape: quit.\n";
 
 static uint16_t button_mask(unsigned int button) {
     switch (button) {
@@ -209,16 +210,29 @@ static int play(Player *p, char *error, size_t size) {
     while (events(p)) {
         uint64_t now = SDL_GetTicks64();
         uint64_t tick = now * 30u / 1001u;
-        unsigned fields;
+        unsigned fields = (unsigned)((now - p->phase_start) * 60u / 1001u);
         int frame;
         if (tick != last_logic) {
             int before = p->flow.phase;
-            if (p->opening_finished && (p->pressed & (PAD_START | PAD_CROSS | PAD_CIRCLE))) {
+            if (p->flow.phase == BFM_TITLE_OPENING && !p->opening_skip &&
+                (p->pressed & PAD_CROSS)) {
+                int accepted = bfm_opening_request_skip(p->opening, p->disc, fields, error, size);
+                if (accepted < 0) return 2;
+                if (accepted) {
+                    p->opening_skip = 1;
+                    /* The outgoing voice becomes idle five fields after Cross. */
+                    p->voice_stop_field = (uint64_t)fields + 5;
+                    p->opening_finished = 0;
+                    SDL_SetWindowTitle(p->window, "Brave Fencer Musashi - Chapter 1");
+                }
+            } else if (p->opening_finished && (p->pressed & (PAD_START | PAD_CROSS | PAD_CIRCLE))) {
                 bfm_desktop_voice_stop(p->voice);
                 bfm_opening_free(p->opening);
                 p->opening = NULL;
                 p->opening_finished = 0;
                 p->opening_seen = 0;
+                p->opening_skip = 0;
+                p->voice_stop_field = 0;
                 bfm_title_begin(&p->flow, p->held | p->pressed);
             } else {
                 bfm_title_input(&p->flow, p->held | p->pressed);
@@ -256,6 +270,10 @@ static int play(Player *p, char *error, size_t size) {
         p->redraw = 0;
         if (opening) {
             unsigned bank, cue;
+            if (p->voice_stop_field && fields >= p->voice_stop_field) {
+                bfm_desktop_voice_stop(p->voice);
+                p->voice_stop_field = 0;
+            }
             if (bfm_opening_voice_due(p->opening, fields, &bank, &cue) &&
                 bfm_desktop_voice_request(p->voice, bank, cue))
                 fprintf(stderr, "Palace voice %u/%u requested at field %u\n", bank, cue, fields);
@@ -264,13 +282,14 @@ static int play(Player *p, char *error, size_t size) {
                 fprintf(stderr, "Palace voice %u/%u reached SDL output at field %u\n", bank, cue, fields);
             }
             frame = bfm_opening_frame(p->opening, fields, p->pixels, p->width, p->height);
-            if (frame > 0) p->opening_seen = 1;
-            if (frame == 0) {
+            if (frame == BFM_OPENING_FRAME) p->opening_seen = 1;
+            if (frame == BFM_OPENING_END || frame == BFM_OPENING_FOREST_PENDING) {
                 if (!p->opening_seen) {
                     snprintf(error, size, "The opening ended before it produced its first frame.");
                     return 2;
                 }
-                if (bfm_opening_final_frame(p->opening, p->pixels, p->width, p->height) <= 0) {
+                if (frame == BFM_OPENING_END &&
+                    bfm_opening_final_frame(p->opening, p->pixels, p->width, p->height) <= 0) {
                     snprintf(error, size, "Could not render the final opening frame.");
                     return 2;
                 }
@@ -278,7 +297,10 @@ static int play(Player *p, char *error, size_t size) {
                 p->opening_finished = 1;
                 SDL_SetWindowTitle(p->window, "Brave Fencer Musashi - End of opening preview");
                 fputs("End of the implemented opening. Gameplay control and saving are unavailable.\n", stderr);
-                status_line(p, "End of preview. Press Start to return.");
+                if (frame == BFM_OPENING_FOREST_PENDING)
+                    status_line(p, "Chapter 1 card complete. Start returns.");
+                else
+                    status_line(p, "End of preview. Press Start to return.");
                 if (!present(p)) {
                     snprintf(error, size, "Could not display the ending: %s", SDL_GetError());
                     return 2;

@@ -9,6 +9,7 @@ add_executable(musashi_native_boot
     title_flow.c
     title_view.c
     opening_view.c
+    chapter_card.c
     palace.c
     stair_actors.c
     palace_dialogue.c
