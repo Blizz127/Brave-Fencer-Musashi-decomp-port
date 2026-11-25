@@ -4,11 +4,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-enum { WIDTH = 320, HEIGHT = 240, LAST_FIELD = 246 };
+enum { WIDTH = 320, HEIGHT = 240, LAST_FIELD = 294 };
 enum { CREDIT_X = 80, CREDIT_Y = 104, CREDIT_WIDTH = 160, CREDIT_HEIGHT = 32 };
 
 typedef struct {
-    uint16_t moon[HEIGHT][WIDTH];
+    uint16_t sky[480][320];
     uint16_t lettering[CREDIT_HEIGHT][CREDIT_WIDTH];
     uint16_t silhouette[CREDIT_HEIGHT][CREDIT_WIDTH];
 } OpeningView;
@@ -23,31 +23,45 @@ static unsigned sample_axis(unsigned coordinate, unsigned extent,
            / (2 * extent);
 }
 
-static uint16_t sky_texel(const uint16_t words[512][1024], unsigned x, unsigned y)
+static uint16_t read_sky(const uint16_t words[512][1024], unsigned x, unsigned y)
 {
-    unsigned local_x, extent, last_u, u0, page_x, page_y;
-    unsigned local_y = y + 52;
-    if (x < 297) {
-        local_x = x + 69;
-        extent = 366;
-        last_u = 255;
-        u0 = 0;
-        page_x = 896;
-        page_y = 0;
-    } else {
-        local_x = x - 297;
-        extent = 92;
-        last_u = 63;
-        u0 = 64;
-        page_x = 960;
-        page_y = 256;
-    }
-    int first_triangle = local_x * 367 + local_y * extent < extent * 367;
-    unsigned u = u0 + sample_axis(local_x, extent, last_u, first_triangle);
-    unsigned v = sample_axis(local_y, 367, 255, first_triangle);
+    unsigned page_x = x < 256 ? (y < 256 ? 896 : 768) : 960;
+    unsigned page_y = x < 256 ? 0 : 256;
+    unsigned u = x < 256 ? x : x - 256 + (y < 256 ? 64 : 0);
+    unsigned v = y < 256 ? y : y - 256;
     uint16_t pair = words[page_y + v][page_x + u / 2];
-    unsigned index = (pair >> (8 * (u & 1))) & 255u;
-    return words[503][index] & 0x7fffu;
+    return words[503][(pair >> (8 * (u & 1))) & 255u] & 0x7fffu;
+}
+
+typedef struct {
+    int left, right, seam, top, middle, bottom;
+} SkyProjection;
+
+static SkyProjection projection(unsigned fields)
+{
+    unsigned steps = fields > 248 ? (fields - 248) / 2 : 0;
+    int scale = steps < 23 ? 5880 - 80 * (int)steps : 4096;
+    return (SkyProjection){
+        160 - 160 * scale / 4096, 160 + 160 * scale / 4096,
+        160 + 96 * scale / 4096, 120 - 120 * scale / 4096,
+        120 + 136 * scale / 4096, 120 + 360 * scale / 4096
+    };
+}
+
+static uint16_t sky_texel(const OpeningView *view, const SkyProjection *p, int x, int y)
+{
+    int left = x < p->seam;
+    int top = y < p->middle;
+    unsigned local_x = (unsigned)(x - (left ? p->left : p->seam));
+    unsigned local_y = (unsigned)(y - (top ? p->top : p->middle));
+    unsigned w = (unsigned)(left ? p->seam - p->left : p->right - p->seam);
+    unsigned h = (unsigned)(top ? p->middle - p->top : p->bottom - p->middle);
+    int first_triangle = local_x * h + local_y * w < w * h;
+    unsigned u = (left ? 0u : 256u) +
+                 sample_axis(local_x, w, left ? 255u : 63u, first_triangle);
+    unsigned v = (top ? 0u : 256u) +
+                 sample_axis(local_y, h, top ? 255u : 223u, first_triangle);
+    return view->sky[v][u];
 }
 
 int bfm_opening_load(const MusashiDiscMedia *disc, void **scene,
@@ -65,9 +79,9 @@ int bfm_opening_load(const MusashiDiscMedia *disc, void **scene,
             snprintf(error, error_size, "Could not load the opening artwork from SC01.CD.");
         return 0;
     }
-    for (unsigned y = 10; y < HEIGHT - 10; ++y)
+    for (unsigned y = 0; y < 480; ++y)
         for (unsigned x = 0; x < WIDTH; ++x)
-            view->moon[y][x] = sky_texel(words, x, y);
+            view->sky[y][x] = read_sky(words, x, y);
     for (unsigned y = 0; y < CREDIT_HEIGHT; ++y) {
         for (unsigned x = 0; x < CREDIT_WIDTH; ++x) {
             unsigned shift = 4 * (x % 4);
@@ -124,10 +138,12 @@ int bfm_opening_frame(void *scene, unsigned fields, uint32_t *pixels,
     /* The original subtracts the same shade on each RGB555 channel and
      * advances it every other display field, then holds the moon fully lit. */
     unsigned darkness = fields < 34 ? 33 - 2 * (fields / 2) : 0;
+    SkyProjection camera = projection(fields);
     unsigned strength = credit_strength(fields);
     for (unsigned y = 0; y < HEIGHT; ++y) {
         for (unsigned x = 0; x < WIDTH; ++x) {
-            uint16_t word = view->moon[y][x];
+            uint16_t word = y >= 10 && y < HEIGHT - 10
+                                ? sky_texel(view, &camera, (int)x, (int)y) : 0;
             if (strength && y >= CREDIT_Y && y < CREDIT_Y + CREDIT_HEIGHT &&
                 x >= CREDIT_X && x < CREDIT_X + CREDIT_WIDTH)
                 word = blend_credit(word, view->silhouette[y - CREDIT_Y][x - CREDIT_X],
