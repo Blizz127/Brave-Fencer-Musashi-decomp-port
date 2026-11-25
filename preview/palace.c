@@ -9,6 +9,9 @@ enum { MAX_GROUPS = 256, MAX_VERTICES = 4096, MAX_FACES = 4096, MAX_SCENE = 1 <<
 
 typedef struct { int x, y, z; } Point;
 typedef struct { uint16_t u, v; } Texel;
+typedef struct { Point eye, aim; } Pose;
+typedef struct { Point right, down, forward; } Basis;
+enum { INWARD_POSES = 100 };
 typedef struct {
     Texel uv[4];
     uint16_t vertices[4], page_x, page_y, palette_x, palette_y;
@@ -18,6 +21,8 @@ typedef struct { int depth; size_t index; } Draw;
 
 struct Palace {
     size_t vertex_count, face_count;
+    Pose track[INWARD_POSES];
+    unsigned member;
     Point vertices[MAX_VERTICES], projected[MAX_VERTICES];
     Face faces[MAX_FACES];
     Draw visible[MAX_FACES];
@@ -76,14 +81,16 @@ static size_t expand(const uint8_t *src, size_t bytes, uint8_t *out)
     return 0;
 }
 
-static size_t read_scene(const MusashiDiscMedia *disc, uint8_t *scene)
+static size_t read_scene(const MusashiDiscMedia *disc, unsigned member, uint8_t *scene)
 {
-    uint8_t header[16];
+    uint8_t header[24];
     size_t size;
     if (!musashi_disc_media_read_root_range(disc, "SC01.CD", 0, header, sizeof(header), &size))
         return 0;
-    uint32_t start = le32(header + 8), member_bytes = le32(header + 12);
-    if (!le32(header) || !start || start > size / SECTOR) return 0;
+    if (member > 1 || member >= le32(header)) return 0;
+    uint32_t start = le32(header + 8 + 8 * member);
+    uint32_t member_bytes = le32(header + 12 + 8 * member);
+    if (!start || start > size / SECTOR) return 0;
     size_t offset = (size_t)start * SECTOR;
     if (member_bytes > size - offset || member_bytes < SECTOR ||
         !musashi_disc_media_read_root_range(disc, "SC01.CD", offset, header, sizeof(header), &size) ||
@@ -112,7 +119,7 @@ static int take_face(Face *face, const uint8_t *entry, const uint8_t *material,
     face->page_y = (uint16_t)((page & 16) * 16);
     face->palette_x = (uint16_t)((palette & 63) * 16);
     face->palette_y = (uint16_t)(palette >> 6);
-    if (face->page_x > 1024 - 128 || face->palette_x > 1024 - 256 ||
+    if (face->palette_x > 1024 - 256 ||
         face->palette_y >= 512) return 0;
     face->count = (uint8_t)corners;
     face->depth_bias = (uint8_t)(le16(entry + 10) & 1u);
@@ -133,7 +140,7 @@ static int take_face(Face *face, const uint8_t *entry, const uint8_t *material,
  * spatial group owns a contiguous list of material/vertex references. */
 static int load_mesh(Palace *palace, const uint8_t *scene, size_t size)
 {
-    const size_t directory = 0x5a6e8;
+    const size_t directory = palace->member ? 0x61e20 : 0x5a6e8;
     if (size < directory + 12) return 0;
     const uint8_t *root = scene + directory + 12;
     size_t available = size - directory - 12;
@@ -170,12 +177,31 @@ static int load_mesh(Palace *palace, const uint8_t *scene, size_t size)
     return palace->face_count != 0;
 }
 
-Palace *bfm_palace_load(const MusashiDiscMedia *disc)
+/* Each authored camera record holds signed XYZ eye and aim positions, then
+ * a roll value. These two opening shots use an unrolled camera. */
+static int read_track(Palace *palace, const uint8_t *scene, size_t bytes)
+{
+    size_t begin = palace->member ? 0x9b424 : 0x7a618;
+    unsigned count = palace->member ? 1 : INWARD_POSES;
+    if (begin > bytes || count > (bytes - begin) / 14) return 0;
+    for (unsigned i = 0; i < count; ++i) {
+        const uint8_t *p = scene + begin + 14 * i;
+        Pose pose = {{signed16(p), signed16(p + 2), signed16(p + 4)},
+                     {signed16(p + 6), signed16(p + 8), signed16(p + 10)}};
+        if (signed16(p + 12) || (pose.eye.x == pose.aim.x && pose.eye.z == pose.aim.z))
+            return 0;
+        palace->track[i] = pose;
+    }
+    return 1;
+}
+
+Palace *bfm_palace_load(const MusashiDiscMedia *disc, unsigned member)
 {
     uint8_t *scene = malloc(MAX_SCENE);
     Palace *palace = calloc(1, sizeof(*palace));
-    size_t bytes = scene && palace ? read_scene(disc, scene) : 0;
-    if (!bytes || !load_mesh(palace, scene, bytes)) {
+    size_t bytes = scene && palace ? read_scene(disc, member, scene) : 0;
+    if (palace) palace->member = member;
+    if (!bytes || !load_mesh(palace, scene, bytes) || !read_track(palace, scene, bytes)) {
         free(palace);
         palace = NULL;
     }
@@ -207,28 +233,93 @@ static int projection_coord(int coordinate, int reciprocal, int center)
     return center + smaller(1023, larger(-1024, screen));
 }
 
+static uint64_t squared(int v)
+{
+    return (uint64_t)((int64_t)v * v);
+}
+
+static unsigned integer_length(uint64_t squared_length)
+{
+    uint64_t remainder = squared_length, root = 0, bit = UINT64_C(1) << 62;
+    while (bit > remainder) bit >>= 2;
+    while (bit) {
+        if (remainder >= root + bit) {
+            remainder -= root + bit;
+            root = (root >> 1) + bit;
+        } else {
+            root >>= 1;
+        }
+        bit >>= 2;
+    }
+    return (unsigned)root;
+}
+
+/* The camera handles short axes with an integer-length denominator. Its
+ * mantissa advances two bits at a time, as the length is a square root. */
+static int axis_magnitude(uint64_t component_squared, uint64_t total, int component)
+{
+    if (component_squared < UINT64_C(1) << 19) {
+        unsigned high_bit = 0;
+        for (uint64_t x = total; x >>= 1;) ++high_bit;
+        unsigned shift = high_bit > 6 ? (high_bit - 6) / 2 * 2 : 0;
+        uint64_t shortened = (total >> shift) << shift;
+        int denominator = (int)integer_length(shortened);
+        return (int)((int64_t)component * 4096 / denominator);
+    }
+    uint64_t ratio = (component_squared << 13) / total;
+    int magnitude = (int)integer_length(ratio << 11);
+    return component < 0 ? -magnitude : magnitude;
+}
+
+static Basis look_at(Pose pose)
+{
+    int dx = pose.aim.x - pose.eye.x, dy = pose.aim.y - pose.eye.y;
+    int dz = pose.aim.z - pose.eye.z;
+    uint64_t horizontal = squared(dx) + squared(dz);
+    uint64_t total = horizontal + squared(dy);
+    int sy = axis_magnitude(squared(dx), horizontal, -dx);
+    int cy = axis_magnitude(squared(dz), horizontal, dz);
+    int cp = axis_magnitude(horizontal, total, (int)integer_length(horizontal));
+    int sp = axis_magnitude(squared(dy), total, dy);
+    return (Basis){{cy, 0, sy}, {floor_div((int64_t)sy * sp, 4096), cp,
+                                  floor_div(-(int64_t)cy * sp, 4096)},
+                   {floor_div(-(int64_t)sy * cp, 4096), sp,
+                    floor_div((int64_t)cy * cp, 4096)}};
+}
+
 static void project_mesh(Palace *palace, unsigned field)
 {
-    /* The eye and aim move vertically, rounding their authored tracks
-     * independently. A one-unit difference changes the camera pitch for
-     * one tick before the tracks align again. */
-    unsigned ticks_to_end = field < 828 ? (829 - field) / 2 : 0;
-    int eye_travel = (int)((87 * ticks_to_end + 7) / 13);
-    int aim_travel = (int)((87 * ticks_to_end + 6) / 13);
-    int eye_y = -715 - eye_travel;
-    int pitch = eye_travel - aim_travel;
-    Point down = {-531 + 2 * pitch, 4014 + pitch, 617 - 3 * pitch};
-    Point forward = {-2616 - pitch, -814 + 3 * pitch, 3043 + pitch};
-    Point negative_eye = {-582, -eye_y, 1064};
-    int tx = camera_axis(negative_eye, 3106, 0, 2669);
-    int ty = camera_axis(negative_eye, down.x, down.y, down.z);
-    int tz = camera_axis(negative_eye, forward.x, forward.y, forward.z);
+    Basis axes;
+    Point eye;
+    int focal = palace->member ? 256 : 400;
+    if (palace->member) {
+        eye = palace->track[0].eye;
+        /* Fixed opening staircase view. */
+        axes = (Basis){{-1130, 0, 3946}, {388, 4074, 111}, {-3925, 403, -1124}};
+    } else if (field >= 958) {
+        unsigned tick = (field - 952) / 2;
+        Pose pose = palace->track[tick < INWARD_POSES ? tick : INWARD_POSES - 1];
+        axes = look_at(pose);
+        eye = pose.eye;
+    } else {
+        unsigned ticks_to_end = field < 828 ? (829 - field) / 2 : 0;
+        int eye_travel = (int)((87 * ticks_to_end + 7) / 13);
+        int aim_travel = (int)((87 * ticks_to_end + 6) / 13);
+        int pitch = eye_travel - aim_travel;
+        eye = (Point){582, -715 - eye_travel, -1064};
+        axes = (Basis){{3106, 0, 2669}, {-531 + 2 * pitch, 4014 + pitch, 617 - 3 * pitch},
+                       {-2616 - pitch, -814 + 3 * pitch, 3043 + pitch}};
+    }
+    Point reverse = {-eye.x, -eye.y, -eye.z};
+    int tx = camera_axis(reverse, axes.right.x, axes.right.y, axes.right.z);
+    int ty = camera_axis(reverse, axes.down.x, axes.down.y, axes.down.z);
+    int tz = camera_axis(reverse, axes.forward.x, axes.forward.y, axes.forward.z);
     for (size_t i = 0; i < palace->vertex_count; ++i) {
         Point v = palace->vertices[i];
-        int x = camera_axis(v, 3106, 0, 2669) + tx;
-        int y = camera_axis(v, down.x, down.y, down.z) + ty;
-        int z = camera_axis(v, forward.x, forward.y, forward.z) + tz;
-        int reciprocal = z > 0 ? smaller(131071, (400 * 65536 + z / 2) / z) : 131071;
+        int x = camera_axis(v, axes.right.x, axes.right.y, axes.right.z) + tx;
+        int y = camera_axis(v, axes.down.x, axes.down.y, axes.down.z) + ty;
+        int z = camera_axis(v, axes.forward.x, axes.forward.y, axes.forward.z) + tz;
+        int reciprocal = z > 0 ? smaller(131071, (focal * 65536 + z / 2) / z) : 131071;
         palace->projected[i] = (Point){projection_coord(x, reciprocal, 160),
                                        projection_coord(y, reciprocal, 120), z};
     }
@@ -278,7 +369,7 @@ static void triangle(const uint16_t tiles[512][1024], const Face *face,
                                      (int64_t)wc * uv[2].u + area / 2) / area);
             unsigned v = (unsigned)(((int64_t)wa * uv[0].v + (int64_t)wb * uv[1].v +
                                      (int64_t)wc * uv[2].v + area / 2) / area);
-            uint16_t pair = tiles[face->page_y + v][face->page_x + u / 2];
+            uint16_t pair = tiles[face->page_y + v][(face->page_x + u / 2) & 1023u];
             unsigned index = (pair >> (8 * (u & 1))) & 255u;
             uint16_t ink = tiles[face->palette_y][face->palette_x + index];
             if (ink)
@@ -317,7 +408,7 @@ void bfm_palace_draw(Palace *palace, const uint16_t tiles[512][1024],
             near_z = smaller(near_z, p[j].z);
             far_z = larger(far_z, p[j].z);
         }
-        if (near_z <= 200 || edge(p[0], p[1], p[2].x, p[2].y) <= 0) continue;
+        if (near_z <= (palace->member ? 0 : 200) || edge(p[0], p[1], p[2].x, p[2].y) <= 0) continue;
         /* Furthest-vertex depth determines the four-unit ordering bucket.
          * Certain surfaces have an additional 512-unit draw priority. */
         palace->visible[drawn++] = (Draw){(far_z + 512 * face->depth_bias) / 4, i};
