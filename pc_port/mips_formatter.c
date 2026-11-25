@@ -6154,6 +6154,11 @@ typedef struct FieldSceneLoad {
     unsigned reg, irq_prepared;
 } FieldSceneLoad;
 
+typedef struct {
+    const MusashiBootMemory *memory;
+    uint32_t next, npc, branch, sp, ra;
+} Sc01RoomFrame;
+
 typedef struct FormatterCpu {
     uint32_t r[32];
     uint32_t hi, lo;
@@ -6228,6 +6233,7 @@ typedef struct FormatterCpu {
     uint32_t room_reset_step;
     unsigned room_reset_slot;
     RoomSceneFrame room_scene;
+    Sc01RoomFrame sc01_room;
     RoomLatchFrame room_latch;
     FieldSceneLoad field_load;
 } FormatterCpu;
@@ -9267,6 +9273,7 @@ static int room_reset_guest_scene(MusashiBootMemory *memory);
 #include "main12_room_slot_reset.h"
 #include "main12_scene_setup.h"
 #include "main10_room_latch.h"
+#include "sc01_room_command.h"
 
 static int formatter_fetch(MusashiBootMemory *memory, const FormatterCpu *cpu, uint32_t *out) {
     const FormatterRange *resident = NULL;
@@ -9292,6 +9299,7 @@ static int formatter_fetch(MusashiBootMemory *memory, const FormatterCpu *cpu, u
             return code_word(memory, cpu, cpu->pc, out);
         return main12_callback_word(memory, cpu, out);
     }
+    if (sc01_room_expected(cpu)) return sc01_room_word(memory, cpu, out);
     /* A cached scene selection must not expose these same words from MAIN. */
     if (cpu->pc - ROOM_RESET_ENTRY < 36u && !room_reset_guest_scene(memory)) return 0;
     if (room_scene_overlay_pc(cpu->pc) && !room_reset_guest_scene(memory)) return 0;
@@ -12644,6 +12652,8 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     uint32_t scheduled_next_pc = 0;
     uint8_t scheduled_merge_reg = 0;
     const uint32_t issued_pc = cpu->pc;
+    const int sc01_room_issuing = sc01_room_expected(cpu);
+    const uint32_t sc01_room_branch = cpu->branch_pc;
     LaneRunFrame *root = g_lane_run_frames;
     int scene_prepaid = 0;
     int mounted_link = 0;
@@ -13374,6 +13384,12 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
             (cpu->cd_irq_frame && cpu->cd_irq_frame->faulted))
             return formatter_refuse0(__LINE__, cpu->pc);
     }
+    if (sc01_room_issuing) {
+        uint32_t live;
+        if (cpu->pc != issued_pc || !sc01_room_expected(cpu) ||
+            !sc01_room_word(memory, cpu, &live) || live != instruction)
+            return formatter_refuse0(__LINE__, issued_pc);
+    }
     /* Advancing devices can replace the sequence bank or change its slot
      * before a bank read, a ramp access or the final delay-slot clear. */
     if (level_image) {
@@ -13822,6 +13838,8 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         scene_scalar_retired(cpu, instruction, scene_prior_rt, scene_ram_load);
     cpu->pc = old_npc;
     cpu->npc = target_npc;
+    if (sc01_room_issuing || issued_pc == SC01_ROOM_CALL)
+        sc01_room_retired(memory, cpu, issued_pc, sc01_room_issuing, sc01_room_branch);
     if (mounted_link) mounted_leaf_link(root, memory, cpu, issued_pc);
     if (mounted_delay && root->mounted_call.delay_step == root->mounted_call.step &&
         cpu->pc == root->mounted_call.target && cpu->npc == cpu->pc + 4u &&
