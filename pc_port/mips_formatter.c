@@ -6178,6 +6178,7 @@ typedef struct FormatterCpu {
     PendingDrawList pending_draw;
     uint32_t movie_record;
     uint32_t level_slot;
+    uint8_t opening_motion_eight;
     int movie_output;
     const MusashiExecutionClock *clock;
     const MusashiCdRegisterDevice *cd_register_device;
@@ -12677,7 +12678,7 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         cpu->room_reset_step == issued_pc && cpu->delay_slot && cpu->branch_pc == ROOM_RESET_CALL &&
         cpu->npc == ROOM_RESET_ENTRY && cpu->r[31] == ROOM_RESET_CALL + 8u;
     const MusashiGuestIrqImage *level_image =
-        (issued_pc == 0x800338d4u || issued_pc == 0x80033d38u ||
+        (cpu->opening_motion_eight || issued_pc == 0x800338d4u || issued_pc == 0x80033d38u ||
          (issued_pc >= 0x8003392cu && issued_pc <= 0x800339c0u) ||
          issued_pc == 0x80033d98u || issued_pc == 0x80033e04u ||
          issued_pc == 0x80033e10u || issued_pc == 0x80033e1cu ||
@@ -16326,6 +16327,8 @@ static int irq_spu_poll_access(const FormatterCpu *cpu, uint32_t word, uint32_t 
 }
 
 static int irq_data_access(const FormatterCpu *cpu, uint32_t w) {
+    if (cpu->opening_motion_eight) return irq_opening_motion_issue(cpu, w);
+    if (irq_motion_eight_pc(cpu->pc)) return 0;
     if (irq_file_end_pc(cpu->pc)) return irq_file_end_issue(cpu, w);
     if (cpu->pc >= 0x800340f4u && cpu->pc < 0x8003417cu) return irq_opening_pan(cpu, w);
     unsigned op = w >> 26;
@@ -16446,6 +16449,16 @@ static int irq_data_access(const FormatterCpu *cpu, uint32_t w) {
 }
 
 typedef struct { uint32_t address, sp; IrqRegion callee; } IrqGuestReturn;
+
+static int irq_opening_motion_dispatch(const FormatterCpu *cpu, uint32_t instruction, uint32_t target,
+                                       const IrqGuestReturn *stack, unsigned depth) {
+    return cpu->opening_motion_eight && cpu->pc == 0x80031740u && !(instruction >> 26) &&
+           (instruction & 63u) == 8u && ((instruction >> 21) & 31u) == 2u && depth == 8u &&
+           stack[7].callee == IRQ_LEVEL_COMMAND && stack[7].address == 0x80033fa4u &&
+           stack[7].sp == cpu->r[29] && stack[6].callee == IRQ_LEVEL_SLOT && cpu->r[3] == 8u &&
+           cpu->r[2] == target && target == 0x80031898u &&
+           cd_irq_ram_word(cpu->irq_image->memory, 0x800730e4u, target);
+}
 
 static int irq_file_pan_call(const FormatterCpu *cpu, unsigned op, uint32_t target,
                              const IrqGuestReturn *stack, unsigned depth) {
@@ -17144,6 +17157,8 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
                     stack[4].callee != IRQ_CHANNEL_TICK || !irq_channel_update_frame(&cpu, channel) ||
                     !irq_channel_leaf_call(&cpu, w, target, channel)) return 0;
                 stack[depth++] = (IrqGuestReturn){origin + 8u, cpu.r[29], dest};
+            } else if (region == IRQ_LEVEL_COMMAND && cpu.opening_motion_eight && origin == 0x80031740u) {
+                if (!irq_opening_motion_dispatch(&cpu, w, target, stack, depth)) return 0;
             } else if (region == IRQ_LEVEL_SLOT && origin == 0x80033b00u &&
                        !op && fn == 8u && dest == region) {
                 uint32_t selector = cpu.r[3], expected = irq_level_case_target(selector);
@@ -17298,6 +17313,9 @@ int musashi_boot_execute_guest_irq_with_services(const MusashiGuestIrqImage *ima
                 (cpu.pc != irq_code[IRQ_FILE_PAN].start || cpu.r[31] != origin + 8u ||
                  cpu.r[4] != cpu.level_slot || !irq_file_pan_frame(&cpu))) return 0;
             if (irq_level_leaf_target(origin) && !irq_level_leaf_entry(&cpu, memory)) return 0;
+            if (origin == 0x80033f9cu)
+                cpu.opening_motion_eight = cd_irq_ram_word(memory, cpu.r[17] + 20u, 0x800c9a34u);
+            if (origin == 0x80031980u) cpu.opening_motion_eight = 0;
             if (origin == 0x80031c88u &&
                 (cpu.r[31] != 0x80031c90u || cpu.r[5] != cpu.r[17] ||
                  !cpu.level_slot || irq_level_slot(&cpu, memory) != cpu.level_slot)) return 0;

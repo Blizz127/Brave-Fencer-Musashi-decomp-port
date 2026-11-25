@@ -24,10 +24,21 @@ static int irq_file_end_pc(uint32_t pc) {
     return pc >= 0x80033d28u && pc <= 0x80033d38u && !(pc & 3u);
 }
 
+/* Only the observed computed dispatch, case 8 and downward ramp tail are
+ * additional fetchable instructions. Their use requires the opening frame. */
+static int irq_motion_eight_pc(uint32_t pc) {
+    return (pc >= 0x8003171cu && pc <= 0x80031744u) ||
+           (pc >= 0x80031898u && pc <= 0x800318bcu) ||
+           (pc >= 0x80031938u && pc <= 0x80031978u);
+}
+
+static int irq_opening_motion_owner(const FormatterCpu *cpu);
+static int irq_opening_motion_return(const FormatterCpu *cpu);
+
 /* Four resident sound helpers called by the sequence slot's first note.
  * Each region is populated from the installed executable by irq_code. */
 static int irq_level_leaf_pc(uint32_t pc) {
-    return (pc >= 0x80030ca4u && pc <= 0x80030d34u) ||
+    return irq_motion_eight_pc(pc) || (pc >= 0x80030ca4u && pc <= 0x80030d34u) ||
            (pc >= 0x80030d6cu && pc <= 0x80030d7cu) ||
            (pc >= 0x800316f8u && pc <= 0x80031718u) ||
            (pc >= 0x80031980u && pc <= 0x80031984u) ||
@@ -94,7 +105,8 @@ static int irq_level_leaf_entry(const FormatterCpu *cpu, MusashiBootMemory *ram)
     }
     if (!irq_level_leaf_channel(cpu, &index) || cpu->r[21] != index) return 0;
     if (cpu->pc == 0x800316f8u)
-        return cpu->r[4] == cpu->r[17] && musashi_boot_read32(ram, cpu->r[4] + 0x14u, &value) && !value;
+        return cpu->r[4] == cpu->r[17] && musashi_boot_read32(ram, cpu->r[4] + 0x14u, &value) &&
+               (!value || (value == 0x800c9a34u && irq_opening_motion_owner(cpu)));
     int mode = cpu->pc == 0x8002eff8u ? 1 : irq_level_motion_mode(cpu);
     return mode >= 0 && cpu->r[4] == (unsigned)mode &&
            musashi_boot_read32(ram, cpu->r[18], &value) &&
@@ -117,7 +129,8 @@ static int irq_level_leaf_return(const FormatterCpu *cpu, uint32_t target) {
             if (!channels[i * 0x54u + 0x4eu]) return 0;
         return 1;
     }
-    case 0x80031980u: return target == 0x80033fa4u;
+    case 0x80031980u:
+        return target == 0x80033fa4u && (!cpu->opening_motion_eight || irq_opening_motion_return(cpu));
     case 0x8002f0c8u: {
         unsigned index;
         uint32_t enabled, disabled;
@@ -566,6 +579,90 @@ static int irq_opening_track4(MusashiBootMemory *ram) {
     const uint8_t *empty = musashi_boot_ram_span(ram, 0x800a4698u, 1u);
     return empty && !*empty && musashi_boot_read16(ram, 0x800a4688u, &primary) &&
            primary == 4u && musashi_boot_read16(ram, 0x800c5338u, &mapped) && mapped == 3u;
+}
+
+/* The third full opening note carries a pointer to its motion record at
+ * descriptor+16. The normal caller writes that same pointer to channel+20.
+ * Authenticate both the record and the registered stream before using it. */
+static int irq_opening_motion_owner(const FormatterCpu *cpu) {
+    static const uint8_t motion_digest[32] = {
+        0xa9, 0xde, 0xd1, 0xe5, 0x31, 0x92, 0x23, 0xdb,
+        0xe5, 0xf1, 0x03, 0x6f, 0x45, 0xe1, 0xc9, 0xd3,
+        0x37, 0x4d, 0xf1, 0x49, 0x84, 0x61, 0x0f, 0x31,
+        0x54, 0xd4, 0x94, 0xc2, 0x6c, 0xdf, 0x2b, 0x1e
+    };
+    const uint8_t *desc = irq_opening_descriptor(cpu);
+    if (!desc || desc[10] != 4u || desc[11] != 9u || cpu->r[21] != 2u ||
+        cpu->r[17] != 0x800a4a30u || cpu->r[18] != 0x800a4cb8u ||
+        cpu->r[22] != 3u || cpu->r[31] != 0x80033fa4u) return 0;
+    MusashiBootMemory *ram = cpu->irq_image->memory;
+    const uint8_t *motion = musashi_boot_ram_span(ram, 0x800c9a34u, 14u);
+    uint16_t pitch, transpose;
+    uint8_t digest[32];
+    return irq_opening_track4(ram) && cd_irq_ram_word(ram, cpu->level_slot + 12u, 0x800c9a8cu) &&
+           cd_irq_ram_word(ram, cpu->r[20] + 16u, 0x800c9a34u) &&
+           cd_irq_ram_word(ram, cpu->r[17] + 20u, 0x800c9a34u) &&
+           musashi_boot_read16(ram, 0x800c9a78u, &pitch) &&
+           musashi_boot_read16(ram, cpu->level_slot + 82u, &transpose) && !transpose &&
+           cd_irq_ram_word(ram, cpu->r[17] + 36u, pitch) &&
+           cd_irq_ram_word(ram, 0x800730e4u, 0x80031898u) &&
+           motion && musashi_sha256_digest(motion, 14u, digest) && !memcmp(digest, motion_digest, sizeof digest);
+}
+
+static int irq_opening_motion_return(const FormatterCpu *cpu) {
+    if (!irq_opening_motion_owner(cpu) || cpu->r[3] != 1u || cpu->r[5] != cpu->r[17]) return 0;
+    MusashiBootMemory *ram = cpu->irq_image->memory;
+    uint32_t ch = cpu->r[17], cmd = 0x800c9a34u, pitch;
+    const uint8_t *flags = musashi_boot_ram_span(ram, ch + 55u, 2u);
+    uint16_t amount, offset, count, reload, command_count, command_reload;
+    return flags && flags[0] == 1u && !flags[1] && cd_irq_ram_word(ram, ch + 24u, 0u) &&
+           musashi_boot_read32(ram, ch + 36u, &pitch) && cd_irq_ram_word(ram, ch + 32u, pitch) &&
+           musashi_boot_read16(ram, cmd + 4u, &amount) && cpu->r[6] == amount && cpu->r[2] == 0u - amount &&
+           musashi_boot_read16(ram, cmd + 6u, &offset) && cpu->r[4] == (uint16_t)(pitch + offset) &&
+           cd_irq_ram_word(ram, ch + 40u, cpu->r[4]) && cd_irq_ram_word(ram, ch + 44u, cpu->r[2]) &&
+           musashi_boot_read16(ram, cmd + 2u, &command_count) && musashi_boot_read16(ram, ch + 48u, &count) &&
+           count == command_count && musashi_boot_read16(ram, cmd + 12u, &command_reload) &&
+           musashi_boot_read16(ram, ch + 18u, &reload) && reload == command_reload;
+}
+
+/* Execute the mounted instructions using the normal guest clock. A2 holds
+ * the record pointer until the common tail extracts a 16-bit ramp amount. */
+static int irq_opening_motion_issue(const FormatterCpu *cpu, uint32_t word) {
+    uint32_t pc = cpu->pc, ch = cpu->r[17], cmd = 0x800c9a34u;
+    uint16_t amount;
+    if (!irq_opening_motion_owner(cpu) ||
+        (!irq_motion_eight_pc(pc) && !(pc >= 0x800316f8u && pc <= 0x80031718u) &&
+         pc != 0x80031980u && pc != 0x80031984u) ||
+        (pc != 0x800316f8u && cpu->r[5] != ch) ||
+        (pc >= 0x80031714u && pc <= 0x80031938u && cpu->r[6] != cmd) ||
+        (pc >= 0x8003193cu && (!musashi_boot_read16(cpu->irq_image->memory, cmd + 4u, &amount) ||
+                                cpu->r[6] != amount))) return 0;
+    if (pc == 0x80031980u || pc == 0x80031984u) return irq_opening_motion_return(cpu);
+    unsigned op = word >> 26;
+    if (op < 32u) return 1;
+    uint32_t address = cpu->r[(word >> 21) & 31u] + (uint32_t)(int32_t)(int16_t)word;
+    switch (pc) {
+    case 0x80031700u: return op == 35u && address == ch + 20u;
+    case 0x80031704u: case 0x80031944u: case 0x80031958u: return op == 35u && address == ch + 36u;
+    case 0x8003170cu: case 0x8003196cu: return op == 40u && address == ch + 55u;
+    case 0x80031710u: return op == 43u && address == ch + 24u;
+    case 0x80031718u: return op == 43u && address == ch + 32u &&
+        cd_irq_ram_word(cpu->irq_image->memory, ch + 36u, cpu->r[2]);
+    case 0x8003171cu: return op == 37u && address == cmd;
+    case 0x80031738u: return op == 35u && cpu->r[3] == 8u && address == 0x800730e4u;
+    case 0x80031898u: return op == 40u && address == ch + 56u;
+    case 0x8003189cu: return op == 37u && address == cmd + 12u;
+    case 0x800318a0u: return op == 37u && address == cmd + 4u;
+    case 0x800318a4u: return op == 37u && address == cmd + 6u;
+    case 0x800318a8u: return op == 41u && address == ch + 18u;
+    case 0x800318acu: return op == 35u && address == ch + 32u;
+    case 0x800318b0u: return op == 37u && address == cmd + 2u;
+    case 0x800318bcu: return op == 41u && address == ch + 48u;
+    case 0x80031954u: return op == 36u && address == ch + 55u;
+    case 0x8003195cu: return op == 43u && address == ch + 40u;
+    case 0x80031978u: return op == 43u && address == ch + 44u && cpu->r[2] == 0u - cpu->r[6];
+    default: return 0;
+    }
 }
 
 /* Track publication precedes individual instrument production. Recheck the
