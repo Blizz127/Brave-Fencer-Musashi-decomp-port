@@ -324,45 +324,61 @@ static void draw_speech(const PalaceDialogue *d, const Speech *speech, unsigned 
     }
 }
 
+typedef struct {
+    const Speech *speech;
+    uint64_t opened, body, closing;
+    int voice_ready;
+} SpeechEvent;
+
 /* The room waits for each message to close. It counts 31 scene ticks before
  * requesting the second speaker, then requests the third as the next event.
- * A field pair advances one scene tick. */
-void bfm_palace_dialogue_draw(const PalaceDialogue *d, unsigned fields,
-                              uint32_t pixels[240][320])
+ * Each script request precedes the first displayed balloon by six fields. */
+static int speech_event(const PalaceDialogue *d, uint64_t field, SpeechEvent *event)
 {
-    if (!d || !pixels || fields < 1790) return;
-    unsigned opened = 1790;
-    unsigned elapsed = fields - opened;
+    uint64_t opened = 1790;
     for (unsigned i = 0; i < 3; ++i) {
         const Speech *speech = &d->speech[i];
-        /* Preserve the initial line's published silent presentation. Later
-         * voices wait at the nameplate until a real stream start is reported. */
-        unsigned body = 32;
-        if (speech->voice_ready && speech->ready_field >= opened) {
-            body = speech->ready_field - opened + 6;
-        } else if (i != 0) {
-            draw_speech(d, speech, elapsed, 0, 0, pixels);
-            return;
+        uint64_t body = opened + 32;
+        int ready = speech->voice_ready || i == 0;
+        if (speech->voice_ready) {
+            /* A fast host stream can start before the script restores normal
+             * lettering after writing the portrait and name. */
+            uint64_t display = (uint64_t)speech->ready_field + 6;
+            body = display > opened + 20 ? display : opened + 20;
         }
-        if (elapsed < body) {
-            draw_speech(d, speech, elapsed, body, 1, pixels);
-            return;
-        }
-        unsigned after_body = elapsed - body;
-        unsigned close = 2 * (speech->lead.voice_ticks + speech->hold_ticks) + 4;
+        uint64_t close = body + 2 * (speech->lead.voice_ticks + speech->hold_ticks) + 4;
         if (speech->continuation.length) close += 4 + 2 * speech->continuation.voice_ticks;
-        if (after_body < close) {
-            draw_speech(d, speech, elapsed, body, 1, pixels);
-            return;
+        uint64_t next = close + (i == 0 ? 12 + 2 * 31 : 14);
+        if (!ready || field < next) {
+            *event = (SpeechEvent){speech, opened, body, close, ready};
+            return 1;
         }
-        elapsed = after_body - close;
-        if (elapsed < 4) {
-            draw_balloon(d, elapsed < 2 ? 6 : 4, pixels);
-            return;
-        }
-        unsigned next = i == 0 ? 12 + 2 * 31 : 14;
-        if (elapsed < next) return;
-        elapsed -= next;
-        opened = fields - elapsed;
+        opened = next;
+    }
+    return 0;
+}
+
+int bfm_palace_dialogue_voice_due(const PalaceDialogue *d, unsigned field,
+                                 unsigned *bank, unsigned *cue)
+{
+    SpeechEvent event;
+    uint64_t display = (uint64_t)field + 6;
+    if (!d || !bank || !cue || !speech_event(d, display, &event) || display < event.opened ||
+        event.speech->voice_ready || (event.voice_ready && display >= event.closing)) return 0;
+    *bank = event.speech->bank;
+    *cue = event.speech->cue;
+    return 1;
+}
+
+void bfm_palace_dialogue_draw(const PalaceDialogue *d, unsigned field,
+                              uint32_t pixels[240][320])
+{
+    SpeechEvent event;
+    if (!d || !pixels || !speech_event(d, field, &event) || field < event.opened) return;
+    if (!event.voice_ready || field < event.closing) {
+        draw_speech(d, event.speech, (unsigned)(field - event.opened),
+                    (unsigned)(event.body - event.opened), event.voice_ready, pixels);
+    } else if (field - event.closing < 4) {
+        draw_balloon(d, field - event.closing < 2 ? 6 : 4, pixels);
     }
 }

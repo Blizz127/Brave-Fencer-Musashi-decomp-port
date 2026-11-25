@@ -14,6 +14,10 @@ PalaceDialogue *bfm_palace_dialogue_load(const MusashiDiscMedia *disc,
                                          const uint8_t *scene, size_t scene_size,
                                          const uint16_t vram[512][1024]);
 void bfm_palace_dialogue_free(PalaceDialogue *dialogue);
+/* Query the script's due bank and cue using the same opening-field clock.
+ * The request remains visible until it starts or the room moves on. */
+int bfm_palace_dialogue_voice_due(const PalaceDialogue *dialogue, unsigned opening_field,
+                                 unsigned *bank, unsigned *cue);
 /* Called on the game thread when the mounted voice stream becomes ready.
  * Bank and cue identify the script's request. opening_field uses the same
  * clock as draw. A duplicate notification preserves the first start. */

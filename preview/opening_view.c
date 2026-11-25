@@ -2,10 +2,11 @@
 #include "scene_views.h"
 #include "scene_tiles.h"
 #include "palace.h"
+#include "palace_dialogue.h"
 #include <stdio.h>
 #include <stdlib.h>
 
-enum { WIDTH = 320, HEIGHT = 240, LAST_FIELD = 2302 };
+enum { WIDTH = 320, HEIGHT = 240, LAST_FIELD = 2755 };
 enum { TITLE_WIDTH = 256, TITLE_HEIGHT = 64 };
 enum { CREDIT_X = 80, CREDIT_Y = 104, CREDIT_WIDTH = 160, CREDIT_HEIGHT = 32 };
 
@@ -262,6 +263,20 @@ int bfm_opening_frame(void *scene, unsigned fields, uint32_t *pixels,
     if (fields >= 1064)
         shade_scene(pixels, (fields - 1064) / 4);
     return 1;
+}
+
+int bfm_opening_voice_due(void *scene, unsigned field, unsigned *bank, unsigned *cue)
+{
+    OpeningView *view = scene;
+    return view && field <= LAST_FIELD &&
+           bfm_palace_dialogue_voice_due(bfm_palace_speech(view->stairs), field, bank, cue);
+}
+
+int bfm_opening_voice_started(void *scene, unsigned bank, unsigned cue, unsigned field)
+{
+    OpeningView *view = scene;
+    return view && field <= LAST_FIELD &&
+           bfm_palace_dialogue_voice_started(bfm_palace_speech(view->stairs), bank, cue, field);
 }
 
 int bfm_opening_final_frame(void *scene, uint32_t *pixels, int width, int height)

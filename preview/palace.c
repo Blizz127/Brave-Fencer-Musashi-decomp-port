@@ -233,6 +233,11 @@ Palace *bfm_palace_load(const MusashiDiscMedia *disc, unsigned member,
     return palace;
 }
 
+PalaceDialogue *bfm_palace_speech(Palace *palace)
+{
+    return palace ? palace->dialogue : NULL;
+}
+
 void bfm_palace_free(Palace *palace)
 {
     if (palace) {

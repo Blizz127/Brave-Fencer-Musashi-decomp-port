@@ -55,6 +55,11 @@ MusashiDiscMedia *musashi_disc_media_open_image(const char *path, char *why,
 int musashi_disc_media_read_root_file(const MusashiDiscMedia *media, const char *name,
                                       uint8_t *out, size_t max, size_t *size);
 
+/* Locate a root file's raw sectors, including Mode 2 Form 2 audio data.
+ * On success first and count delimit its half-open file-frame interval. */
+int musashi_disc_media_root_frames(const MusashiDiscMedia *media, const char *name,
+                                   uint32_t *first, uint32_t *count);
+
 /* Copy count bytes beginning at offset in a supported root file. On success
  * file_size receives its full length. A zero-byte read permits a NULL out
  * pointer, including at end of file. A failed read preserves both outputs. */

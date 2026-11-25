@@ -2,6 +2,7 @@
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include "scene_views.h"
+#include "desktop_voice.h"
 #include "bfm_plat_font.h"
 #include "title_flow.h"
 
@@ -18,6 +19,7 @@ enum { PAD_START = 1u << 3, PAD_UP = 1u << 4, PAD_DOWN = 1u << 6,
 typedef struct Player {
     MusashiDiscMedia *disc;
     void *title, *opening;
+    DesktopVoice *voice;
     SDL_Window *window;
     SDL_Renderer *renderer;
     SDL_Texture *texture;
@@ -106,6 +108,10 @@ static int events(Player *p) {
             if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_ESCAPE) return 0;
             if ((unsigned)e.key.keysym.scancode < SDL_NUM_SCANCODES)
                 p->keys[e.key.keysym.scancode] = e.type == SDL_KEYDOWN;
+            break;
+        case SDL_AUDIODEVICEADDED:
+        case SDL_AUDIODEVICEREMOVED:
+            bfm_desktop_voice_event(p->voice, &e.adevice);
             break;
         case SDL_RENDER_DEVICE_RESET:
             if (p->texture) SDL_DestroyTexture(p->texture);
@@ -208,6 +214,7 @@ static int play(Player *p, char *error, size_t size) {
         if (tick != last_logic) {
             int before = p->flow.phase;
             if (p->opening_finished && (p->pressed & (PAD_START | PAD_CROSS | PAD_CIRCLE))) {
+                bfm_desktop_voice_stop(p->voice);
                 bfm_opening_free(p->opening);
                 p->opening = NULL;
                 p->opening_finished = 0;
@@ -248,6 +255,14 @@ static int play(Player *p, char *error, size_t size) {
         last_field = fields;
         p->redraw = 0;
         if (opening) {
+            unsigned bank, cue;
+            if (bfm_opening_voice_due(p->opening, fields, &bank, &cue) &&
+                bfm_desktop_voice_request(p->voice, bank, cue))
+                fprintf(stderr, "Palace voice %u/%u requested at field %u\n", bank, cue, fields);
+            if (bfm_desktop_voice_pump(p->voice, &bank, &cue)) {
+                bfm_opening_voice_started(p->opening, bank, cue, fields);
+                fprintf(stderr, "Palace voice %u/%u reached SDL output at field %u\n", bank, cue, fields);
+            }
             frame = bfm_opening_frame(p->opening, fields, p->pixels, p->width, p->height);
             if (frame > 0) p->opening_seen = 1;
             if (frame == 0) {
@@ -259,6 +274,7 @@ static int play(Player *p, char *error, size_t size) {
                     snprintf(error, size, "Could not render the final opening frame.");
                     return 2;
                 }
+                bfm_desktop_voice_stop(p->voice);
                 p->opening_finished = 1;
                 SDL_SetWindowTitle(p->window, "Brave Fencer Musashi - End of opening preview");
                 fputs("End of the implemented opening. Gameplay control and saving are unavailable.\n", stderr);
@@ -316,6 +332,8 @@ static int run(const char *disc_path, int windowed) {
     SDL_SetMainReady();
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) < 0) goto sdl_error;
     sdl_ready = 1;
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO) == 0) p->voice = bfm_desktop_voice_open(p->disc);
+    else SDL_LogWarn(SDL_LOG_CATEGORY_AUDIO, "Dialogue output unavailable: %s", SDL_GetError());
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
     p->window = SDL_CreateWindow("Brave Fencer Musashi", SDL_WINDOWPOS_CENTERED,
                                   SDL_WINDOWPOS_CENTERED, TITLE_W, TITLE_H,
@@ -338,6 +356,7 @@ done:
     if (p->texture) SDL_DestroyTexture(p->texture);
     if (p->renderer) SDL_DestroyRenderer(p->renderer);
     if (p->window) SDL_DestroyWindow(p->window);
+    bfm_desktop_voice_free(p->voice);
     if (sdl_ready) SDL_Quit();
     if (p->opening) bfm_opening_free(p->opening);
     if (p->title) bfm_title_free(p->title);

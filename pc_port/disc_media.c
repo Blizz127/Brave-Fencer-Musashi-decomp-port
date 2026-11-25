@@ -335,6 +335,15 @@ static int root_file_extent(const MusashiDiscMedia *media, const char *name, Iso
     return 0;
 }
 
+int musashi_disc_media_root_frames(const MusashiDiscMedia *media, const char *name,
+                                   uint32_t *first, uint32_t *count) {
+    IsoExtent file;
+    if (!first || !count || !root_file_extent(media, name, &file)) return 0;
+    *first = file.lba;
+    *count = file.size / ISO_BLOCK + (file.size % ISO_BLOCK != 0);
+    return 1;
+}
+
 static void copy_root_range(const MusashiDiscMedia *media, IsoExtent file,
                             size_t offset, uint8_t *out, size_t count) {
     while (count) {

@@ -4,6 +4,8 @@ find_package(SDL2 2.0.18 REQUIRED CONFIG)
 set(bfm_root "${CMAKE_CURRENT_SOURCE_DIR}/..")
 add_executable(musashi_native_boot
     player.c
+    desktop_voice.c
+    palace_voice.c
     title_flow.c
     title_view.c
     opening_view.c
