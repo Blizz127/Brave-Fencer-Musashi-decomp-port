@@ -6,7 +6,7 @@ This project reimplements *Brave Fencer Musashi* for the US PlayStation release 
 
 Download the Windows x64 ZIP or Linux x86_64 archive from [GitHub Releases](https://github.com/Blizz127/Brave-Fencer-Musashi-decomp-port/releases/latest). Extract the whole archive and follow its README to select your US disc. The bundled Linux SDL2 library requires glibc 2.38 or newer. The executable also accepts `--disc "path/to/game.cue"`. Append `--windowed` to run in a window.
 
-Press Enter or the controller’s Start button at **Push Start**. Select **Start** to enter the opening scene. The preview reads its title and opening artwork from the disc at runtime and runs the matching title-menu C function on the host CPU. The original loading sprite appears before the silent opening moon and the first publisher credit. The preview ends before character control. Continue and saving are unavailable.
+Press Enter or the controller’s Start button at **Push Start**. Select **Start** to enter the opening scene. The preview reads its title and opening artwork from the disc at runtime and runs the matching title-menu C function on the host CPU. New Game shows the original loading sprite, the opening moon, the publisher credit and the animated game title. The camera pans down through the sky before the preview ends at the first palace approach. This opening is silent and ends before character control. Continue and saving are unavailable.
 
 To build the preview, install CMake 3.16 or newer and the SDL2 development files (2.0.18 or newer). From the repository root, run
 

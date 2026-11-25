@@ -4,22 +4,25 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-enum { WIDTH = 320, HEIGHT = 240, LAST_FIELD = 294 };
+enum { WIDTH = 320, HEIGHT = 240, LAST_FIELD = 696 };
+enum { TITLE_WIDTH = 256, TITLE_HEIGHT = 64 };
 enum { CREDIT_X = 80, CREDIT_Y = 104, CREDIT_WIDTH = 160, CREDIT_HEIGHT = 32 };
 
 typedef struct {
     uint16_t sky[480][320];
+    uint16_t title_ink[TITLE_HEIGHT][TITLE_WIDTH];
+    uint16_t title_mask[TITLE_HEIGHT][TITLE_WIDTH];
     uint16_t lettering[CREDIT_HEIGHT][CREDIT_WIDTH];
     uint16_t silhouette[CREDIT_HEIGHT][CREDIT_WIDTH];
 } OpeningView;
 
 /* The opening paints the sky with screen-aligned textured quads. Nearest
  * texel interpolation at a half-texel lands on opposite sides of the tie
- * in their two triangles. Only the top pair is visible in the first shot. */
+ * in their two triangles when the texture step is fractional in 16.16. */
 static unsigned sample_axis(unsigned coordinate, unsigned extent,
                             unsigned last_texel, int first_triangle)
 {
-    return (2 * coordinate * last_texel + extent - (first_triangle ? 1u : 0u))
+    return (2 * coordinate * last_texel + extent - (first_triangle && (last_texel * 65536u) % extent ? 1u : 0u))
            / (2 * extent);
 }
 
@@ -41,10 +44,15 @@ static SkyProjection projection(unsigned fields)
 {
     unsigned steps = fields > 248 ? (fields - 248) / 2 : 0;
     int scale = steps < 23 ? 5880 - 80 * (int)steps : 4096;
+    /* After the game title fades, the camera tilts down by three world
+     * pixels every two 30 Hz animation ticks. */
+    unsigned pan_ticks = fields > 508 ? (fields - 508) / 2 : 0;
+    int pan = (int)((3 * pan_ticks + 1) / 2);
+    if (pan > 239) pan = 239;
     return (SkyProjection){
         160 - 160 * scale / 4096, 160 + 160 * scale / 4096,
-        160 + 96 * scale / 4096, 120 - 120 * scale / 4096,
-        120 + 136 * scale / 4096, 120 + 360 * scale / 4096
+        160 + 96 * scale / 4096, 120 - 120 * scale / 4096 - pan,
+        120 + 136 * scale / 4096 - pan, 120 + 360 * scale / 4096 - pan
     };
 }
 
@@ -92,6 +100,16 @@ int bfm_opening_load(const MusashiDiscMedia *disc, void **scene,
             view->silhouette[y][x] = words[257][368 + mask];
         }
     }
+    for (unsigned y = 0; y < TITLE_HEIGHT; ++y) {
+        for (unsigned x = 0; x < TITLE_WIDTH; ++x) {
+            unsigned shift = 4 * (x % 4);
+            unsigned page_x = 896 + x / 4;
+            unsigned ink = (words[320 + y][page_x] >> shift) & 15;
+            unsigned mask = (words[400 + y][page_x] >> shift) & 15;
+            view->title_ink[y][x] = words[258][368 + ink];
+            view->title_mask[y][x] = words[260][368 + mask];
+        }
+    }
     free(words);
     *scene = view;
     return 1;
@@ -126,6 +144,46 @@ static uint16_t blend_credit(uint16_t backdrop, uint16_t silhouette, uint16_t le
     return result;
 }
 
+/* Each line of the game title opens from its middle. The top and bottom
+ * strips grow by one source row per animation tick and then fade together. */
+static uint16_t title_line(const OpeningView *view, uint16_t back, int x, int y,
+                           int center, int first_row, int rows, unsigned level)
+{
+    int dy = y - center;
+    if (dy < -rows || dy > rows)
+        return back;
+    int row = first_row + (dy < 0 ? dy + rows : 31 - rows + dy);
+    return blend_credit(back, view->title_mask[row][x],
+                        view->title_ink[row][x], level);
+}
+
+static uint16_t game_title(const OpeningView *view, uint16_t back, unsigned fields,
+                           int x, int y)
+{
+    if (fields >= 324 && fields < 506 && x >= 32 && x < 288 &&
+        y >= 88 && y <= 152) {
+        int rows = (int)((fields - 324) / 2);
+        if (rows > 16) rows = 16;
+        unsigned level = 8 * ((506 - (fields & ~1u)) / 2);
+        if (level > 128) level = 128;
+        back = title_line(view, back, x - 32, y, 136, 32, rows, level);
+        back = title_line(view, back, x - 32, y, 104, 0, rows, level);
+    }
+    if (fields >= 294 && fields < 356 && (y == 104 || y == 136)) {
+        int tick = 1 + (int)((fields - 294) / 2);
+        int length = tick * (26 + 6 * tick);
+        if (length > 256) length = 256;
+        int left = y == 104 ? 32 : 288 - length;
+        if (x >= left && x <= left + length) {
+            int start = 16 * (tick + (tick >= 6));
+            if (start > 255) start = 255;
+            int color = start + (x - left) * (255 - start) / length;
+            back = (uint16_t)((color >> 3) << (y == 104 ? 0 : 10));
+        }
+    }
+    return back;
+}
+
 int bfm_opening_frame(void *scene, unsigned fields, uint32_t *pixels,
                       int width, int height)
 {
@@ -148,6 +206,8 @@ int bfm_opening_frame(void *scene, unsigned fields, uint32_t *pixels,
                 x >= CREDIT_X && x < CREDIT_X + CREDIT_WIDTH)
                 word = blend_credit(word, view->silhouette[y - CREDIT_Y][x - CREDIT_X],
                                     view->lettering[y - CREDIT_Y][x - CREDIT_X], strength);
+            if (fields >= 294 && fields < 506)
+                word = game_title(view, word, fields, (int)x, (int)y);
             uint32_t r = faded_channel(word & 31, darkness);
             uint32_t g = faded_channel((word >> 5) & 31, darkness);
             uint32_t b = faded_channel((word >> 10) & 31, darkness);
