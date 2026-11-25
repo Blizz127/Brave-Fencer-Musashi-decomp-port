@@ -19,9 +19,11 @@ void bfm_title_free(void *scene);
 int bfm_opening_load(const MusashiDiscMedia *disc, void **scene, char *error,
                      size_t error_size);
 /* Positive produces a frame, zero ends the opening segment, and negative
- * reports a render failure. Retain the last presented image at the end. */
+ * reports a render failure. A clock step can skip the last display field. */
 int bfm_opening_frame(void *scene, unsigned int fields, uint32_t *pixels,
                       int width, int height);
+/* Render the final supported field, even when the display clock skipped it. */
+int bfm_opening_final_frame(void *scene, uint32_t *pixels, int width, int height);
 void bfm_opening_free(void *scene);
 
 #endif

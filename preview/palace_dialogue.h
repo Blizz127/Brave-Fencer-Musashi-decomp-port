@@ -8,12 +8,17 @@
 
 typedef struct PalaceDialogue PalaceDialogue;
 
-/* Only the first palace speech is supported. Resource bytes are copied, so
- * the scene and its uploaded graphics can be released after this call. */
+/* Load the three speakers on the palace staircase from the mounted scene.
+ * Their script and drawing resources can be released after this call. */
 PalaceDialogue *bfm_palace_dialogue_load(const MusashiDiscMedia *disc,
                                          const uint8_t *scene, size_t scene_size,
                                          const uint16_t vram[512][1024]);
 void bfm_palace_dialogue_free(PalaceDialogue *dialogue);
+/* Called on the game thread when the mounted voice stream becomes ready.
+ * Bank and cue identify the script's request. opening_field uses the same
+ * clock as draw. A duplicate notification preserves the first start. */
+int bfm_palace_dialogue_voice_started(PalaceDialogue *dialogue, unsigned bank,
+                                     unsigned cue, unsigned opening_field);
 /* fields counts display fields from the opening moon, starting at zero.
  * Compose after drawing the room and actors at 320 x 240. */
 void bfm_palace_dialogue_draw(const PalaceDialogue *dialogue, unsigned fields,

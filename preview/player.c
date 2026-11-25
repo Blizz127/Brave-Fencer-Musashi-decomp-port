@@ -255,6 +255,10 @@ static int play(Player *p, char *error, size_t size) {
                     snprintf(error, size, "The opening ended before it produced its first frame.");
                     return 2;
                 }
+                if (bfm_opening_final_frame(p->opening, p->pixels, p->width, p->height) <= 0) {
+                    snprintf(error, size, "Could not render the final opening frame.");
+                    return 2;
+                }
                 p->opening_finished = 1;
                 SDL_SetWindowTitle(p->window, "Brave Fencer Musashi - End of opening preview");
                 fputs("End of the implemented opening. Gameplay control and saving are unavailable.\n", stderr);

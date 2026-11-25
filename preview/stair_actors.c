@@ -5,7 +5,7 @@
 #include <string.h>
 
 enum { ACTORS = 3, PARTS = 26, MAX_VERTS = 128, MAX_FACES = 128,
-       MAX_DRAW = 2048, ROOT_POSES = 200, W = 320, H = 240 };
+       MAX_DRAW = 2048, ROOT_POSES = 601, W = 320, H = 240 };
 typedef struct { int v[3]; } Vec;
 typedef struct { int a[3][3]; } Mat;
 typedef struct {
@@ -18,7 +18,7 @@ typedef struct {
     Face faces[MAX_FACES];
 } Model;
 typedef struct {
-    const uint8_t *bones, *roots;
+    const uint8_t *bones, *roots, *landing_bones;
     unsigned first, count, frames;
 } Performer;
 typedef struct {
@@ -28,15 +28,16 @@ typedef struct {
     unsigned sequence;
 } Draw;
 typedef struct { Vec normal; int32_t offset; } Plane;
-typedef struct { Plane side[4]; } FloorTriangle;
+typedef struct { Plane side[5]; unsigned count; } FloorSurface;
 struct BfmStairActors {
-    FloorTriangle floor[256];
+    FloorSurface floor[512];
     size_t floor_count;
     Vec spawn[3];
     Face shadow;
     int shadow_left, shadow_top;
     Model parts[PARTS];
     Performer actor[ACTORS];
+    const uint8_t *princess_landing;
     Draw order[MAX_DRAW];
     size_t used, next;
 };
@@ -127,22 +128,36 @@ static int load_model(Model *m, const uint8_t *s, size_t bytes)
     return 1;
 }
 
-/* Each triangular collision face references four planes. The first
- * supplies ground height, the other three enclose its footprint. */
+/* Both the stairs and the flat landing use convex collision faces. One
+ * plane supplies the ground height, the remaining planes bound its edges. */
 static int read_floor(BfmStairActors *a, const uint8_t *scene, size_t bytes)
 {
     const size_t at = 0x67f7c;
     if (!within(bytes, at, 32)) return 0;
     const uint8_t *grid = scene + at;
     size_t distance = longword(grid + 12), normal = longword(grid + 16);
-    size_t indices = longword(grid + 20), faces = longword(grid + 24), end = longword(grid + 28);
+    size_t indices = longword(grid + 20), faces = longword(grid + 24), quads = longword(grid + 28);
     if (distance < 32 || distance > normal || normal > indices || indices > faces ||
-        faces > end || end > bytes - at || (normal-distance)%4 || (indices-normal)%8 ||
-        (end-faces)%18 || (end-faces)/18 > 256) return 0;
-    a->floor_count = (end-faces)/18;
+        faces > quads || quads > bytes - at || (normal-distance)%4 || (indices-normal)%8 ||
+        (faces-indices)%2 || (quads-faces)%18) return 0;
+    size_t triangles = (quads-faces)/18, quad_count = 0;
+    for (size_t pos = indices; pos < faces; pos += 2) {
+        unsigned id = word(grid + pos);
+        if (id < 0x8000) {
+            if (id >= triangles) return 0;
+        } else {
+            size_t used = 1u + (id & 0x7fffu);
+            if (used > quad_count) quad_count = used;
+        }
+    }
+    if (triangles > 512 || quad_count > 512-triangles ||
+        quad_count > (bytes-at-quads)/22) return 0;
+    a->floor_count = triangles + quad_count;
     for (size_t i = 0; i < a->floor_count; ++i) {
-        const uint8_t *face = grid + faces + 18 * i;
-        for (unsigned j = 0; j < 4; ++j) {
+        unsigned planes = i < triangles ? 4u : 5u;
+        const uint8_t *face = i < triangles ? grid + faces + 18*i : grid + quads + 22*(i-triangles);
+        a->floor[i].count = planes;
+        for (unsigned j = 0; j < planes; ++j) {
             unsigned n = word(face + 2 + 4*j), d = word(face + 4 + 4*j);
             if (n >= (indices-normal)/8 || d >= (normal-distance)/4) return 0;
             Plane *plane = &a->floor[i].side[j];
@@ -171,7 +186,8 @@ static int ground(const BfmStairActors *a, Vec position, Vec *normal, int *heigh
         test.v[1] = floored(plane_value(p[0], test), -p[0].normal.v[1]);
         if (test.v[1] < -32768 || test.v[1] > 32767 ||
             plane_value(p[1], test) < -4096 || plane_value(p[2], test) < -4096 ||
-            plane_value(p[3], test) < -4096) continue;
+            plane_value(p[3], test) < -4096 ||
+            (a->floor[i].count == 5 && plane_value(p[4], test) < -4096)) continue;
         int gap = abs(test.v[1] - position.v[1]);
         if (gap < nearest) {
             nearest = gap;
@@ -208,25 +224,29 @@ BfmStairActors *bfm_stair_actors_load(const uint8_t *s, size_t bytes)
      * Pointer lists refer to the member's original load address. Pose frames
      * store a local translation and three angles per piece, independent of
      * the scene track which moves the whole figure. */
-    static const struct { unsigned list, bones, root, count, frames; } layout[ACTORS] = {
-        {0x73be0, 0x7cff4, 0xaf764, 8, 20}, {0x7634c, 0x823c4, 0xb3d4c, 10, 12},
-        {0x7848c, 0x86b7c, 0xbe8e4, 7, 12}
+    static const struct { unsigned list, bones, root, count, frames, landing_bones, landing_frames; } layout[ACTORS] = {
+        {0x73be0, 0x7cff4, 0xaf764, 8, 20, 0x7d774, 14},
+        {0x7634c, 0x823c4, 0xb3d4c, 10, 12, 0x82964, 23},
+        {0x7848c, 0x86b7c, 0xbe8e4, 7, 12, 0x86834, 10}
     };
     const uint32_t load_address = UINT32_C(0x80128158);
     const unsigned rock = 0x71604u;
     if (!s || !within(bytes, rock, 40)) return NULL;
     BfmStairActors *out = calloc(1, sizeof(*out));
     if (!out || !read_effects(out, s, bytes) || !load_model(&out->parts[0], s + rock, bytes - rock)) goto fail;
+    if (!within(bytes, 0xb0a30, 100*8)) goto fail;
+    out->princess_landing = s + 0xb0a30;
     unsigned part = 1;
     unsigned total_faces = 3 * out->parts[0].nf + ACTORS;
     for (unsigned i = 0; i < ACTORS; ++i) {
         unsigned n = layout[i].count, frames = layout[i].frames;
         if (!within(bytes, layout[i].list, 4 * (n + 1)) ||
             !within(bytes, layout[i].bones, 12 * n * frames) ||
+            !within(bytes, layout[i].landing_bones, 12 * n * layout[i].landing_frames) ||
             !within(bytes, layout[i].root, ROOT_POSES * 8)) goto fail;
         const uint8_t *list = s + layout[i].list;
         if (longword(list + 4 * n)) goto fail;
-        out->actor[i] = (Performer){s + layout[i].bones, s + layout[i].root, part, n, frames};
+        out->actor[i] = (Performer){s + layout[i].bones, s + layout[i].root, s + layout[i].landing_bones, part, n, frames};
         for (unsigned j = 0; j < n; ++j, ++part) {
             uint32_t pointer = longword(list + 4 * j);
             if (pointer < load_address) goto fail;
@@ -486,6 +506,30 @@ static void masonry(BfmStairActors *a, unsigned field, Mat view, Vec translation
     }
 }
 
+/* The princess turns toward the landing and takes a shorter second path.
+ * The steward and butler finish their first path and settle into idle poses. */
+static void actor_keys(const BfmStairActors *a, unsigned actor, unsigned tick,
+                       const uint8_t **root, const uint8_t **bones)
+{
+    const Performer *p = a->actor + actor;
+    unsigned path = tick < ROOT_POSES ? tick : ROOT_POSES - 1;
+    unsigned pose = tick % p->frames;
+    const uint8_t *poses = p->bones;
+    *root = p->roots + 8*path;
+    if (actor == 0 && tick >= 504) {
+        unsigned landing = tick - 504;
+        if (landing) *root = a->princess_landing + 8*(landing < 101 ? landing-1 : 99);
+        else *root = p->roots + 8*503;
+        poses = p->landing_bones;
+        pose = landing < 14 ? landing : 13;
+    } else if (actor && tick >= 600) {
+        unsigned rest = tick - 600;
+        poses = p->landing_bones;
+        pose = actor == 2 ? rest % 10 : (rest < 23 ? rest : 22);
+    }
+    *bones = poses + 12*p->count*pose;
+}
+
 void bfm_stair_actors_prepare(BfmStairActors *a, unsigned field,
                               const int axes[3][3], const int origin[3])
 {
@@ -496,14 +540,14 @@ void bfm_stair_actors_prepare(BfmStairActors *a, unsigned field,
     masonry(a, field, view, translation);
     if (field >= 1510) {
         unsigned tick = (field - 1510) / 2;
-        if (tick && tick < ROOT_POSES) for (unsigned i = 0; i < ACTORS; ++i) {
+        if (tick) for (unsigned i = 0; i < ACTORS; ++i) {
             const Performer *p = a->actor + i;
-            const uint8_t *root = p->roots + 8 * tick;
+            const uint8_t *root, *frame;
+            actor_keys(a, i, tick, &root, &frame);
             int heading = signed_word(root + 6);
             shoe_shadow(a, triple(root), heading, view, translation);
             Mat yaw = rotation(1, heading), turned = multiply(view, yaw);
             Vec base = add(translation, transform(view, triple(root)));
-            const uint8_t *frame = p->bones + 12 * p->count * (tick % p->frames);
             for (unsigned j = 0; j < p->count; ++j) {
                 const uint8_t *bone = frame + 12 * j;
                 Mat pose = angles(triple(bone + 6));

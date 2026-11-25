@@ -13,7 +13,7 @@ typedef struct { int x, y, z; } Point;
 typedef struct { uint16_t u, v; } Texel;
 typedef struct { Point eye, aim; } Pose;
 typedef struct { Point right, down, forward; } Basis;
-enum { INWARD_POSES = 100, INTERIOR_POSES = 224 };
+enum { INWARD_POSES = 100, STAIR_POSES = 504, LANDING_POSES = 98 };
 typedef struct {
     Texel uv[4];
     uint16_t vertices[4], page_x, page_y, palette_x, palette_y;
@@ -23,7 +23,7 @@ typedef struct { int depth; size_t index; } Draw;
 
 struct Palace {
     size_t vertex_count, face_count;
-    Pose track[INTERIOR_POSES];
+    Pose track[STAIR_POSES + LANDING_POSES];
     BfmStairActors *actors;
     PalaceDialogue *dialogue;
     uint8_t *scene;
@@ -184,20 +184,25 @@ static int load_mesh(Palace *palace, const uint8_t *scene, size_t size)
 
 /* Each authored camera record holds signed XYZ eye and aim positions, then
  * a roll value. These two opening shots use an unrolled camera. */
-static int read_track(Palace *palace, const uint8_t *scene, size_t bytes)
+static int read_poses(Pose *out, const uint8_t *scene, size_t bytes, size_t begin, unsigned count)
 {
-    size_t begin = palace->member ? 0x9b424 : 0x7a618;
-    unsigned count = palace->member ? INTERIOR_POSES : INWARD_POSES;
     if (begin > bytes || count > (bytes - begin) / 14) return 0;
     for (unsigned i = 0; i < count; ++i) {
-        const uint8_t *p = scene + begin + 14 * i;
+        const uint8_t *p = scene + begin + 14*i;
         Pose pose = {{signed16(p), signed16(p + 2), signed16(p + 4)},
                      {signed16(p + 6), signed16(p + 8), signed16(p + 10)}};
         if (signed16(p + 12) || (pose.eye.x == pose.aim.x && pose.eye.z == pose.aim.z))
             return 0;
-        palace->track[i] = pose;
+        out[i] = pose;
     }
     return 1;
+}
+
+static int read_track(Palace *palace, const uint8_t *scene, size_t bytes)
+{
+    if (!palace->member) return read_poses(palace->track, scene, bytes, 0x7a618, INWARD_POSES);
+    return read_poses(palace->track, scene, bytes, 0x9b424, STAIR_POSES) &&
+           read_poses(palace->track + STAIR_POSES, scene, bytes, 0x9d504, LANDING_POSES);
 }
 
 Palace *bfm_palace_load(const MusashiDiscMedia *disc, unsigned member,
@@ -280,14 +285,18 @@ static unsigned integer_length(uint64_t squared_length)
 
 /* The camera handles short axes with an integer-length denominator. Its
  * mantissa advances two bits at a time, as the length is a square root. */
+static unsigned camera_length(uint64_t squared_length)
+{
+    unsigned high_bit = 0;
+    for (uint64_t bits = squared_length; bits >>= 1;) ++high_bit;
+    unsigned shift = high_bit > 6 ? (high_bit - 6) / 2 * 2 : 0;
+    return integer_length((squared_length >> shift) << shift);
+}
+
 static int axis_magnitude(uint64_t component_squared, uint64_t total, int component)
 {
     if (component_squared < UINT64_C(1) << 19) {
-        unsigned high_bit = 0;
-        for (uint64_t x = total; x >>= 1;) ++high_bit;
-        unsigned shift = high_bit > 6 ? (high_bit - 6) / 2 * 2 : 0;
-        uint64_t shortened = (total >> shift) << shift;
-        int denominator = (int)integer_length(shortened);
+        int denominator = (int)camera_length(total);
         return (int)((int64_t)component * 4096 / denominator);
     }
     uint64_t ratio = (component_squared << 13) / total;
@@ -295,7 +304,7 @@ static int axis_magnitude(uint64_t component_squared, uint64_t total, int compon
     return component < 0 ? -magnitude : magnitude;
 }
 
-static Basis look_at(Pose pose)
+static Basis look_at(Pose pose, int use_scene_length)
 {
     int dx = pose.aim.x - pose.eye.x, dy = pose.aim.y - pose.eye.y;
     int dz = pose.aim.z - pose.eye.z;
@@ -303,7 +312,8 @@ static Basis look_at(Pose pose)
     uint64_t total = horizontal + squared(dy);
     int sy = axis_magnitude(squared(dx), horizontal, -dx);
     int cy = axis_magnitude(squared(dz), horizontal, dz);
-    int cp = axis_magnitude(horizontal, total, (int)integer_length(horizontal));
+    int length = (int)(use_scene_length ? camera_length(horizontal) : integer_length(horizontal));
+    int cp = axis_magnitude(horizontal, total, length);
     int sp = axis_magnitude(squared(dy), total, dy);
     return (Basis){{cy, 0, sy}, {floor_div((int64_t)sy * sp, 4096), cp,
                                   floor_div(-(int64_t)cy * sp, 4096)},
@@ -318,13 +328,14 @@ static void project_mesh(Palace *palace, unsigned field)
     int focal = palace->member ? 256 : 400;
     if (palace->member) {
         unsigned tick = field >= 1512 ? (field - 1512) / 2 : 0;
-        Pose pose = palace->track[tick < INTERIOR_POSES ? tick : INTERIOR_POSES - 1];
+        if (field >= 2520) {
+            unsigned landing = (field - 2520) / 2;
+            tick = STAIR_POSES + (landing < LANDING_POSES ? landing : LANDING_POSES - 1);
+        }
+        Pose pose = palace->track[tick];
         eye = pose.eye;
-        /* The wide stairwell view changes yaw by one scene unit as the
-         * group descends. An impact shakes the camera, then decays. */
-        axes = pose.aim.x == palace->track[0].aim.x
-                   ? (Basis){{-1130,0,3946},{388,4074,111},{-3925,403,-1124}}
-                   : (Basis){{-1124,0,3947},{388,4096,110},{-3947,403,-1124}};
+        axes = look_at(pose, 1);
+        /* Falling masonry briefly shakes the otherwise authored camera. */
         if (field >= 1480 && field < 1544) {
             unsigned wave = (field - 1480) / 4;
             int amplitude = 8 - (int)(wave / 2);
@@ -333,7 +344,7 @@ static void project_mesh(Palace *palace, unsigned field)
     } else if (field >= 958) {
         unsigned tick = (field - 952) / 2;
         Pose pose = palace->track[tick < INWARD_POSES ? tick : INWARD_POSES - 1];
-        axes = look_at(pose);
+        axes = look_at(pose, 0);
         eye = pose.eye;
     } else {
         unsigned ticks_to_end = field < 828 ? (829 - field) / 2 : 0;
