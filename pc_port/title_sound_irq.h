@@ -665,28 +665,51 @@ static int irq_opening_motion_issue(const FormatterCpu *cpu, uint32_t word) {
     }
 }
 
-/* Track publication precedes individual instrument production. Recheck the
- * complete row produced for instrument ten before consuming its four fields. */
-static int irq_opening_row10(const FormatterCpu *cpu, const uint8_t *desc) {
-    static const uint8_t row_digest[32] = {
-        0x45, 0x88, 0x5b, 0x68, 0x42, 0x72, 0xd9, 0xa8,
-        0x2d, 0x53, 0x58, 0xdb, 0x1d, 0x1e, 0x80, 0x04,
-        0x2c, 0xbf, 0x64, 0xee, 0x61, 0xf5, 0x8b, 0xd6,
-        0xd6, 0x4c, 0x7c, 0x8f, 0x88, 0x94, 0xff, 0x33
+/* Map publication precedes instrument installation. The opening prefix selects
+ * these three instruments on track four. Verify the complete installed row. */
+static int irq_opening_instrument(const FormatterCpu *cpu, const uint8_t *desc) {
+    static const struct {
+        uint8_t instrument;
+        uint8_t digest[32];
+    } installed[] = {
+        { 9u, {
+            0xfb, 0xa7, 0xed, 0x42, 0xf4, 0x2a, 0x0a, 0xa4,
+            0x0a, 0x99, 0xba, 0x81, 0x06, 0x50, 0xa9, 0x04,
+            0x80, 0x18, 0x6a, 0xfa, 0xf7, 0xcb, 0x17, 0x8c,
+            0xec, 0xce, 0xa1, 0x88, 0x60, 0xa5, 0x7a, 0x2b
+        } },
+        { 10u, {
+            0x45, 0x88, 0x5b, 0x68, 0x42, 0x72, 0xd9, 0xa8,
+            0x2d, 0x53, 0x58, 0xdb, 0x1d, 0x1e, 0x80, 0x04,
+            0x2c, 0xbf, 0x64, 0xee, 0x61, 0xf5, 0x8b, 0xd6,
+            0xd6, 0x4c, 0x7c, 0x8f, 0x88, 0x94, 0xff, 0x33
+        } },
+        { 12u, {
+            0xcd, 0x96, 0xd3, 0x2d, 0x44, 0x74, 0xdd, 0xa2,
+            0x4e, 0x30, 0x9c, 0x58, 0xc8, 0x31, 0x01, 0x77,
+            0x70, 0x95, 0xc6, 0xe1, 0x7a, 0x70, 0x59, 0xd8,
+            0xef, 0x05, 0x77, 0xd6, 0xb0, 0x82, 0x71, 0x04
+        } },
     };
     unsigned channel;
-    uint8_t digest[32];
     MusashiBootMemory *ram = cpu->irq_image->memory;
-    const uint8_t *row = musashi_boot_ram_span(ram, 0x800a61f8u, 12u);
-    return desc && desc[10] == 4u && desc[11] == 10u && cpu->r[22] == 3u &&
-           irq_level_leaf_channel(cpu, &channel) && cpu->r[21] == channel &&
-           irq_opening_track4(ram) && cd_irq_ram_word(ram, 0x8006a97cu, 0x800a6180u) &&
-           row && musashi_sha256_digest(row, 12u, digest) && !memcmp(digest, row_digest, sizeof digest);
+    if (!desc || desc[10] != 4u || cpu->r[22] != 3u ||
+        !irq_level_leaf_channel(cpu, &channel) || cpu->r[21] != channel ||
+        !irq_opening_track4(ram) || !cd_irq_ram_word(ram, 0x8006a97cu, 0x800a6180u)) return 0;
+    for (size_t i = 0; i < sizeof installed / sizeof installed[0]; ++i) {
+        if (installed[i].instrument == desc[11]) {
+            const uint8_t *row = musashi_boot_ram_span(ram, 0x800a6180u + 12u * desc[11], 12u);
+            uint8_t digest[32];
+            return row && musashi_sha256_digest(row, 12u, digest) &&
+                   !memcmp(digest, installed[i].digest, sizeof digest);
+        }
+    }
+    return 0;
 }
 
 static int irq_opening_pan(const FormatterCpu *cpu, uint32_t word) {
     const uint8_t *desc = irq_opening_descriptor(cpu);
-    if (cpu->r[31] != 0x80033fa4u || !irq_opening_row10(cpu, desc)) return 0;
+    if (cpu->r[31] != 0x80033fa4u || !irq_opening_instrument(cpu, desc)) return 0;
     MusashiBootMemory *ram = cpu->irq_image->memory;
     const uint8_t *bias = musashi_boot_ram_span(ram, cpu->level_slot + 56u, 1u);
     const uint8_t *channel = musashi_boot_ram_span(ram, cpu->r[17], 0x54u);
@@ -727,11 +750,10 @@ static int irq_level_instrument(const FormatterCpu *cpu, uint32_t *row) {
     const uint8_t *instrument = musashi_boot_ram_span(ram, cpu->r[29] + 27u, 1);
     uint32_t bank = cpu->r[22], base;
     if (!instrument || cpu->r[20] != cpu->r[29] + 16u) return 0;
-    if (bank == 3u && *instrument == 10u && cpu->r[31] == 0x80033d6cu &&
-        irq_opening_row10(cpu, irq_opening_descriptor(cpu)))
-        base = 0x800a6180u;
-    else if (bank == 0 && *instrument == 26u) base = 0x800a5f68u;
+    if (bank == 0 && *instrument == 26u) base = 0x800a5f68u;
     else if (bank == 3u && (*instrument == 0u || *instrument == 3u)) base = 0x800a6180u;
+    else if (bank == 3u && cpu->r[31] == 0x80033d6cu &&
+             irq_opening_instrument(cpu, irq_opening_descriptor(cpu))) base = 0x800a6180u;
     else return 0;
     if (!cd_irq_ram_word(ram, 0x8006a970u + bank * 4u, base)) return 0;
     *row = base + 12u * *instrument;
