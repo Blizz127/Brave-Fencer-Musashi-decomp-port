@@ -52,7 +52,78 @@ static int sc01_room_image(MusashiBootMemory *memory, const FormatterCpu *cpu)
 static int sc01_room_expected(const FormatterCpu *cpu)
 {
     const Sc01RoomFrame *f = &cpu->sc01_room;
-    return f->next && cpu->pc == f->next && sc01_room_foreground(cpu);
+    return f->next && !f->callee_return && cpu->pc == f->next && sc01_room_foreground(cpu);
+}
+
+static int sc01_room_position(const Sc01RoomFrame *f, const FormatterCpu *cpu)
+{
+    return f->next == cpu->pc && f->npc == cpu->npc && f->branch == cpu->branch_pc &&
+           !!f->branch == !!cpu->delay_slot && f->sp == cpu->r[29] && f->ra == cpu->r[31];
+}
+
+static void sc01_room_remember(Sc01RoomFrame *f, const FormatterCpu *cpu)
+{
+    f->next = cpu->pc;
+    f->npc = cpu->npc;
+    f->branch = cpu->branch_pc;
+    f->sp = cpu->r[29];
+    f->ra = cpu->r[31];
+}
+
+static void sc01_room_end(Sc01RoomFrame *f)
+{
+    f->next = f->callee_return = f->return_jump = 0;
+}
+
+/* Existing formatter services return atomically. This witness follows an
+ * actual return from the expected service, including nested calls within it. */
+static void sc01_room_service_return(FormatterCpu *cpu)
+{
+    Sc01RoomFrame *f = &cpu->sc01_room;
+    if (!sc01_room_foreground(cpu)) return;
+    if (!sc01_room_position(f, cpu) || cpu->r[29] > f->callee_sp) {
+        sc01_room_end(f);
+        return;
+    }
+    const uint32_t to = cpu->r[31];
+    if (to == f->callee_return && cpu->r[29] == f->callee_sp)
+        f->callee_return = 0;
+    else if (sc01_room_code(to)) {
+        sc01_room_end(f);
+        return;
+    }
+    f->next = to;
+    f->npc = to + 4u;
+    f->branch = f->return_jump = 0;
+}
+
+/* Original guest code can call further functions before its JR and delay
+ * instruction. Keep observing the same CPU's actual issue sequence without
+ * granting its callee access to any additional guest code. */
+static void sc01_room_callee_retired(FormatterCpu *cpu, uint32_t issued, uint32_t word,
+                                     uint32_t old_branch)
+{
+    Sc01RoomFrame *f = &cpu->sc01_room;
+    if (cpu->pc == f->callee_return && f->return_jump && old_branch == f->return_jump &&
+        cpu->r[31] == f->callee_return && cpu->r[29] == f->callee_sp &&
+        !cpu->delay_slot && !cpu->branch_pc && cpu->npc == cpu->pc + 4u)
+        f->callee_return = 0;
+    else if (sc01_room_code(cpu->pc) || cpu->r[29] > f->callee_sp) {
+        sc01_room_end(f);
+        return;
+    }
+    f->return_jump = word == MIPS_JR(31) && cpu->branch_pc == issued &&
+                     cpu->npc == f->callee_return ? issued : 0;
+    sc01_room_remember(f, cpu);
+}
+
+/* The entry wrapper calls the table dispatcher directly. Its saved return
+ * stays in the dispatcher's frame while command 1 and its children run. */
+static int sc01_room_caller(MusashiBootMemory *ram, const FormatterCpu *cpu, uint32_t sp)
+{
+    uint32_t resume;
+    return sp <= UINT32_MAX - 20u && !(sp & 3u) && intrinsic_span(cpu, sp + 16u, 4u) &&
+           musashi_boot_read32(ram, sp + 16u, &resume) && resume == SC01_ROOM_ENTRY + 16u;
 }
 
 static int sc01_room_word(MusashiBootMemory *memory, const FormatterCpu *cpu, uint32_t *out)
@@ -60,9 +131,8 @@ static int sc01_room_word(MusashiBootMemory *memory, const FormatterCpu *cpu, ui
     const Sc01RoomFrame *f = &cpu->sc01_room;
     const Sc01RoomCode *code;
     uint64_t digest;
-    if (f->memory != memory || f->npc != cpu->npc || f->branch != cpu->branch_pc ||
-        !!f->branch != !!cpu->delay_slot || f->sp != cpu->r[29] || f->ra != cpu->r[31] ||
-        !sc01_room_image(memory, cpu)) return 0;
+    if (f->memory != memory || !sc01_room_position(f, cpu) ||
+        !sc01_room_caller(memory, cpu, f->caller_sp) || !sc01_room_image(memory, cpu)) return 0;
     if (cpu->pc != SC01_ROOM_CALL + 4u) {
         code = sc01_room_code(cpu->pc);
         if (!code || !intrinsic_span(cpu, code->start, code->end - code->start) ||
@@ -81,34 +151,26 @@ static void sc01_room_retired(MusashiBootMemory *memory, FormatterCpu *cpu,
     Sc01RoomFrame *f = &cpu->sc01_room;
     if (issued == SC01_ROOM_CALL && sc01_room_foreground(cpu)) {
         uint16_t command;
-        f->next = 0;
+        sc01_room_end(f);
         if (cpu->pc != SC01_ROOM_CALL + 4u || cpu->npc != SC01_ROOM_COMMAND ||
             cpu->branch_pc != SC01_ROOM_CALL || !cpu->delay_slot ||
             cpu->r[2] != SC01_ROOM_COMMAND || cpu->r[3] != 1u ||
             cpu->r[31] != SC01_ROOM_CALL + 8u ||
             !intrinsic_span(cpu, 0x800b99f6u, 2u) ||
             !musashi_boot_read16(memory, 0x800b99f6u, &command) || command != 1u ||
-            !sc01_room_image(memory, cpu)) return;
+            !sc01_room_caller(memory, cpu, cpu->r[29]) || !sc01_room_image(memory, cpu)) return;
         f->memory = memory;
+        f->caller_sp = cpu->r[29];
     } else if (!issuing) {
         return;
     } else if (!sc01_room_code(cpu->pc)) {
-        /* A delay slot following JAL can enter a resident service (including
-         * the normal memory clear). Preserve its return without admitting any
-         * of that service under the scene's code identity. */
-        f->next = 0;
-        if (old_branch && cpu->r[31] == old_branch + 8u && sc01_room_code(cpu->r[31])) {
-            f->next = cpu->r[31];
-            f->npc = f->next + 4u;
-            f->branch = 0;
-            f->sp = cpu->r[29];
-            f->ra = f->next;
+        if (!old_branch || cpu->r[31] != old_branch + 8u || !sc01_room_code(cpu->r[31])) {
+            sc01_room_end(f);
+            return;
         }
-        return;
+        f->callee_return = cpu->r[31];
+        f->callee_sp = cpu->r[29];
+        f->return_jump = 0;
     }
-    f->next = cpu->pc;
-    f->npc = cpu->npc;
-    f->branch = cpu->branch_pc;
-    f->sp = cpu->r[29];
-    f->ra = cpu->r[31];
+    sc01_room_remember(f, cpu);
 }

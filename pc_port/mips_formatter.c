@@ -6157,6 +6157,7 @@ typedef struct FieldSceneLoad {
 typedef struct {
     const MusashiBootMemory *memory;
     uint32_t next, npc, branch, sp, ra;
+    uint32_t caller_sp, callee_return, callee_sp, return_jump;
 } Sc01RoomFrame;
 
 typedef struct FormatterCpu {
@@ -7382,8 +7383,11 @@ static int cpu_write32(MusashiBootMemory *memory, const FormatterCpu *cpu,
     return callback_write32(cpu, address, value);
 }
 
+static void sc01_room_service_return(FormatterCpu *cpu);
+
 static int formatter_return(FormatterCpu *cpu) {
     if (cpu->gte_load_pending) return 0;
+    if (cpu->sc01_room.callee_return) sc01_room_service_return(cpu);
     cpu->delay_slot = 0;
     cpu->branch_pc = 0;
     cpu->pc = cpu->r[31];
@@ -12652,6 +12656,12 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     uint32_t scheduled_next_pc = 0;
     uint8_t scheduled_merge_reg = 0;
     const uint32_t issued_pc = cpu->pc;
+    int sc01_callee_issuing = cpu->sc01_room.callee_return && sc01_room_foreground(cpu);
+    if (sc01_callee_issuing && (cpu->sc01_room.memory != memory ||
+            !sc01_room_position(&cpu->sc01_room, cpu))) {
+        sc01_room_end(&cpu->sc01_room);
+        sc01_callee_issuing = 0;
+    }
     const int sc01_room_issuing = sc01_room_expected(cpu);
     const uint32_t sc01_room_branch = cpu->branch_pc;
     LaneRunFrame *root = g_lane_run_frames;
@@ -13367,6 +13377,11 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
         if (!merge_memory_available(memory, cpu, merge_kind, address))
             return formatter_refuse0(__LINE__, cpu->pc);
     }
+    /* A clocked device can run between decode and a load/store. Retire the
+     * addressing operand and (for stores) its data from the original issue. */
+    const int sc01_access = sc01_room_issuing && opcode >= 32u && opcode <= 43u;
+    const uint32_t sc01_base = sc01_access ? cpu->r[rs] : 0;
+    const uint32_t sc01_value = sc01_access && opcode >= 40u ? cpu->r[rt] : 0;
     enum SceneWitness witness = SCENE_NO_WITNESS;
     if (root && root->cpu == cpu && (root->scene.phase || issued_pc == SCENE_PARENT_CALL))
         witness = scene_before_issue(root, memory, cpu, instruction);
@@ -13387,6 +13402,7 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     if (sc01_room_issuing) {
         uint32_t live;
         if (cpu->pc != issued_pc || !sc01_room_expected(cpu) ||
+            (sc01_access && (cpu->r[rs] != sc01_base || (opcode >= 40u && cpu->r[rt] != sc01_value))) ||
             !sc01_room_word(memory, cpu, &live) || live != instruction)
             return formatter_refuse0(__LINE__, issued_pc);
     }
@@ -13840,6 +13856,8 @@ static int formatter_step(MusashiBootMemory *memory, FormatterCpu *cpu) {
     cpu->npc = target_npc;
     if (sc01_room_issuing || issued_pc == SC01_ROOM_CALL)
         sc01_room_retired(memory, cpu, issued_pc, sc01_room_issuing, sc01_room_branch);
+    else if (sc01_callee_issuing)
+        sc01_room_callee_retired(cpu, issued_pc, instruction, sc01_room_branch);
     if (mounted_link) mounted_leaf_link(root, memory, cpu, issued_pc);
     if (mounted_delay && root->mounted_call.delay_step == root->mounted_call.step &&
         cpu->pc == root->mounted_call.target && cpu->npc == cpu->pc + 4u &&
