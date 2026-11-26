@@ -5,13 +5,14 @@
 
 enum { FIGURE_CHAPTER = 0x2e, FIRST_FIGURE = 0x63 };
 
-int bfm_gameplay_start_banks(BfmGameplayBanks *banks, const MusashiDiscMedia *disc)
+int bfm_gameplay_new_player(BfmGameplayRun *run, const MusashiDiscMedia *disc)
 {
     enum { OFFER_COUNT = 6, ROW_SIZE = 8 };
     const uint32_t first_offer = UINT32_C(0x8010f46c) + ROW_SIZE;
     ForestPlayerArchive archive;
     uint8_t offers[OFFER_COUNT * ROW_SIZE];
-    if (!banks || !forest_player_archive_open(disc, &archive) ||
+    BfmForestStatus player;
+    if (!run || !bfm_forest_status_load(disc, &player) || !forest_player_archive_open(disc, &archive) ||
         !forest_player_archive_read(&archive, first_offer, offers, sizeof offers)) return 0;
 
     BfmGameplayBanks fresh = {0};
@@ -23,7 +24,9 @@ int bfm_gameplay_start_banks(BfmGameplayBanks *banks, const MusashiDiscMedia *di
         memcpy(fresh.figure_prices + 2 * i, offer, 2);
         fresh.variables[FIRST_FIGURE + i] = offer[2] | 0x80u;
     }
-    *banks = fresh;
+    run->player = player;
+    run->banks = fresh;
+    run->has_player = 1;
     return 1;
 }
 

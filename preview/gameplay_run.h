@@ -21,8 +21,8 @@ typedef struct BfmGameplayRun {
     BfmGameplayBanks banks;
 } BfmGameplayRun;
 
-/* Start the Chapter 1 banks from the mounted resident figure table. */
-int bfm_gameplay_start_banks(BfmGameplayBanks *banks, const MusashiDiscMedia *disc);
+/* Initialize the first palace room from mounted New Game and figure data. */
+int bfm_gameplay_new_player(BfmGameplayRun *run, const MusashiDiscMedia *disc);
 /* The final Steam Knight cutscene advances the figure chapter before departure. */
 int bfm_gameplay_advance_figures(BfmGameplayRun *run);
 

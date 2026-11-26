@@ -666,6 +666,10 @@ static int play(Player *p, char *error, size_t size) {
             p->phase_start = SDL_GetTicks64();
             if (p->flow.room != 0x3005 || !bfm_opening_load(p->disc, &p->opening, error, size))
                 return 2;
+            if (!bfm_gameplay_new_player(&p->gameplay, p->disc)) {
+                snprintf(error, size, "Could not load the New Game player and figure data from your disc.");
+                return 2;
+            }
         }
         SDL_Delay(8);
     }
