@@ -541,6 +541,7 @@ static int street_tick(BfmSteamKnight *s)
         }
         if (step == BFM_STREET_WALK_CROSSED_DEPTH)
             bfm_steam_street_depth_crossed(&s->street.route, &s->battle_flags);
+        s->battle_flags &= ~0x1000u;
         return street_choose(s);
     }
     if (s->body_stage == 3) return street_shot_frame(s);
