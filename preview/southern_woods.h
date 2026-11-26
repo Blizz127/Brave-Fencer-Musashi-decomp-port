@@ -15,6 +15,7 @@ BfmSouthernWoods *bfm_southern_woods_open(const MusashiDiscMedia *disc, BfmBedro
 void bfm_southern_woods_free(BfmSouthernWoods *woods);
 int bfm_southern_woods_step_field(BfmSouthernWoods *woods, BfmGameplayRun *run, BfmFieldInput field,
                                   BfmForestMessage **opened);
+int bfm_southern_woods_award_cue(const BfmSouthernWoods *woods);
 int bfm_southern_woods_tether_gauge(const BfmSouthernWoods *woods);
 int bfm_southern_woods_step(BfmSouthernWoods *woods, int x, int y,
                             int talk_edge, BfmForestMessage **opened);

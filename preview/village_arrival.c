@@ -329,6 +329,11 @@ int bfm_village_arrival_step_field(BfmVillageArrival *a, BfmGameplayRun *run,
     return bfm_village_motion_face(a->motion, a->tiles);
 }
 
+int bfm_village_arrival_award_cue(const BfmVillageArrival *a)
+{
+    return a->woods && bfm_southern_woods_award_cue(a->woods);
+}
+
 int bfm_village_arrival_tether_gauge(const BfmVillageArrival *a)
 {
     return a->woods ? bfm_southern_woods_tether_gauge(a->woods) : -1;

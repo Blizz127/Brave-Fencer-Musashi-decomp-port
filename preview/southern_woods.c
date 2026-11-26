@@ -2,11 +2,13 @@
 #include "southern_woods.h"
 #include "village_field.h"
 #include "village_clock.h"
+#include "village_lighting.h"
 #include "village_sky.h"
 #include "scene_tiles.h"
 #include "forest_message_art.h"
 #include "woods_sign_model.h"
 #include "woods_caster.h"
+#include "woods_award_effect.h"
 #include "woods_fusion.h"
 #include "woods_fusion_art.h"
 #include "woods_shrink_message.h"
@@ -21,11 +23,14 @@ struct BfmSouthernWoods {
     BfmVillageMotion *motion;
     BfmVillageField field;
     BfmVillageCamera camera;
+    BfmVillageDaylight daylight;
     uint16_t (*tiles)[1024];
     BfmWoodsSignModel *sign;
     BfmWoodsCaster *caster;
     BfmWoodsFusion *fusion;
     BfmWoodsFusionFrame action;
+    BfmWoodsAwardEffect apparition;
+    const MusashiDiscMedia *disc;
     BfmSaveRecord *save;
     const uint8_t *main;
     size_t main_bytes;
@@ -75,7 +80,9 @@ BfmSouthernWoods *bfm_southern_woods_open(const MusashiDiscMedia *disc, BfmBedro
     woods->motion = bfm_village_motion_woods(woods->scene,woods->bytes,main,main_bytes);
     if (!woods->motion || !bfm_village_field_load_woods(&woods->field,disc,woods->scene,woods->bytes) ||
         !bfm_scene_read_tiles(disc,"MAIN.CD",10,tiles) ||
-        !bfm_scene_read_tiles(disc,"SC03.CD",next.scene_member,tiles)) goto fail;
+        !bfm_scene_read_tiles(disc,"SC03.CD",next.scene_member,tiles) ||
+        !bfm_woods_daylight_begin(&woods->daylight, woods->scene, woods->bytes,
+                                  next.state.progress[0x37], tiles)) goto fail;
     const uint32_t base = UINT32_C(0x80128158);
     const size_t script = UINT32_C(0x8018bdec) - base;
     if (woods->bytes < script + 20) goto fail;
@@ -96,6 +103,7 @@ BfmSouthernWoods *bfm_southern_woods_open(const MusashiDiscMedia *disc, BfmBedro
     woods->caster = bfm_woods_caster_load(woods->scene, woods->bytes);
     woods->fusion = bfm_woods_fusion_open(disc, woods->scene, woods->bytes);
     if (!woods->sign || !woods->writing || !woods->caster || !woods->fusion) goto fail;
+    woods->disc = disc;
     woods->main = main;
     woods->main_bytes = main_bytes;
     woods->save = &entry->state;
@@ -124,6 +132,11 @@ int bfm_southern_woods_close(BfmSouthernWoods *woods)
     return bfm_village_motion_end_read(woods->motion);
 }
 
+int bfm_southern_woods_award_cue(const BfmSouthernWoods *woods)
+{
+    return woods->action.release_award;
+}
+
 int bfm_southern_woods_tether_gauge(const BfmSouthernWoods *woods)
 {
     return woods->action.tether_gauge;
@@ -140,6 +153,7 @@ int bfm_southern_woods_step_field(BfmSouthernWoods *woods, BfmGameplayRun *run,
      * the acquisition pose and its three message pages suspend it. */
     if (run && p->controlled && !bfm_woods_fusion_awarding(woods->fusion))
         bfm_village_clock_step(woods->save, 0);
+    bfm_village_daylight_step(&woods->daylight, woods->save->progress[0x37], woods->tiles);
     int16_t previous[3], endpoint[3];
     memcpy(previous,p->root.xyz,sizeof previous);
     int yaw = bfm_village_motion_view_yaw(woods->camera.eye,woods->camera.target);
@@ -189,6 +203,8 @@ int bfm_southern_woods_step_field(BfmSouthernWoods *woods, BfmGameplayRun *run,
             woods->award_open = 1;
         }
     }
+    if (!bfm_woods_award_effect_step(&woods->apparition, woods->disc, woods->scene, woods->bytes,
+                                     woods->tiles, run && woods->action.release_award)) return 0;
     ++woods->age;
     return bfm_village_motion_face(woods->motion,woods->tiles);
 }
@@ -222,13 +238,15 @@ int bfm_southern_woods_draw(BfmSouthernWoods *woods, const uint8_t flags[64],
     BfmBedroomPose displayed = p->pose;
     if (!bfm_woods_fusion_art_pose(woods->main, woods->main_bytes, woods->action.pose,
                                    woods->action.visible, woods->action.blade_away, &displayed) ||
-        !bfm_village_sky_draw(woods->scene+room,woods->bytes-room,pixels) ||
+        !bfm_bedroom_figure_lights(woods->field.hero, woods->daylight.lamps) ||
+        !bfm_village_sky_draw_lit(woods->scene+room,woods->bytes-room,woods->daylight.sky,pixels) ||
         !bfm_village_field_prepare(&woods->field,&woods->camera,&p->root,&displayed,flags,
                                    woods->age,woods->tiles,&pixels[0][0])) return 0;
     const BfmBedroomView *view = bfm_bedroom_field_view(woods->field.field);
     if (!bfm_woods_caster_add(woods->caster, woods->field.hero, view) ||
         !bfm_woods_fusion_art_append(woods->field.hero, view, woods->action.blade,
                                      woods->action.trails, woods->action.bp_digits) ||
+        !bfm_woods_award_effect_append(&woods->apparition, woods->field.hero, view) ||
         !bfm_woods_sign_model_prepare(woods->sign,view,
                                       woods->tiles,&pixels[0][0])) return 0;
     bfm_bedroom_field_draw(woods->field.field,woods->tiles,&pixels[0][0],draw_actors,woods);

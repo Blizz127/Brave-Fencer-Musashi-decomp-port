@@ -74,7 +74,7 @@ struct BfmBedroom {
     const MusashiDiscMedia *disc;
     BfmForestScore *scores[5], *prepared_score, *current_score;
     unsigned score_count, effect_request;
-    BfmBedroomEffects *effects, *knock;
+    BfmBedroomEffects *effects, *knock, *shrink_sound;
     uint32_t room_sound_group;
     BfmForestHud *hud;
     BfmForestStatus status;
@@ -152,6 +152,7 @@ void bfm_bedroom_free(BfmBedroom *room)
     bfm_cable_sound_free(room->slider_sound);
     bfm_forest_hud_free(room->hud);
     bfm_bedroom_effects_free(room->knock);
+    bfm_bedroom_effects_free(room->shrink_sound);
     bfm_bedroom_effects_free(room->effects);
     free(room->books_background);
     bfm_library_books_free(room->books);
@@ -693,6 +694,11 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
     if (room->story_flags != room->entry.state.flags)
         memcpy(room->story_flags, room->entry.state.flags, sizeof room->entry.state.flags);
     const BfmVillagePlayer *player = bfm_village_arrival_player(room->village);
+    if (bfm_village_arrival_award_cue(room->village)) {
+        if (!room->shrink_sound) room->shrink_sound = bfm_woods_shrink_sound_load(room->disc);
+        if (!room->shrink_sound) return 0;
+        room->effect_request = BFM_WOODS_SHRINK_SOUND;
+    }
     if (player->pose.knock_contact) {
         if (!room->knock) room->knock = bfm_village_knock_sound_load(room->disc);
         if (!room->knock) return 0;
@@ -1052,6 +1058,7 @@ BfmCableSound *bfm_bedroom_slider(const BfmBedroom *room, int *event)
 BfmBedroomEffects *bfm_bedroom_effect(const BfmBedroom *room, unsigned *command)
 {
     *command = room->effect_request;
+    if (*command == BFM_WOODS_SHRINK_SOUND) return room->shrink_sound;
     return *command == BFM_VILLAGE_KNOCK_SOUND ? room->knock : room->effects;
 }
 

@@ -20,6 +20,7 @@ const BfmVillagePlayer *bfm_village_arrival_player(const BfmVillageArrival *arri
 int bfm_village_arrival_step(BfmVillageArrival *arrival, BfmGameplayRun *run, int x, int y);
 int bfm_village_arrival_step_field(BfmVillageArrival *arrival, BfmGameplayRun *run,
                                    BfmFieldInput field, BfmForestMessage **opened);
+int bfm_village_arrival_award_cue(const BfmVillageArrival *arrival);
 int bfm_village_arrival_tether_gauge(const BfmVillageArrival *arrival);
 int bfm_village_arrival_step_input(BfmVillageArrival *arrival, BfmGameplayRun *run,
                                    int x, int y, int talk_edge, BfmForestMessage **opened);
