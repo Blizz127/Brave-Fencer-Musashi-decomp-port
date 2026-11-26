@@ -14,11 +14,11 @@
 static const uint32_t scene_origin = UINT32_C(0x80128158);
 static const uint32_t woods_room = UINT32_C(0x8018ea38);
 
-/* The four movement sets reference packed transforms in the user's scene. */
-typedef enum { REST_POSE, RUSH_POSE, APPROACH_POSE, CAST_POSE, CLIPS } ClipId;
+/* The movement and hit-reaction clips reference packed transforms in the user's scene. */
+typedef enum { REST_POSE, RUSH_POSE, APPROACH_POSE, CAST_POSE, HIT_POSE, CLIPS } ClipId;
 static const uint32_t clips[CLIPS] = {
     UINT32_C(0x801c7aa4), UINT32_C(0x801c7b9c),
-    UINT32_C(0x801c7c74), UINT32_C(0x801c7d4c)
+    UINT32_C(0x801c7c74), UINT32_C(0x801c7d4c), UINT32_C(0x801c8024)
 };
 
 typedef struct {
@@ -29,7 +29,7 @@ typedef struct {
 
 typedef enum {
     OUTSIDE, WAIT_FOR_VIEW, APPEAR, SCAN, WALK, RUSH, VANISH,
-    HIDDEN, EMERGE, APPROACH, CAST, SPENT
+    HIDDEN, EMERGE, APPROACH, CAST, ABSORBED, RELEASING, HIT_REACTION
 } Phase;
 
 typedef struct {
@@ -38,7 +38,8 @@ typedef struct {
     Phase phase;
     unsigned remaining, key;
     ClipId clip;
-    int bound;
+    int bound, tether_width;
+    unsigned meter;
 } Caster;
 
 struct BfmWoodsCaster {
@@ -251,7 +252,13 @@ static void next_pose(const BfmWoodsCaster *casters, Caster *actor)
 static void update_caster(BfmWoodsCaster *casters, Caster *actor, const BfmBedroomView *view,
                           const BfmBedroomRoot *player)
 {
-    if (actor->bound || actor->phase == SPENT) return;
+    if (actor->bound) {
+        /* Fusion keeps the contact key still while the visible body narrows. */
+        int desired = (144-(int)actor->meter)*4096/144;
+        if (actor->tether_width < 0 || !actor->meter) actor->tether_width = 4096;
+        actor->tether_width += (desired-actor->tether_width)/4;
+        return;
+    }
     if (actor->phase == OUTSIDE) {
         /* Dynamic actors mount as the player's admission band crosses a placement. */
         int64_t range = distance2(actor->home,player->xyz);
@@ -265,6 +272,24 @@ static void update_caster(BfmWoodsCaster *casters, Caster *actor, const BfmBedro
     if (range >= 2048*2048) {
         enter(actor,OUTSIDE,0,REST_POSE);
         actor->key = 0;
+        return;
+    }
+    if (actor->phase == ABSORBED) {
+        if (actor->remaining) --actor->remaining;
+        if (!actor->remaining && range >= 320*320) enter(actor,APPEAR,8,REST_POSE);
+        return;
+    }
+    if (actor->phase == RELEASING) {
+        actor->tether_width += (4096-actor->tether_width)/4;
+        if (!--actor->remaining) {
+            actor->tether_width = 4096;
+            enter(actor,HIT_REACTION,casters->motion[HIT_POSE].length,HIT_POSE);
+        }
+        return;
+    }
+    if (actor->phase == HIT_REACTION) {
+        if (--actor->remaining) next_pose(casters,actor);
+        else enter(actor,SCAN,32,REST_POSE);
         return;
     }
     if (actor->phase == WAIT_FOR_VIEW) {
@@ -335,7 +360,7 @@ int bfm_woods_caster_step(BfmWoodsCaster *casters, const BfmBedroomView *view,
 static int visible(const Caster *actor)
 {
     return actor->phase != OUTSIDE && actor->phase != WAIT_FOR_VIEW &&
-           actor->phase != HIDDEN && actor->phase != SPENT;
+           actor->phase != HIDDEN && actor->phase != ABSORBED;
 }
 
 int bfm_woods_caster_add(const BfmWoodsCaster *casters, BfmBedroomFigure *figure,
@@ -346,7 +371,9 @@ int bfm_woods_caster_add(const BfmWoodsCaster *casters, BfmBedroomFigure *figure
         const Caster *actor = &casters->actor[i];
         if (!visible(actor) && actor->phase != HIDDEN) continue;
         unsigned width = 4096, height = 4096;
-        if (actor->phase == HIDDEN) {
+        if ((actor->bound && actor->tether_width >= 0) || actor->phase == RELEASING) {
+            width = (unsigned)actor->tether_width;
+        } else if (actor->phase == HIDDEN) {
             width = 0;  /* Its independent floor shadow stays visible. */
         } else if (actor->phase == APPEAR || actor->phase == EMERGE || actor->phase == VANISH) {
             unsigned tick = actor->remaining;
@@ -376,7 +403,8 @@ static const Caster *active(const BfmWoodsCaster *casters, int target)
 {
     if (!casters || target < 1 || target > BFM_WOODS_CASTERS) return NULL;
     const Caster *actor = &casters->actor[target-1];
-    return visible(actor) && actor->phase != VANISH ? actor : NULL;
+    return visible(actor) && actor->phase != VANISH && actor->phase != RELEASING &&
+           actor->phase != HIT_REACTION ? actor : NULL;
 }
 
 int bfm_woods_caster_root(const BfmWoodsCaster *casters, int target, int16_t root[3])
@@ -430,13 +458,28 @@ int bfm_woods_caster_latch(BfmWoodsCaster *casters, int target)
 {
     const Caster *actor = active(casters,target);
     if (!actor || actor->bound) return 0;
-    casters->actor[target-1].bound = 1;
+    Caster *tethered = &casters->actor[target-1];
+    tethered->bound = 1;
+    tethered->tether_width = -1;  /* Keep the contact frame until the first tether update. */
+    tethered->meter = 0;
     return 1;
+}
+
+void bfm_woods_caster_meter(BfmWoodsCaster *casters, int target, unsigned meter)
+{
+    if (!casters || target < 1 || target > BFM_WOODS_CASTERS) return;
+    Caster *actor = &casters->actor[target-1];
+    if (actor->bound) actor->meter = meter > 128 ? 128 : meter;
 }
 
 void bfm_woods_caster_release(BfmWoodsCaster *casters, int target)
 {
-    if (casters && target >= 1 && target <= BFM_WOODS_CASTERS) casters->actor[target-1].bound = 0;
+    if (!casters || target < 1 || target > BFM_WOODS_CASTERS) return;
+    Caster *actor = &casters->actor[target-1];
+    if (!actor->bound) return;
+    actor->bound = 0;
+    if (actor->tether_width < 0) actor->tether_width = 4096;
+    enter(actor,RELEASING,6,actor->clip);
 }
 
 int bfm_woods_caster_absorb(BfmWoodsCaster *casters, int target)
@@ -445,6 +488,11 @@ int bfm_woods_caster_absorb(BfmWoodsCaster *casters, int target)
     Caster *actor = &casters->actor[target-1];
     if (!actor->bound) return 0;
     actor->bound = 0;
-    enter(actor,SPENT,0,REST_POSE);
+    /* Absorption rearms this placement at home. Its body and shadow stay
+     * absent through the cooldown and until the player clears the bank. */
+    place_home(actor);
+    actor->yaw = 0;
+    actor->key = 0;
+    enter(actor,ABSORBED,64,REST_POSE);
     return 1;
 }

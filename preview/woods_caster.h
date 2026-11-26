@@ -26,6 +26,8 @@ int bfm_woods_caster_contact(const BfmWoodsCaster *casters, const int16_t start[
 int bfm_woods_caster_target(const BfmWoodsCaster *casters, int target, int16_t center[3]);
 int bfm_woods_caster_root(const BfmWoodsCaster *casters, int target, int16_t root[3]);
 int bfm_woods_caster_latch(BfmWoodsCaster *casters, int target);
+/* Update the visible tethered body from the live absorption meter. */
+void bfm_woods_caster_meter(BfmWoodsCaster *casters, int target, unsigned meter);
 void bfm_woods_caster_release(BfmWoodsCaster *casters, int target);
 int bfm_woods_caster_absorb(BfmWoodsCaster *casters, int target);
 
