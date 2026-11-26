@@ -24,6 +24,7 @@ typedef struct {
 
 /* The forest ordering table provides either three corners or four strip corners.
  * For flat shading callers supply the same lighting value at every corner. */
+void bfm_forest_raster_additive_line(const BfmForestRaster *surface, const BfmForestRasterVertex line[2]);
 void bfm_forest_raster_face(const BfmForestRaster *surface,
                             const BfmForestRasterMaterial *material,
                             const BfmForestRasterVertex corners[4]);

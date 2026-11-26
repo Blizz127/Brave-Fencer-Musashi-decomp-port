@@ -888,7 +888,10 @@ int bfm_forest_terrain_draw_entrance_with_effects(BfmForestTerrain *terrain,
         ProjectedFace *out = &terrain->draw[i];
         if (out->model_face == &effect_face) {
             const BfmForestDustCard *card = &cards[out->ordinal];
-            bfm_forest_raster_face(&surface, &card->material, card->vertices);
+            if (card->material.count == 2)
+                bfm_forest_raster_additive_line(&surface, card->vertices);
+            else
+                bfm_forest_raster_face(&surface, &card->material, card->vertices);
         } else if (out->model_face)
             draw_model_face(&surface, out);
         else

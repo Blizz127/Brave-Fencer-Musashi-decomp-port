@@ -185,36 +185,11 @@ unsigned bfm_cable_sparks_project(BfmCableSparks *sparks, const BfmBedroomView *
     return count;
 }
 
-static void draw_line(const BfmForestRaster *surface, const BfmForestRasterVertex *line)
-{
-    const int dx = line[1].x - line[0].x, dy = line[1].y - line[0].y;
-    if (abs(dx) > 1023 || abs(dy) > 511) return;
-    int steps = abs(dx) > abs(dy) ? abs(dx) : abs(dy);
-    int divisor = steps ? steps : 1;
-    for (int i = 0; i <= steps; ++i) {
-        int x = line[0].x + floor_q12((int64_t)i*dx*4096/divisor + 2048);
-        int y = line[0].y + floor_q12((int64_t)i*dy*4096/divisor + 2048);
-        if (x < 0 || x >= 320 || y < 0 || y >= 240 || y < surface->top || y > surface->bottom)
-            continue;
-        uint32_t pixel = surface->pixels[y][x], color = 0xff000000u;
-        for (unsigned k = 0; k < 3; ++k) {
-            int start = (line[0].rgb >> (8*k)) & 255;
-            int end = (line[1].rgb >> (8*k)) & 255;
-            unsigned ink = (unsigned)(start + (end-start)*i/divisor) >> 3;
-            unsigned shift = 16-8*k;
-            unsigned value = ((pixel >> (shift+3)) & 31u) + ink;
-            if (value > 31) value = 31;
-            color |= (value*8u + value/4u) << shift;
-        }
-        surface->pixels[y][x] = color;
-    }
-}
-
 void bfm_cable_sparks_draw(const BfmForestRaster *surface, const BfmCableSparkFace *face)
 {
     if (!surface || !surface->pixels || !face) return;
     if (face->count == 2) {
-        draw_line(surface, face->vertices);
+        bfm_forest_raster_additive_line(surface, face->vertices);
     } else if (face->count == 3) {
         const BfmForestRasterMaterial material = {.page = 0x12a, .count = 3, .translucent = 1};
         bfm_forest_raster_face(surface, &material, face->vertices);

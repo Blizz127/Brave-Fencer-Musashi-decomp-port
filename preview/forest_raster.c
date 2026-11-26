@@ -2,6 +2,7 @@
 #include "forest_raster.h"
 
 #include <stdint.h>
+#include <stdlib.h>
 
 enum { WIDTH = 320, HEIGHT = 240, ONE = 4096 };
 
@@ -13,6 +14,40 @@ typedef struct {
 
 static int minimum(int a, int b) { return a < b ? a : b; }
 static int maximum(int a, int b) { return a > b ? a : b; }
+
+static int line_offset(int step, int delta, int divisor)
+{
+    int64_t q12 = (int64_t)step * delta * ONE / divisor + ONE / 2;
+    return (int)(q12 / ONE - (q12 % ONE < 0));
+}
+
+void bfm_forest_raster_additive_line(const BfmForestRaster *surface, const BfmForestRasterVertex line[2])
+{
+    if (!surface || !surface->pixels || !line) return;
+    int64_t span_x = (int64_t)line[1].x - line[0].x;
+    int64_t span_y = (int64_t)line[1].y - line[0].y;
+    if (span_x < -1023 || span_x > 1023 || span_y < -511 || span_y > 511) return;
+    int dx = (int)span_x, dy = (int)span_y;
+    int steps = abs(dx) > abs(dy) ? abs(dx) : abs(dy);
+    int divisor = steps ? steps : 1;
+    for (int i = 0; i <= steps; ++i) {
+        int x = line[0].x + line_offset(i, dx, divisor);
+        int y = line[0].y + line_offset(i, dy, divisor);
+        if (x < 0 || x >= 320 || y < 0 || y >= 240 || y < surface->top || y > surface->bottom)
+            continue;
+        uint32_t pixel = surface->pixels[y][x], color = 0xff000000u;
+        for (unsigned k = 0; k < 3; ++k) {
+            int start = (line[0].rgb >> (8*k)) & 255;
+            int end = (line[1].rgb >> (8*k)) & 255;
+            unsigned ink = (unsigned)(start + (end-start)*i/divisor) >> 3;
+            unsigned shift = 16-8*k;
+            unsigned value = ((pixel >> (shift+3)) & 31u) + ink;
+            if (value > 31) value = 31;
+            color |= (value*8u + value/4u) << shift;
+        }
+        surface->pixels[y][x] = color;
+    }
+}
 
 static int64_t edge(const Vertex *a, const Vertex *b, int x, int y)
 {
