@@ -475,6 +475,11 @@ int bfm_bedroom_figure_prepare(BfmBedroomFigure *figure, const BfmBedroomView *v
     return 1;
 }
 
+int bfm_bedroom_figure_next_depth(const BfmBedroomFigure *figure)
+{
+    return figure && figure->next < figure->count ? figure->faces[figure->next].depth : INT_MIN;
+}
+
 void bfm_bedroom_figure_draw_to(void *context, int depth)
 {
     BfmBedroomFigure *figure = context;

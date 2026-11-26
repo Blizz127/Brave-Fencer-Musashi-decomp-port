@@ -10,5 +10,6 @@ BfmVillageGate *bfm_village_gate_load(const uint8_t *scene, size_t bytes, uint32
 void bfm_village_gate_free(BfmVillageGate *gate);
 int bfm_village_gate_prepare(BfmVillageGate *gate, const BfmBedroomView *view,
                              const uint16_t tiles[512][1024], uint32_t *pixels);
+int bfm_village_gate_next_depth(const BfmVillageGate *gate);
 void bfm_village_gate_draw_to(BfmVillageGate *gate, int depth);
 #endif

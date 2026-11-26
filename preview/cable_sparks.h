@@ -14,6 +14,11 @@ typedef struct {
 
 /* Four little-endian pitch/roll pairs from the mounted cable scene. */
 BfmCableSparks *bfm_cable_sparks_open(const uint8_t *orientations, size_t size);
+BfmCableSparks *bfm_cable_sparks_open_yaw(const uint8_t *orientations, size_t size, unsigned yaw);
+/* Advance existing particles every update. Emit on the scene's eligible
+ * four-update clock phase, drawing both trail directions from the shared run. */
+void bfm_cable_sparks_advance(BfmCableSparks *sparks, unsigned movement, int emit,
+                              const int16_t position[3], BfmGameplayRun *run);
 void bfm_cable_sparks_free(BfmCableSparks *sparks);
 /* Advance once per movement update, with the rider's world-space root. */
 void bfm_cable_sparks_step(BfmCableSparks *sparks, unsigned movement,

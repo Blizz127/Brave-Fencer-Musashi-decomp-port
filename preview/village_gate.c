@@ -184,6 +184,11 @@ int bfm_village_gate_prepare(BfmVillageGate *gate, const BfmBedroomView *view,
     return 1;
 }
 
+int bfm_village_gate_next_depth(const BfmVillageGate *gate)
+{
+    return gate && gate->next < gate->visible ? gate->order[gate->next]->depth : INT_MIN;
+}
+
 void bfm_village_gate_draw_to(BfmVillageGate *gate, int depth)
 {
     if (!gate || !gate->raster.pixels) return;

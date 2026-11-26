@@ -26,5 +26,6 @@ void bfm_bedroom_figure_free(BfmBedroomFigure *figure);
 int bfm_bedroom_figure_prepare(BfmBedroomFigure *figure, const BfmBedroomView *view,
                      const BfmBedroomBody *body, uint16_t tiles[512][1024], uint32_t *pixels);
 /* Supply this callback to the field's ordering-table draw. */
+int bfm_bedroom_figure_next_depth(const BfmBedroomFigure *figure);
 void bfm_bedroom_figure_draw_to(void *figure, int depth);
 #endif

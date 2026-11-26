@@ -12,7 +12,8 @@ typedef struct {
 
 struct BfmCableSparks {
     int axes[4][3][2];
-    unsigned movement;
+    int sine, cosine;
+    unsigned movement, last_birth;
     SparkBurst bursts[2];
 };
 
@@ -26,28 +27,39 @@ static unsigned angle(const uint8_t *p)
     return (p[0] | (unsigned)p[1] << 8) & 4095u;
 }
 
-BfmCableSparks *bfm_cable_sparks_open(const uint8_t *orientations, size_t size)
+BfmCableSparks *bfm_cable_sparks_open_yaw(const uint8_t *orientations, size_t size, unsigned yaw)
 {
     if (!orientations || size < 16) return NULL;
     BfmCableSparks *sparks = calloc(1, sizeof *sparks);
     if (!sparks) return NULL;
     const int16_t zero[3] = {0};
+    BfmForestTransform heading;
+    bfm_forest_actor_root(yaw, zero, &heading);
+    int sine = sparks->sine = heading.rotation[0][2];
+    int cosine = sparks->cosine = heading.rotation[0][0];
     for (unsigned i = 0; i < 4; ++i) {
         BfmForestTransform pitch, roll;
         bfm_forest_actor_root(angle(orientations + 4*i), zero, &pitch);
         bfm_forest_actor_root(angle(orientations + 4*i + 2), zero, &roll);
         int sx = pitch.rotation[0][2], cx = pitch.rotation[0][0];
         int sz = roll.rotation[0][2], cz = roll.rotation[0][0];
-        /* The fan tilts around X, then rolls around Z inside the cable's
-         * half-turn heading. Only the local X and Z axes carry geometry. */
+        /* Compose the fan's pitch and roll with the rider's heading. Only
+         * its local X and Z columns contribute to the projected triangles. */
+        int xz = floor_q12(sz * sx);
         int (*axis)[2] = sparks->axes[i];
-        axis[0][0] = -cz;
+        axis[0][0] = floor_q12(cosine * cz);
         axis[1][0] = sz;
-        axis[0][1] = -floor_q12(sz * sx);
+        axis[2][0] = floor_q12(-sine * cz);
+        axis[0][1] = floor_q12(cosine * xz + sine * cx);
         axis[1][1] = -floor_q12(cz * sx);
-        axis[2][1] = -cx;
+        axis[2][1] = floor_q12(-sine * xz + cosine * cx);
     }
     return sparks;
+}
+
+BfmCableSparks *bfm_cable_sparks_open(const uint8_t *orientations, size_t size)
+{
+    return bfm_cable_sparks_open_yaw(orientations,size,2048);
 }
 
 void bfm_cable_sparks_free(BfmCableSparks *sparks)
@@ -55,17 +67,18 @@ void bfm_cable_sparks_free(BfmCableSparks *sparks)
     free(sparks);
 }
 
-void bfm_cable_sparks_step(BfmCableSparks *sparks, unsigned movement,
-                           const int16_t position[3], BfmGameplayRun *run)
+void bfm_cable_sparks_advance(BfmCableSparks *sparks, unsigned movement, int emit,
+                              const int16_t position[3], BfmGameplayRun *run)
 {
     if (!sparks || !position || !run || movement <= sparks->movement) return;
     sparks->movement = movement;
-    if (movement % 4) return;
+    if (!emit || (sparks->last_birth && movement - sparks->last_birth < 4)) return;
+    sparks->last_birth = movement;
     SparkBurst *burst = &sparks->bursts[(movement / 4) % 2];
     burst->birth = movement;
-    burst->origin[0] = position[0];
+    burst->origin[0] = position[0] + floor_q12(-8 * sparks->sine);
     burst->origin[1] = position[1] - 68;
-    burst->origin[2] = position[2] + 8;
+    burst->origin[2] = position[2] + floor_q12(-8 * sparks->cosine);
     for (unsigned i = 0; i < 2; ++i) {
         uint16_t random = bfm_gameplay_random(run);
         BfmForestTransform direction;
@@ -73,12 +86,19 @@ void bfm_cable_sparks_step(BfmCableSparks *sparks, unsigned movement,
         unsigned pitch = 8u * (random & 127u);
         unsigned yaw = 3072u + 8u * ((random >> 8) & 127u);
         bfm_forest_actor_pitch_yaw(pitch, yaw, zero, &direction);
-        for (unsigned k = 0; k < 3; ++k) {
-            int axis = direction.rotation[k][2];
-            if (k != 1) axis = -axis;
-            burst->velocity[i][k] = floor_q12(36 * axis);
-        }
+        int x = direction.rotation[0][2], z = direction.rotation[2][2];
+        int dx = floor_q12(sparks->cosine*x + sparks->sine*z);
+        int dz = floor_q12(-sparks->sine*x + sparks->cosine*z);
+        burst->velocity[i][0] = floor_q12(36 * dx);
+        burst->velocity[i][1] = floor_q12(36 * direction.rotation[1][2]);
+        burst->velocity[i][2] = floor_q12(36 * dz);
     }
+}
+
+void bfm_cable_sparks_step(BfmCableSparks *sparks, unsigned movement,
+                           const int16_t position[3], BfmGameplayRun *run)
+{
+    bfm_cable_sparks_advance(sparks,movement,movement % 4 == 0,position,run);
 }
 
 static int project_point(const BfmBedroomView *view, const int world[3],

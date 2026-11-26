@@ -3,11 +3,13 @@
 #include "forest_message_art.h"
 #include "scene_tiles.h"
 #include "village_field.h"
+#include "village_cable.h"
 #include "village_impact.h"
 #include "village_greeting.h"
 #include "village_gate.h"
 #include "village_residents.h"
 #include "village_sky.h"
+#include <limits.h>
 #include <stdlib.h>
 
 struct BfmVillageArrival {
@@ -19,6 +21,7 @@ struct BfmVillageArrival {
     BfmVillageField view;
     BfmVillageResidents *residents;
     BfmVillageGate *gate;
+    BfmVillageCable *cable;
     BfmVillageImpact *impact;
     BfmForestDustCard cards[BFM_VILLAGE_IMPACT_CARDS];
     unsigned next_card, card_count;
@@ -34,6 +37,7 @@ void bfm_village_arrival_free(BfmVillageArrival *a)
     bfm_village_residents_free(a->residents);
     bfm_village_impact_free(a->impact);
     bfm_village_gate_free(a->gate);
+    bfm_village_cable_free(a->cable);
     bfm_village_motion_free(a->motion);
     bfm_village_field_clear(&a->view);
     free(a);
@@ -58,13 +62,17 @@ BfmVillageArrival *bfm_village_arrival_open(const MusashiDiscMedia *disc, BfmBed
     a->message_art = bfm_castle_message_art_load(disc, a->scene, a->bytes, tiles, 0x5da74);
     a->gate = bfm_village_gate_load(a->scene, a->bytes, room, next.state.progress[8], next.state.flags);
     a->impact = bfm_village_impact_open(a->scene, a->bytes, main, main_bytes);
-    if (!a->message_art || !a->gate || !a->impact) goto fail;
+    a->cable = bfm_village_cable_load(a->scene, a->bytes, room);
+    if (!a->message_art || !a->gate || !a->impact || !a->cable) goto fail;
     if (!(next.state.flags[240 / 8] & 1u) && next.state.progress[8] == 10) {
         a->residents = bfm_village_residents_load(a->scene, a->bytes, room, 0x80188094u);
         if (!a->residents) goto fail;
     }
     a->tiles = tiles;
-    bfm_village_camera_begin(&a->camera, bfm_village_motion_player(a->motion)->root.xyz);
+    const int16_t *spawn = bfm_village_motion_player(a->motion)->root.xyz;
+    bfm_village_camera_begin(&a->camera, spawn);
+    /* The first live camera update precedes Musashi's first moving update. */
+    bfm_village_camera_step(&a->camera, spawn, 0);
     *entry = next;
     return a;
 fail:
@@ -95,6 +103,7 @@ int bfm_village_arrival_step(BfmVillageArrival *a, BfmGameplayRun *run, int x, i
     /* The camera's orbit yaw points from the target to the eye. */
     if (!bfm_village_motion_step(a->motion, x, y, (a->camera.yaw + 2048) & 4095)) return 0;
     const BfmVillagePlayer *p = bfm_village_motion_player(a->motion);
+    bfm_village_cable_step(a->cable, p->movement, p->movement <= 81, p->root.xyz, run);
     bfm_village_impact_step(a->impact, p->events & BFM_VILLAGE_HIT, run);
     bfm_village_camera_step(&a->camera, p->root.xyz, p->events & BFM_VILLAGE_CAMERA);
     ++a->age;
@@ -111,15 +120,28 @@ static int far_card_first(const void *left, const void *right)
 static void draw_actors(void *context, int depth)
 {
     BfmVillageArrival *a = context;
-    while (a->next_card < a->card_count && (int)a->cards[a->next_card].bucket >= depth) {
-        const BfmForestDustCard *card = &a->cards[a->next_card++];
-        int farther = (int)card->bucket + 1;
-        bfm_village_gate_draw_to(a->gate, farther);
-        bfm_bedroom_figure_draw_to(a->view.hero, farther);
-        bfm_forest_raster_face(&a->surface, &card->material, card->vertices);
+    for (;;) {
+        int bucket = bfm_village_cable_next_depth(a->cable);
+        int gate = bfm_village_gate_next_depth(a->gate);
+        int hero = bfm_bedroom_figure_next_depth(a->view.hero);
+        if (gate > bucket) bucket = gate;
+        if (hero > bucket) bucket = hero;
+        if (a->next_card < a->card_count && (int)a->cards[a->next_card].bucket > bucket)
+            bucket = (int)a->cards[a->next_card].bucket;
+        if (bucket == INT_MIN || bucket < depth) break;
+
+        while (a->next_card < a->card_count && (int)a->cards[a->next_card].bucket == bucket) {
+            const BfmForestDustCard *card = &a->cards[a->next_card++];
+            bfm_forest_raster_face(&a->surface, &card->material, card->vertices);
+        }
+        bfm_village_gate_draw_to(a->gate, bucket);
+        bfm_bedroom_figure_draw_to(a->view.hero, bucket);
+        bfm_village_cable_draw_to(a->cable, bucket);
     }
-    bfm_village_gate_draw_to(a->gate, depth);
-    bfm_bedroom_figure_draw_to(a->view.hero, depth);
+    if (depth == INT_MIN) {
+        bfm_village_gate_draw_to(a->gate, depth);
+        bfm_bedroom_figure_draw_to(a->view.hero, depth);
+    }
 }
 
 int bfm_village_arrival_draw(BfmVillageArrival *a, const uint8_t flags[64],
@@ -134,6 +156,8 @@ int bfm_village_arrival_draw(BfmVillageArrival *a, const uint8_t flags[64],
         !bfm_village_field_prepare(&a->view, &drawing, &p->root, &p->pose, flags, a->age,
                                    a->tiles, &pixels[0][0])) return 0;
     const BfmBedroomView *camera = bfm_bedroom_field_view(a->view.field);
+    if (!bfm_village_cable_prepare(a->cable, camera, p->root.xyz, p->phase == BFM_VILLAGE_RIDE,
+                                  a->tiles, &pixels[0][0])) return 0;
     if (!bfm_village_gate_prepare(a->gate, camera, a->tiles, &pixels[0][0])) return 0;
     if (a->residents && !bfm_village_residents_add(a->residents, a->view.hero, camera, a->age))
         return 0;
