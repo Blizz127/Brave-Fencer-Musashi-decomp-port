@@ -6,7 +6,7 @@
 
 typedef struct {
     int eye[3], target[3], focal;
-    int radius, yaw, following;
+    int radius, yaw, following, woods_pitch;
 } BfmVillageCamera;
 
 /* The descending cable entrance prepares the initial view before the first
@@ -23,6 +23,9 @@ void bfm_village_camera_step(BfmVillageCamera *camera, const int16_t xyz[3],
 void bfm_village_camera_lower(BfmVillageCamera *camera, const int16_t xyz[3],
                               int entering);
 
-void bfm_village_camera_woods_orbit(BfmVillageCamera *camera, int bearing);
+/* Step the trail camera after movement. The zone uses the player's Z even
+ * while the camera target is still catching up. */
+void bfm_village_camera_woods_orbit(BfmVillageCamera *camera, int bearing,
+                                    int player_z, int entering);
 
 #endif

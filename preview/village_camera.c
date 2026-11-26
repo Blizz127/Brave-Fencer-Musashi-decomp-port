@@ -83,9 +83,19 @@ void bfm_village_camera_lower(BfmVillageCamera *camera, const int16_t xyz[3],
 }
 
 /* The entrance trail orbits the field origin along with the player. */
-void bfm_village_camera_woods_orbit(BfmVillageCamera *camera, int bearing)
+void bfm_village_camera_woods_orbit(BfmVillageCamera *camera, int bearing,
+                                    int player_z, int entering)
 {
+    int pitch = player_z < -1280 ? 341 : 728;
+    if (entering) {
+        camera->woods_pitch = pitch;
+    } else {
+        int delta = pitch - camera->woods_pitch;
+        int step = delta / 4;
+        if (!step && delta) step = delta > 0 ? 1 : -1;
+        camera->woods_pitch += step;
+    }
     camera->yaw = (bearing - 512) & 4095;
     camera->radius = 900;
-    orbit(camera,728);
+    orbit(camera, (unsigned)camera->woods_pitch);
 }
