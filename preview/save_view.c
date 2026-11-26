@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "save_menu.h"
 #include "inn_menu.h"
+#include "chapter_completion_view.h"
 #include "inn_greeting.h"
 #include "scene_tiles.h"
 
@@ -299,6 +300,18 @@ static void inn_room_fade(uint32_t pixels[240][320], unsigned age)
     }
 }
 
+static void save_picker_heading(Canvas *c, int selecting)
+{
+    if (selecting) {
+        label(c, 46, 18, 0, 156, 172, 12, 128);
+        label(c, 219, 18, 179, 132, 50, 12, 128);
+        label(c, 94, 31, 126, 24, 126, 12, 128);
+    } else {
+        label(c, 106, 18, 0, 180, 102, 12, 128);
+        label(c, 118, 31, 114, 72, 85, 12, 128);
+    }
+}
+
 void bfm_inn_menu_draw(const BfmInnMenu *menu, const BfmSaveArt *art,
                        unsigned fields, uint32_t pixels[240][320])
 {
@@ -317,14 +330,7 @@ void bfm_inn_menu_draw(const BfmInnMenu *menu, const BfmSaveArt *art,
     }
     panel(&c, 8, 12, 304, 38, 29);
     for (unsigned i = 0; i < 4; ++i) draw_row(&c, &menu->card, i);
-    if (menu->page == BFM_INN_FILES || menu->page == BFM_INN_FILE_ERROR) {
-        label(&c, 46, 18, 0, 156, 172, 12, 128);
-        label(&c, 219, 18, 179, 132, 50, 12, 128);
-        label(&c, 94, 31, 126, 24, 126, 12, 128);
-    } else {
-        label(&c, 106, 18, 0, 180, 102, 12, 128);
-        label(&c, 118, 31, 114, 72, 85, 12, 128);
-    }
+    save_picker_heading(&c, menu->page == BFM_INN_FILES || menu->page == BFM_INN_FILE_ERROR);
     switch (menu->page) {
     case BFM_INN_WRITING:
     case BFM_INN_SAVED:
@@ -342,4 +348,64 @@ void bfm_inn_menu_draw(const BfmInnMenu *menu, const BfmSaveArt *art,
         file_cursor(&c, menu->card.selected, fields);
         break;
     }
+}
+
+int bfm_chapter_completion_draw(const BfmChapterCompletion *state, const BfmSaveArt *art,
+                                const BfmChapterCard *title, unsigned fields,
+                                uint32_t pixels[240][320])
+{
+    if (!state || !pixels || state->page == BFM_CHAPTER_INACTIVE ||
+        state->page == BFM_CHAPTER_BEDROOM || state->page == BFM_CHAPTER_COMPLETION_FINISHED)
+        return 0;
+    if (state->page == BFM_CHAPTER_TWO_TITLE) {
+        /* The first field follows the accepted resume prompt. The fade
+         * starts earlier on the shared crest clock than on a forest entry. */
+        unsigned elapsed = fields < BFM_CHAPTER_FOREST_FIELD - 56u ?
+                           fields + 56u : BFM_CHAPTER_FOREST_FIELD;
+        return bfm_chapter_card_draw(title, elapsed, 1, &pixels[0][0]) >= 0;
+    }
+    if (!art) return 0;
+    Canvas c = {art, pixels, 0};
+    for (unsigned y = 0; y < 240; ++y)
+        for (unsigned x = 0; x < 320; ++x) pixels[y][x] = 0xff000000u;
+    panel(&c, 8, 12, 304, 38, 29);
+    switch (state->page) {
+    case BFM_CHAPTER_SAVE_PROMPT:
+        label(&c, 88, 18, 0, 144, 139, 12, 128);
+        label(&c, 118, 31, 114, 72, 85, 12, 128);
+        break;
+    case BFM_CHAPTER_RESUME:
+        label(&c, 70, 18, 0, 144, 107, 12, 128);
+        label(&c, 178, 18, 180, 144, 71, 12, 128);
+        label(&c, 118, 31, 114, 72, 83, 12, 128);
+        break;
+    case BFM_CHAPTER_SAVE_READING:
+        label(&c, 118, 18, 0, 24, 76, 12, 128);
+        label(&c, 40, 31, 0, 36, 238, 12, 128);
+        break;
+    case BFM_CHAPTER_SAVE_ERROR:
+        if (state->issue) text(&c, 22, 25, state->issue, 128);
+        break;
+    case BFM_CHAPTER_SAVE_FILES:
+    case BFM_CHAPTER_SAVE_CONFIRM:
+    case BFM_CHAPTER_SAVE_WRITING:
+    case BFM_CHAPTER_SAVED:
+        save_picker_heading(&c, state->page == BFM_CHAPTER_SAVE_FILES);
+        for (unsigned i = 0; i < 4; ++i) draw_row(&c, &state->files, i);
+        if (state->page == BFM_CHAPTER_SAVE_WRITING || state->page == BFM_CHAPTER_SAVED) {
+            panel(&c, 32, 118, 256, 38, 29);
+            if (state->page == BFM_CHAPTER_SAVE_WRITING) {
+                label(&c, 124, 124, 0, 204, 71, 12, 128);
+                label(&c, 40, 137, 0, 36, 238, 12, 128);
+            } else {
+                label(&c, 124, 131, 72, 204, 65, 12, 128);
+            }
+        } else {
+            file_cursor(&c, state->files.selected, fields);
+        }
+        break;
+    default:
+        return 0;
+    }
+    return 1;
 }

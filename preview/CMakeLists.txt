@@ -5,6 +5,7 @@ set(bfm_root "${CMAKE_CURRENT_SOURCE_DIR}/..")
 add_executable(musashi_native_boot
     player.c
     gameplay_run.c
+    chapter_completion.c
     desktop_voice.c
     palace_effects.c
     palace_score.c
