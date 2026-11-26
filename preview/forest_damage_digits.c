@@ -94,7 +94,9 @@ unsigned bfm_forest_damage_digits_project(const BfmForestDamageDigits *digits,
     int age = digits->age - 1;
     int rise = age < rise_updates ? age : rise_updates;
     int fade = age > rise_updates + hold_updates ? age - rise_updates - hold_updates : 0;
-    int lift = 32 + rise * (2 * rise_updates + 1 - rise) / 2;
+    /* A BP credit is issued 32 units above the hero, then its own
+     * number initializer lifts the first card by a further 24. */
+    int lift = (digits->bp_credit ? 56 : 32) + rise * (2 * rise_updates + 1 - rise) / 2;
     int world[3] = {digits->contact[0], digits->contact[1] - lift, digits->contact[2]};
     if (digits->hurt) {
         /* This number drifts sideways and follows a vertical arc in addition
@@ -111,11 +113,12 @@ unsigned bfm_forest_damage_digits_project(const BfmForestDamageDigits *digits,
     unsigned shade;
     int half_height;
     int luminous = age >= rise_updates + hold_updates;
+    int full_height = digits->hurt || digits->bp_credit;
     if (age < rise_updates) {
-        shade = digits->hurt ? 128 : 96;
-        half_height = digits->hurt ? 4 : 1 + (age + 2) / 4;
+        shade = full_height ? 128 : 96;
+        half_height = full_height ? 4 : 1 + (age + 2) / 4;
     } else if (!luminous) {
-        shade = (unsigned)((digits->hurt ? 192 : 255) - 8 * (age - rise_updates));
+        shade = (unsigned)((full_height ? 192 : 255) - 8 * (age - rise_updates));
         half_height = 4;
     } else {
         shade = (unsigned)(112 - 16 * fade);

@@ -7,7 +7,7 @@ typedef struct {
     int16_t contact[3];
     uint16_t amount;
     uint8_t age, palette;
-    uint8_t hurt;
+    uint8_t hurt, bp_credit; /* Incoming damage and positive ability credit use distinct glyph poses. */
     int8_t drift_x, drift_z; /* Half world units per update. */
 } BfmForestDamageDigits;
 

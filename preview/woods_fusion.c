@@ -23,9 +23,12 @@ struct BfmWoodsFusion {
     BfmFusionFlight flight;
     BfmForestTether tether;
     BfmForestTetherTrails trails;
+    BfmForestDamageDigits bp_digits;
+    uint8_t credit_palette;
     BfmFusionModel *model;
     enum WoodsAward award;
-    unsigned key, gain;
+    unsigned key, gain, partial_bp;
+    int partial_return;
     uint32_t duration, message;
 };
 
@@ -89,12 +92,14 @@ BfmWoodsFusion *bfm_woods_fusion_open(const MusashiDiscMedia *disc, const uint8_
     BfmWoodsFusion *fusion = calloc(1, sizeof *fusion);
     if (!fusion) return NULL;
     fusion->gain = scene[UINT32_C(0x8018a58c) - base + SHRINK];
+    fusion->partial_bp = scene[UINT32_C(0x8018a5ac) - base + SHRINK];
+    fusion->credit_palette = scene[UINT32_C(0x8018a974) - base + 4];
     fusion->duration = u32le(scene + (UINT32_C(0x8018a510) - base) + 4 * SHRINK);
     fusion->message = u32le(scene + (UINT32_C(0x8018a208) - base) + 4 * SHRINK);
     uint32_t table = u32le(scene + (room - base) + 0x4c);
     fusion->surface = bfm_forest_motion_surface_open(scene, bytes, room);
-    if (!fusion->gain || !fusion->message || !fusion->surface || !locate_package(fusion, disc) ||
-        !bfm_forest_cast_load(&fusion->cast, disc, table) ||
+    if (!fusion->gain || !fusion->partial_bp || !fusion->message || !fusion->surface ||
+        !locate_package(fusion, disc) || !bfm_forest_cast_load(&fusion->cast, disc, table) ||
         !(fusion->model = bfm_fusion_model_open(disc))) {
         bfm_woods_fusion_free(fusion);
         return NULL;
@@ -185,10 +190,14 @@ static int step_flight(BfmWoodsFusion *s, BfmWoodsCaster *casters, const int16_t
     int present = bfm_woods_caster_target(casters, target, center);
     BfmForestTetherPhase phase = bfm_forest_tether_tick(&s->tether,
         present ? &s->tether.target : NULL, tick, square, 0);
+    if (present) bfm_woods_caster_meter(casters, target, s->tether.meter);
     if (phase == BFM_TETHER_ATTACHED) return 1;
     if (phase == BFM_TETHER_EARNED) {
         if (!bfm_woods_caster_absorb(casters, target)) return 0;
     } else if (present) {
+        /* A timed-out tether still carries the particular recipient's BP
+         * return. Losing that actor earlier leaves the returning blade empty. */
+        s->partial_return = phase == BFM_TETHER_LOST && s->tether.ticks >= 128;
         bfm_woods_caster_release(casters, target);
     }
     bfm_fusion_release_tether(&s->flight);
@@ -211,6 +220,11 @@ static uint32_t grip(uint32_t equipped, uint32_t key)
 static unsigned trail_random(void *run)
 {
     return bfm_gameplay_random(run);
+}
+
+int bfm_woods_fusion_awarding(const BfmWoodsFusion *s)
+{
+    return s && s->award != NO_AWARD;
 }
 
 int bfm_woods_fusion_close_award(BfmWoodsFusion *s)
@@ -238,10 +252,13 @@ static int step_award(BfmWoodsFusion *s, BfmForestStatus *status, BfmWoodsFusion
                 s->award = READ_AWARD;
             }
         }
-    } else if (s->award == RELEASE_AWARD && ++s->key == clip->count) {
-        if (!bfm_forest_tether_commit(&s->tether, status)) return 0;
-        s->award = NO_AWARD;
-        return 1;
+    } else if (s->award == RELEASE_AWARD) {
+        if (++s->key == clip->count) {
+            if (!bfm_forest_tether_commit(&s->tether, status)) return 0;
+            s->award = NO_AWARD;
+            return 1;
+        }
+        frame->release_award = clip->keys[s->key].launch;
     }
     frame->action = 22;
     frame->pose = clip->keys[s->key].pose;
@@ -275,6 +292,22 @@ int bfm_woods_fusion_step(BfmWoodsFusion *s, BfmWoodsCaster *casters, BfmGamepla
     } else if (blade_away(s) && !step_flight(s, casters, root->xyz, field_tick, square)) {
         return 0;
     }
+    bfm_forest_damage_digits_advance(&s->bp_digits);
+    if (s->partial_return && s->flight.phase == BFM_FUSION_DONE) {
+        s->partial_return = 0;
+        if (bfm_forest_status_values(status).hp > 0) {
+            unsigned maximum = u16le(status->record + 0x3e);
+            unsigned bp = u16le(status->record + 0x40) + s->partial_bp;
+            if (bp > maximum) bp = maximum;
+            status->record[0x40] = (uint8_t)bp;
+            status->record[0x41] = (uint8_t)(bp >> 8);
+            frame->bp_credit = s->partial_bp;
+            bfm_forest_damage_digits_start_data(&s->bp_digits, &s->credit_palette,
+                                                root->xyz, (uint16_t)s->partial_bp);
+            s->bp_digits.bp_credit = 1;
+        }
+    }
+    if (s->bp_digits.amount) frame->bp_digits = &s->bp_digits;
     if (!step_award(s, status, frame)) return 0;
     frame->movement_locked = frame->action == 21 || frame->action == 22;
     frame->blade_away = blade_away(s);

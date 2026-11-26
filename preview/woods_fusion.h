@@ -3,6 +3,7 @@
 #define BFM_WOODS_FUSION_H
 
 #include "bedroom_travel.h"
+#include "forest_damage_digits.h"
 #include "forest_flight.h"
 #include "forest_tether_trails.h"
 #include "gameplay_run.h"
@@ -17,7 +18,9 @@ typedef struct {
 
 typedef struct {
     uint32_t pose, visible; /* pose is the resident joint packet, after its 16-byte header. */
-    int action, blade_away, movement_locked, tether_gauge, open_award;
+    int action, blade_away, movement_locked, tether_gauge, open_award, release_award;
+    unsigned bp_credit; /* Face amount of a caught, incomplete tether on this update. */
+    const BfmForestDamageDigits *bp_digits;
     const BfmForestActor *blade;
     const BfmForestTetherTrails *trails;
     const BfmFusionFlight *flight;
@@ -35,5 +38,6 @@ int bfm_woods_fusion_step(BfmWoodsFusion *fusion, BfmWoodsCaster *casters, BfmGa
 /* Call after the final page has closed; the normal release clip then equips
  * the ability on the player's existing status record. */
 int bfm_woods_fusion_close_award(BfmWoodsFusion *fusion);
+int bfm_woods_fusion_awarding(const BfmWoodsFusion *fusion);
 
 #endif
