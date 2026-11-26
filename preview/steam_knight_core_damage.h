@@ -8,6 +8,7 @@ typedef struct {
     unsigned round, body_stage, weak_stage;
     uint32_t flags;
     int hp, max_hp;
+    uint16_t pending_damage;
 } BfmSteamKnightCoreState;
 
 typedef enum {
@@ -21,6 +22,7 @@ typedef struct {
     BfmSteamKnightCoreContact contact;
     BfmSteamKnightCoreResponse response;
     int hp_after;
+    uint16_t accepted;
     uint32_t clear_flags, set_flags;
 } BfmSteamKnightCoreHit;
 

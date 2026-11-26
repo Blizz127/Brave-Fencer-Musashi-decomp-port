@@ -41,10 +41,17 @@ int bfm_steam_knight_core_strike(const BfmSteamKnightCoreState *body, unsigned *
                                          &result.contact)) return 0;
 
     result.hp_after = body->hp;
+    result.accepted = strength;
     if (surface == BFM_STEAM_CLOSED_CAP) {
         result.response = BFM_STEAM_CAP_STRUCK;
     } else {
-        result.hp_after = body->hp - strength;
+        /* A prior throw can still have damage pending on the chassis. The
+         * core displays only the newly accepted packet. The body consumes both. */
+        int available = body->hp - body->pending_damage;
+        if (floor_hp && available <= floor_hp) return 0;
+        if (floor_hp && strength > available - floor_hp)
+            result.accepted = (uint16_t)(available - floor_hp);
+        result.hp_after = available - result.accepted;
         if (result.hp_after > floor_hp) {
             result.response = BFM_STEAM_CORE_DAMAGED;
         } else {

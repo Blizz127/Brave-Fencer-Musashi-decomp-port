@@ -17,6 +17,7 @@
 #include "forest_damage_digits.h"
 #include "forest_message_art.h"
 #include "steam_knight_street_route.h"
+#include "../pc_port/forest_player_bytes.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -57,6 +58,7 @@ struct BfmSteamKnight {
     int chapter_pending;
     unsigned transfer_age, arrival_wait;
     unsigned core_hp, core_max;
+    uint16_t pending_body_damage;
     unsigned round, weak_stage, weak_age, core_struck, recovery_left;
     unsigned body_stage, pending_kneel_joint;
     uint32_t battle_flags, pending_kneel_flags;
@@ -180,8 +182,9 @@ static int core_contact(BfmSteamKnight *s, const BfmSteamKnightHeroStrike *strik
      * extends its waist. A separate actor owns the liftable chassis. */
     if (street && (s->street.landing.core_extension != 24 || s->carry.held ||
                    (strike->type != 1 && strike->type != 2))) return 1;
-    BfmSteamKnightCoreState body = {s->round, s->body_stage, s->weak_stage,
-                                    s->battle_flags, (int)s->core_hp, (int)s->core_max};
+    BfmSteamKnightCoreState body = {.round = s->round, .body_stage = s->body_stage,
+        .weak_stage = s->weak_stage, .flags = s->battle_flags, .hp = (int)s->core_hp,
+        .max_hp = (int)s->core_max, .pending_damage = s->pending_body_damage};
     BfmForestTransform attachment;
     if (!core_attachment(s, &attachment, NULL)) return 0;
     BfmSteamKnightCoreHit hit;
@@ -196,13 +199,14 @@ static int core_contact(BfmSteamKnight *s, const BfmSteamKnightHeroStrike *strik
     }
     bfm_steam_knight_machine_flash_core(s->machine);
     s->core_hp = (unsigned)hit.hp_after;
+    s->pending_body_damage = 0;
     s->battle_flags = (s->battle_flags & ~hit.clear_flags) | hit.set_flags;
     if (hit.response == BFM_STEAM_CORE_DEPLETED) {
         if (!bfm_steam_carry_knockdown(&s->carry, s->machine, s->round)) return 0;
         s->body_stage = 10;
         s->transfer_age = 0;
     }
-    return damage_number(s, hit.contact.point, street ? (uint16_t)(body.hp - hit.hp_after) : amount);
+    return damage_number(s, hit.contact.point, hit.accepted);
 }
 
 static int transfer_tick(BfmSteamKnight *s)
@@ -221,8 +225,12 @@ static int transfer_tick(BfmSteamKnight *s)
         unsigned edges;
         int was_held = s->carry.held;
         if (!bfm_steam_carry_tick(&s->carry, s->hero, s->machine, &edges)) return 0;
-        if (was_held && s->carry.thrown)
+        if (was_held && s->carry.thrown) {
+            uint32_t rank = u32le(s->event.run->player.record + 0x6c);
+            if (rank >= sizeof s->power.body / sizeof s->power.body[0]) return 0;
             s->launch_action = bfm_steam_hero_sample(s->hero)->action;
+            s->pending_body_damage = (uint16_t)(s->power.body[rank] * 75u / 100u);
+        }
         if (edges & BFM_STEAM_THROW_LIFTABLE) {
             s->body_stage = 8;
             if (s->round == 2) s->weak_stage = 4;
