@@ -2,6 +2,7 @@
 #include "forest_walk.h"
 #include "forest_gateway_transition.h"
 #include "tower_field.h"
+#include "tower_ascent_floor.h"
 #include "tower_note.h"
 #include "tower_note_pose.h"
 #include "forest_opening_data.h"
@@ -1385,6 +1386,9 @@ static int tick_gateway(BfmForestWalk *w, int x, int y, int square_edge, int con
     if (w->tower_placed) {
         if (frame.mode >= 8) {
             bfm_tower_field_tick(w->tower, w->cached, w->yaw, w->gameplay);
+            if (bfm_tower_field_rise_phase(w->tower) == 3 &&
+                !bfm_tower_ascent_floor_activate(bfm_tower_field_room(w->tower)))
+                return -1;
             if (!bfm_tower_field_camera(w->tower, w->cached, &w->camera, w->eye)) return -1;
             TowerSubmission *submit = &w->submitted_tower[w->submit_slot];
             *submit = (TowerSubmission){.pose = w->pose, .camera = w->camera,
