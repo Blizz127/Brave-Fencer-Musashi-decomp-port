@@ -722,6 +722,9 @@ static int select_jump_pose(BfmForestWalk *w)
     if (w->jump.walk_off && !w->jump.landed) {
         if (!w->jump.elapsed) return 0;
         frame = bfm_forest_walkoff_pose_frame(poses, w->jump.elapsed - 1);
+    } else if (w->actor.state == 3 && !w->jump.landed) {
+        /* After an aerial hit the fall starts the standing air clip anew. */
+        frame = bfm_forest_jump_pose_frame(poses, BFM_FOREST_JUMP_RISING, w->jump.elapsed);
     } else {
         enum BfmForestJumpPhase phase = BFM_FOREST_JUMP_RISING;
         if (w->jump.landed) phase = BFM_FOREST_JUMP_LANDING;
@@ -958,7 +961,6 @@ static int tick_hurt(BfmForestWalk *w, unsigned received, int16_t hit_yaw,
         received = 0;
     }
     if (received && !w->hurt.active) {
-        if (w->jump.active) return 0;
         if ((!w->hurt_clip.visible && !bfm_forest_hurt_load(w->disc, &w->hurt_clip)) ||
             !bfm_forest_hit_damage(w->disc, &w->gameplay->player, w->actor.flags, received, &w->pending_damage) ||
             !bfm_forest_hurt_begin(&w->hurt, w->yaw, hit_yaw)) return -1;
@@ -978,6 +980,7 @@ static int tick_hurt(BfmForestWalk *w, unsigned received, int16_t hit_yaw,
         return 1;
     case BFM_FOREST_HURT_LOCKED:
         if (scripted) return 2;
+        if (w->jump.active && !w->jump.landed) w->actor.action = 3;
         return select_pose(w, frame, w->summit_free ? w->walk.visible : w->hurt_clip.visible) ? 2 : -1;
     case BFM_FOREST_HURT_RECOVERED: {
         unsigned debit = w->pending_damage;
@@ -992,6 +995,17 @@ static int tick_hurt(BfmForestWalk *w, unsigned received, int16_t hit_yaw,
             return 0;
         }
         if (scripted) return 2;
+        if (w->jump.active && !w->jump.landed) {
+            /* Hurt held the actor in place. Begin falling from rest at that
+             * position on the next movement update, even during a rising jump. */
+            if (!w->jump_poses.visible &&
+                !bfm_forest_jump_poses_load(w->disc, w->data.animation_table, &w->jump_poses)) return -1;
+            w->jump = (BfmForestJump){.active = 1, .descending = 1};
+            w->stride_jump = 0;
+            w->actor.kind = w->actor.state = 3;
+            return select_jump_pose(w) ? 2 : -1;
+        }
+        w->jump.active = 0;
         return tick_ground(w, 0, 0, 1, dust) == 1 ? 2 : -1;
     }
     default:
@@ -1082,6 +1096,13 @@ static int step_jump(BfmForestWalk *w, const BfmForestField *room, int launched,
             w->blocked_x = x;
             w->blocked_y = y;
         } else {
+            if (w->actor.kind == 3) {
+                if (result == BFM_FOREST_JUMP_LANDED) w->actor.action = 2;
+                if (result == BFM_FOREST_JUMP_FINISHED) {
+                    w->actor.kind = w->actor.state;
+                    w->actor.action = 1;
+                }
+            }
             if (result == BFM_FOREST_JUMP_LANDED && !previously_landed && !w->jump.walk_off)
                 *dust = BFM_FOREST_DUST_BRAKE;
             if (result == BFM_FOREST_JUMP_FINISHED && !w->jump.walk_off && (x || y))
