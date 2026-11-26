@@ -359,6 +359,8 @@ void bfm_steam_knight_field_track_arena(BfmSteamKnightField *field, unsigned rou
     int town = round == 2;
     int stomp = town && stage == 6;
     int entering = !field->arena_ready || field->arena_round != round;
+    if (entering)
+        bfm_forest_terrain_set_forward_culling(field->terrain, town);
     if (stomp && (entering || field->arena_stage != stage))
         field->stomp_origin_z = body[2];
 

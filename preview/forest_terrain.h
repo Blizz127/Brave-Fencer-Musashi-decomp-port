@@ -40,6 +40,8 @@ typedef struct {
 int bfm_forest_terrain_set_lighting(BfmForestTerrain *terrain,
                                     const uint8_t *descriptor, size_t bytes);
 /* Borrow the mounted room graphics until the terrain is released. */
+/* The outdoor pursuit view omits offscreen faces wholly behind its heading. */
+void bfm_forest_terrain_set_forward_culling(BfmForestTerrain *terrain, int enabled);
 const uint16_t (*bfm_forest_terrain_tiles(const BfmForestTerrain *terrain))[1024];
 void bfm_forest_terrain_free(BfmForestTerrain *terrain);
 

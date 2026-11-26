@@ -41,6 +41,7 @@ struct BfmForestTerrain {
     TerrainMesh mesh;
     size_t capacity;
     int has_lighting;
+    int cull_behind_heading;
     BfmForestModelLighting room_light;
     ProjectedFace *draw;
     uint16_t tiles[512][1024];
@@ -207,6 +208,12 @@ static unsigned field_length(uint32_t squared)
     while ((squared >> shift) > 255)
         shift += 2;
     return (unsigned)sqrt((double)((squared >> shift) << shift));
+}
+
+void bfm_forest_terrain_set_forward_culling(BfmForestTerrain *terrain, int enabled)
+{
+    if (terrain)
+        terrain->cull_behind_heading = enabled != 0;
 }
 
 int bfm_forest_terrain_set_lighting(BfmForestTerrain *terrain, const uint8_t *room, size_t bytes)
@@ -723,6 +730,27 @@ int bfm_forest_terrain_draw_actor_buffer(BfmForestTerrain *terrain, const BfmFor
                                            buffer, NULL, pixels);
 }
 
+/* For a face that wraps vertically into the viewport, test its world
+ * position against the camera's forward direction on the ground plane.
+ * A steep view can still see a folded face that crosses this plane. */
+static int behind_camera_heading(const Face *face, const BfmForestCamera *camera)
+{
+    int fx = camera->rotation[2][0], fz = camera->rotation[2][2];
+    int64_t eye_depth = 0;
+    for (unsigned axis = 0; axis < 3; ++axis) {
+        int64_t horizontal = (int64_t)camera->rotation[axis][0] * fx +
+                             (int64_t)camera->rotation[axis][2] * fz;
+        eye_depth -= horizontal * camera->translation[axis];
+    }
+    for (unsigned i = 0; i < face->count; ++i) {
+        const int16_t *xyz = face->corners[i].world;
+        int64_t depth = (int64_t)xyz[0] * fx + (int64_t)xyz[2] * fz;
+        if (depth * 4096 >= eye_depth)
+            return 0;
+    }
+    return 1;
+}
+
 static size_t collect_cell(BfmForestTerrain *terrain, const TerrainCell *cell,
                            const BfmForestCamera *camera, unsigned buffer, size_t count)
 {
@@ -731,6 +759,7 @@ static size_t collect_cell(BfmForestTerrain *terrain, const TerrainCell *cell,
         ProjectedFace *out = &terrain->draw[count];
         unsigned depth = 0, j = 0;
         int raw_min_x = 320, raw_max_x = -1;
+        int raw_min_y = 240, raw_max_y = -1;
         for (; j < face->count; ++j) {
             ScreenPoint *point = &out->points[j];
             if (!project(camera, face->corners[j].world, point))
@@ -739,6 +768,8 @@ static size_t collect_cell(BfmForestTerrain *terrain, const TerrainCell *cell,
                 depth = (unsigned)point->z;
             raw_min_x = smaller(raw_min_x, point->x);
             raw_max_x = larger(raw_max_x, point->x);
+            raw_min_y = smaller(raw_min_y, point->y);
+            raw_max_y = larger(raw_max_y, point->y);
         }
         /* The room contains horizontally remote cells outside the submitted
          * doorway geometry. Keep an offscreen lateral triangle from folding
@@ -758,6 +789,9 @@ static size_t collect_cell(BfmForestTerrain *terrain, const TerrainCell *cell,
             y1 = larger(y1, y);
         }
         if (x0 >= 320 || x1 < 0 || y0 >= 240 || y1 < 0)
+            continue;
+        if (terrain->cull_behind_heading && (raw_min_y >= 240 || raw_max_y < 0) &&
+            behind_camera_heading(face, camera))
             continue;
         out->depth = depth / 4;
         out->ordinal = i;
