@@ -12,6 +12,7 @@ void bfm_steam_knight_field_free(BfmSteamKnightField *field);
 const uint8_t *bfm_steam_knight_field_scene(const BfmSteamKnightField *field, size_t *size);
 BfmForestTerrain *bfm_steam_knight_field_terrain(const BfmSteamKnightField *field);
 const RoomTransferDescriptor *bfm_steam_knight_field_entrance(const BfmSteamKnightField *field);
+void bfm_steam_knight_aftermath_camera(BfmForestCamera *camera, int show_ledge);
 void bfm_steam_knight_entrance_camera(BfmForestCamera *camera);
 void bfm_steam_knight_hostage_camera(BfmForestCamera *camera);
 void bfm_steam_knight_charge_camera(BfmForestCamera *camera);
@@ -45,6 +46,7 @@ int bfm_steam_knight_field_break_gate(BfmSteamKnightField *field, unsigned gate)
 /* Houses 1 and 2 flank the northbound street. Houses 3 and 4 share the
  * western sectors; applying 4 also retains the rubble from 3. */
 int bfm_steam_knight_field_break_house(BfmSteamKnightField *field, unsigned house);
+int bfm_steam_knight_field_open_crater(BfmSteamKnightField *field);
 /* Omit both hero arguments for a shot that hides Musashi. */
 int bfm_steam_knight_field_draw(BfmSteamKnightField *field, const BfmForestCamera *camera,
     const BfmForestPose *pose, const BfmForestTransform *root, uint32_t visible_parts,

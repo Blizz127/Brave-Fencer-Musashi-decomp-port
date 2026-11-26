@@ -20,4 +20,8 @@ uint8_t *bfm_steam_knight_house_mesh(const uint8_t *mesh, size_t bytes,
                                      const uint8_t *record, size_t size,
                                      unsigned house, size_t *out_size);
 
+/* The blast marks a three-by-four patch of ground below the western ledge. */
+uint8_t *bfm_steam_knight_crater_mesh(const uint8_t *mesh, size_t bytes,
+                                      const uint8_t *record, size_t size, size_t *out_size);
+
 #endif
