@@ -128,6 +128,13 @@ static void triangle(const BfmForestRaster *surface, const BfmForestRasterMateri
         const Vertex *first = a;
         a = c; c = b; b = first;
     }
+    int max_x = maximum(b->x, c->x);
+    int min_y = minimum(a->y, minimum(b->y, c->y));
+    int max_y = maximum(a->y, maximum(b->y, c->y));
+    /* The GPU drops an overlarge triangle before clipping to the draw area.
+     * This also applies to either triangle of a textured quad. */
+    if ((int64_t)max_x - a->x > 1023 || (int64_t)max_y - min_y > 511) return;
+
     int64_t area = edge(a,b,c->x,c->y);
     if (!area) return;
     if (area < 0) {
@@ -136,9 +143,9 @@ static void triangle(const BfmForestRaster *surface, const BfmForestRasterMateri
     }
 
     int left = maximum(0,a->x);
-    int right = minimum(WIDTH-1,maximum(b->x,c->x));
-    int top = maximum(maximum(0,surface->top),minimum(a->y,minimum(b->y,c->y)));
-    int bottom = minimum(minimum(HEIGHT-1,surface->bottom),maximum(a->y,maximum(b->y,c->y)));
+    int right = minimum(WIDTH-1,max_x);
+    int top = maximum(maximum(0,surface->top),min_y);
+    int bottom = minimum(minimum(HEIGHT-1,surface->bottom),max_y);
     if (left > right || top > bottom) return;
 
     Plane lights[3], uv[2];

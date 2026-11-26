@@ -5,7 +5,8 @@
 #include "forest_field.h"
 
 typedef struct {
-    int moving, after_jump;
+    int moving, after_jump, left_support;
+    int32_t last_descent;
     unsigned motion, elapsed;
     int16_t ground_normal[3];
 } BfmForestManual;
@@ -25,7 +26,8 @@ typedef enum {
  * A positive landing result retains the contact until the recovery finishes. */
 typedef struct {
     unsigned active, elapsed, neutral_ticks, descending, landed, recovery, phase_elapsed;
-    int steering;
+    int steering, walk_off;
+    int32_t touchdown_velocity;
     BfmForestContact ground;
 } BfmForestJump;
 
@@ -38,6 +40,10 @@ typedef enum {
 
 int bfm_forest_jump_begin(BfmForestJump *jump, const BfmForestField *field,
                           ForestPlayerState *actor, const int16_t cached[3]);
+/* Accept the preceding ground update's loss of support. The same update
+ * that takes ownership advances horizontal movement with jump_tick. */
+int bfm_forest_fall_begin(BfmForestJump *jump, BfmForestManual *manual,
+                          ForestPlayerState *actor);
 BfmForestJumpResult bfm_forest_jump_tick(BfmForestJump *jump, const BfmForestField *field,
     ForestPlayerState *actor, const BfmForestCamera *camera, int x, int y, int cross_held,
     int16_t *yaw, int16_t cached[3]);

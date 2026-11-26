@@ -35,6 +35,7 @@ struct BfmForestWalk {
     int8_t blade_anchors[2][3];
     Motion idle, walk, run;
     BfmForestJumpPoses jump_poses;
+    BfmForestJumpPoses walkoff_poses;
     BfmForestJump jump;
     BfmForestSpeechActor speaker;
     BfmForestManual manual;
@@ -350,6 +351,17 @@ static int tick_ground(BfmForestWalk *w, int x, int y, int enter_stance)
 
 static int select_jump_pose(BfmForestWalk *w)
 {
+    if (w->jump.walk_off) {
+        uint32_t frame;
+        if (w->jump.landed) {
+            frame = bfm_forest_jump_pose_frame(&w->walkoff_poses, BFM_FOREST_JUMP_LANDING,
+                                                w->jump.phase_elapsed);
+        } else {
+            if (!w->jump.elapsed) return 0;
+            frame = bfm_forest_walkoff_pose_frame(&w->walkoff_poses, w->jump.elapsed - 1);
+        }
+        return frame && select_pose(w, frame, w->walkoff_poses.visible);
+    }
     enum BfmForestJumpPhase phase = BFM_FOREST_JUMP_RISING;
     if (w->jump.landed) phase = BFM_FOREST_JUMP_LANDING;
     else if (w->jump.descending) phase = BFM_FOREST_JUMP_FALLING;
@@ -360,6 +372,10 @@ static int select_jump_pose(BfmForestWalk *w)
 static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jump_held)
 {
     bfm_forest_hud_tick(w->hud);
+    if (bfm_forest_fall_begin(&w->jump, &w->manual, &w->actor) &&
+        !w->walkoff_poses.visible &&
+        !bfm_forest_walkoff_poses_load(w->disc, w->data.animation_table, &w->walkoff_poses))
+        return -1;
     if (!w->jump.active && jump_pressed &&
         bfm_forest_jump_begin(&w->jump, w->field, &w->actor, w->cached)) {
         if (!w->jump_poses.visible &&

@@ -32,6 +32,13 @@ int bfm_forest_jump_poses_load(const MusashiDiscMedia *disc, uint32_t animation_
 uint32_t bfm_forest_jump_pose_frame(const BfmForestJumpPoses *poses,
                                     enum BfmForestJumpPhase phase, unsigned phase_tick);
 
+/* When a walking actor loses floor support, its mounted motion starts with
+ * one key per update. Tick zero is the loss of support. The last entry key
+ * is held until another action or ground contact selects the next clip. */
+int bfm_forest_walkoff_poses_load(const MusashiDiscMedia *disc, uint32_t animation_table,
+                                  BfmForestJumpPoses *out);
+uint32_t bfm_forest_walkoff_pose_frame(const BfmForestJumpPoses *poses, unsigned airborne_tick);
+
 /* Load the frame selected by the live animation's pose cursor. Each local
  * transform is relative to the same model root. Pose and mesh can outlive
  * the disc and can be reused while the animation frame is held. */

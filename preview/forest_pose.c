@@ -95,7 +95,10 @@ int bfm_forest_pose_decode(const uint8_t *bytes, size_t size, BfmForestPose *pos
     return 1;
 }
 
-enum { RUN_SLOT = 8, JUMP_SLOT = 13, LAND_SLOT = 14, CLIP_WORDS = 32 };
+enum {
+    RUN_SLOT = 8, JUMP_SLOT = 13, LAND_SLOT = 14,
+    WALKOFF_SLOT = 15, WALKOFF_LAND_SLOT = 16, CLIP_WORDS = 32
+};
 
 static int read_clip(const ForestPlayerArchive *archive, uint32_t table, unsigned slot,
                      uint8_t *bytes, size_t size)
@@ -157,8 +160,8 @@ static int jump_keys(const ForestPlayerArchive *archive, const uint8_t *clip, ui
     return 0;
 }
 
-int bfm_forest_jump_poses_load(const MusashiDiscMedia *disc, uint32_t table,
-                               BfmForestJumpPoses *out)
+static int load_air_poses(const MusashiDiscMedia *disc, uint32_t table, unsigned air_slot,
+                          unsigned land_slot, BfmForestJumpPoses *out)
 {
     ForestPlayerArchive archive;
     uint8_t run[12], clip[4 * CLIP_WORDS], parts[4 * (MUSASHI_FOREST_PLAYER_PARTS + 1)];
@@ -177,13 +180,32 @@ int bfm_forest_jump_poses_load(const MusashiDiscMedia *disc, uint32_t table,
     }
     /* Both clips restore the same equipped Fusion body as the running clip. */
     poses.visible &= ~((UINT32_C(1) << 21) | (UINT32_C(1) << 24) | (UINT32_C(1) << 25));
-    if (!read_clip(&archive, table, JUMP_SLOT, clip, sizeof clip) ||
+    if (!read_clip(&archive, table, air_slot, clip, sizeof clip) ||
         !jump_keys(&archive, clip, model, BFM_FOREST_JUMP_RISING, &poses) ||
-        !read_clip(&archive, table, LAND_SLOT, clip, sizeof clip) ||
+        !read_clip(&archive, table, land_slot, clip, sizeof clip) ||
         !jump_keys(&archive, clip, model, BFM_FOREST_JUMP_LANDING, &poses))
         return 0;
     *out = poses;
     return 1;
+}
+
+int bfm_forest_jump_poses_load(const MusashiDiscMedia *disc, uint32_t table,
+                               BfmForestJumpPoses *out)
+{
+    return load_air_poses(disc, table, JUMP_SLOT, LAND_SLOT, out);
+}
+
+int bfm_forest_walkoff_poses_load(const MusashiDiscMedia *disc, uint32_t table,
+                                  BfmForestJumpPoses *out)
+{
+    return load_air_poses(disc, table, WALKOFF_SLOT, WALKOFF_LAND_SLOT, out);
+}
+
+uint32_t bfm_forest_walkoff_pose_frame(const BfmForestJumpPoses *poses, unsigned airborne_tick)
+{
+    /* The entry sequence ends at a hold. Keep that pose while the actor is
+     * unsupported; touching down selects a different mounted clip. */
+    return bfm_forest_jump_pose_frame(poses, BFM_FOREST_JUMP_RISING, airborne_tick);
 }
 
 uint32_t bfm_forest_jump_pose_frame(const BfmForestJumpPoses *poses,
