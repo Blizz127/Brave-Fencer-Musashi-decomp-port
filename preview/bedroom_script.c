@@ -22,6 +22,13 @@ int bfm_bedroom_script_begin(BfmBedroomScript *script, const uint8_t *scene, siz
     return 1;
 }
 
+/* The queued player action starts the next exchange. */
+int bfm_bedroom_script_at_player_action(const BfmBedroomScript *s)
+{
+    return s->cursor <= s->size && s->size - s->cursor >= 8 &&
+           word(s->scene + s->cursor) == 0x59 && word(s->scene + s->cursor + 4) == 0;
+}
+
 /* The player and visitors continue updating while the room event waits for
  * movement, dialogue, or a delay from its mounted script. */
 int bfm_bedroom_script_tick(BfmBedroomScript *s, int player_queue_idle, int message_active,
@@ -58,6 +65,7 @@ int bfm_bedroom_script_tick(BfmBedroomScript *s, int player_queue_idle, int mess
             case 0x80180b04u: event = BFM_BED_RIBSON_SPEAKS; break;
             case 0x80180b14u: event = BFM_BED_RIBSON_RESTS; break;
             case 0x80180b24u: event = BFM_BED_BUTLER_SPEAKS; break;
+            case 0x80180b34u: event = BFM_BED_BUTLER_RESTS; break;
             default: goto invalid;
             }
             break;

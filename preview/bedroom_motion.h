@@ -18,12 +18,14 @@ typedef enum {
     BFM_BEDROOM_LAND,
     BFM_BEDROOM_STAND,
     BFM_BEDROOM_REST,
-    BFM_BEDROOM_SEARCH
+    BFM_BEDROOM_SEARCH,
+    BFM_BEDROOM_SHOW_FUSION
 } BfmBedroomAction;
 
 typedef struct {
     const uint8_t *pose; /* 256 mounted bytes. The part transforms start at +16. */
     unsigned face_word;
+    unsigned show_weapon; /* The direct body program requests a held Fusion. */
     unsigned pitch; /* Model X rotation, in 1/4096 turns. */
     unsigned draw_current; /* The active scripted gesture submits its current pose. */
     unsigned finished; /* Player action completed in this update. */

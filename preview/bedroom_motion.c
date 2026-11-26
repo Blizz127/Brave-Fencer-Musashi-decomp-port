@@ -17,7 +17,7 @@ typedef struct {
     int ended;
 } Channel;
 
-enum Activity { QUIET, TILTING, UNROLLING, RISING, YAWNING, STANDING, RETURNING, STARTING_RUN };
+enum Activity { QUIET, TILTING, UNROLLING, RISING, YAWNING, STANDING, RETURNING, STARTING_RUN, SHOWING_FUSION };
 
 struct BfmBedroomMotion {
     Region main, scene;
@@ -104,9 +104,14 @@ static int advance(BfmBedroomMotion *m, Channel *channel, int body)
             if (!body || !next_word(m, channel, &operand) || operand > 255 ||
                 !select_slot(m, &m->face, m->face_bank, operand)) return 0;
             break;
+        case 16: /* Request the held weapon for this pose. */
+            if (!body) return 0;
+            m->frame.show_weapon = 1;
+            break;
         case 17: /* Sheathe equipped weapons for this motion. */
         case 19:
             if (!body) return 0;
+            m->frame.show_weapon = 0;
             break;
         default:
             if (body) {
@@ -164,6 +169,7 @@ BfmBedroomMotion *bfm_bedroom_motion_open(const uint8_t *scene, size_t scene_byt
 
 static int update(BfmBedroomMotion *m, BfmBedroomAction action)
 {
+    int update_body = 1;
     m->frame.finished = 0;
     switch (action) {
     case BFM_BEDROOM_LIE:
@@ -201,6 +207,10 @@ static int update(BfmBedroomMotion *m, BfmBedroomAction action)
         m->activity = STANDING;
         break;
     case BFM_BEDROOM_REST:
+        /* The room releases its direct pose after the player's ordinary
+         * motion pass. Keep the first standing pose for this submission. */
+        update_body = m->activity != SHOWING_FUSION;
+        m->frame.show_weapon = 0;
         m->frame.draw_current = 0;
         if (!pair(m, 0, 17)) return 0;
         m->activity = QUIET;
@@ -209,6 +219,12 @@ static int update(BfmBedroomMotion *m, BfmBedroomAction action)
         m->frame.draw_current = 1;
         if (!select_body(m, 34)) return 0;
         m->activity = STANDING;
+        break;
+    case BFM_BEDROOM_SHOW_FUSION:
+        start(&m->body, 0x801ca6ecu);
+        if (!advance(m, &m->body, 1)) return 0;
+        m->frame.draw_current = 1;
+        m->activity = SHOWING_FUSION;
         break;
     case BFM_BEDROOM_UPRIGHT:
         m->pitch = 0;
@@ -239,7 +255,7 @@ static int update(BfmBedroomMotion *m, BfmBedroomAction action)
          * resumes on the following player update. */
         if (!pair(m, 0, 17)) return 0;
         m->activity = QUIET;
-    } else if (m->body.ended && m->activity != QUIET) {
+    } else if (m->body.ended && m->activity != QUIET && m->activity != SHOWING_FUSION) {
         if (m->activity == UNROLLING && !pair(m, 39, 31)) return 0;
         if (m->activity == YAWNING && !select_body(m, 37)) return 0;
         if (m->activity == STANDING) {
@@ -249,7 +265,7 @@ static int update(BfmBedroomMotion *m, BfmBedroomAction action)
         m->frame.finished = m->activity != STANDING;
         m->activity = m->activity == RISING ? RETURNING : QUIET;
     }
-    if (!advance(m, &m->body, 1) || !advance(m, &m->face, 0)) return 0;
+    if ((update_body && !advance(m, &m->body, 1)) || !advance(m, &m->face, 0)) return 0;
     m->frame.pitch = m->pitch;
     return 1;
 }

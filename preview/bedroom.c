@@ -39,7 +39,7 @@ struct BfmBedroom {
     BfmForestMessageArt *message_art;
     ForestVoice *voice;
     unsigned generation, message_closed, look_count;
-    int waking, notice_pending, visitor_window, butler_speaking;
+    int waking, notice_pending, visitor_window;
     BedroomWindowLayout player_layout, visitor_layout;
     BfmBedroomAction requested, pending;
     BfmBedroomPose pose;
@@ -161,7 +161,9 @@ static int apply(void *context, BfmBedroomEvent event, uint32_t operand)
         break;
     case BFM_BED_BUTLER_SPEAKS:
         bfm_bedroom_visitors_request(room->visitors, BFM_VISITOR_BUTLER_SPEAK);
-        room->butler_speaking = 1;
+        break;
+    case BFM_BED_BUTLER_RESTS:
+        bfm_bedroom_visitors_request(room->visitors, BFM_VISITOR_BUTLER_REST);
         break;
     case BFM_BED_VISITOR_LAYOUT:
     case BFM_BED_PLAYER_LAYOUT: {
@@ -180,9 +182,8 @@ static int apply(void *context, BfmBedroomEvent event, uint32_t operand)
         const uint8_t *program = data_range(room, operand, 1);
         if (!program || room->message) return 0;
         size_t bytes = room->scene_bytes - (size_t)(program - room->scene);
-        if (bytes > 160) bytes = 160;
         room->visitor_window = event == BFM_BED_VISITOR_WINDOW;
-        room->message = bfm_field_message_open(program, bytes);
+        room->message = bfm_field_message_borrow(program, bytes);
         return room->message != NULL;
     }
     }
@@ -220,9 +221,14 @@ static int render_scene(BfmBedroom *room, const BfmBedroomPose *pose, uint32_t p
         BfmBedroomBody body = { .pose = pose->pose, .pose_bytes = 256,
             .heading = root->yaw, .pitch = pose->pitch, .shadow_visible = root->shadow_visible,
             .face_word = pose->face_word };
-        /* The wake poses stow both weapons. Flag 128 owns the second sword. */
+        /* Flag 128 owns the second sword. Flag 303 suppresses the hand model
+         * while the early-story room controls Musashi. */
         body.visible_parts = UINT32_C(0x7fffffff) &
                              ~((UINT32_C(1) << 22) | (UINT32_C(1) << 25));
+        if (pose->show_weapon && !(room->entry.state.flags[303 / 8] & (1u << (303 % 8)))) {
+            body.visible_parts &= ~(UINT32_C(1) << 21);
+            body.visible_parts |= UINT32_C(1) << 22;
+        }
         if (!(room->entry.state.flags[128 / 8] & 1))
             body.visible_parts &= ~(UINT32_C(1) << 24);
         for (unsigned axis = 0; axis < 3; ++axis) {
@@ -247,8 +253,11 @@ static int render_scene(BfmBedroom *room, const BfmBedroomPose *pose, uint32_t p
         const BedroomWindowLayout *layout = room->visitor_window ?
                                             &room->visitor_layout : &room->player_layout;
         int anchor = (layout->portrait_on_right ? 159 : 160) + layout->offset_x;
-        bfm_bedroom_message_art_draw_side(room->message_art, bfm_forest_message_frame(room->message),
-                                         anchor, layout->portrait_on_right, pixels);
+        /* The shared prompt blinks against the field that presents this frame. */
+        BfmForestMessageFrame frame = *bfm_forest_message_frame(room->message);
+        if ((room->update + 2) & 4) frame.inline_prompt = 0;
+        bfm_bedroom_message_art_draw_side(room->message_art, &frame, anchor,
+                                         layout->portrait_on_right, pixels);
     }
     bfm_bedroom_fade_draw(&room->fade, pixels);
     return 1;
@@ -302,10 +311,9 @@ int bfm_bedroom_step_input(BfmBedroom *room, int confirm_edge, int reveal_edge)
             if (room->look_count < 49) ++room->look_count;
         }
         if (flags & (1u << 2)) speech_action = BFM_BEDROOM_SEARCH;
+        if (flags & (1u << 3)) speech_action = BFM_BEDROOM_SHOW_FUSION;
         if (f->events & BFM_FOREST_MESSAGE_CLOSED) {
-            /* The next room event returns the butler to rest before it cuts
-             * back to Musashi for a new exchange. Hold the cleared visitor view. */
-            room->message_closed = room->visitor_window && room->butler_speaking;
+            room->message_closed = bfm_bedroom_script_at_player_action(&room->script);
             bfm_forest_message_free(room->message);
             room->message = NULL;
             room->waking = 0;

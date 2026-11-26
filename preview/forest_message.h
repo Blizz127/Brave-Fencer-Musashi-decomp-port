@@ -22,6 +22,7 @@ enum {
 typedef struct {
     /* Zero glyph means an empty cell. Ink is the mounted text palette index. */
     BfmForestMessageCell cells[3][36];
+    unsigned scroll, prompt_row, prompt_column, inline_prompt;
     unsigned events, voice_bank, voice_cue;
     /* Actor message flags 0x125 through 0x129 set during this update. */
     unsigned actor_flags;
@@ -33,8 +34,10 @@ typedef struct {
 /* Open on the update where the doorway gives focus to its message slot.
  * Copies the 160-byte mounted program. The first tick is the NEXT update. */
 BfmForestMessage *bfm_forest_message_open(const uint8_t *program, size_t length);
-/* A field message can end before the doorway program's full span. */
+/* Copies the field stream within its supplied mounted extent. */
 BfmForestMessage *bfm_field_message_open(const uint8_t *program, size_t length);
+/* The room keeps its mounted bytes alive until this cursor is freed. */
+BfmForestMessage *bfm_field_message_borrow(const uint8_t *program, size_t length);
 void bfm_forest_message_free(BfmForestMessage *message);
 const BfmForestMessageFrame *bfm_forest_message_frame(const BfmForestMessage *message);
 

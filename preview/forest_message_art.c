@@ -11,7 +11,7 @@ enum { TAIL_OFFSET = 0x2030, FONT_OFFSET = 0x24cbc, CONTOUR_OFFSET = 0x257fc,
 struct BfmForestMessageArt {
     BfmDialoguePoint contour[2][CORNERS], inset[2][CORNERS];
     uint8_t glyph[GLYPHS][FONT_HEIGHT];
-    uint32_t portrait[3][40][32], tail[16][16], ink[16];
+    uint32_t portrait[3][40][32], tail[16][16], prompt[12][12], ink[16];
     uint32_t paper, highlight, outline;
 };
 
@@ -80,6 +80,12 @@ static int read_art(BfmForestMessageArt *art, const MusashiDiscMedia *disc,
             unsigned index = (tail[y * 64 + x/2] >> (4 * (x & 1))) & 15;
             art->tail[y][x] = bubble[index] ? rgb(bubble[index]) : 0;
         }
+    for (unsigned y = 0; y < 12; ++y)
+        for (unsigned x = 0; x < 12; ++x) {
+            unsigned packed = tiles[256 + y][508 + x / 4];
+            uint16_t color = tiles[446][352 + ((packed >> (4 * (x & 3))) & 15)];
+            art->prompt[y][x] = color ? rgb(color) : 0;
+        }
     /* Musashi is in the shared atlas. The two courtiers occupy successive
      * portrait slots in the room upload, each with its own palette. */
     for (unsigned face = 0; face < 3; ++face) {
@@ -139,11 +145,11 @@ static int coordinate(int round, int pointed, int mix, int scale)
     return floor_div((round + floor_div((pointed - round) * mix, 4)) * scale, 4096);
 }
 
-static void draw_message(const BfmForestMessageArt *art, int tail_x, int right,
+static void draw_message(const BfmForestMessageArt *art, int tail_x, int right, int draw_prompt,
                          const BfmForestMessageFrame *frame, uint32_t pixels[240][320])
 {
     if (!art || !frame || !pixels || !frame->border_step || frame->border_step > 8 ||
-        frame->jagged_mix > 4)
+        frame->jagged_mix > 4 || frame->scroll > 9)
         return;
     int step = (int)frame->border_step, mix = (int)frame->jagged_mix;
     BfmDialoguePoint border[CORNERS], inset[CORNERS];
@@ -180,23 +186,34 @@ static void draw_message(const BfmForestMessageArt *art, int tail_x, int right,
             uint32_t color = art->portrait[face][uv.y][uv.x];
             if (color) pixels[24+y][(right ? 256 : 32)+x] = color;
         }
-    for (unsigned row = 0; row < 3; ++row)
+    int text_x = right ? 32 : 72;
+    for (int row = 0; row < 3; ++row)
         for (unsigned col = 0; col < 36; ++col) {
             BfmForestMessageCell cell = frame->cells[row][col];
             if (cell.glyph < 32 || cell.glyph >= 32 + GLYPHS || !cell.ink || cell.ink >= 16)
                 continue;
             const uint8_t *glyph = art->glyph[cell.glyph-32];
-            for (unsigned y = 0; y < FONT_HEIGHT; ++y)
+            for (int y = 0; y < FONT_HEIGHT; ++y) {
+                int screen_y = 24 + 14 * row + y - (int)frame->scroll;
+                if (screen_y < 24) continue;
                 for (unsigned x = 0; x < 6; ++x)
                     if (glyph[y] & (128u >> x))
-                        pixels[24 + 14*row + y][(right ? 32 : 72) + 6*col + x] = art->ink[cell.ink];
+                        pixels[screen_y][text_x + 6 * col + x] = art->ink[cell.ink];
+            }
         }
+    if (draw_prompt && frame->inline_prompt && frame->prompt_row < 3 && frame->prompt_column < 36) {
+        for (unsigned y = 0; y < 12; ++y)
+            for (unsigned x = 0; x < 12; ++x)
+                if (art->prompt[y][x])
+                    pixels[24 + 14 * frame->prompt_row + y][text_x + 6 * frame->prompt_column + x] =
+                        art->prompt[y][x];
+    }
 }
 
 void bfm_forest_message_art_draw(const BfmForestMessageArt *art, const BfmForestMessageFrame *frame,
                                  uint32_t pixels[240][320])
 {
-    draw_message(art, 160, 0, frame, pixels);
+    draw_message(art, 160, 0, 0, frame, pixels);
 }
 
 void bfm_bedroom_message_art_draw(const BfmForestMessageArt *art, const BfmForestMessageFrame *frame,
@@ -209,5 +226,5 @@ void bfm_bedroom_message_art_draw_side(const BfmForestMessageArt *art, const Bfm
                                        int speaker_x, int portrait_on_right, uint32_t pixels[240][320])
 {
     int left = portrait_on_right ? speaker_x - 17 : speaker_x;
-    draw_message(art, left, portrait_on_right, frame, pixels);
+    draw_message(art, left, portrait_on_right, 1, frame, pixels);
 }

@@ -9,7 +9,8 @@ typedef struct BfmBedroomVisitors BfmBedroomVisitors;
 typedef enum {
     BFM_VISITOR_RIBSON_SPEAK,
     BFM_VISITOR_RIBSON_REST,
-    BFM_VISITOR_BUTLER_SPEAK
+    BFM_VISITOR_BUTLER_SPEAK,
+    BFM_VISITOR_BUTLER_REST
 } BfmBedroomVisitorCue;
 
 typedef struct {

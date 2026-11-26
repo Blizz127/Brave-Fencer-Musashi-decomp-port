@@ -183,10 +183,10 @@ int bfm_bedroom_visitors_spawn(BfmBedroomVisitors *v)
 
 void bfm_bedroom_visitors_request(BfmBedroomVisitors *v, BfmBedroomVisitorCue cue)
 {
-    if (!v || (unsigned)cue > BFM_VISITOR_BUTLER_SPEAK) return;
-    Visitor *actor = &v->people[cue == BFM_VISITOR_BUTLER_SPEAK ? 1 : 0];
+    if (!v || (unsigned)cue > BFM_VISITOR_BUTLER_REST) return;
+    Visitor *actor = &v->people[cue >= BFM_VISITOR_BUTLER_SPEAK ? 1 : 0];
     if (actor->state != ABSENT)
-        actor->requested_clip = cue == BFM_VISITOR_RIBSON_REST ? 2 : 1;
+        actor->requested_clip = (cue == BFM_VISITOR_RIBSON_REST || cue == BFM_VISITOR_BUTLER_REST) ? 2 : 1;
 }
 
 void bfm_bedroom_visitors_speak(BfmBedroomVisitors *v)

@@ -7,32 +7,47 @@
 enum { DOORWAY_BYTES = 160 };
 
 enum MessagePhase {
-    PRINT, OPENING, WAIT_VOICE, WAIT_TIMER, WAIT_CONFIRM, WAIT_DISMISS, CLOSING, CLOSED, INVALID
+    PRINT, OPENING, SCROLL, WAIT_VOICE, WAIT_TIMER, WAIT_CONFIRM, WAIT_DISMISS, CLOSING, CLOSED, INVALID
 };
 
 struct BfmForestMessage {
     BfmForestMessageFrame frame;
-    uint8_t program[DOORWAY_BYTES];
     size_t size, cursor;
     enum MessagePhase phase;
     unsigned row, column, ink;
     unsigned timer, delay, glyph_interval;
-    int speaker_name, voiced_page, rapid, voice_interrupted;
+    int speaker_name, voiced_page, rapid, voice_interrupted, sync_on_open;
+    const uint8_t *program;
 };
 
-BfmForestMessage *bfm_field_message_open(const uint8_t *program, size_t length)
+static BfmForestMessage *open_message(const uint8_t *program, size_t length, int copy)
 {
     BfmForestMessage *message;
-    if (!program || !length || length > sizeof(message->program))
+    if (!program || !length || length > SIZE_MAX - sizeof(*message))
         return NULL;
-    message = calloc(1, sizeof(*message));
+    message = calloc(1, sizeof(*message) + (copy ? length : 0));
     if (message) {
-        memcpy(message->program, program, length);
+        if (copy) {
+            uint8_t *owned = (uint8_t *)(message + 1);
+            memcpy(owned, program, length);
+            program = owned;
+        }
+        message->program = program;
         message->size = length;
         message->frame.focused = 1;
         message->ink = 1;
     }
     return message;
+}
+
+BfmForestMessage *bfm_field_message_open(const uint8_t *program, size_t length)
+{
+    return open_message(program, length, 1);
+}
+
+BfmForestMessage *bfm_field_message_borrow(const uint8_t *program, size_t length)
+{
+    return open_message(program, length, 0);
 }
 
 BfmForestMessage *bfm_forest_message_open(const uint8_t *program, size_t length)
@@ -97,6 +112,9 @@ static int print_update(BfmForestMessage *m)
             break;
         case 0x07:
             if (!m->voiced_page) {
+                f->inline_prompt = 1;
+                f->prompt_row = m->row;
+                f->prompt_column = m->column < 36 ? m->column : 35;
                 f->wait_for_confirm = 1;
                 m->phase = WAIT_CONFIRM;
                 return 1;
@@ -111,9 +129,11 @@ static int print_update(BfmForestMessage *m)
             ++m->cursor;
             break;
         case 0x0a:
-            if (m->row + 1 >= 3) return 0;
-            ++m->row;
             m->column = 0;
+            if (m->row < 2)
+                ++m->row;
+            else
+                m->phase = SCROLL;
             return 1;
         case 0x0b: /* Request voice. The high parameter bit permits layout
                     * to continue before the explicit synchronization point. */
@@ -128,6 +148,12 @@ static int print_update(BfmForestMessage *m)
             m->cursor += 3;
             m->voiced_page = 1;
             if (!(arg[0] & 0x80)) {
+                /* An immediately following border opens during the seek.
+                 * Inline cues synchronize before printing continues. */
+                if (m->cursor < m->size && m->program[m->cursor] == 0x02) {
+                    m->sync_on_open = 1;
+                    break;
+                }
                 m->phase = WAIT_VOICE;
                 return 1;
             }
@@ -219,9 +245,21 @@ const BfmForestMessageFrame *bfm_field_message_tick(BfmForestMessage *m,
         if (f->border_step < 8)
             ++f->border_step;
         else {
-            m->phase = PRINT;
+            m->phase = m->sync_on_open ? WAIT_VOICE : PRINT;
+            m->sync_on_open = 0;
             f->text_visible = 1;
         }
+        break;
+    case SCROLL:
+        if (f->scroll == 9) {
+            memmove(f->cells[0], f->cells[1], 2 * sizeof(f->cells[0]));
+            memset(f->cells[2], 0, sizeof(f->cells[2]));
+            f->scroll = 0;
+            m->phase = PRINT;
+        } else {
+            f->scroll = f->scroll ? 9 : 4;
+        }
+        reveal(m, reveal_edge);
         break;
     case WAIT_VOICE:
         if (voice_status == 0) {
@@ -246,6 +284,7 @@ const BfmForestMessageFrame *bfm_field_message_tick(BfmForestMessage *m,
         break;
     case WAIT_CONFIRM:
         if (confirm_edge) {
+            f->inline_prompt = 0;
             f->wait_for_confirm = 0;
             m->phase = PRINT;
         }

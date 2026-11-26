@@ -473,7 +473,7 @@ static int play(Player *p, char *error, size_t size) {
             bfm_desktop_voice_forest(p->voice, voice, generation, 0);
             frame = bfm_bedroom_draw(p->bedroom, (uint32_t (*)[320])p->pixels);
             if (frame && bfm_bedroom_endpoint(p->bedroom))
-                status_line(p, "End of the butler's introduction. Start to return.");
+                status_line(p, "End of Musashi's question about going home. Start to return.");
             if (!frame) frame = -1;
         } else if (files) {
             bfm_save_menu_draw(p->save_art, &p->saves, fields, (uint32_t (*)[320])p->pixels);
