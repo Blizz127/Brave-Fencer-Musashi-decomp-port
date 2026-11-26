@@ -669,7 +669,8 @@ static int cable_trip_step(BfmBedroom *room)
     if (tick == STATION_START+1) room->slider_event=1;
     if (tick == STATION_START+77) room->slider_event=-1;
     if (tick == VILLAGE_PENDING) {
-        memcpy(room->entry.state.flags, room->story_flags, sizeof room->entry.state.flags);
+        if (room->story_flags != room->entry.state.flags)
+            memcpy(room->entry.state.flags, room->story_flags, sizeof room->entry.state.flags);
         room->village = bfm_village_arrival_open(room->disc, &room->entry, room->main,
                                                 room->main_bytes, room->tiles);
         if (!room->village) return 0;
@@ -969,15 +970,19 @@ int bfm_bedroom_step(BfmBedroom *room)
 int bfm_bedroom_draw(BfmBedroom *room, uint32_t pixels[240][320])
 {
     memcpy(pixels, room->frames[room->presented], sizeof room->frames[0]);
-    if (room->village) return 1;
+    if (room->village && room->village_updates >= 18) return 1;
     if (room->village_trip) {
         unsigned tick=room->cable_tick;
-        int entering=tick>=STATION_START && tick<STATION_START+19;
+        int entering = room->village || (tick >= STATION_START && tick < STATION_START+19);
+        /* Both room entries reveal two RGB555 levels on each visible field
+         * update. The arriving village first becomes visible at update three. */
+        int entry_loss = room->village ? 35 - 2*(int)room->village_updates
+                                       : 37 - 2*((int)tick-STATION_START);
         unsigned wipe=tick>=STATION_WIPE ? STATION_WIPE : COURT_WIPE;
         if (entering || (tick>=wipe && (tick<STATION_START || tick>=STATION_WIPE))) {
             for (unsigned y=0;y<240;++y) {
                 unsigned band=(y<120 ? y : 239-y)/8;
-                int loss=entering ? 37-2*(int)(tick-STATION_START) : (int)((tick-wipe)/2)-(int)band;
+                int loss=entering ? entry_loss : (int)((tick-wipe)/2)-(int)band;
                 if (loss<=0) continue;
                 for (unsigned x=0;x<320;++x) {
                     uint32_t pix=pixels[y][x], dark=0xff000000u;
