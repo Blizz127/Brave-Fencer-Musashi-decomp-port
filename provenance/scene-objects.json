@@ -7947,6 +7947,32 @@
       "origin": "Existing owner-authored SC02 member 35 C independently rebuilt for US Giant Forest member 77. Passes the three signed components of a vector to the actor update routine and returns its result.",
       "source_sha256": "cd8c7e706a6e9af1961927c0033de50932ec3f83696791312cd7566069a55877",
       "span_sha256": "6ccd09feb33454bcffd5d0bd9c517597bb68cb968a6d4a75420368e6c091eb0c"
+    },
+    {
+      "name": "func_801287B8",
+      "region": "sc01_0077",
+      "vram": 2148698040,
+      "size": 248,
+      "source": "src/overlays/sc01_0077/801287b8.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Owner clean-room reconstruction from US SC01 member 77 and the independently authored public MAIN member 12 update. Advances the forest scene subsystems, checks its local object block and increments the frame counter.",
+      "source_sha256": "19f4f8e2d03416b65d3480e42b20713d0820b803d4bae268c909cc3263ccddff",
+      "span_sha256": "dcf6027776bea88d9e5a204f9cbc9bafefef2d437ed7bb0a2f007fd224b5141b"
+    },
+    {
+      "name": "func_8014FDF4",
+      "region": "sc01_0077",
+      "vram": 2148859380,
+      "size": 108,
+      "source": "src/overlays/main_0012/8014fdf4.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Existing owner-authored MAIN member 12 C independently rebuilt for US SC01 member 77. Selects the player floor probe by comparing current and cached integer coordinates.",
+      "source_sha256": "89b4e94b30d27b997d98d31c368653422df41613f74767655553d6b44dabf828",
+      "span_sha256": "5b3725203e6953ae8a79b738d2f5db2e3550e9c162251dd8b1d4d20680b64d8d"
     }
   ]
 }
