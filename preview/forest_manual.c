@@ -358,7 +358,7 @@ int bfm_forest_carry_step(const BfmForestField *field, ForestPlayerState *actor,
     next.field_24.word = next.local_y.word = 0;
     next.field_2c.word = speed;
     if (!bfm_forest_level_velocity(&next, 0, yaw, 0) ||
-        step_on_floor(field, &ground, &next, position, 0, ground.bridge) != BFM_FOREST_TOP_GROUNDED) return 0;
+        step_on_floor(field, &ground, &next, position, 0, ground.bridge, NULL) != BFM_FOREST_TOP_GROUNDED) return 0;
     *actor = next;
     return 1;
 }
