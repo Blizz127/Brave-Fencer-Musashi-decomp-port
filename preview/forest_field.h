@@ -92,6 +92,8 @@ int bfm_forest_tick_sweep(BfmForestField *field, const MusashiDiscMedia *disc,
                           int begin, uint32_t logical_pose, const BfmForestTransform *previous_root);
 /* Queue a confirmed loss at the unshifted player root. Its effect draws randomness on dispatch. */
 int bfm_forest_queue_hurt_number(BfmForestField *field, const int16_t player[3], uint16_t amount);
+void bfm_forest_begin_water_effect(BfmForestField *field, const int16_t foot[3],
+                                   const int32_t eye[3], BfmGameplayRun *run);
 int bfm_forest_submit_guard_and_impact(BfmForestField *field, const BfmForestHit *hit,
                            const int32_t camera_eye[3], const BfmForestCamera *camera);
 int bfm_forest_submit_guard_and_impact_with_run(BfmForestField *field, const BfmForestHit *hit,

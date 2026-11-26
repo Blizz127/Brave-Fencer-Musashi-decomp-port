@@ -16,6 +16,7 @@
 #include "forest_rifle_contact.h"
 #include "forest_muzzle_fan.h"
 #include "forest_fall.h"
+#include "forest_water_effect.h"
 #include "forest_shore_motion.h"
 #include "forest_guard_contact.h"
 #include "forest_lesson_guard.h"
@@ -90,7 +91,8 @@ typedef struct {
     BfmForestActor fusion_actor;
     BfmForestTransform fusion_root;
     BfmForestCamera camera;
-    BfmForestDustCard cards[3 + BFM_FOREST_STRIKE_CARDS + BFM_FOREST_SWEEP_CARDS];
+    BfmForestDustCard cards[3 + BFM_FOREST_STRIKE_CARDS + BFM_FOREST_SWEEP_CARDS +
+                            BFM_FOREST_WATER_EFFECT_CARDS];
     unsigned count;
     BfmForestDustCard skill_cards[BFM_TETHER_CARDS + BFM_FOREST_MUZZLE_CARDS +
                                 BFM_GUNSHOT_FAN_CARDS + BFM_FOREST_SHOT_EFFECT_CARDS];
@@ -138,6 +140,7 @@ struct BfmForestField {
     unsigned far_bank_cells;
     BfmForestBlade blade;
     BfmForestDust dust;
+    BfmForestWaterEffect water_effect;
     BfmForestDrift drift;
     BfmForestGlows lights;
     BfmForestGlowFigures *light_figures;
@@ -630,6 +633,7 @@ BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t roo
     if (!field->shore_figures || !field->trail || !field->upper_trunks || !field->light_figures ||
         !field->rifles || !field->round_art ||
         !bfm_forest_bridge_load(&field->bridge, field) ||
+        !bfm_forest_water_effect_load(&field->water_effect, field) ||
         !bfm_forest_dust_load(&field->dust, disc)) {
         bfm_forest_field_free(field);
         return NULL;
@@ -941,6 +945,13 @@ int bfm_forest_queue_hurt_number(BfmForestField *field, const int16_t player[3],
     return field && player && bfm_forest_strike_effects_queue_hurt(&field->strikes, field, player, amount);
 }
 
+void bfm_forest_begin_water_effect(BfmForestField *field, const int16_t foot[3],
+                                   const int32_t eye[3], BfmGameplayRun *run)
+{
+    if (field && field->room == FOREST_ROOM)
+        bfm_forest_water_effect_begin(&field->water_effect, foot, eye, run);
+}
+
 int bfm_forest_submit_guard_and_impact(BfmForestField *field, const BfmForestHit *hit,
                            const int32_t camera_eye[3], const BfmForestCamera *camera)
 {
@@ -978,6 +989,9 @@ int bfm_forest_submit_guard_and_impacts_with_run(BfmForestField *field,
     frame->count += bfm_forest_strike_effects_step(&field->strikes, camera_eye, camera, run,
                                                   frame->cards + frame->count);
     frame->count += bfm_forest_sweep_project(&field->sweep, camera, frame->cards + frame->count);
+    frame->count += (unsigned)bfm_forest_water_effect_project(&field->water_effect, camera,
+                                frame->cards + frame->count, BFM_FOREST_WATER_EFFECT_CARDS);
+    bfm_forest_water_effect_tick(&field->water_effect);
     for (unsigned i = 0; i < FOREST_MELEE_GUARDS; ++i) {
         const BfmForestActor *guard = bfm_forest_shore_actor(guards[i]);
         frame->guard[i].parts = guard ? guard->visible_parts : 0;
@@ -1233,7 +1247,7 @@ int bfm_forest_draw_entrance_player(BfmForestField *field, const BfmForestCamera
                 &submitted->guard[i].pose, &submitted->guard[i].root,
                 submitted->guard[i].parts, &submitted->camera};
     }
-    BfmForestDustCard cards[BFM_FOREST_EFFECT_CARDS + BFM_TETHER_CARDS +
+    BfmForestDustCard cards[BFM_FOREST_EFFECT_CARDS + BFM_FOREST_WATER_EFFECT_CARDS + BFM_TETHER_CARDS +
                             BFM_FOREST_MUZZLE_CARDS + BFM_GUNSHOT_FAN_CARDS + BFM_FOREST_SHOT_EFFECT_CARDS];
     unsigned card_count = bfm_forest_dust_project(&field->dust, camera, cards);
     memcpy(cards + card_count, submitted->cards, submitted->count * sizeof *cards);

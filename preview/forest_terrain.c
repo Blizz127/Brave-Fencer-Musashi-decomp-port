@@ -4,6 +4,7 @@
 #include "forest_tether_trails.h"
 #include "forest_muzzle_art.h"
 #include "forest_shot_effects.h"
+#include "forest_water_effect.h"
 #include "scene_tiles.h"
 #include "forest_raster.h"
 
@@ -847,7 +848,7 @@ int bfm_forest_terrain_draw_entrance_with_effects(BfmForestTerrain *terrain,
 {
     if (!terrain || !camera || !camera->projection || !pixels || buffer > 1 ||
         actor_count > BFM_FOREST_ACTOR_LIMIT || (actor_count && !actors) ||
-        card_count > BFM_FOREST_EFFECT_CARDS + BFM_TETHER_CARDS +
+        card_count > BFM_FOREST_EFFECT_CARDS + BFM_FOREST_WATER_EFFECT_CARDS + BFM_TETHER_CARDS +
                      BFM_FOREST_MUZZLE_CARDS + BFM_GUNSHOT_FAN_CARDS + BFM_FOREST_SHOT_EFFECT_CARDS ||
         (card_count && !cards) ||
         ((model || actor_count) && !terrain->has_lighting))
