@@ -7986,6 +7986,32 @@
       "origin": "Owner clean-room reconstruction from US SC01 member 77 and the published SC01 member 5 placement constructor. Initializes the actor, runs its kind-specific setup and applies the model transform or rolls back the placement.",
       "source_sha256": "544dacbb4af687d363fb22da4702f2923d707c5bd0b804194fd3240d9e4226aa",
       "span_sha256": "886c86272c3e0221cb1485f9482129c752b388856fb77fcf49a09ef2692208fd"
+    },
+    {
+      "name": "func_80155518",
+      "region": "sc01_0077",
+      "vram": 2148881688,
+      "size": 52,
+      "source": "src/overlays/sc01_0077/80155518.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Owner clean-room reconstruction from the US SC01 member 77. Enters the ground sword action and initializes the swing.",
+      "source_sha256": "a8d18148cd60fcf178369da51d338acf370f499420cdf2d6ccbcc0c684d8de64",
+      "span_sha256": "16cc54d2c1e856887ed9ff0edffe37d01263fdb7226440458d9288b622718cf7"
+    },
+    {
+      "name": "func_8015554C",
+      "region": "sc01_0077",
+      "vram": 2148881740,
+      "size": 52,
+      "source": "src/overlays/sc01_0077/8015554c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Owner clean-room reconstruction from the US SC01 member 77. Enters the ground sword action and dispatches its current phase.",
+      "source_sha256": "b98fee293cff25624058a95735b2f933627df5f0c304e9bb559710fda8658632",
+      "span_sha256": "6cb15fbe27ad5978a8f58a8cc76c4f8243ba543c2b43001bb4f34f90d2d288d4"
     }
   ]
 }
