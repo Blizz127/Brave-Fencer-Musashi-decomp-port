@@ -36,6 +36,8 @@ struct BfmSteamKnight {
     int swing_sound, hit_sound;
     BfmSteamKnightBossHud boss_hud;
     unsigned core_hp, core_max;
+    unsigned body_stage, pending_kneel_joint;
+    uint32_t battle_flags;
     BfmLuminaRotation rotation;
     BfmSteamWeaponEffects weapons;
     BfmSteamKnightFlames flames;
@@ -66,6 +68,7 @@ BfmSteamKnight *bfm_steam_knight_open(const MusashiDiscMedia *disc,
     s->damage_palette = scene + damage_palette;
     s->machine = bfm_steam_knight_machine_load(scene, size);
     s->core_max = s->core_hp = 192;
+    s->body_stage = 1;
     s->hud = bfm_steam_knight_hud_load(disc, scene, size, bfm_steam_knight_field_terrain(s->field));
     s->voice = bfm_forest_voice_load(disc);
     if (!s->art || !s->hostages || !s->machine || !s->hud ||
@@ -97,6 +100,25 @@ void bfm_steam_knight_free(BfmSteamKnight *s)
 
 static void hall_camera(const BfmSteamKnight *s, BfmForestCamera *camera);
 
+static int plate_contact(BfmSteamKnight *s, uint16_t amount)
+{
+    s->hit_sound = 1;
+    if (s->hit.change == BFM_STEAM_INNER_REMOVED) {
+        s->battle_flags |= s->hit.body_flags_set;
+        s->pending_kneel_joint = s->hit.joint;
+    }
+    if (s->hit.before > s->hit.after)
+        bfm_steam_knight_machine_flash_armor(s->machine, s->hit.joint);
+    for (size_t i = 0; i < BFM_STEAM_ARMOR_PLATES; ++i) {
+        if (s->numbers[i].digits.amount) continue;
+        if (!bfm_forest_damage_digits_start_data(&s->numbers[i].digits, s->damage_palette,
+                                                s->hit.point, amount)) return 0;
+        s->numbers[i].delay = 2;
+        break;
+    }
+    return 1;
+}
+
 static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t held)
 {
     BfmSteamKnightEvent *e = &s->event;
@@ -121,18 +143,13 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
         if (!bfm_forest_fusion_strength(&s->power, &e->run->player, strike.power_class,
                 bfm_gameplay_story_flag(e->run, 0x81), bfm_gameplay_random(e->run), &amount)) return -1;
         if (strike.count && bfm_steam_knight_armor_strike(&s->armor, s->machine,
-                strike.from, strike.ends, strike.count, strike.type, amount, &s->hit)) {
-            s->hit_sound = 1;
-            if (s->hit.before > s->hit.after)
-                bfm_steam_knight_machine_flash_armor(s->machine, s->hit.joint);
-            for (size_t i = 0; i < BFM_STEAM_ARMOR_PLATES; ++i) {
-                if (s->numbers[i].digits.amount) continue;
-                if (!bfm_forest_damage_digits_start_data(&s->numbers[i].digits, s->damage_palette,
-                                                         s->hit.point, amount)) return -1;
-                s->numbers[i].delay = 2;
-                break;
-            }
-        }
+                strike.from, strike.ends, strike.count, strike.type, amount, &s->hit) &&
+            !plate_contact(s, amount)) return -1;
+    }
+    if (s->pending_kneel_joint && s->body_stage != 11 &&
+        bfm_steam_knight_machine_inner_broken(s->machine, s->pending_kneel_joint)) {
+        s->body_stage = 11;
+        s->pending_kneel_joint = 0;
     }
     return 1;
 }

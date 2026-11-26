@@ -29,7 +29,7 @@ int bfm_steam_knight_armor_load(BfmSteamKnightArmor *armor, const uint8_t *scene
         BfmSteamKnightArmorPlate *plate = &mounted.plate[i];
         plate->joint = u16le(joints + 2 * i);
         plate->hp = s16le(resource);
-        plate->flags = u16le(resource + 2);
+        plate->flags = plate->initial_flags = u16le(resource + 2);
         uint32_t shape = u32le(resource + 8);
         if (plate->joint >= CHASSIS_PARTS || plate->hp <= 0 ||
             shape != UINT32_C(0x80195b74) + variant * 16)
@@ -61,6 +61,24 @@ int bfm_steam_knight_armor_load_power(const MusashiDiscMedia *disc, const uint8_
     return bfm_forest_fusion_power_rows(disc, moves, rows, power);
 }
 
+int bfm_steam_knight_armor_rearm(BfmSteamKnightArmor *armor, unsigned round, unsigned body_stage)
+{
+    if (!armor || round != 1 || body_stage != 1 || armor->round == round) return 0;
+    for (unsigned i = 0; i < BFM_STEAM_ARMOR_PLATES; ++i) {
+        if (!(armor->depleted_joints & (UINT32_C(1) << armor->plate[i].joint))) return 0;
+    }
+    /* The original restores 72 HP to each of the same four actors when the
+     * second arena lands. Its earlier round counter and core HP reset first. */
+    for (unsigned i = 0; i < BFM_STEAM_ARMOR_PLATES; ++i) {
+        armor->plate[i].hp = 72;
+        armor->plate[i].flags = armor->plate[i].initial_flags;
+    }
+    armor->round = round;
+    armor->struck = 0;
+    armor->depleted_joints = 0;
+    return 1;
+}
+
 void bfm_steam_knight_armor_begin_swing(BfmSteamKnightArmor *armor)
 {
     if (armor) armor->struck = 0;
@@ -79,7 +97,8 @@ int bfm_steam_knight_armor_strike(BfmSteamKnightArmor *armor, const BfmSteamKnig
         BfmSteamKnightArmorHit contact = {0};
         for (unsigned i = 0; i < BFM_STEAM_ARMOR_PLATES; ++i) {
             const BfmSteamKnightArmorPlate *plate = &armor->plate[i];
-            if ((armor->struck & (1u << i)) || !(plate->flags & 0x8000) || plate->hp <= 0)
+            unsigned required = (i & 1) ? 0x8800 : 0x8400;
+            if ((armor->struck & (1u << i)) || (plate->flags & required) != required || plate->hp <= 0)
                 continue;
             BfmForestTransform root;
             const MusashiForestPlayerPart *model;
@@ -109,10 +128,18 @@ int bfm_steam_knight_armor_strike(BfmSteamKnightArmor *armor, const BfmSteamKnig
         plate->hp -= damage;
         contact.after = plate->hp;
         armor->struck |= 1u << nearest;
-        /* Breaking an outer plate exposes its inner plate to the next blow. */
-        if (!(nearest & 1) && plate->hp <= 0) {
-            armor->plate[nearest + 1].flags = 0x8800;
-            armor->struck |= 1u << (nearest + 1);
+        if (plate->hp <= 0) {
+            armor->depleted_joints |= UINT32_C(1) << plate->joint;
+            if (!(nearest & 1)) {
+                BfmSteamKnightArmorPlate *inner = &armor->plate[nearest + 1];
+                inner->flags |= 0x8800;
+                armor->struck |= 1u << (nearest + 1);
+                contact.change = BFM_STEAM_OUTER_REMOVED;
+                contact.released_joint = inner->joint;
+            } else {
+                contact.change = BFM_STEAM_INNER_REMOVED;
+                contact.body_flags_set = nearest == 1 ? UINT32_C(0x20000) : UINT32_C(0x40000);
+            }
         }
         *hit = contact;
         return 1;

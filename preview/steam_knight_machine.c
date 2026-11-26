@@ -3,8 +3,10 @@
 #include "../pc_port/forest_player_bytes.h"
 #include <stdlib.h>
 
-enum { CHASSIS, TORSO, ASSEMBLIES, MAX_KEYS = 16 };
-enum { NEUTRAL, FIRST_ACTION, LOWER, RISE, CLIPS };
+enum { CHASSIS, TORSO, ASSEMBLIES, MAX_KEYS = 24 };
+enum { NEUTRAL, FIRST_ACTION, LOWER, RISE, STEP_RIGHT, STEP_LEFT, STEP_FORWARD,
+       KNEEL_RIGHT, KNEEL_LEFT, CLIPS };
+enum { FREE, WALKING, KNEELING, GETTING_UP };
 enum { FIRST_HIT_JOINT = 18, FIRST_WHITE_UPDATE = 2, OBSERVED_WHITE_UPDATES = 6 };
 static const uint32_t origin = UINT32_C(0x80128158);
 static const struct { uint32_t table; unsigned parts; } model[] = {
@@ -12,10 +14,13 @@ static const struct { uint32_t table; unsigned parts; } model[] = {
 };
 static const struct { uint32_t table; unsigned index, keys; } chassis_program[] = {
     [NEUTRAL] = {0x801945b0, 0, 16}, [FIRST_ACTION] = {0x80194960, 6, 8},
+    [STEP_RIGHT] = {0x80194638, 1, 24}, [STEP_LEFT] = {0x80194700, 2, 24},
+    [STEP_FORWARD] = {0x801947c8, 3, 24},
+    [KNEEL_RIGHT] = {0x80194ea8, 20, 16}, [KNEEL_LEFT] = {0x80194f78, 22, 16},
     [LOWER]   = {0x801949a8, 7, 5},  [RISE] = {0x801949d8, 8, 8}
 };
 typedef struct {
-    BfmForestPose pose[MAX_KEYS];
+    BfmForestPose *pose;
     unsigned count, terminal;
 } MachineClip;
 struct BfmSteamKnightMachine {
@@ -26,6 +31,11 @@ struct BfmSteamKnightMachine {
     const BfmForestPose *display[ASSEMBLIES], *chassis_pose;
     unsigned entrance_age, outgoing_display, control_age, clip_epoch, clip_age;
     const MachineClip *selected;
+    const BfmForestPose *outgoing[2];
+    BfmForestPose mounted_torso;
+    int action, step_x, step_z, patrol_after_recovery;
+    unsigned neutral_since;
+    int32_t x4, z4, action_x4, action_z4;
     int spawn_y, active, revealed, controlled;
 };
 
@@ -69,6 +79,8 @@ static int load_clip(MachineClip *clip, const uint8_t *scene, size_t bytes, unsi
     unsigned stride = 12 * model[piece].parts;
     uint32_t first = piece == CHASSIS ? UINT32_C(0x801bdcd8) : UINT32_C(0x801d323c);
     uint32_t last = piece == CHASSIS ? UINT32_C(0x801d3128) : UINT32_C(0x801d3944);
+    clip->pose = calloc(count, sizeof *clip->pose);
+    if (!clip->pose) return 0;
     for (unsigned i = 0; i < count; ++i) {
         uint32_t key = u32le(program + 8*i);
         if (key < first || key > last || (key - first) % stride ||
@@ -95,6 +107,8 @@ BfmSteamKnightMachine *bfm_steam_knight_machine_load(const uint8_t *scene, size_
     if (!machine) return NULL;
     bfm_forest_actor_root(0, at, &machine->root);
     machine->spawn_y = at[1];
+    machine->x4 = at[0] * 4;
+    machine->z4 = at[2] * 4;
     machine->display_root = machine->root;
     for (unsigned piece = 0; piece < ASSEMBLIES; ++piece) {
         unsigned count = 0;
@@ -117,6 +131,8 @@ failed:
 void bfm_steam_knight_machine_free(BfmSteamKnightMachine *machine)
 {
     if (!machine) return;
+    for (unsigned i = 0; i < CLIPS; ++i) free(machine->chassis[i].pose);
+    free(machine->torso.pose);
     musashi_forest_player_mesh_free(machine->white_chassis);
     for (unsigned i = 0; i < ASSEMBLIES; ++i)
         musashi_forest_player_mesh_free(machine->mesh[i]);
@@ -150,14 +166,84 @@ static unsigned entrance_clock(unsigned age)
     return (age - 6) % 32;
 }
 
-static void selected_chassis(BfmSteamKnightMachine *machine)
+static const BfmForestPose *action_pose(const BfmSteamKnightMachine *machine, unsigned age)
 {
-    if (!machine->selected) return;
-    unsigned delta = machine->control_age >= machine->clip_epoch
-                   ? machine->control_age - machine->clip_epoch : 0;
-    uint64_t age = (uint64_t)machine->clip_age + delta;
-    machine->chassis_pose = sample(machine->selected, age);
-    if (age >= 2) machine->display[CHASSIS] = sample(machine->selected, age - 2);
+    const MachineClip *clip = machine->selected;
+    if (machine->action == GETTING_UP)
+        return &clip->pose[age < clip->count ? clip->count - 1 - age : 0];
+    return sample(clip, (uint64_t)machine->clip_age + age);
+}
+
+static void select_clip(BfmSteamKnightMachine *machine, unsigned id, unsigned age)
+{
+    unsigned elapsed = machine->control_age - machine->clip_epoch;
+    machine->outgoing[0] = machine->display[CHASSIS];
+    if (machine->selected && elapsed) machine->outgoing[1] = action_pose(machine, elapsed - 1);
+    else if (!machine->selected) {
+        unsigned tick = machine->control_age;
+        machine->outgoing[1] = sample(&machine->chassis[NEUTRAL], tick ? tick - 1 : 0);
+    }
+    machine->selected = &machine->chassis[id];
+    machine->clip_epoch = machine->control_age;
+    machine->clip_age = age;
+    machine->action_x4 = machine->x4;
+    machine->action_z4 = machine->z4;
+}
+
+/* Carry the upper assembly on the posed waist. Its neutral reference waist
+ * has identity rotation and its position already occurs in each upper joint. */
+static void mount_torso(BfmSteamKnightMachine *machine, unsigned shown)
+{
+    const BfmForestTransform *waist = &machine->display[CHASSIS]->local[21];
+    const BfmForestTransform *reference = &sample(&machine->chassis[NEUTRAL], shown)->local[21];
+    const BfmForestPose *source = sample(&machine->torso, shown);
+    for (unsigned p = 0; p < model[TORSO].parts; ++p) {
+        const BfmForestTransform *local = &source->local[p];
+        BfmForestTransform *placed = &machine->mounted_torso.local[p];
+        for (unsigned i = 0; i < 3; ++i) {
+            int move = 0;
+            for (unsigned k = 0; k < 3; ++k)
+                move += waist->rotation[i][k] * (local->translation[k] - reference->translation[k]);
+            placed->translation[i] = waist->translation[i] + (move >> 12);
+            for (unsigned j = 0; j < 3; ++j) {
+                int turn = 0;
+                for (unsigned k = 0; k < 3; ++k)
+                    turn += waist->rotation[i][k] * local->rotation[k][j];
+                placed->rotation[i][j] = (int16_t)(turn >> 12);
+            }
+        }
+    }
+    machine->display[TORSO] = &machine->mounted_torso;
+}
+
+static void selected_chassis(BfmSteamKnightMachine *machine, unsigned shown)
+{
+    if (!machine->selected || machine->control_age < machine->clip_epoch) return;
+    unsigned age = machine->control_age - machine->clip_epoch;
+    if (machine->action == WALKING) {
+        unsigned steps = age < 48 ? age : 48;
+        machine->x4 = machine->action_x4 + (int)steps * 7 * machine->step_x;
+        machine->z4 = machine->action_z4 + (int)steps * 7 * machine->step_z;
+        machine->root.translation[0] = machine->display_root.translation[0] = machine->x4 >> 2;
+        machine->root.translation[2] = machine->display_root.translation[2] = machine->z4 >> 2;
+    }
+    unsigned duration = machine->action == WALKING ? 48 : machine->selected->count;
+    if ((machine->action == WALKING || machine->action == GETTING_UP) && age >= duration) {
+        int recovered = machine->action == GETTING_UP;
+        unsigned remaining = age - duration;
+        machine->outgoing[0] = action_pose(machine, duration - 2);
+        machine->outgoing[1] = action_pose(machine, duration - 1);
+        machine->action = FREE;
+        machine->selected = &machine->chassis[NEUTRAL];
+        machine->clip_epoch = machine->control_age - remaining;
+        machine->clip_age = 0;
+        machine->neutral_since = machine->clip_epoch;
+        machine->patrol_after_recovery = recovered;
+        age = remaining;
+    }
+    machine->chassis_pose = action_pose(machine, age);
+    machine->display[CHASSIS] = age < 2 ? machine->outgoing[age] : action_pose(machine, age - 2);
+    mount_torso(machine, shown);
 }
 
 void bfm_steam_knight_machine_present(BfmSteamKnightMachine *machine, unsigned elapsed)
@@ -184,7 +270,9 @@ void bfm_steam_knight_machine_present(BfmSteamKnightMachine *machine, unsigned e
     machine->chassis_pose = sample(&machine->chassis[NEUTRAL], clock);
     machine->display[CHASSIS] = sample(&machine->chassis[NEUTRAL], shown);
     machine->display[TORSO] = sample(&machine->torso, shown);
-    selected_chassis(machine);
+    selected_chassis(machine, shown);
+    if (machine->patrol_after_recovery && machine->control_age - machine->neutral_since >= 32)
+        bfm_steam_knight_machine_walk(machine, BFM_STEAM_WALK_FORWARD);
 }
 
 void bfm_steam_knight_machine_reveal(BfmSteamKnightMachine *machine)
@@ -204,16 +292,51 @@ void bfm_steam_knight_machine_handover(BfmSteamKnightMachine *machine)
 int bfm_steam_knight_machine_set_chassis_clip(BfmSteamKnightMachine *machine,
                                              unsigned clip, unsigned elapsed)
 {
-    if (!machine || !machine->controlled) return 0;
-    for (unsigned i = 0; i < CLIPS; ++i)
-        if (chassis_program[i].index == clip) {
-            machine->selected = &machine->chassis[i];
-            machine->clip_epoch = machine->control_age;
-            machine->clip_age = elapsed;
-            selected_chassis(machine);
-            return 1;
-        }
+    if (!machine || !machine->controlled || machine->action != FREE) return 0;
+    for (unsigned i = 0; i < CLIPS; ++i) {
+        if (chassis_program[i].index != clip) continue;
+        select_clip(machine, i, elapsed);
+        bfm_steam_knight_machine_present(machine, machine->control_age);
+        return 1;
+    }
     return 0;
+}
+
+int bfm_steam_knight_machine_walk(BfmSteamKnightMachine *machine, BfmSteamKnightWalk direction)
+{
+    if (!machine || !machine->controlled || machine->action != FREE ||
+        (unsigned)direction > BFM_STEAM_WALK_FORWARD) return 0;
+    unsigned id = direction == BFM_STEAM_WALK_FORWARD ? STEP_FORWARD :
+                  direction == BFM_STEAM_WALK_RIGHT ? STEP_RIGHT : STEP_LEFT;
+    select_clip(machine, id, 0);
+    machine->step_x = (direction == BFM_STEAM_WALK_RIGHT) - (direction == BFM_STEAM_WALK_LEFT);
+    machine->step_z = direction == BFM_STEAM_WALK_FORWARD;
+    machine->action = WALKING;
+    machine->patrol_after_recovery = 0;
+    bfm_steam_knight_machine_present(machine, machine->control_age);
+    return 1;
+}
+
+int bfm_steam_knight_machine_inner_broken(BfmSteamKnightMachine *machine, unsigned joint)
+{
+    if (!machine || !machine->controlled || (joint != 14 && joint != 19) ||
+        machine->action == KNEELING || machine->action == GETTING_UP) return 0;
+    select_clip(machine, joint == 14 ? KNEEL_RIGHT : KNEEL_LEFT, 0);
+    machine->action = KNEELING;
+    machine->patrol_after_recovery = 0;
+    bfm_steam_knight_machine_present(machine, machine->control_age);
+    return 1;
+}
+
+int bfm_steam_knight_machine_recover(BfmSteamKnightMachine *machine)
+{
+    if (!machine || machine->action != KNEELING ||
+        machine->control_age - machine->clip_epoch < 2 * (machine->selected->count - 1)) return 0;
+    unsigned id = machine->selected == &machine->chassis[KNEEL_RIGHT] ? KNEEL_RIGHT : KNEEL_LEFT;
+    select_clip(machine, id, 0);
+    machine->action = GETTING_UP;
+    bfm_steam_knight_machine_present(machine, machine->control_age);
+    return 1;
 }
 
 size_t bfm_steam_knight_machine_actors(const BfmSteamKnightMachine *machine,
@@ -246,4 +369,17 @@ int bfm_steam_knight_machine_joint(const BfmSteamKnightMachine *machine, unsigne
         world->translation[axis] += machine->root.translation[axis];
     *mesh_part = musashi_forest_player_mesh_part(machine->mesh[CHASSIS], chassis_part);
     return *mesh_part != NULL;
+}
+
+int bfm_steam_knight_machine_core_socket(const BfmSteamKnightMachine *machine,
+                                         int waist, BfmForestTransform *world)
+{
+    const MusashiForestPlayerPart *unused = NULL;
+    if (!bfm_steam_knight_machine_joint(machine, waist ? 21 : 0, world, &unused)) return 0;
+    for (unsigned i = 0; i < 3; ++i) {
+        int offset = 16 * world->rotation[i][1];
+        if (waist) offset += 24 * world->rotation[i][2];
+        world->translation[i] += offset >> 12;
+    }
+    return 1;
 }

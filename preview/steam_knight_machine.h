@@ -17,6 +17,16 @@ size_t bfm_steam_knight_machine_actors(const BfmSteamKnightMachine *machine,
 /* The encounter selects an action once its live control has issued it. */
 int bfm_steam_knight_machine_set_chassis_clip(BfmSteamKnightMachine *machine,
                                              unsigned clip, unsigned elapsed);
+/* The encounter supplies gameplay results for a real inner leg break and
+ * completion of its resulting weak-core opportunity. */
+int bfm_steam_knight_machine_inner_broken(BfmSteamKnightMachine *machine, unsigned joint);
+int bfm_steam_knight_machine_recover(BfmSteamKnightMachine *machine);
+typedef enum {
+    BFM_STEAM_WALK_RIGHT, BFM_STEAM_WALK_LEFT, BFM_STEAM_WALK_FORWARD
+} BfmSteamKnightWalk;
+int bfm_steam_knight_machine_walk(BfmSteamKnightMachine *machine, BfmSteamKnightWalk direction);
+int bfm_steam_knight_machine_core_socket(const BfmSteamKnightMachine *machine,
+                                         int waist, BfmForestTransform *world);
 /* Start the mounted outer shell's observed white response on actual damage. */
 void bfm_steam_knight_machine_flash_armor(BfmSteamKnightMachine *machine, unsigned joint);
 int bfm_steam_knight_machine_joint(const BfmSteamKnightMachine *machine, unsigned chassis_part,
