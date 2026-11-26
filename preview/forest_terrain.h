@@ -27,6 +27,9 @@ BfmForestTerrain *bfm_forest_terrain_load(const MusashiDiscMedia *disc,
                                           const uint8_t *mesh, size_t bytes);
 BfmForestTerrain *bfm_forest_terrain_load_member(const MusashiDiscMedia *disc,
                                           unsigned member, const uint8_t *mesh, size_t bytes);
+/* Replace the static polygons while retaining mounted tiles and room lighting.
+ * A rejected mesh leaves the previous geometry available for drawing. */
+int bfm_forest_terrain_replace_mesh(BfmForestTerrain *terrain, const uint8_t *mesh, size_t bytes);
 /* Set the active room descriptor's ambient and directional lights. */
 int bfm_forest_terrain_set_lighting(BfmForestTerrain *terrain,
                                     const uint8_t *descriptor, size_t bytes);

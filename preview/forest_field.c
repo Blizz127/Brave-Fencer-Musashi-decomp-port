@@ -377,8 +377,15 @@ int bfm_tower_ascent_floor_activate(BfmForestField *field)
     if (field->tower_floor_raised) return 1;
     const uint8_t *slot = scene_record(field->scene, field->scene_size, tower_descriptor_slot, 4);
     const uint8_t *room = slot ? scene_record(field->scene, field->scene_size, read32(slot), 0x90) : NULL;
+    /* The risen courtyard has its own cell directory and textured surfaces.
+     * In the US room member it ends where the first figure begins. */
+    const uint32_t raised_mesh = UINT32_C(0x80193c64);
+    const size_t mesh_bytes = UINT32_C(0x801a176c) - raised_mesh;
+    const uint8_t *mesh = scene_record(field->scene, field->scene_size, raised_mesh, mesh_bytes);
     FloorGrid raised = {0};
-    if (!room || !load_grid(&raised, field->scene, field->scene_size, read32(room + 0x8c))) {
+    if (!room || !mesh ||
+        !load_grid(&raised, field->scene, field->scene_size, read32(room + 0x8c)) ||
+        !bfm_forest_terrain_replace_mesh(field->terrain, mesh, mesh_bytes)) {
         free_grid(&raised);
         return 0;
     }

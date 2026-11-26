@@ -162,6 +162,10 @@ int bfm_tower_field_draw(BfmTowerField *tower, const BfmForestCamera *camera,
     const BfmTowerPylonFrame *posts = tower->pylons.history[field_tick % 3];
     size_t count = bfm_tower_figures_actors(tower->figures, field_tick, posts,
                                             tower->submitted_rise[field_tick % 3], tower->face_yaw[field_tick % 3], actors, BFM_TOWER_FIGURE_ACTORS);
+    /* The risen static mesh now supplies the moving body's stonework.
+     * Its head and the other room figures remain separate submissions. */
+    if (count && tower->rise_age >= BFM_TOWER_RISE_END)
+        actors[0].visible_parts = 0;
     size_t arcs = bfm_tower_lightning_cards(tower->circuit, 2, camera, cards, BFM_TOWER_LIGHTNING_CARDS);
     size_t glows = bfm_tower_figures_cards(tower->figures, field_tick, posts, field_tick & 1u,
                                           tower->submitted_rise[field_tick % 3], camera, cards + arcs, BFM_TOWER_FIGURE_CARDS);

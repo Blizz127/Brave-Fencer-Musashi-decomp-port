@@ -31,12 +31,17 @@ typedef struct {
     uint32_t lighting[4];
 } ProjectedFace;
 
-struct BfmForestTerrain {
-    size_t count, capacity, cell_count;
+typedef struct {
+    size_t count, cell_count;
     TerrainCell *cells;
+    Face *faces;
+} TerrainMesh;
+
+struct BfmForestTerrain {
+    TerrainMesh mesh;
+    size_t capacity;
     int has_lighting;
     int direction[3][3], color[3][3], ambient[3];
-    Face *faces;
     ProjectedFace *draw;
     uint16_t tiles[512][1024];
 };
@@ -86,7 +91,7 @@ static int decode_face(Face *face, const uint8_t *record, const uint8_t *vertice
 
 /* Interior sectors share a material and vertex pool; each directory entry
  * owns a contiguous face run and signed world bounding box. */
-static int load_grouped_faces(BfmForestTerrain *terrain, const uint8_t *mesh, size_t bytes)
+static int load_grouped_faces(TerrainMesh *terrain, const uint8_t *mesh, size_t bytes)
 {
     if (bytes < 20) return 0;
     const uint8_t *root = mesh + 20;
@@ -105,12 +110,11 @@ static int load_grouped_faces(BfmForestTerrain *terrain, const uint8_t *mesh, si
         cursor += count * 12;
     }
     terrain->cell_count = groups;
-    terrain->capacity = terrain->count = (cursor - first) / 12;
+    terrain->count = (cursor - first) / 12;
     if (!terrain->count) return 0;
     terrain->cells = calloc(groups, sizeof *terrain->cells);
     terrain->faces = calloc(terrain->count, sizeof *terrain->faces);
-    terrain->draw = calloc(terrain->capacity, sizeof *terrain->draw);
-    if (!terrain->cells || !terrain->faces || !terrain->draw) return 0;
+    if (!terrain->cells || !terrain->faces) return 0;
     unsigned used = 0;
     for (unsigned i = 0; i < groups; ++i) {
         const uint8_t *entry = root + 20 * i;
@@ -131,7 +135,7 @@ static int load_grouped_faces(BfmForestTerrain *terrain, const uint8_t *mesh, si
     return 1;
 }
 
-static int load_faces(BfmForestTerrain *terrain, const uint8_t *mesh, size_t bytes)
+static int load_faces(TerrainMesh *terrain, const uint8_t *mesh, size_t bytes)
 {
     if (bytes >= 8 && le32(mesh) == 0x43 && !le32(mesh + 4))
         return load_grouped_faces(terrain, mesh, bytes);
@@ -162,14 +166,11 @@ static int load_faces(BfmForestTerrain *terrain, const uint8_t *mesh, size_t byt
         end = off;
     }
     if (!terrain->count || terrain->count > UINT_MAX ||
-        terrain->count > SIZE_MAX / sizeof(*terrain->faces) ||
-        terrain->count > SIZE_MAX / sizeof(*terrain->draw))
+        terrain->count > SIZE_MAX / sizeof(*terrain->faces))
         return 0;
     terrain->cells = calloc(terrain->cell_count, sizeof(*terrain->cells));
     terrain->faces = calloc(terrain->count, sizeof(*terrain->faces));
-    terrain->capacity = terrain->count;
-    terrain->draw = malloc(terrain->capacity * sizeof(*terrain->draw));
-    if (!terrain->cells || !terrain->faces || !terrain->draw)
+    if (!terrain->cells || !terrain->faces)
         return 0;
     size_t used = 0, occupied = 0;
     for (unsigned i = 0; i < GRID_CELLS; ++i) {
@@ -233,13 +234,43 @@ int bfm_forest_terrain_set_lighting(BfmForestTerrain *terrain, const uint8_t *ro
     return 1;
 }
 
+static int reserve_faces(BfmForestTerrain *terrain, size_t required)
+{
+    if (required <= terrain->capacity) return 1;
+    if (required > SIZE_MAX / sizeof(*terrain->draw)) return 0;
+    ProjectedFace *faces = realloc(terrain->draw, required * sizeof(*faces));
+    if (!faces) return 0;
+    terrain->draw = faces;
+    terrain->capacity = required;
+    return 1;
+}
+
+static void free_mesh(TerrainMesh *mesh)
+{
+    free(mesh->cells);
+    free(mesh->faces);
+}
+
+int bfm_forest_terrain_replace_mesh(BfmForestTerrain *terrain, const uint8_t *mesh, size_t bytes)
+{
+    if (!terrain || !mesh) return 0;
+    TerrainMesh next = {0};
+    if (!load_faces(&next, mesh, bytes) || !reserve_faces(terrain, next.count)) {
+        free_mesh(&next);
+        return 0;
+    }
+    free_mesh(&terrain->mesh);
+    terrain->mesh = next;
+    return 1;
+}
+
 BfmForestTerrain *bfm_forest_terrain_load_member(const MusashiDiscMedia *disc, unsigned member,
                                           const uint8_t *mesh, size_t bytes)
 {
     if (!disc || !mesh)
         return NULL;
     BfmForestTerrain *terrain = calloc(1, sizeof(*terrain));
-    if (terrain && (!load_faces(terrain, mesh, bytes) ||
+    if (terrain && (!bfm_forest_terrain_replace_mesh(terrain, mesh, bytes) ||
                     !bfm_scene_read_tiles(disc, "MAIN.CD", 10, terrain->tiles) ||
                     !bfm_scene_read_tiles(disc, "SC01.CD", member, terrain->tiles))) {
         bfm_forest_terrain_free(terrain);
@@ -262,8 +293,7 @@ const uint16_t (*bfm_forest_terrain_tiles(const BfmForestTerrain *terrain))[1024
 void bfm_forest_terrain_free(BfmForestTerrain *terrain)
 {
     if (terrain) {
-        free(terrain->cells);
-        free(terrain->faces);
+        free_mesh(&terrain->mesh);
         free(terrain->draw);
         free(terrain);
     }
@@ -495,17 +525,6 @@ static uint32_t light_vertex(const BfmForestTerrain *terrain, const int32_t ligh
 static const MusashiForestPlayerFace effect_face = {.corners = 4};
 static const MusashiForestPlayerFace blade_face = {.mode = 0x3a, .corners = 4, .tpage = 0x12a};
 
-static int reserve_faces(BfmForestTerrain *terrain, size_t required)
-{
-    if (required <= terrain->capacity) return 1;
-    if (required > SIZE_MAX / sizeof(*terrain->draw)) return 0;
-    ProjectedFace *faces = realloc(terrain->draw, required * sizeof(*faces));
-    if (!faces) return 0;
-    terrain->draw = faces;
-    terrain->capacity = required;
-    return 1;
-}
-
 static int collect_blade(BfmForestTerrain *terrain, const BfmForestCamera *camera,
                          const BfmForestBlade *blade, const BfmForestBladeFrame *frame,
                          size_t *count)
@@ -589,7 +608,7 @@ static int collect_model(BfmForestTerrain *terrain, const BfmForestCamera *camer
                 out->depth = nearest/4 - 1;
             else
                 out->depth = (sum * (face->corners == 3 ? 341 : 256))/4096;
-            out->ordinal = (unsigned)(terrain->count + *count);
+            out->ordinal = (unsigned)(terrain->mesh.count + *count);
             out->model_face = face;
             ++*count;
         }
@@ -656,7 +675,7 @@ static size_t collect_cell(BfmForestTerrain *terrain, const TerrainCell *cell,
                            const BfmForestCamera *camera, unsigned buffer, size_t count)
 {
     for (unsigned i = cell->first; i < cell->first + cell->count; ++i) {
-        const Face *face = &terrain->faces[i];
+        const Face *face = &terrain->mesh.faces[i];
         ProjectedFace *out = &terrain->draw[count];
         unsigned depth = 0, j = 0;
         int raw_min_x = 320, raw_max_x = -1;
@@ -754,8 +773,8 @@ int bfm_forest_terrain_draw_entrance_with_effects(BfmForestTerrain *terrain,
         .top = model || actor_count ? 10 : 0, .bottom = model || actor_count ? 229 : 239
     };
     size_t count = 0;
-    for (size_t i = 0; i < terrain->cell_count; ++i) {
-        const TerrainCell *cell = &terrain->cells[i];
+    for (size_t i = 0; i < terrain->mesh.cell_count; ++i) {
+        const TerrainCell *cell = &terrain->mesh.cells[i];
         if (cell_in_view(cell, camera))
             count = collect_cell(terrain, cell, camera, buffer, count);
     }
@@ -787,7 +806,7 @@ int bfm_forest_terrain_draw_entrance_with_effects(BfmForestTerrain *terrain,
         } else if (out->model_face)
             draw_model_face(&surface, out);
         else
-            draw_face(&surface, &terrain->faces[out->ordinal], out->points);
+            draw_face(&surface, &terrain->mesh.faces[out->ordinal], out->points);
     }
     return 1;
 }

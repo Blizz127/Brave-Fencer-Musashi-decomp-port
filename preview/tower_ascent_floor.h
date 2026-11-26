@@ -4,8 +4,8 @@
 
 #include "forest_field.h"
 
-/* Replace the submerged collision mesh when the central tower finishes rising.
- * Repeated activation is harmless. A failed mount keeps the old mesh. */
+/* Install the raised courtyard rendering and collision meshes together.
+ * Repeated activation is harmless. A failed mount retains the submerged pair. */
 int bfm_tower_ascent_floor_activate(BfmForestField *field);
 
 /* BLOCKED rejects a wall or a bad starting surface. FREE means that this
