@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "forest_walk.h"
 #include "castle_drawbridge.h"
+#include "steam_knight.h"
 #include "forest_gateway_transition.h"
 #include "tower_field.h"
 #include "tower_ascent_door.h"
@@ -71,6 +72,8 @@ struct BfmForestWalk {
     BfmTowerEscape escape;
     BfmTowerEscapeCamera escape_camera;
     BfmCastleDrawbridge *drawbridge;
+    BfmSteamKnight *steam_knight;
+    uint32_t hall_equipment;
     int summit_placed, summit_free;
     BfmTowerInterior *inner;
     const RoomTransferDescriptor *inner_exit;
@@ -385,6 +388,7 @@ void bfm_forest_walk_inherit_clock(BfmForestWalk *w, uint16_t first_tick)
 void bfm_forest_walk_free(BfmForestWalk *w)
 {
     if (w) {
+        bfm_steam_knight_free(w->steam_knight);
         bfm_castle_drawbridge_free(w->drawbridge);
         bfm_tower_summit_free(w->summit);
         bfm_tower_interior_note_close(&w->inner_note);
@@ -1266,6 +1270,7 @@ int bfm_forest_walk_swing_sound(const BfmForestWalk *w)
 
 uint16_t bfm_forest_walk_room(const BfmForestWalk *w)
 {
+    if (w && w->steam_knight) return bfm_steam_knight_room(w->steam_knight);
     if (w && w->drawbridge) return bfm_castle_drawbridge_room(w->drawbridge);
     if (w && w->summit) return 0x300b;
     if (w && w->inner) return 0x300a;
@@ -1305,6 +1310,7 @@ int bfm_forest_walk_control(const BfmForestWalk *w)
 ForestVoice *bfm_forest_walk_voice(BfmForestWalk *w, unsigned *generation)
 {
     if (!w || !generation) return NULL;
+    if (w->steam_knight) return bfm_steam_knight_voice(w->steam_knight, generation);
     *generation = w->voice_generation;
     return w->voice;
 }
@@ -2079,7 +2085,43 @@ int bfm_forest_walk_take_boss_request(BfmForestWalk *w, RoomTransferDescriptor *
 int bfm_forest_walk_tick_controller(BfmForestWalk *w, int x, int y, uint16_t pressed,
                                     uint16_t held, int stick_direction)
 {
-    if (w && w->drawbridge) return tick_drawbridge(w);
+    if (w && w->steam_knight) {
+        int stepped = bfm_steam_knight_tick(w->steam_knight, pressed, held);
+        if (stepped <= 0) return stepped;
+        ++w->tick;
+        int16_t feet[3], heading;
+        unsigned elapsed;
+        int running;
+        if (bfm_steam_knight_hero(w->steam_knight, feet, &heading, &running, &elapsed)) {
+            restore_whole_position(w, feet);
+            w->yaw = heading;
+            w->support_y = w->support_z = 0;
+            w->actor.state = running;
+            w->actor.phase = 1;
+            w->motion = running ? RUN : IDLE;
+            w->elapsed = elapsed;
+            const uint32_t weapon_parts = UINT32_C(0x3f) << 21;
+            uint32_t equipped = w->hall_equipment;
+            uint32_t special = bfm_steam_knight_body(w->steam_knight);
+            if (special) {
+                equipped &= ~((UINT32_C(1) << 21) | (UINT32_C(1) << 24));
+                equipped |= (UINT32_C(1) << 22) | (UINT32_C(1) << 25);
+                if (!select_pose(w, special, w->visible)) return -1;
+            } else if (!update_pose(w)) return -1;
+            w->visible = (w->visible & ~weapon_parts) | equipped;
+        }
+        return 1;
+    }
+    if (w && w->drawbridge) {
+        int stepped = tick_drawbridge(w);
+        RoomTransferDescriptor hall;
+        if (stepped > 0 && bfm_forest_walk_take_boss_request(w, &hall)) {
+            w->steam_knight = bfm_steam_knight_open(w->disc, &hall, w->gameplay);
+            if (!w->steam_knight) return -1;
+            w->hall_equipment = w->visible & (UINT32_C(0x3f) << 21);
+        }
+        return stepped;
+    }
     int result = step_controller(w, x, y, pressed, held, stick_direction);
     RoomTransferDescriptor destination;
     if (result >= 0 && bfm_forest_walk_take_castle_request(w, &destination)) {
@@ -2116,6 +2158,18 @@ int bfm_forest_walk_draw(BfmForestWalk *w,uint32_t pixels[240][320])
     if(!w || !pixels) return 0;
     for(unsigned y=0;y<240;y++) for(unsigned x=0;x<320;x++) pixels[y][x]=UINT32_C(0xff000000);
     if(!w->tick) return 1;
+    if (w->steam_knight) {
+        unsigned shade = bfm_steam_knight_shade(w->steam_knight);
+        if (shade >= 31) return 1;
+        if (bfm_steam_knight_room(w->steam_knight) == 0x300d) {
+            if (!bfm_castle_drawbridge_draw(w->drawbridge, &w->pose, &w->root, w->visible, pixels))
+                return 0;
+        } else if (!bfm_steam_knight_draw(w->steam_knight, &w->pose, &w->root, w->visible, pixels)) {
+            return 0;
+        }
+        if (shade) field_palette(pixels, shade);
+        return 1;
+    }
     if (w->drawbridge) {
         unsigned shade = bfm_castle_drawbridge_shade(w->drawbridge);
         if (shade >= 31) return 1;

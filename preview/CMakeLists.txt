@@ -183,6 +183,12 @@ add_executable(musashi_native_boot
     forest_message.c
     castle_drawbridge.c
     castle_drawbridge_view.c
+    steam_knight.c
+    steam_knight_event.c
+    steam_knight_cast.c
+    steam_knight_rotation.c
+    steam_knight_flames.c
+    steam_knight_field.c
     forest_walk.c
     forest_gateway_transition.c
     forest_lift.c

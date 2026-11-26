@@ -62,7 +62,9 @@ static int decode_face(Face *face, const uint8_t *record, const uint8_t *vertice
     uint32_t ref = le32(record);
     size_t off = ref & 0xffffff;
     uint16_t last = le16(record + 10);
-    unsigned mode = last & (shared_vertices ? 7u : 15u);
+    /* Sparse cells can mark the same textured triangle or quad with bit zero.
+     * The mounted polygon command and the aligned fourth index identify its shape. */
+    unsigned mode = last & (shared_vertices ? 7u : 14u);
     if ((off & 15) || off >= material_bytes || (mode != 2 && mode != 6))
         return 0;
     const uint8_t *mat = materials + off;
@@ -452,7 +454,7 @@ static int cross(ScreenPoint a, ScreenPoint b, int x, int y)
 }
 
 static void draw_face(const BfmForestRaster *surface, const Face *face,
-                      const ScreenPoint *points)
+                      const ScreenPoint *points, unsigned buffer)
 {
     const BfmForestRasterMaterial material = {
         .page = face->page, .clut = face->clut, .count = face->count,
@@ -463,10 +465,10 @@ static void draw_face(const BfmForestRaster *surface, const Face *face,
     BfmForestRasterVertex vertices[4];
     for (unsigned i = 0; i < face->count; ++i) {
         vertices[i] = (BfmForestRasterVertex){
-            points[i].x, points[i].y, face->corners[i].u, face->corners[i].v, light
+            points[i].x - 160, points[i].y - 120, face->corners[i].u, face->corners[i].v, light
         };
     }
-    bfm_forest_raster_face(surface, &material, vertices);
+    bfm_forest_raster_buffer_face(surface, &material, vertices, buffer);
 }
 
 static int compose(const BfmForestTransform *parent, const BfmForestTransform *child,
@@ -703,13 +705,13 @@ static size_t collect_cell(BfmForestTerrain *terrain, const TerrainCell *cell,
         int x0 = 320, y0 = 240, x1 = -1, y1 = -1;
         int origin_y = (int)buffer * 240;
         for (unsigned k = 0; k < face->count; ++k) {
-            ScreenPoint *point = &out->points[k];
-            point->x = signed_screen(point->x);
-            point->y = signed_screen(point->y + origin_y) - origin_y;
-            x0 = smaller(x0, point->x);
-            x1 = larger(x1, point->x);
-            y0 = smaller(y0, point->y);
-            y1 = larger(y1, point->y);
+            const ScreenPoint *point = &out->points[k];
+            int x = signed_screen(point->x);
+            int y = signed_screen(point->y + origin_y) - origin_y;
+            x0 = smaller(x0, x);
+            x1 = larger(x1, x);
+            y0 = smaller(y0, y);
+            y1 = larger(y1, y);
         }
         if (x0 >= 320 || x1 < 0 || y0 >= 240 || y1 < 0)
             continue;
@@ -812,7 +814,7 @@ int bfm_forest_terrain_draw_entrance_with_effects(BfmForestTerrain *terrain,
         } else if (out->model_face)
             draw_model_face(&surface, out);
         else
-            draw_face(&surface, &terrain->mesh.faces[out->ordinal], out->points);
+            draw_face(&surface, &terrain->mesh.faces[out->ordinal], out->points, buffer);
     }
     return 1;
 }

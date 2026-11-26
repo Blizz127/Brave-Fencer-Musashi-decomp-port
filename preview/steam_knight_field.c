@@ -1,0 +1,188 @@
+/* SPDX-License-Identifier: MIT */
+#include "steam_knight_field.h"
+#include "scene_payload.h"
+#include "../pc_port/forest_player_bytes.h"
+#include <stdlib.h>
+#include <string.h>
+
+enum { MEMBER = 5, SCENE_LIMIT = 1 << 20 };
+static const uint32_t scene_base = UINT32_C(0x80128158);
+static const uint32_t descriptor_slot = UINT32_C(0x80190894);
+
+struct BfmSteamKnightField {
+    uint8_t *scene;
+    size_t bytes;
+    BfmForestTerrain *terrain;
+    MusashiForestPlayerMesh *hero;
+    RoomTransferDescriptor entrance;
+};
+
+static const uint8_t *scene_range(const BfmSteamKnightField *field, uint32_t address, size_t size)
+{
+    if (address < scene_base || (address & 3) || size > field->bytes ||
+        address - scene_base > field->bytes - size) return NULL;
+    return field->scene + (address - scene_base);
+}
+
+/* The audience hall's mesh follows its walk grid. The final occupied sector
+ * ends with its face run, independently of the position of the grid. */
+static size_t mesh_size(const uint8_t *mesh, size_t available)
+{
+    enum { CELLS = 64 * 64, HEADER = 8, DIRECTORY = CELLS * 4 };
+    if (available < HEADER + DIRECTORY || u32le(mesh) != 0x42 || mesh[4]) return 0;
+    const uint8_t *table = mesh + HEADER;
+    size_t limit = available - HEADER;
+    for (size_t i = CELLS; i > 0; --i) {
+        size_t offset = u32le(table + 4 * (i - 1));
+        if (!offset) continue;
+        if (offset < DIRECTORY || (offset & 3) || offset > limit - 28) return 0;
+        const uint8_t *cell = table + offset;
+        size_t faces = u32le(cell + 20), count = u32le(cell + 24);
+        if (faces < 28 || faces > limit - offset || count > (limit - offset - faces) / 12)
+            return 0;
+        return HEADER + offset + faces + count * 12;
+    }
+    return 0;
+}
+
+BfmSteamKnightField *bfm_steam_knight_field_open(const MusashiDiscMedia *disc)
+{
+    if (!disc) return NULL;
+    BfmSteamKnightField *field = calloc(1, sizeof *field);
+    if (!field) return NULL;
+    field->scene = bfm_scene_unpack_pac0(disc, "SC02.CD", MEMBER, SCENE_LIMIT, SCENE_LIMIT,
+                                         &field->bytes);
+    if (!field->scene) goto failed;
+    const uint8_t *slot = scene_range(field, descriptor_slot, 4);
+    const uint8_t *room = slot ? scene_range(field, u32le(slot), 0xcc) : NULL;
+    if (!room) goto failed;
+    const uint8_t *entries = scene_range(field, u32le(room + 0xc8), 8);
+    const uint8_t *first = entries ? scene_range(field, u32le(entries), sizeof field->entrance) : NULL;
+    const uint8_t *out = entries ? scene_range(field, u32le(entries + 4), 4) : NULL;
+    if (!first || !out || u32le(first) != 0x300e || u32le(out) != 0x3001) goto failed;
+    memcpy(&field->entrance, first, sizeof field->entrance);
+    const uint8_t *mesh = scene_range(field, u32le(room + 0x94), 8);
+    if (!mesh) goto failed;
+    size_t length = mesh_size(mesh, field->bytes - (size_t)(mesh - field->scene));
+    if (!length) goto failed;
+    field->terrain = bfm_forest_terrain_load_archive(disc, "SC02.CD", MEMBER, mesh, length);
+    if (!field->terrain || !bfm_forest_terrain_set_lighting(field->terrain, room, 0x98))
+        goto failed;
+    field->hero = musashi_forest_player_mesh_load(disc);
+    if (field->hero) return field;
+failed:
+    bfm_steam_knight_field_free(field);
+    return NULL;
+}
+
+void bfm_steam_knight_field_free(BfmSteamKnightField *field)
+{
+    if (!field) return;
+    musashi_forest_player_mesh_free(field->hero);
+    bfm_forest_terrain_free(field->terrain);
+    free(field->scene);
+    free(field);
+}
+
+const uint8_t *bfm_steam_knight_field_scene(const BfmSteamKnightField *field, size_t *size)
+{
+    if (size) *size = field ? field->bytes : 0;
+    return field ? field->scene : NULL;
+}
+
+BfmForestTerrain *bfm_steam_knight_field_terrain(const BfmSteamKnightField *field)
+{
+    return field ? field->terrain : NULL;
+}
+
+const RoomTransferDescriptor *bfm_steam_knight_field_entrance(const BfmSteamKnightField *field)
+{
+    return field ? &field->entrance : NULL;
+}
+
+static void camera_at(BfmForestCamera *camera, const int16_t eye[3])
+{
+    for (unsigned i = 0; i < 3; ++i) {
+        int32_t dot = 0;
+        for (unsigned j = 0; j < 3; ++j) dot -= camera->rotation[i][j] * eye[j];
+        camera->translation[i] = dot / 4096 - (dot % 4096 < 0);
+    }
+}
+
+void bfm_steam_knight_entrance_camera(BfmForestCamera *camera)
+{
+    if (!camera) return;
+    /* Carpet, entry door and steps as Musashi calls to the princess. */
+    *camera = (BfmForestCamera) {
+        .rotation = {{-3849, -1, -1400}, {-248, 4032, 677}, {1378, 721, -3789}},
+        .projection = 507
+    };
+    camera_at(camera, (const int16_t[3]){-334, -2348, -3826});
+}
+
+void bfm_steam_knight_hostage_camera(BfmForestCamera *camera)
+{
+    if (!camera) return;
+    /* Reverse shot of Fillet and Rootrick at the foot of the steps. */
+    *camera = (BfmForestCamera) {
+        .rotation = {{3844, 22, -1415}, {-511, 3841, -1327}, {1319, 1422, 3607}},
+        .projection = 501
+    };
+    camera_at(camera, (const int16_t[3]){-291, -2422, -4599});
+}
+
+void bfm_steam_knight_charge_camera(BfmForestCamera *camera)
+{
+    if (!camera) return;
+    /* Looking down at the carpet and the flames around Musashi. */
+    *camera = (BfmForestCamera) {
+        .rotation = {{4096, -18, 1}, {11, 2095, -3520}, {15, 3520, 2095}},
+        .projection = 510
+    };
+    camera_at(camera, (const int16_t[3]){-126, -3221, -4470});
+}
+
+void bfm_steam_knight_captor_close_camera(BfmForestCamera *camera)
+{
+    if (!camera) return;
+    /* Rootrick and Fillet against the east hall wall. */
+    *camera = (BfmForestCamera) {
+        .rotation = {{2873, -1, -2919}, {488, 4039, 479}, {2878, -684, 2833}},
+        .projection = 489
+    };
+    camera_at(camera, (const int16_t[3]){-415, -2125, -4073});
+}
+
+void bfm_steam_knight_fire_reverse_camera(BfmForestCamera *camera)
+{
+    if (!camera) return;
+    /* Over Rootrick as the flames close around Musashi. */
+    *camera = (BfmForestCamera) {
+        .rotation = {{-4096, -14, 12}, {-6, 3538, 2064}, {-18, 2064, -3538}},
+        .projection = 495
+    };
+    camera_at(camera, (const int16_t[3]){-126, -2464, -3368});
+}
+
+void bfm_steam_knight_princess_close_camera(BfmForestCamera *camera)
+{
+    if (!camera) return;
+    /* Low view of Fillet speaking beside Rootrick. */
+    *camera = (BfmForestCamera) {
+        .rotation = {{2882, 10, -2911}, {961, 3863, 965}, {2748, -1362, 2715}},
+        .projection = 494
+    };
+    camera_at(camera, (const int16_t[3]){-446, -2028, -3986});
+}
+
+int bfm_steam_knight_field_draw(BfmSteamKnightField *field, const BfmForestCamera *camera,
+    const BfmForestPose *pose, const BfmForestTransform *root, uint32_t visible_parts,
+    unsigned buffer, const BfmForestActor *actors, size_t actor_count,
+    const BfmForestDustCard *cards, size_t card_count, uint32_t pixels[240][320])
+{
+    if (!field || !camera || !pixels || (!!pose != !!root)) return 0;
+    memset(pixels, 0, 320 * 240 * sizeof(uint32_t));
+    return bfm_forest_terrain_draw_entrance_with_effects(field->terrain, camera,
+        pose ? field->hero : NULL, pose, root, visible_parts, NULL, buffer, NULL,
+        actors, actor_count, cards, card_count, pixels);
+}

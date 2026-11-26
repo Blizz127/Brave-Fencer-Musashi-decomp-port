@@ -116,8 +116,7 @@ static int print_update(BfmForestMessage *m)
             m->phase = WAIT_DISMISS;
             return 1;
         case 0x01: /* Ink */
-            if (left < 1 || (arg[0] != 1 && arg[0] != 2 &&
-                             arg[0] != 3 && arg[0] != 5)) return 0;
+            if (left < 1 || arg[0] < 1 || arg[0] > 5) return 0;
             m->ink = arg[0];
             ++m->cursor;
             break;
@@ -252,7 +251,7 @@ static int print_update(BfmForestMessage *m)
             }
             break;
         default:
-            if (op < 0x20 || (op > 0x7e && (op < 0x90 || op > 0x93)) || m->column >= 36)
+            if (op < 0x20 || (op > 0x7e && (op < 0x90 || op > 0x95)) || m->column >= 36)
                 return 0;
             f->cells[m->row][m->column].glyph = (uint8_t)op;
             f->cells[m->row][m->column++].ink = (uint8_t)m->ink;

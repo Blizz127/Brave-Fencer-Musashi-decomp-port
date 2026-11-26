@@ -367,7 +367,9 @@ static int forest_frame(Player *p)
     int control = bfm_forest_walk_control(p->forest);
     uint16_t room = bfm_forest_walk_room(p->forest);
     if (control != p->control_message || room != p->display_room) {
-        if (room == 0x300d) {
+        if (room == 0x300e) {
+            SDL_SetWindowTitle(p->window, "Brave Fencer Musashi - Allucaneet Castle");
+        } else if (room == 0x300d) {
             SDL_SetWindowTitle(p->window, "Brave Fencer Musashi - Allucaneet Castle drawbridge");
         } else if (room == 0x300b) {
             const char *title = control == 0 ? "Brave Fencer Musashi - Arriving at the Spiral Tower summit" :

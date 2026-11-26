@@ -5,7 +5,8 @@
 #include <string.h>
 
 enum { SCENE_BASE = 0x128158, FOREST_PANELS = 0x18a1dc - SCENE_BASE,
-       BEDROOM_PANELS = 0x185a70 - SCENE_BASE, ABILITY_NAMES = 0x60,
+       BEDROOM_PANELS = 0x185a70 - SCENE_BASE, STEAM_KNIGHT_PANELS = 0x193fa0 - SCENE_BASE,
+       ABILITY_NAMES = 0x60,
        VITALITY_ROWS = 0xdc, DIAL_ROWS = 0xf0, WEEKDAY_COLORS = 0x124,
        ABILITY_COUNT = 31, MAX_NAME = 24 };
 enum { EXE_HEADER = 2048, ALPHABET = EXE_HEADER + 0x636d8 - 0x10000,
@@ -125,6 +126,12 @@ BfmForestHud *bfm_bedroom_hud_load(const MusashiDiscMedia *disc, const uint8_t *
                                   size_t bytes, const uint16_t tiles[512][1024])
 {
     return load_hud(disc, scene, bytes, BEDROOM_PANELS, tiles);
+}
+
+BfmForestHud *bfm_steam_knight_hud_load(const MusashiDiscMedia *disc, const uint8_t *scene,
+                                        size_t bytes, const BfmForestTerrain *terrain)
+{
+    return load_hud(disc, scene, bytes, STEAM_KNIGHT_PANELS, bfm_forest_terrain_tiles(terrain));
 }
 
 BfmForestHud *bfm_village_hud_load(const MusashiDiscMedia *disc, const uint8_t *scene,
