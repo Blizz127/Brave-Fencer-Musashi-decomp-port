@@ -15,17 +15,18 @@ typedef enum {
     BFM_BED_VISITOR_LAYOUT, BFM_BED_PLAYER_LAYOUT, BFM_BED_WINDOW_POSITION,
     BFM_BED_WINDOW, BFM_BED_VISITOR_WINDOW, BFM_BED_SOUND_CHANGE, BFM_BED_SOUND_FADE,
     BFM_BED_SOUND_READY,
+    BFM_BED_FAREWELL, BFM_BED_CAMERA_RELEASE, BFM_BED_TRANSFER, BFM_BED_BOOKS,
     BFM_BED_HANDOVER, BFM_BED_COLLECT, BFM_BED_AWARD, BFM_BED_HUD_SHOW, BFM_BED_HUD_HIDE
 } BfmBedroomEvent;
 typedef struct {
     const uint8_t *scene;
     size_t size, cursor;
     unsigned delay, answer, waiting_for_score;
-    int waiting_for_player, waiting_for_message, failed;
+    int waiting_for_player, waiting_for_message, finished, failed;
 } BfmBedroomScript;
 typedef int (*BfmBedroomApply)(void *context, BfmBedroomEvent event, uint32_t operand);
 int bfm_bedroom_script_begin(BfmBedroomScript *script, const uint8_t *scene, size_t bytes);
-int bfm_bedroom_script_at_departure(const BfmBedroomScript *script);
+int bfm_library_script_begin(BfmBedroomScript *script, const uint8_t *scene, size_t bytes);
 int bfm_bedroom_script_tick(BfmBedroomScript *script, int player_queue_idle, int message_active,
                             BfmBedroomApply apply, void *context);
 #endif

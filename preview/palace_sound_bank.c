@@ -80,7 +80,8 @@ static BfmPalaceBank *read_score_bank(const MusashiDiscMedia *disc, const char *
     if (bytes % SECTOR || le32(wrapper + 12)) return NULL;
     size_t middle = le32(wrapper + 4), last = le32(wrapper + 8);
     size_t final_track = 16;
-    if (member == 2 || (!strcmp(archive, "SC03.CD") && member == 68)) {
+    if (member == 2 || (!strcmp(archive, "SC01.CD") && member == 75) ||
+        (!strcmp(archive, "SC03.CD") && member == 68)) {
         if (middle < 12 || last <= middle || last > bytes - 8) return NULL;
         final_track = 4 + last;
     } else if (member != 78 || middle || last) {

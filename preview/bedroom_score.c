@@ -30,16 +30,20 @@ BfmForestScore *bfm_bedroom_score_load(const MusashiDiscMedia *disc, unsigned se
     uint8_t request[6], command[16], header[8];
     if (selector > 255 || !bfm_bedroom_resident_data(disc, 0x80063138u + 6*selector, request, sizeof request)) return NULL;
     unsigned file = half(request), id = half(request + 4);
-    const char *const preceding[] = {"MAIN.CD", "SC01.CD", "SC02.CD"};
+    const char *const archives[] = {"MAIN.CD", "SC01.CD", "SC02.CD", "SC03.CD"};
     size_t size;
-    for (unsigned i = 0; i < sizeof preceding / sizeof *preceding; ++i) {
-        if (!musashi_disc_media_read_root_range(disc, preceding[i], 0, header, sizeof header, &size)) return NULL;
+    for (unsigned i = 0; i < sizeof archives / sizeof *archives; ++i) {
+        if (!musashi_disc_media_read_root_range(disc, archives[i], 0, header, sizeof header, &size)) return NULL;
         unsigned count = word(header);
-        if (!count || count > size / 8 || count > file) return NULL;
+        if (!count || count > size / 8) return NULL;
+        if (file < count) {
+            if (!((i == 1 && file == 75) || (i == 3 && file == 68)) || id < 0x100 || id >= 0x200 ||
+                !bfm_bedroom_resident_data(disc,0x80068b5cu+16*(id-0x100),command,sizeof command) ||
+                half(command)!=4 || half(command+2)>127) return NULL;
+            if (i == 1) return bfm_library_score_load(disc, 37800, half(command+6), half(command+2));
+            return bfm_castle_score_load(disc, 37800, file, half(command+6), half(command+2));
+        }
         file -= count;
     }
-    if (file != 68 || id < 0x100 || id >= 0x200 ||
-        !bfm_bedroom_resident_data(disc, 0x80068b5cu + 16*(id-0x100), command, sizeof command) ||
-        half(command) != 4 || half(command+2) > 127) return NULL;
-    return bfm_castle_score_load(disc, 37800, file, half(command+6), half(command+2));
+    return NULL;
 }

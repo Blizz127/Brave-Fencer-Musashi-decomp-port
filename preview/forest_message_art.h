@@ -16,6 +16,8 @@ BfmForestMessageArt *bfm_forest_message_art_load(const MusashiDiscMedia *disc,
 BfmForestMessageArt *bfm_bedroom_message_art_load(const MusashiDiscMedia *disc,
                                                   const uint8_t *scene, size_t bytes,
                                                   const uint16_t tiles[512][1024]);
+BfmForestMessageArt *bfm_library_message_art_load(const MusashiDiscMedia *disc, const uint8_t *scene,
+                                                  size_t bytes, const uint16_t tiles[512][1024]);
 void bfm_forest_message_art_free(BfmForestMessageArt *art);
 void bfm_forest_message_art_draw(const BfmForestMessageArt *art,
                                  const BfmForestMessageFrame *frame,
@@ -25,4 +27,7 @@ void bfm_bedroom_message_art_draw(const BfmForestMessageArt *art, const BfmFores
 /* The active room command selects the side and positions the tail in screen space. */
 void bfm_bedroom_message_art_draw_side(const BfmForestMessageArt *art, const BfmForestMessageFrame *frame,
                                        int speaker_x, int portrait_on_right, uint32_t pixels[240][320]);
+int bfm_library_question_draw(const BfmForestMessageArt *art, const uint8_t *box, const uint8_t *portrait,
+                              const uint16_t tiles[512][1024], const uint8_t *text, size_t bytes,
+                              unsigned update, uint32_t pixels[240][320]);
 #endif

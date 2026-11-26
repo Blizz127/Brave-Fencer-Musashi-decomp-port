@@ -641,6 +641,7 @@ void bfm_palace_draw(Palace *palace, const uint16_t tiles[512][1024],
 struct BfmBedroomField {
     Palace geometry;
     int current[6], target[6], active;
+    unsigned pan_divisor;
     BfmBedroomView view;
 };
 
@@ -707,29 +708,49 @@ int bfm_bedroom_field_camera(BfmBedroomField *field, const uint8_t *scene,
 {
     const uint8_t *p = field_data(scene, bytes, camera_address, 16);
     if (!field || !p || !actor_origin) return 0;
-    int yaw = signed16(p + 8), distance = signed16(p + 10), pitch = signed16(p + 12);
-    if (distance <= 0) return 0;
+    int target[3];
+    for (unsigned i = 0; i < 3; ++i) {
+        if (actor_origin[i] < INT16_MIN || actor_origin[i] > INT16_MAX) return 0;
+        target[i] = actor_origin[i] + signed16(p + 2*i);
+    }
+    return bfm_bedroom_field_orbit(field, target, signed16(p+8), signed16(p+10),
+                                   signed16(p+12), immediate, 12);
+}
+
+int bfm_bedroom_field_orbit(BfmBedroomField *field, const int target[3], int yaw,
+                            int distance, int pitch, int immediate, unsigned divisor)
+{
+    if (!field || !target || distance <= 0 || distance > INT16_MAX ||
+        yaw < INT16_MIN || yaw > INT16_MAX || pitch < INT16_MIN || pitch > INT16_MAX) return 0;
     int sx, cx, sy, cy;
     field_rotation(pitch, &sx, &cx);
     field_rotation(yaw, &sy, &cy);
     int arm[3] = {floor_div((int64_t)sy * cx, 4096), sx, floor_div((int64_t)cy * cx, 4096)};
     int coordinates[6];
     for (unsigned i = 0; i < 3; ++i) {
-        if (actor_origin[i] < INT16_MIN || actor_origin[i] > INT16_MAX) return 0;
-        int aim = actor_origin[i] + signed16(p + 2*i);
+        int aim = target[i];
+        if (aim < INT16_MIN || aim > INT16_MAX) return 0;
         int eye = aim + floor_div(-(int64_t)distance * arm[i], 4096);
-        if (aim < INT16_MIN || aim > INT16_MAX || eye < INT16_MIN || eye > INT16_MAX) return 0;
+        if (eye < INT16_MIN || eye > INT16_MAX) return 0;
         coordinates[i] = eye;
         coordinates[i + 3] = aim;
     }
     if (coordinates[0] == coordinates[3] && coordinates[2] == coordinates[5]) return 0;
-    memcpy(field->target, coordinates, sizeof(coordinates));
+    bfm_bedroom_field_viewpoint(field, coordinates, coordinates+3, immediate, divisor);
+    return 1;
+}
+
+void bfm_bedroom_field_viewpoint(BfmBedroomField *field, const int eye[3], const int target[3],
+                                 int immediate, unsigned divisor)
+{
+    memcpy(field->target, eye, 3*sizeof(int));
+    memcpy(field->target+3, target, 3*sizeof(int));
+    field->pan_divisor = divisor ? divisor : 1;
     if (!field->active || immediate) {
-        memcpy(field->current, coordinates, sizeof(coordinates));
+        memcpy(field->current, field->target, sizeof(field->current));
         refresh_bedroom_view(field);
     }
     field->active = 1;
-    return 1;
 }
 
 void bfm_bedroom_field_step(BfmBedroomField *field)
@@ -738,7 +759,7 @@ void bfm_bedroom_field_step(BfmBedroomField *field)
     for (unsigned i = 0; i < 6; ++i) {
         int delta = field->target[i] - field->current[i];
         if (!delta) continue;
-        int divisor = 12;
+        int divisor = (int)field->pan_divisor;
         while (divisor > 1 && delta / divisor == 0) divisor /= 2;
         field->current[i] += delta / divisor;
     }

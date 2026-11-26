@@ -28,6 +28,7 @@ struct BfmBedroomTravel {
     int64_t position[3];
     int speed, fall_speed, airborne, landed;
     int retreat, saved_yaw, entry_action;
+    unsigned entrance_ticks;
 };
 
 static unsigned u16(const uint8_t *p)
@@ -220,10 +221,10 @@ static int contact(const Floor *f, const int16_t start[3], const int next[3],
     return 0;
 }
 
-BfmBedroomTravel *bfm_bedroom_travel_open(const uint8_t *scene, size_t bytes)
+BfmBedroomTravel *bfm_bedroom_travel_open(const uint8_t *scene, size_t bytes, uint32_t room_address)
 {
     if (!scene) return NULL;
-    const uint8_t *room = mounted(scene, bytes, UINT32_C(0x801888b8), 0xcc);
+    const uint8_t *room = mounted(scene, bytes, room_address, 0xcc);
     if (!room) return NULL;
     const uint8_t *list = mounted(scene, bytes, u32(room + 0xc8), 4);
     const uint8_t *grid = mounted(scene, bytes, u32(room + 0x88), 32);
@@ -271,6 +272,16 @@ int bfm_bedroom_travel_turn(BfmBedroomTravel *t, unsigned yaw, int entry_action)
     t->goal_yaw = (int)yaw;
     begin(t, TURN);
     t->entry_action = entry_action;
+    return 1;
+}
+
+int bfm_bedroom_travel_entrance(BfmBedroomTravel *t, unsigned updates)
+{
+    if (!t || !updates || updates > 255 || t->root.busy) return 0;
+    t->entrance_ticks = updates;
+    t->saved_yaw = (int)t->root.yaw;
+    t->entry_action = 1;
+    begin(t, START_WALK);
     return 1;
 }
 
@@ -348,7 +359,7 @@ int bfm_bedroom_travel_retreat(BfmBedroomTravel *t, int16_t distance)
 static int walk_step(BfmBedroomTravel *t, const int32_t eye[3], const int32_t target[3])
 {
     int dx = t->goal_x - t->root.xyz[0], dz = t->goal_z - t->root.xyz[2];
-    if ((int64_t)dx*dx + (int64_t)dz*dz < 16*16) {
+    if (!t->entrance_ticks && (int64_t)dx*dx + (int64_t)dz*dz < 16*16) {
         t->root.xyz[0] = (int16_t)t->goal_x;
         t->root.xyz[2] = (int16_t)t->goal_z;
         for (int j = 0; j < 3; ++j)
@@ -360,7 +371,7 @@ static int walk_step(BfmBedroomTravel *t, const int32_t eye[3], const int32_t ta
     }
     if (!eye || !target) return 0;
     int camera = (direction((int64_t)target[0]-eye[0], (int64_t)target[2]-eye[2]) + 2048) & 4095;
-    int facing = direction(dx, dz) + 2048;
+    int facing = t->entrance_ticks ? t->saved_yaw : direction(dx, dz) + 2048;
     int relative = (facing - camera) & 4088;
     int pad_x = sine(relative) / 32, pad_z = sine(relative + 1024) / 32;
     if (pad_x > 127) pad_x = 127;
@@ -414,6 +425,10 @@ static int walk_step(BfmBedroomTravel *t, const int32_t eye[3], const int32_t ta
         if (high < INT16_MIN || high > INT16_MAX) return 0;
         t->root.xyz[j] = (int16_t)high;
         t->position[j] = (int64_t)high * Q + (update[j] & (Q-1));
+    }
+    if (t->entrance_ticks && !--t->entrance_ticks) {
+        t->state = FINISH;
+        t->root.locomotion_edge = BFM_TRAVEL_STAND;
     }
     return project_shadow(t);
 }

@@ -22,11 +22,12 @@ int bfm_bedroom_script_begin(BfmBedroomScript *script, const uint8_t *scene, siz
     return 1;
 }
 
-/* The next room sequence begins the library departure. */
-int bfm_bedroom_script_at_departure(const BfmBedroomScript *s)
+int bfm_library_script_begin(BfmBedroomScript *s, const uint8_t *scene, size_t bytes)
 {
-    return s->cursor <= s->size && s->size - s->cursor >= 8 &&
-           word(s->scene + s->cursor) == 0x34 && word(s->scene + s->cursor + 4) == 0x801bbda0u;
+    *s = (BfmBedroomScript){ .scene = scene, .size = bytes };
+    if (!scene || !scene_range(s, 0x8019f498u, 8)) return 0;
+    s->cursor = 0x8019f498u - scene_base;
+    return 1;
 }
 
 /* The player and visitors continue updating while the room event waits for
@@ -35,6 +36,7 @@ int bfm_bedroom_script_tick(BfmBedroomScript *s, int player_queue_idle, int mess
                             BfmBedroomApply apply, void *context)
 {
     if (s->failed || !apply) return 0;
+    if (s->finished) return 1;
     if ((s->waiting_for_message && message_active) || (s->delay && --s->delay) ||
         (s->waiting_for_player && !player_queue_idle)) return 1;
     if (s->waiting_for_score && !apply(context, BFM_BED_SOUND_READY, 0)) return 1;
@@ -47,6 +49,12 @@ int bfm_bedroom_script_tick(BfmBedroomScript *s, int player_queue_idle, int mess
         BfmBedroomEvent event;
         s->cursor += 8;
         switch (op) {
+        case 0x02:
+            s->finished = 1;
+            if (!apply(context, BFM_BED_TRANSFER, arg)) goto invalid;
+            return 1;
+        case 0x0c: event = BFM_BED_FAREWELL; break;
+        case 0x20: event = BFM_BED_CAMERA_RELEASE; break;
         case 0x22:
         case 0x21:
             if (!scene_range(s, arg, 16)) goto invalid;
@@ -70,6 +78,7 @@ int bfm_bedroom_script_tick(BfmBedroomScript *s, int player_queue_idle, int mess
             case 0x80180b24u: event = BFM_BED_BUTLER_SPEAKS; break;
             case 0x80180b34u: event = BFM_BED_BUTLER_RESTS; break;
             case 0x80180b44u: event = BFM_BED_SOUND_FADE; break;
+            case 0x8017f294u: event = BFM_BED_BOOKS; break;
             case 0x80180ae8u: event = BFM_BED_HANDOVER; break;
             default: goto invalid;
             }
@@ -96,6 +105,13 @@ int bfm_bedroom_script_tick(BfmBedroomScript *s, int player_queue_idle, int mess
         case 0x4a: event = BFM_BED_HUD_SHOW; break;
         case 0x4b: event = BFM_BED_HUD_HIDE; break;
         case 0x36:
+            /* Closing BOOKS with Quit leaves the book result zero. The room
+             * consumes the branch operand and continues to Shanky's question. */
+            if (arg == 0x8017f6c8u) {
+                if (s->size-s->cursor<8 || word(s->scene+s->cursor)!=0) goto invalid;
+                s->cursor+=8;
+                continue;
+            }
             if (arg != 0x80180ad0u || !s->answer || s->answer > 2 ||
                 s->size - s->cursor < 8 || word(s->scene + s->cursor) != 0) goto invalid;
             arg = word(s->scene + s->cursor + 4);

@@ -23,6 +23,11 @@ int bfm_palace_blade_load(BfmForestBlade *blade, const uint8_t *scene, size_t by
     return load_outlines(blade, scene, bytes, 0x60c50);
 }
 
+int bfm_library_blade_load(BfmForestBlade *blade, const uint8_t *scene, size_t bytes)
+{
+    return load_outlines(blade, scene, bytes, 0x5a574);
+}
+
 static int normalize(double v[3])
 {
     double length = sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);

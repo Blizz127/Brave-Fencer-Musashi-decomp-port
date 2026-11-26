@@ -9,6 +9,8 @@ void bfm_bedroom_free(BfmBedroom *room);
 enum { BFM_BEDROOM_ADVANCED = 1, BFM_BEDROOM_VOICE_STOPPED };
 int bfm_bedroom_step(BfmBedroom *room);
 /* A stop result asks the desktop to cancel the queued voice output. */
+int bfm_bedroom_step_pad(BfmBedroom *room, int confirm_edge, int reveal_edge,
+                         int direction, int held, int accept_edge, int back_edge);
 int bfm_bedroom_step_controls(BfmBedroom *room, int confirm_edge, int reveal_edge,
                               int direction, int accept_edge);
 int bfm_bedroom_step_input(BfmBedroom *room, int confirm_edge, int reveal_edge);

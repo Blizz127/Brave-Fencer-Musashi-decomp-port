@@ -22,12 +22,13 @@ typedef struct {
 } BfmBedroomRoot;
 
 /* The caller keeps the unpacked SC01 room member mounted for this lifetime. */
-BfmBedroomTravel *bfm_bedroom_travel_open(const uint8_t *scene, size_t bytes);
+BfmBedroomTravel *bfm_bedroom_travel_open(const uint8_t *scene, size_t bytes, uint32_t room_address);
 void bfm_bedroom_travel_free(BfmBedroomTravel *travel);
 const BfmBedroomRoot *bfm_bedroom_travel_root(const BfmBedroomTravel *travel);
 void bfm_bedroom_travel_look(BfmBedroomTravel *travel, int yaw);
 int bfm_bedroom_travel_turn_to_point(BfmBedroomTravel *travel, int x, int z);
 void bfm_bedroom_travel_face_point(BfmBedroomTravel *travel, int x, int z);
+int bfm_bedroom_travel_entrance(BfmBedroomTravel *travel, unsigned updates);
 int bfm_bedroom_travel_walk(BfmBedroomTravel *travel, int16_t x, int16_t z, int entry_action);
 int bfm_bedroom_travel_retreat(BfmBedroomTravel *travel, int16_t distance);
 /* The wake controller retires its queued actions separately. An ordinary turn

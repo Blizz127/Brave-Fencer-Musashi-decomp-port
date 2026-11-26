@@ -17,10 +17,10 @@ typedef enum {
     BFM_BEDROOM_FALL,
     BFM_BEDROOM_LAND,
     BFM_BEDROOM_STAND,
-    BFM_BEDROOM_REST,
+    BFM_BEDROOM_REST, BFM_BEDROOM_ENTER,
     BFM_BEDROOM_SEARCH,
     BFM_BEDROOM_SHOW_FUSION,
-    BFM_BEDROOM_COLLECT, BFM_BEDROOM_RECEIVE, BFM_BEDROOM_LOWER
+    BFM_BEDROOM_COLLECT, BFM_BEDROOM_RECEIVE, BFM_BEDROOM_LOWER, BFM_BEDROOM_FAREWELL
 } BfmBedroomAction;
 
 typedef struct {
@@ -35,7 +35,7 @@ typedef struct {
 /* The expanded room member and MAIN/10 type-0x101 payload (after its header)
  * are borrowed for the lifetime of the evaluator. */
 BfmBedroomMotion *bfm_bedroom_motion_open(const uint8_t *scene, size_t scene_bytes,
-                                          const uint8_t *main, size_t main_bytes);
+                                          const uint8_t *main, size_t main_bytes, uint32_t room);
 int bfm_bedroom_motion_step(BfmBedroomMotion *motion, BfmBedroomAction action,
                             BfmBedroomPose *frame);
 /* Apply a mounted facial texture and palette when the facial channel requests

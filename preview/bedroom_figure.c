@@ -169,11 +169,14 @@ static int read_shadow(ShadowRect *rect, const uint8_t *source)
 }
 
 BfmBedroomFigure *bfm_bedroom_figure_load(const MusashiDiscMedia *disc,
-                     const uint8_t *scene, size_t size, uint32_t room_address)
+                     const uint8_t *scene, size_t size, uint32_t room_address,
+                     uint32_t face_address, uint32_t shadow_address)
 {
-    const unsigned origin = 0x80128158, face_table = 0x801841dc - 0x80128158;
+    const uint32_t origin = 0x80128158;
+    if (face_address < origin || shadow_address < origin) return NULL;
+    size_t face_table = face_address-origin, shadow_offset = shadow_address-origin;
     if (!disc || !scene || room_address < origin || size < 36 ||
-        room_address-origin > size-36 || size < face_table+64 || size < 0x80184f48-origin+12)
+        room_address-origin > size-36 || size < face_table+64 || shadow_offset > size || size-shadow_offset < 12)
         return NULL;
     BfmBedroomFigure *figure = calloc(1, sizeof(*figure));
     if (!figure) return NULL;
@@ -187,11 +190,11 @@ BfmBedroomFigure *bfm_bedroom_figure_load(const MusashiDiscMedia *disc,
             rect[0]+rect[2] > 512)
             goto fail;
     }
-    const uint8_t *shadow = scene + (0x80184f48 - origin);
+    const uint8_t *shadow = scene + shadow_offset;
     if (!read_shadow(&figure->shadow,shadow)) goto fail;
     figure->mesh = musashi_forest_player_mesh_load(disc);
     if (!figure->mesh) goto fail;
-    size_t capacity = 1;
+    size_t capacity = 1 + 8; /* Ground shadow and two four-quad sword halos. */
     for (unsigned i = 0; i < MUSASHI_FOREST_PLAYER_PARTS; ++i) {
         const MusashiForestPlayerPart *part = musashi_forest_player_mesh_part(figure->mesh,i);
         if (part->face_count > SIZE_MAX / sizeof(FigureFace) - capacity) goto fail;
@@ -334,6 +337,53 @@ static void collect_shadow(BfmBedroomFigure *figure, const BfmBedroomView *view,
     face->order = figure->count++;
 }
 
+/* The leading six bytes of the current body pose describe the held blade
+ * axis in actor coordinates. The two mounted outlines face the camera. */
+static void collect_blade(BfmBedroomFigure *figure, const BfmBedroomView *view,
+                          const BfmBedroomBody *body, const Transform *root,
+                          const Transform *eye)
+{
+    int8_t anchors[2][3];
+    BfmForestTransform player, halo;
+    memcpy(anchors, body->pose, sizeof anchors);
+    for (unsigned i = 0; i < 3; ++i) {
+        for (unsigned j = 0; j < 3; ++j) player.rotation[i][j] = (int16_t)root->r[i][j];
+        player.translation[i] = root->t[i];
+    }
+    if (!bfm_forest_blade_transform(anchors, &player, view->eye, &halo)) return;
+    Transform world;
+    for (unsigned i = 0; i < 3; ++i) {
+        for (unsigned j = 0; j < 3; ++j) world.r[i][j] = halo.rotation[i][j];
+        world.t[i] = halo.translation[i];
+    }
+    Transform posed = compose(eye, &world);
+    BfmBedroomView camera = {.focal = view->focal};
+    memcpy(camera.axes, posed.r, sizeof camera.axes);
+    memcpy(camera.translation, posed.t, sizeof camera.translation);
+    for (unsigned i = 0; i < 8; ++i) {
+        uint32_t colors[4];
+        int16_t xyz[4][3];
+        if (!bfm_forest_blade_quad(body->blade, i, body->blade_tick, xyz, colors)) return;
+        FigureFace *face = &figure->faces[figure->count];
+        int screen[3];
+        unsigned k = 0;
+        for (; k < 4; ++k) {
+            if (!bfm_bedroom_project(&camera, xyz[k], screen)) break;
+            uint32_t color = colors[k];
+            if (body->green_blade) {
+                unsigned blue = color >> 16;
+                color = ((blue / 2) << 16) | (blue << 8) | (i < 4 ? blue / 4 : blue);
+            }
+            face->v[k] = (BfmForestRasterVertex){.x = screen[0], .y = screen[1], .rgb = color};
+            include_pixel(figure, screen[0], screen[1]);
+        }
+        if (k < 4) continue;
+        face->depth = screen[2] / 4;
+        face->material = (BfmForestRasterMaterial){.page = 0x12a, .count = 4, .translucent = 1};
+        face->order = figure->count++;
+    }
+}
+
 static int back_to_front(const void *a, const void *b)
 {
     const FigureFace *x = a, *y = b;
@@ -397,6 +447,7 @@ int bfm_bedroom_figure_prepare(BfmBedroomFigure *figure, const BfmBedroomView *v
         memcpy(camera.translation, posed.t, sizeof(camera.translation));
         collect_part(figure,&camera,&world,musashi_forest_player_mesh_part(figure->mesh,i),i < 2);
     }
+    if (body->blade) collect_blade(figure, view, body, &root, &eye);
     qsort(figure->faces,figure->count,sizeof(*figure->faces),back_to_front);
     return 1;
 }
@@ -443,10 +494,11 @@ void bfm_bedroom_visitor_free(BfmBedroomVisitor *visitor)
     free(visitor);
 }
 
-BfmBedroomVisitor *bfm_bedroom_visitor_load(const uint8_t *scene, size_t size)
+BfmBedroomVisitor *bfm_bedroom_visitor_load(const uint8_t *scene, size_t size,
+                                             const uint32_t *tables, unsigned count, uint32_t shadow_address)
 {
-    static const uint32_t tables[] = {UINT32_C(0x801c6b18),UINT32_C(0x801c97c0)};
-    size_t shadow_offset = UINT32_C(0x80183cc8)-visitor_scene_origin;
+    if (!tables || !count || count > 2 || shadow_address < visitor_scene_origin) return NULL;
+    size_t shadow_offset = shadow_address-visitor_scene_origin;
     if (!scene || size > BFM_FIELD_SCENE_CAPACITY || size < shadow_offset+12) return NULL;
     BfmBedroomVisitor *visitor = calloc(1,sizeof(*visitor));
     if (!visitor) return NULL;
@@ -456,7 +508,7 @@ BfmBedroomVisitor *bfm_bedroom_visitor_load(const uint8_t *scene, size_t size)
     }
     visitor->scene = scene;
     visitor->bytes = size;
-    for (unsigned i = 0; i < 2; ++i) {
+    for (unsigned i = 0; i < count; ++i) {
         visitor->model[i] = musashi_forest_player_mesh_from_table(scene,size,
                                               visitor_scene_origin,tables[i],&visitor->parts[i]);
         if (!visitor->model[i]) {
@@ -473,7 +525,7 @@ int bfm_bedroom_visitor_add(const BfmBedroomVisitor *visitor, BfmBedroomFigure *
                            const BfmBedroomView *view, unsigned index,
                            const int position[3], int heading, uint32_t pose_address)
 {
-    if (!visitor || !figure || !view || !position || index >= 2 || figure->next ||
+    if (!visitor || !figure || !view || !position || index >= 2 || !visitor->model[index] || figure->next ||
         (figure->visitors_added & (1u << index)) ||
         !figure->surface.pixels || pose_address < visitor_scene_origin ||
         (pose_address & 3) || view->focal <= 0 || view->focal > 65535) return 0;

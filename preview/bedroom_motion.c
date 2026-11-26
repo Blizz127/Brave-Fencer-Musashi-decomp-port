@@ -109,9 +109,11 @@ static int advance(BfmBedroomMotion *m, Channel *channel, int body)
             m->frame.show_weapon = 1;
             break;
         case 17: /* Sheathe equipped weapons for this motion. */
-        case 19:
             if (!body) return 0;
             m->frame.show_weapon = 0;
+            break;
+        case 19: /* Sheathe Lumina independently of Fusion. */
+            if (!body) return 0;
             break;
         default:
             if (body) {
@@ -150,15 +152,14 @@ static int pair(BfmBedroomMotion *m, unsigned body, unsigned face)
 }
 
 BfmBedroomMotion *bfm_bedroom_motion_open(const uint8_t *scene, size_t scene_bytes,
-                                          const uint8_t *main, size_t main_bytes)
+                                          const uint8_t *main, size_t main_bytes, uint32_t room)
 {
     if (!scene || !main) return NULL;
     BfmBedroomMotion *m = calloc(1, sizeof *m);
     if (!m) return NULL;
     m->scene = (Region){scene_base, scene, scene_bytes};
     m->main = (Region){main_base, main, main_bytes};
-    uint32_t room;
-    if (!word(m, 0x80182364u, &room) || !region(&m->scene, room, 0x54) ||
+    if (!region(&m->scene, room, 0x54) ||
         !word(m, room + 0x4c, &m->body_bank) || !word(m, room + 0x50, &m->face_bank) ||
         !region(&m->main, m->body_bank, 40 * 4) || !region(&m->main, m->face_bank, 35 * 4)) {
         free(m);
@@ -206,11 +207,12 @@ static int update(BfmBedroomMotion *m, BfmBedroomAction action)
         if (!pair(m, 4, 17)) return 0;
         m->activity = STANDING;
         break;
+    case BFM_BEDROOM_ENTER:
     case BFM_BEDROOM_REST:
         /* The room releases its direct pose after the player's ordinary
          * motion pass. Keep the first standing pose for this submission. */
         update_body = m->activity != SHOWING_FUSION;
-        m->frame.show_weapon = 0;
+        m->frame.show_weapon = action == BFM_BEDROOM_ENTER;
         m->frame.draw_current = 0;
         if (!pair(m, 0, 17)) return 0;
         m->activity = QUIET;
@@ -231,6 +233,12 @@ static int update(BfmBedroomMotion *m, BfmBedroomAction action)
         if (!advance(m, &m->body, 1)) return 0;
         m->frame.draw_current = 1;
         m->activity = action == BFM_BEDROOM_RECEIVE ? QUIET : COLLECTING;
+        break;
+    case BFM_BEDROOM_FAREWELL:
+        start(&m->body, 0x800d59ecu);
+        if (!advance(m, &m->body, 1)) return 0;
+        m->frame.draw_current = 1;
+        m->activity = COLLECTING;
         break;
     case BFM_BEDROOM_SHOW_FUSION:
         start(&m->body, 0x801ca6ecu);

@@ -129,6 +129,12 @@ BfmForestMessageArt *bfm_bedroom_message_art_load(const MusashiDiscMedia *disc,
     return load_art(disc, scene, bytes, tiles, BEDROOM_INSET);
 }
 
+BfmForestMessageArt *bfm_library_message_art_load(const MusashiDiscMedia *disc, const uint8_t *scene,
+                                                  size_t bytes, const uint16_t tiles[512][1024])
+{
+    return load_art(disc, scene, bytes, tiles, 0x57d08);
+}
+
 void bfm_forest_message_art_free(BfmForestMessageArt *art)
 {
     free(art);
@@ -274,4 +280,49 @@ void bfm_bedroom_message_art_draw_side(const BfmForestMessageArt *art, const Bfm
 {
     int left = portrait_on_right ? speaker_x - 17 : speaker_x;
     draw_message(art, left, portrait_on_right, 1, frame, pixels);
+}
+
+int bfm_library_question_draw(const BfmForestMessageArt *art, const uint8_t *box, const uint8_t *portrait,
+                              const uint16_t tiles[512][1024], const uint8_t *text, size_t bytes,
+                              unsigned update, uint32_t pixels[240][320])
+{
+    if (!art || !box || !portrait || !tiles || !text || !pixels) return 0;
+    int x=160+signed16(box), y=120+signed16(box+2);
+    int width=16*signed16(box+4)+4, height=14*signed16(box+6)+14;
+    if (bytes<3 || text[0]!=2 || text[1] || text[2] ||
+        width<=0 || width>320 || height<=0 || height>240) return 0;
+    BfmDialoguePoint border[CORNERS], inset[CORNERS];
+    for (unsigned i=0;i<CORNERS;++i) {
+        BfmDialoguePoint point=art->contour[0][i];
+        border[i].x=x+floor_div(point.x*(width*4096/154),4096);
+        border[i].y=y+floor_div(point.y*(height*4096/42),4096);
+        inset[i].x=border[i].x+art->inset[0][i].x;
+        inset[i].y=border[i].y+art->inset[0][i].y;
+    }
+    bfm_dialogue_contour(border,inset,art->paper,art->highlight,art->outline,10,pixels);
+    int px=160+signed16(portrait), py=120+signed16(portrait+2);
+    unsigned w=le16(portrait+4),h=le16(portrait+6),u=le16(portrait+8),v=le16(portrait+10);
+    unsigned clut=le16(portrait+12), page=le16(portrait+14);
+    if (w>64 || h>64 || u+w>256 || v+h>256 || page>31 || px<0 || py<0 ||
+        px+(int)w>320 || py+(int)h>240 || (clut>>6)>=512) return 0;
+    for (unsigned j=0;j<h;++j) for (unsigned i=0;i<w;++i) {
+        unsigned packed=tiles[((page>>4)&1)*256+v+j][(page&15)*64+(u+i)/4];
+        uint16_t color=tiles[clut>>6][(clut&63)*16+((packed>>(4*((u+i)&3)))&15)];
+        if (color) pixels[py+j][px+i]=rgb(color);
+    }
+    unsigned row=0,col=0,ink=1;
+    int ox=160+signed16(box+8)-64, oy=120+signed16(box+10)-20;
+    for (size_t i=3;i<bytes;++i) {
+        unsigned c=text[i];
+        if (!c) return 1;
+        if (c=='\n') {++row;col=0;continue;}
+        if (c==1 && i+1<bytes) {ink=text[++i];continue;}
+        if (c<32 || c>126 || row>=3 || col>=36 || ink>=16) return 0;
+        int gx=ox+6*(int)col++,gy=oy+14*(int)row;
+        if (gx<0 || gx+6>320 || gy<0 || gy+12>240) return 0;
+        if (update<4+row) continue;
+        for (int j=0;j<12;++j) for (int k=0;k<6;++k)
+            if (art->glyph[c-32][j]&(128u>>k)) pixels[gy+j][gx+k]=art->ink[ink];
+    }
+    return 0;
 }

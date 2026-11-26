@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "bedroom.h"
+#include "library_books.h"
 #include "bedroom_award.h"
 #include "bedroom_effects.h"
 #include "bedroom_dust.h"
@@ -32,7 +33,13 @@ typedef enum {
 
 struct BfmBedroom {
     uint8_t *scene, *main;
-    size_t scene_bytes;
+    size_t scene_bytes, main_bytes;
+    int library, gesture;
+    BfmForestBlade blade;
+    unsigned transfer_wait, transition, arrival, entry_wait;
+    BfmLibraryBooks *books;
+    unsigned books_active, books_closing;
+    uint32_t (*books_background)[320];
     uint16_t tiles[512][1024];
     BfmBedroomEntry entry;
     BfmBedroomScript script;
@@ -48,7 +55,7 @@ struct BfmBedroom {
     BfmForestMessageArt *message_art;
     ForestVoice *voice;
     const MusashiDiscMedia *disc;
-    BfmForestScore *scores[2], *prepared_score, *current_score;
+    BfmForestScore *scores[3], *prepared_score, *current_score;
     unsigned score_count, effect_request;
     BfmBedroomEffects *effects;
     uint32_t room_sound_group;
@@ -92,6 +99,8 @@ void bfm_bedroom_free(BfmBedroom *room)
     bfm_forest_voice_free(room->voice);
     bfm_forest_hud_free(room->hud);
     bfm_bedroom_effects_free(room->effects);
+    free(room->books_background);
+    bfm_library_books_free(room->books);
     bfm_bedroom_field_free(room->field);
     bfm_bedroom_motion_free(room->motion);
     bfm_bedroom_figure_free(room->figure);
@@ -127,14 +136,18 @@ BfmBedroom *bfm_bedroom_open(const MusashiDiscMedia *disc, const BfmSaveRecord *
     size_t main_bytes;
     room->main = bfm_bedroom_player_data(disc, &main_bytes);
     size_t sound_row = 0x800d34b0u - 0x800cedf8u;
+    room->main_bytes = main_bytes;
     if (!room->main || !room->field || main_bytes < sound_row + 4) goto failed;
     room->room_sound_group = word(room->main+sound_row);
     if (!bfm_hero_run_smoke_load(&room->dust.sprite,room->main,main_bytes)) goto failed;
-    room->motion = bfm_bedroom_motion_open(room->scene, room->scene_bytes, room->main, main_bytes);
-    room->figure = bfm_bedroom_figure_load(disc, room->scene, room->scene_bytes, address);
-    room->travel = bfm_bedroom_travel_open(room->scene, room->scene_bytes);
+    room->motion = bfm_bedroom_motion_open(room->scene, room->scene_bytes, room->main, main_bytes, address);
+    room->figure = bfm_bedroom_figure_load(disc, room->scene, room->scene_bytes, address,
+                                            0x801841dcu, 0x80184f48u);
+    room->travel = bfm_bedroom_travel_open(room->scene, room->scene_bytes, address);
     room->visitors = bfm_bedroom_visitors_open(room->scene, room->scene_bytes);
-    room->visitor_models = bfm_bedroom_visitor_load(room->scene, room->scene_bytes);
+    const uint32_t courtiers[] = {0x801c6b18u, 0x801c97c0u};
+    room->visitor_models = bfm_bedroom_visitor_load(room->scene, room->scene_bytes,
+                                                  courtiers, 2, 0x80183cc8u);
     if (!room->motion || !room->figure || !room->travel || !room->visitors || !room->visitor_models ||
         !bfm_scene_read_tiles(disc, "MAIN.CD", 10, room->tiles) ||
         !bfm_scene_read_tiles(disc, "SC01.CD", entry.scene_member, room->tiles) ||
@@ -166,10 +179,78 @@ failed:
     return NULL;
 }
 
+static int enter_library(BfmBedroom *r)
+{
+    BfmBedroomEntry entry=r->entry;
+    const uint8_t *destination=data_range(r,0x80185e5cu,sizeof(entry.state.destination));
+    if (!bfm_library_entry(r->disc,destination,&entry)) return 0;
+    bfm_bedroom_field_free(r->field); r->field=NULL;
+    bfm_bedroom_figure_free(r->figure); r->figure=NULL;
+    bfm_bedroom_motion_free(r->motion); r->motion=NULL;
+    bfm_bedroom_travel_free(r->travel); r->travel=NULL;
+    bfm_bedroom_visitors_free(r->visitors); r->visitors=NULL;
+    bfm_bedroom_visitor_free(r->visitor_models); r->visitor_models=NULL;
+    bfm_forest_message_art_free(r->message_art); r->message_art=NULL;
+    bfm_forest_voice_free(r->voice); r->voice=NULL;
+    r->scene_bytes=bfm_read_field_scene(r->disc,entry.scene_member,r->scene);
+    const uint8_t *root=data_range(r,0x8017f744u,4);
+    const uint8_t *d=root ? data_range(r,word(root),0xcc) : NULL;
+    const uint8_t *actor=d ? data_range(r,word(d+0xb4),20) : NULL;
+    if (!actor || half(actor+6)!=366 || !bfm_scene_read_tiles(r->disc,"MAIN.CD",10,r->tiles) ||
+        !bfm_scene_read_tiles(r->disc,"SC01.CD",entry.scene_member,r->tiles)) return 0;
+    uint32_t address=word(root);
+    for (unsigned i=0;i<3;++i) r->camera_actor[i]=(int16_t)half(actor+2*i);
+    r->field=bfm_bedroom_field_load(r->scene,r->scene_bytes,address);
+    r->travel=bfm_bedroom_travel_open(r->scene,r->scene_bytes,address);
+    r->motion=bfm_bedroom_motion_open(r->scene,r->scene_bytes,r->main,r->main_bytes,address);
+    r->figure=bfm_bedroom_figure_load(r->disc,r->scene,r->scene_bytes,address,0x801815bcu,0x80182328u);
+    const uint32_t scribe=0x8019e198u;
+    r->visitor_models=bfm_bedroom_visitor_load(r->scene,r->scene_bytes,&scribe,1,0x801810a8u);
+    r->visitors=bfm_bedroom_visitors_open(r->scene,r->scene_bytes);
+    r->message_art=bfm_library_message_art_load(r->disc,r->scene,r->scene_bytes,r->tiles);
+    r->voice=bfm_library_voice_load(r->disc);
+    if (!bfm_library_blade_load(&r->blade, r->scene, r->scene_bytes) ||
+        !r->field || !r->travel || !r->motion || !r->figure || !r->visitor_models || !r->visitors ||
+        !r->message_art || !r->voice || !bfm_library_script_begin(&r->script,r->scene,r->scene_bytes) ||
+        !bfm_bedroom_visitors_scribe(r->visitors,r->camera_actor,half(actor+12))) return 0;
+    const int target[3] = {0, -130-145, -2-384};
+    if (!bfm_bedroom_field_orbit(r->field, target, 0xd8, 400, 168, 1, 12)) return 0;
+    memset(&r->pose,0,sizeof r->pose);
+    memset(r->dust.puffs,0,sizeof r->dust.puffs);
+    r->requested=r->pending=BFM_BEDROOM_NONE;
+    const uint8_t *walk_duration = data_range(r, 0x80183204u, 4);
+    if (!walk_duration || !bfm_bedroom_motion_step(r->motion, BFM_BEDROOM_ENTER, &r->pose) ||
+        !bfm_bedroom_travel_entrance(r->travel, word(walk_duration))) return 0;
+    entry.state.flags[303 / 8] &= (uint8_t)~(1u << (303 % 8));
+    r->entry=entry;
+    r->library=1;
+    r->entry_wait=4;
+    r->arrival=1;
+    return 1;
+}
+
 static int apply(void *context, BfmBedroomEvent event, uint32_t operand)
 {
     BfmBedroom *room = context;
     switch (event) {
+    case BFM_BED_FAREWELL:
+        room->requested = BFM_BEDROOM_FAREWELL;
+        room->gesture = 1;
+        break;
+    case BFM_BED_CAMERA_RELEASE: {
+        const int target[3] = {13, -130-130, 138-384};
+        return bfm_bedroom_field_orbit(room->field, target, 0x50, 400, 0, 0, 6);
+    }
+    case BFM_BED_TRANSFER:
+        room->transfer_wait = 17;
+        break;
+    case BFM_BED_BOOKS:
+        if (!room->library || room->books) return 0;
+        room->books = bfm_library_books_open(room->disc,room->scene,room->scene_bytes);
+        room->books_background = malloc(sizeof room->frames[0]);
+        if (!room->books || !room->books_background) return 0;
+        room->books_active = 1;
+        break;
     case BFM_BED_CAMERA_CUT:
     case BFM_BED_CAMERA_MOVE:
         return bfm_bedroom_field_camera(room->field, room->scene, room->scene_bytes,
@@ -308,6 +389,11 @@ static int render_scene(BfmBedroom *room, const BfmBedroomPose *pose, uint32_t p
         body.visible_parts = UINT32_C(0x7fffffff) &
                              ~((UINT32_C(1) << 22) | (UINT32_C(1) << 25));
         if (pose->show_weapon && !(room->entry.state.flags[303 / 8] & (1u << (303 % 8)))) {
+            if (room->library) {
+                body.blade = &room->blade;
+                body.blade_tick = room->update ^ 1u;
+                body.green_blade = (room->entry.state.flags[129 / 8] >> (129 % 8)) & 1u;
+            }
             body.visible_parts &= ~(UINT32_C(1) << 21);
             body.visible_parts |= UINT32_C(1) << 22;
         }
@@ -350,17 +436,67 @@ static int render_scene(BfmBedroom *room, const BfmBedroomPose *pose, uint32_t p
     return 1;
 }
 
-int bfm_bedroom_step_controls(BfmBedroom *room, int confirm_edge, int reveal_edge,
-                              int direction, int accept_edge)
+int bfm_bedroom_step_pad(BfmBedroom *room, int confirm_edge, int reveal_edge,
+                         int direction, int held, int accept_edge, int back_edge)
 {
     room->effect_request = 0;
     int result = BFM_BEDROOM_ADVANCED;
+    if (room->books_active) {
+        /* The constructor and setup precede the first interactive submission.
+         * The field scanout queue presents the frozen room and modal frames. */
+        unsigned submitted = room->presented;
+        if (room->books_active == 1)
+            memcpy(room->books_background, room->frames[(submitted+2)%3], sizeof room->frames[0]);
+        memcpy(room->frames[submitted], room->books_background, sizeof room->frames[0]);
+        if (room->books_closing) {
+            room->books_active = 0;
+        } else if (room->books_active <= 2) {
+            ++room->books_active;
+        } else {
+            int selection = bfm_library_books_input(room->books, direction, held, accept_edge, back_edge,
+                                      room->entry.state.variables[98], &room->effect_request);
+            if (!bfm_library_books_draw(room->books, room->message_art, room->tiles,
+                                        room->frames[submitted])) return 0;
+            if (selection == BFM_BOOKS_QUIT) room->books_closing = 1;
+            if (selection == BFM_BOOKS_SELECTED) {
+                room->books_active = 0;
+                room->message_closed = 1;
+            }
+        }
+        room->presented = (submitted+1)%3;
+        return result;
+    }
     if (room->message_closed) {
         if (room->drain < 2) {
             room->presented = (room->presented + 1) % 3;
             ++room->drain;
         }
         return 1;
+    }
+    /* Room actor completion counts down sixteen to minus one. The old
+     * room remains the display source through the field-loader wipe. */
+    if (room->transfer_wait && !--room->transfer_wait) {
+        room->transition=1;
+        room->entry.state.progress[8]=2;
+    }
+    if (room->transition) {
+        /* The outgoing door allows the score to continue after relinquishing
+         * room control. Its exit callback fades the active song when it
+         * starts the screen wipe. */
+        if (room->transition == 41) room->current_score = NULL;
+        /* The room requests the new bank once the old picture is black.
+         * On the measured US transfer its first attack follows 42 room
+         * updates later, two updates before the incoming field activates. */
+        if (room->transition == 126 && !apply(room, BFM_BED_SOUND_CHANGE, 0x3d)) return 0;
+        if (room->transition == 168 && !apply(room, BFM_BED_SOUND_READY, 0)) return 0;
+        if (room->transition==170) {
+            if (!enter_library(room)) return 0;
+            room->transition=0;
+        } else if (room->transition>=41) {
+            ++room->transition;
+            ++room->update;
+            return result;
+        } else ++room->transition;
     }
     const BfmForestMessageFrame *previous = bfm_forest_message_frame(room->message);
     int window_blocks = previous && previous->focused;
@@ -413,7 +549,8 @@ int bfm_bedroom_step_controls(BfmBedroom *room, int confirm_edge, int reveal_edg
                 room->requested = BFM_BEDROOM_LOWER;
                 room->item_action = LOWER_AWARD;
             }
-            room->message_closed = bfm_bedroom_script_at_departure(&room->script);
+            if (room->library && room->script.cursor == 0x8019f450u-scene_base)
+                room->message_closed = 1;
             bfm_forest_message_free(room->message);
             room->message = NULL;
             room->waking = 0;
@@ -465,13 +602,20 @@ int bfm_bedroom_step_controls(BfmBedroom *room, int confirm_edge, int reveal_edg
     if (action || room->pose.pose) {
         if (!bfm_bedroom_motion_step(room->motion, action, &room->pose)) return 0;
     }
+    if (room->pose.finished) room->gesture = 0;
     if (room->pose.finished && (room->item_action == COLLECT_MOTION || room->item_action == LOWER_AWARD)) {
         room->item_action = room->item_action == LOWER_AWARD ? TURN_BACK : NO_ITEM_ACTION;
     }
     room->pending = room->requested;
     room->requested = BFM_BEDROOM_NONE;
-    unsigned submitted = room->update % 3;
-    if (!room->message_closed && !bfm_bedroom_script_tick(&room->script, !root->busy && !room->item_action,
+    unsigned submitted = room->presented;
+    int room_ready=1;
+    if (room->arrival) {
+        if (room->entry_wait) --room->entry_wait;
+        if (room->arrival<25) ++room->arrival;
+        if (room->entry_wait || root->busy) room_ready=0;
+    }
+    if (room_ready && !room->message_closed && !bfm_bedroom_script_tick(&room->script, !root->busy && !room->item_action && !room->gesture,
                                                           window_blocks, apply, room)) return 0;
     if (!bfm_bedroom_visitors_step(room->visitors)) return 0;
     bfm_bedroom_reaction_step(&room->reaction);
@@ -498,6 +642,12 @@ BfmForestScore *bfm_bedroom_score(const BfmBedroom *room)
     return room ? room->current_score : NULL;
 }
 
+int bfm_bedroom_step_controls(BfmBedroom *room,int confirm_edge,int reveal_edge,int direction,int accept_edge)
+{
+    return bfm_bedroom_step_pad(room,confirm_edge,reveal_edge,direction,direction,accept_edge,
+                                confirm_edge && !reveal_edge && !accept_edge);
+}
+
 int bfm_bedroom_step_input(BfmBedroom *room, int confirm_edge, int reveal_edge)
 {
     return bfm_bedroom_step_controls(room, confirm_edge, reveal_edge, 0, confirm_edge && !reveal_edge);
@@ -511,6 +661,25 @@ int bfm_bedroom_step(BfmBedroom *room)
 int bfm_bedroom_draw(BfmBedroom *room, uint32_t pixels[240][320])
 {
     memcpy(pixels, room->frames[room->presented], sizeof room->frames[0]);
+    if (room->transition>=41 || (room->arrival && room->arrival<23)) {
+        int entering=room->arrival!=0;
+        int level=entering ? 41-2*(int)room->arrival : (int)(room->transition-41)/2;
+        for (unsigned y=0;y<240;++y) {
+            int edge=y<120 ? (int)y : 239-(int)y;
+            int delay=entering || edge<24 ? 0 : (edge-24)/8;
+            if (delay>11) delay=11;
+            int shade=level-delay;
+            if (shade<=0) continue;
+            for (unsigned x=0;x<320;++x) {
+                uint32_t p=pixels[y][x], out=0xff000000u;
+                for (unsigned shift=0;shift<=16;shift+=8) {
+                    int intensity=(int)((p>>shift)&255u)/8-shade;
+                    if (intensity>0) out|=(unsigned)(intensity*255/31)<<shift;
+                }
+                pixels[y][x]=out;
+            }
+        }
+    }
     if (room->message && room->waking) {
         const BfmBedroomRoot *root = bfm_bedroom_travel_root(room->travel);
         int projection[3];

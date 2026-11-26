@@ -6,7 +6,8 @@
 typedef struct BfmBedroomVisitor BfmBedroomVisitor;
 
 /* Keep the mounted scene alive until the visitor models are freed. */
-BfmBedroomVisitor *bfm_bedroom_visitor_load(const uint8_t *scene, size_t size);
+BfmBedroomVisitor *bfm_bedroom_visitor_load(const uint8_t *scene, size_t size,
+                                             const uint32_t *tables, unsigned count, uint32_t shadow_address);
 void bfm_bedroom_visitor_free(BfmBedroomVisitor *visitor);
 
 /* Append Ribson (0) or Livers (1) after preparing the figure queue and before

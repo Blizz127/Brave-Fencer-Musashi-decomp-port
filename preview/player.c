@@ -349,9 +349,10 @@ static int play(Player *p, char *error, size_t size) {
                     for (uint64_t t = last_logic; t < tick; ++t) {
                         unsigned pressed = t == last_logic ? p->pressed : 0;
                         int direction = (pressed & PAD_UP) ? -1 : !!(pressed & PAD_DOWN);
-                        int result = bfm_bedroom_step_controls(p->bedroom,
+                        int held = (p->held & PAD_UP) ? -1 : !!(p->held & PAD_DOWN);
+                        int result = bfm_bedroom_step_pad(p->bedroom,
                                     pressed & (PAD_CIRCLE | PAD_CROSS | PAD_TRIANGLE),
-                                    pressed & PAD_CIRCLE, direction, pressed & PAD_CROSS);
+                                    pressed & PAD_CIRCLE, direction, held, pressed & PAD_CROSS, pressed & PAD_TRIANGLE);
                         if (!result) {
                             snprintf(error, size, "Could not advance the mounted bedroom scene.");
                             return 2;
@@ -480,7 +481,7 @@ static int play(Player *p, char *error, size_t size) {
         } else if (bedroom) {
             frame = bfm_bedroom_draw(p->bedroom, (uint32_t (*)[320])p->pixels);
             if (frame && bfm_bedroom_endpoint(p->bedroom))
-                status_line(p, "Library visit agreed. Start to return.");
+                status_line(p, "Library preview complete. Start to return.");
             if (!frame) frame = -1;
         } else if (files) {
             bfm_save_menu_draw(p->save_art, &p->saves, fields, (uint32_t (*)[320])p->pixels);

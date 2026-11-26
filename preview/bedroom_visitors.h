@@ -28,5 +28,6 @@ void bfm_bedroom_visitors_speak(BfmBedroomVisitors *visitors);
 int bfm_bedroom_visitors_step(BfmBedroomVisitors *visitors);
 const BfmBedroomVisitorPose *bfm_bedroom_visitors_pose(const BfmBedroomVisitors *visitors,
                                                        unsigned visitor);
+int bfm_bedroom_visitors_scribe(BfmBedroomVisitors *visitors, const int xyz[3], int yaw);
 void bfm_bedroom_visitors_free(BfmBedroomVisitors *visitors);
 #endif

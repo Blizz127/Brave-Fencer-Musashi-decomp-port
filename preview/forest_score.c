@@ -22,7 +22,7 @@ typedef struct {
     BfmDecodedSpuSample samples[SAMPLES];
     Note notes[VOICES];
     unsigned program[CHANNELS], pan[CHANNELS], wheel[CHANNELS];
-    int samples_ready;
+    int samples_ready, library_wheel;
 } Orchestra;
 
 struct BfmForestScore {
@@ -94,11 +94,12 @@ static int start_note(Orchestra *o, const BfmSqvEvent *e)
         if (slot == VOICES) return 0;
         Note *n = &o->notes[slot];
         *n = (Note){.sample = s, .channel = e->channel, .key = e->number};
-        if (o->wheel[e->channel] != 64) return 0;
+        unsigned wheel = o->wheel[e->channel];
+        if (!o->library_wheel && wheel != 64) return 0;
         n->center = tone->center;
         n->bend_range[0] = tone->bend_range[0];
         n->bend_range[1] = tone->bend_range[1];
-        n->pitch = note_pitch(e->number, tone->center, 64, 0);
+        n->pitch = note_pitch(e->number, tone->center, wheel, tone->bend_range[0]);
         int pan = (int)o->pan[e->channel] + (int)tone->program_pan + (int)tone->tone_pan - 128;
         if (pan < 1 || pan > 127) return 0;
         n->left = ear_level(e->value, pan > 64 ? (unsigned)(127 - pan) : 63);
@@ -148,8 +149,8 @@ static int event(Orchestra *o, const BfmSqvEvent *e)
         for (unsigned i = 0; i < VOICES; ++i) {
             Note *n = &o->notes[i];
             if (!n->sample || n->channel != e->channel || n->releasing) continue;
-            if (e->number != 64 && (n->bend_range[0] != 3 || n->bend_range[1] != 3)) return 0;
-            if (e->number < 64 && (n->key != 65 || n->center != 64)) return 0;
+            if (!o->library_wheel && e->number != 64 && (n->bend_range[0] != 3 || n->bend_range[1] != 3)) return 0;
+            if (!o->library_wheel && e->number < 64 && (n->key != 65 || n->center != 64)) return 0;
             n->pitch = note_pitch(n->key, n->center, e->number, n->bend_range[0]);
         }
         return 1;
@@ -195,9 +196,10 @@ static void mix_frame(Orchestra *o, int left_right[2])
         left_right[c] = limit_sample(channels[c]);
 }
 
-static int known_wheel(unsigned channel, unsigned program, unsigned wheel)
+static int known_wheel(const Orchestra *o, unsigned channel, unsigned program, unsigned wheel)
 {
     if (wheel == 64) return 1;
+    if (o->library_wheel) return channel == 0 && program == 0 && wheel >= 43 && wheel < 64;
     if (channel == 1 && program == 2) return wheel == 67;
     if (channel == 7 && program == 6)
         return wheel == 60 || wheel == 56 || wheel == 52 || wheel == 48 || wheel == 43;
@@ -234,7 +236,7 @@ static int prepare_schedule(BfmForestScore *score)
             continue;
         }
         if (e->kind == BFM_SQV_END || (e->kind == BFM_SQV_CONTROL && !initial_parameter(e)) ||
-            (e->kind == BFM_SQV_PITCH_BEND && !known_wheel(e->channel, program[e->channel], e->number))) {
+            (e->kind == BFM_SQV_PITCH_BEND && !known_wheel(&score->orchestra, e->channel, program[e->channel], e->number))) {
             uint64_t frames = elapsed * score->rate / denominator;
             if (!frames || frames > SIZE_MAX / (2 * sizeof(int16_t))) return 0;
             if (e->kind == BFM_SQV_CONTROL && e->channel == 0 && e->number == 99 && e->value == 30 &&
@@ -321,6 +323,7 @@ static BfmForestScore *load_score(const MusashiDiscMedia *disc, unsigned rate, c
     if (!score) return NULL;
     score->rate = rate;
     score->gain = gain;
+    score->orchestra.library_wheel = !strcmp(archive, "SC01.CD") && member == 75 && track == 0;
     if (bfm_sqv_archive_track_load(disc, archive, member, track, &score->track) != BFM_SQV_OK ||
         !prepare_schedule(score)) goto fail;
     score->orchestra.bank = bfm_archive_sound_bank_load(disc, archive, member);
@@ -351,6 +354,13 @@ BfmForestScore *bfm_castle_score_load(const MusashiDiscMedia *disc, unsigned rat
 {
     if (volume > 127) return NULL;
     return load_score(disc, rate, "SC03.CD", member, track, volume);
+}
+
+BfmForestScore *bfm_library_score_load(const MusashiDiscMedia *disc, unsigned rate,
+                                      unsigned track, unsigned volume)
+{
+    if (volume > 127 || track != 0) return NULL;
+    return load_score(disc, rate, "SC01.CD", 75, track, volume);
 }
 
 void bfm_castle_score_fade(BfmForestScore *score)

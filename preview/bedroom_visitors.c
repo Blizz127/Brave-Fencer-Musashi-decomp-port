@@ -34,6 +34,7 @@ struct BfmBedroomVisitors {
     const uint8_t *scene;
     size_t bytes;
     Visitor people[2];
+    int scribe;
 };
 
 static const uint8_t *span(const BfmBedroomVisitors *v, uint32_t address, size_t size)
@@ -193,6 +194,19 @@ BfmBedroomVisitors *bfm_bedroom_visitors_open(const uint8_t *scene, size_t bytes
     return v;
 }
 
+int bfm_bedroom_visitors_scribe(BfmBedroomVisitors *v, const int xyz[3], int yaw)
+{
+    if (!v || !xyz) return 0;
+    Visitor *actor = &v->people[0];
+    const VisitorClass scribe = {.parts = 7};
+    if (!animate(v, actor, &scribe, 0x8019f034u)) return 0;
+    for (unsigned i = 0; i < 3; ++i) actor->frame.position[i] = xyz[i];
+    actor->frame.heading = yaw;
+    actor->frame.visible = 1;
+    v->scribe = 1;
+    return 1;
+}
+
 int bfm_bedroom_visitors_spawn(BfmBedroomVisitors *v)
 {
     if (!v || v->people[0].state != ABSENT) return 0;
@@ -238,6 +252,15 @@ int bfm_bedroom_visitors_step(BfmBedroomVisitors *v)
 {
     if (!v) return 0;
     BfmBedroomVisitors next = *v;
+    if (v->scribe) {
+        Visitor *actor = &v->people[0];
+        if (actor->hold && --actor->hold == 0) {
+            const VisitorClass scribe = {.parts = 7};
+            actor->cursor += 8;
+            return set_frame(v, actor, &scribe);
+        }
+        return 1;
+    }
     for (unsigned i=0; i<2; ++i)
         if (!step(&next, &next.people[i], &classes[i])) return 0;
     *v = next;

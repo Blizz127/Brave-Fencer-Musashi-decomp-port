@@ -139,7 +139,7 @@ static BfmSqvResult channel_event(Cursor *in, unsigned status, unsigned member, 
 {
     unsigned command = status >> 4;
     if (command != 8 && command != 9 && command != 11 && command != 12 &&
-        !(member == FOREST_MEMBER && command == 14))
+        !((member == FOREST_MEMBER || member == 75) && command == 14))
         return BFM_SQV_UNSUPPORTED;
     if (in->next == in->end || *in->next >= 128) return BFM_SQV_INVALID;
     event->channel = (uint8_t)(status & 15);
@@ -150,7 +150,7 @@ static BfmSqvResult channel_event(Cursor *in, unsigned status, unsigned member, 
     } else if (command == 12) {
         event->kind = BFM_SQV_PROGRAM;
     } else if (command == 14) {
-        /* The mounted forest score encodes a single wheel byte. */
+        /* The mounted field scores encode a single wheel byte. */
         event->kind = BFM_SQV_PITCH_BEND;
     } else {
         if (in->next == in->end || *in->next >= 128) return BFM_SQV_INVALID;
@@ -205,9 +205,10 @@ BfmSqvResult bfm_sqv_archive_track_load(const MusashiDiscMedia *disc, const char
     if (!disc) return BFM_SQV_INVALID;
     if (!archive) return BFM_SQV_INVALID;
     int castle = !strcmp(archive, "SC03.CD") && member == 68;
-    if (!castle && (strcmp(archive, "SC01.CD") || (member != PALACE_MEMBER && member != FOREST_MEMBER)))
+    int library = !strcmp(archive, "SC01.CD") && member == 75;
+    if (!castle && !library && (strcmp(archive, "SC01.CD") || (member != PALACE_MEMBER && member != FOREST_MEMBER)))
         return BFM_SQV_UNSUPPORTED;
-    unsigned tracks = castle || member == PALACE_MEMBER ? MAX_TRACKS : 1;
+    unsigned tracks = castle || library || member == PALACE_MEMBER ? MAX_TRACKS : 1;
     if (track >= tracks) return BFM_SQV_INVALID;
     TrackRange range;
     BfmSqvResult result = locate(disc, archive, member, track, tracks, &range);

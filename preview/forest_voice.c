@@ -43,6 +43,11 @@ ForestVoice *bfm_bedroom_voice_load(const MusashiDiscMedia *disc)
     return load_voice(disc, BFM_VOICE_ST02);
 }
 
+ForestVoice *bfm_library_voice_load(const MusashiDiscMedia *disc)
+{
+    return load_voice(disc, BFM_VOICE_OPEN);
+}
+
 int bfm_forest_voice_request(ForestVoice *v, unsigned bank, unsigned cue)
 {
     BfmDiscVoiceCue selected;

@@ -20,7 +20,7 @@ typedef struct {
     size_t frame;
 } Playback;
 struct BfmBedroomEffects {
-    Clip clips[3];
+    Clip clips[7];
     Playback playing[VOICES];
 };
 typedef struct {
@@ -67,7 +67,10 @@ static int description(const Sources *s, unsigned command, uint32_t *address)
             !read_data(s, word(header+16)+2*(row*columns+column-1), value, 2) ||
             !read_data(s, 0x8006451cu+4*half(value), entry, 4)) return 0;
     }
-    if (entry[0] != 1 || (entry[1] && entry[1] != s->group)) return 0;
+    /* Direct common menu effects preserve their high service-mode flag
+     * in the resident slot. The lower six bits select the instrument
+     * descriptor and run the same envelope. */
+    if ((entry[0] != 1 && entry[0] != 0x41) || (entry[1] && entry[1] != s->group)) return 0;
     uint32_t tables = entry[1] ? word(header+20) : 0x80068304u;
     if (!read_data(s, tables+4*entry[2], pointer, 4)) return 0;
     *address = word(pointer)+20u*entry[3];
@@ -219,7 +222,9 @@ BfmBedroomEffects *bfm_bedroom_effects_load(const MusashiDiscMedia *disc, unsign
         !read_data(&s,0x8006ab30u,s.pitch,sizeof s.pitch) ||
         !prepare(&s,BFM_ROOM_AWARD_SOUND,&e->clips[0]) ||
         !prepare(&s,BFM_ROOM_MOVE_SOUND,&e->clips[1]) ||
-        !prepare(&s,BFM_ROOM_ACCEPT_SOUND,&e->clips[2])) {
+        !prepare(&s,BFM_ROOM_ACCEPT_SOUND,&e->clips[2]) ||
+        !prepare(&s,0x45a,&e->clips[3]) || !prepare(&s,0x45d,&e->clips[4]) ||
+        !prepare(&s,0x473,&e->clips[5]) || !prepare(&s,0x474,&e->clips[6])) {
         bfm_bedroom_effects_free(e);
         e = NULL;
     }
@@ -232,14 +237,24 @@ BfmBedroomEffects *bfm_bedroom_effects_load(const MusashiDiscMedia *disc, unsign
 void bfm_bedroom_effects_free(BfmBedroomEffects *e)
 {
     if (!e) return;
-    for (unsigned i=0; i<3; ++i) free(e->clips[i].mono);
+    for (unsigned i=0; i<sizeof e->clips/sizeof *e->clips; ++i) free(e->clips[i].mono);
     free(e);
 }
 
 void bfm_bedroom_effects_start(BfmBedroomEffects *e, unsigned command)
 {
     if (!e || !command) return;
-    for (unsigned i=0; i<3; ++i) if (e->clips[i].id == command) {
+    for (unsigned i=0; i<sizeof e->clips/sizeof *e->clips; ++i) if (e->clips[i].id == command) {
+        /* The resident menu reissues an identical command in its own voice
+         * slot. Distinct button commands may overlap until their releases. */
+        if (i >= 3) {
+            for (unsigned j=0; j<VOICES; ++j) {
+                if (e->playing[j].clip == &e->clips[i]) {
+                    e->playing[j].frame = 0;
+                    return;
+                }
+            }
+        }
         for (unsigned j=0; j<VOICES; ++j) if (!e->playing[j].clip) {
             e->playing[j] = (Playback){&e->clips[i],0};
             return;

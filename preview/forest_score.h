@@ -10,6 +10,8 @@ typedef struct BfmForestScore BfmForestScore;
 BfmForestScore *bfm_forest_score_load(const MusashiDiscMedia *disc, unsigned rate);
 BfmForestScore *bfm_castle_score_load(const MusashiDiscMedia *disc, unsigned rate,
                                     unsigned member, unsigned track, unsigned volume);
+BfmForestScore *bfm_library_score_load(const MusashiDiscMedia *disc, unsigned rate,
+                                      unsigned track, unsigned volume);
 /* Room command 1/1 fades the running sequence on the sound-field clock. */
 void bfm_castle_score_fade(BfmForestScore *score);
 void bfm_forest_score_rewind(BfmForestScore *score);
