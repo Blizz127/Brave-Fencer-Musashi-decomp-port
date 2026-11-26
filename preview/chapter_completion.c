@@ -98,8 +98,8 @@ int bfm_chapter_completion_step(BfmChapterCompletion *state, const MusashiDiscMe
     if (state->fields < UINT32_MAX) ++state->fields;
     switch (state->page) {
     case BFM_CHAPTER_SAVE_PROMPT:
-        if (pressed & TRIANGLE) return 0;
-        if (pressed & CROSS) read_card(state, copy);
+        if (pressed & TRIANGLE) page(state, BFM_CHAPTER_RESUME);
+        else if (pressed & CROSS) read_card(state, copy);
         break;
     case BFM_CHAPTER_SAVE_READING:
         if (state->fields >= CARD_READ_FIELDS) page(state, BFM_CHAPTER_SAVE_FILES);
