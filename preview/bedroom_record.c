@@ -79,6 +79,12 @@ uint8_t *bfm_bedroom_effect_data(const MusashiDiscMedia *disc, unsigned member, 
     return read_payload(disc, "SC01.CD", member, 0x107, size);
 }
 
+/* Village porch events are resident members separate from the field mesh. */
+uint8_t *bfm_village_event_data(const MusashiDiscMedia *disc, unsigned member, size_t *size)
+{
+    return read_payload(disc, "SC03.CD", member, 0x101, size);
+}
+
 int bfm_bedroom_entry(const MusashiDiscMedia *disc, const BfmSaveRecord *record,
                       BfmBedroomEntry *out)
 {
@@ -120,6 +126,7 @@ int bfm_castle_room_entry(const MusashiDiscMedia *disc, const uint8_t *transfer,
     case 0x3002: member = 8; resource = 57; group = 1; break;
     case 0x43000: member = 4; resource = 53; group = 1; break;
     case 0x3004: member = 74; resource = 123; group = 1; break;
+    case 0x02011010: member = 1; resource = 179; group = 3; break;
     case 0x51011: member = 2; resource = 180; group = 3; break;
     default: return 0;
     }
@@ -141,6 +148,9 @@ int bfm_castle_room_entry(const MusashiDiscMedia *disc, const uint8_t *transfer,
         word(row) != start / SECTOR || word(row + 4) != length) return 0;
     memcpy(entry->state.destination, transfer, sizeof(entry->state.destination));
     if (target == 0x3002u) entry->state.progress[8] = 2;
+    /* The field player's room initialization enables world time from story ten. */
+    if (word(entry->state.progress + 8) >= 10)
+        entry->state.flags[127 / 8] |= 1u << (127 % 8);
     entry->scene_member = member;
     return 1;
 }

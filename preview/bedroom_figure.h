@@ -19,6 +19,15 @@ typedef struct {
     unsigned blade_tick, green_blade;
 } BfmBedroomBody;
 
+typedef struct {
+    int16_t axis[3];
+    uint8_t rgb[3];
+} BfmBedroomLight;
+
+/* Replace the three directional lights for the whole figure queue. The room
+ * ambient light is common to Musashi and the other actors in the field. */
+int bfm_bedroom_figure_lights(BfmBedroomFigure *figure, const BfmBedroomLight lights[3]);
+
 BfmBedroomFigure *bfm_bedroom_figure_load(const MusashiDiscMedia *disc,
                      const uint8_t *scene, size_t scene_bytes, uint32_t room_address,
                      uint32_t face_address, uint32_t shadow_address);

@@ -9,7 +9,7 @@
 #include <string.h>
 
 enum { SCREEN_W = 320, TOP = 10, BOTTOM = 230, SECTOR = 2048 };
-enum { MAX_GROUPS = 256, MAX_VERTICES = 4096, MAX_FACES = 4096, MAX_SCENE = BFM_FIELD_SCENE_CAPACITY };
+enum { MAX_VERTICES = 4096, MAX_FACES = 4096, MAX_SCENE = BFM_FIELD_SCENE_CAPACITY };
 
 typedef struct { int x, y, z; } Point;
 typedef struct { uint16_t u, v; } Texel;
@@ -61,7 +61,7 @@ enum { COURT_SHOT_COUNT = sizeof(court_shots) / sizeof(court_shots[0]) };
 typedef struct {
     Texel uv[4];
     uint16_t vertices[4], page_x, page_y, palette_x, palette_y;
-    uint8_t count, depth_bias, texture_bits, rgb[3];
+    uint8_t count, depth_bias, texture_bits, blend_mode, semi_transparent, rgb[3];
 } Face;
 typedef struct { int depth; size_t index; } Draw;
 
@@ -176,6 +176,8 @@ static int take_face(Face *face, const uint8_t *entry, const uint8_t *material,
         unsigned depth = (page >> 7) & 3;
         if (material[3] != entry[3] || depth > 1) return 0;
         face->texture_bits = depth ? 8 : 4;
+        face->blend_mode = (uint8_t)((page >> 5) & 3u);
+        face->semi_transparent = (entry[3] & 2u) != 0;
         face->page_x = (uint16_t)((page & 15) * 64);
         face->page_y = (uint16_t)((page & 16) * 16);
         face->palette_x = (uint16_t)((palette & 63) * 16);
@@ -207,11 +209,11 @@ static int take_face(Face *face, const uint8_t *entry, const uint8_t *material,
  * spatial group owns a contiguous list of material/vertex references. */
 static int load_mesh(Palace *palace, const uint8_t *scene, size_t size, size_t directory)
 {
-    if (size < directory + 12) return 0;
+    if (directory > size || size - directory < 12) return 0;
     const uint8_t *root = scene + directory + 12;
     size_t available = size - directory - 12;
     unsigned groups = le32(root - 12), materials = le32(root - 8), vertices = le32(root - 4);
-    if (!groups || groups > MAX_GROUPS || materials != 20 * groups ||
+    if (!groups || groups > available / 20 || materials != (size_t)20 * groups ||
         vertices < materials || vertices > available || (vertices - materials) % 16)
         return 0;
     unsigned faces = le32(root + 16);
@@ -230,12 +232,15 @@ static int load_mesh(Palace *palace, const uint8_t *scene, size_t size, size_t d
         for (size_t i = 0; i < count; ++i, next += 12) {
             const uint8_t *entry = root + next;
             unsigned kind = entry[3];
-            if (kind != 0x20 && kind != 0x24 && kind != 0x28 && kind != 0x2c) return 0;
             const uint8_t *material = NULL;
             if (kind & 4) {
                 unsigned offset = le16(entry);
-                if (offset % 16 || offset >= vertices - materials) return 0;
+                /* Flat textured triangles and quads can request blending. */
+                if ((kind & ~0x0au) != 0x24 || offset % 16 || offset >= vertices - materials)
+                    return 0;
                 material = root + materials + offset;
+            } else if (kind != 0x20 && kind != 0x28) {
+                return 0;
             }
             if (palace->face_count == MAX_FACES ||
                 !take_face(&palace->faces[palace->face_count], entry, material,
@@ -501,6 +506,26 @@ static uint32_t color(uint16_t ink)
     return UINT32_C(0xff000000) | (r << 16) | (g << 8) | blue;
 }
 
+/* Blend in five-bit framebuffer space. The texture palette supplies the
+ * mask bit independently of the polygon's blend request and texture page. */
+static uint16_t blend_texel(uint16_t source, uint32_t background, unsigned mode)
+{
+    unsigned combined = 0;
+    for (unsigned channel = 0; channel < 3; ++channel) {
+        unsigned front = (source >> (channel * 5)) & 31;
+        unsigned back = (background >> (19 - channel * 8)) & 31;
+        unsigned level;
+        switch (mode) {
+        case 0: level = (back + front) / 2; break;
+        case 1: level = back + front; break;
+        case 2: level = back > front ? back - front : 0; break;
+        default: level = back + front / 4; break;
+        }
+        combined |= (level > 31 ? 31 : level) << (channel * 5);
+    }
+    return (uint16_t)combined;
+}
+
 /* The ritual darkens these mounted floor and masonry palettes. The ceiling
  * light, actors and hovering crystal keep their own colors. */
 static const unsigned ritual_rows[] = {480, 482, 483, 484, 485, 486, 487, 488};
@@ -566,6 +591,7 @@ static void triangle(const uint16_t tiles[512][1024], const Face *face,
             unsigned index = (packed >> (bits * (u & word_mask))) & index_mask;
             uint16_t ink = palette[index];
             if (ink) {
+                int blend = face->semi_transparent && (ink & 0x8000u);
                 if (modulates) {
                     unsigned modulated = 0;
                     for (unsigned channel = 0; channel < 3; ++channel) {
@@ -574,6 +600,8 @@ static void triangle(const uint16_t tiles[512][1024], const Face *face,
                     }
                     ink = (uint16_t)modulated;
                 }
+                if (blend)
+                    ink = blend_texel(ink, pixels[y * SCREEN_W + x], face->blend_mode);
                 pixels[y * SCREEN_W + x] = color(ink);
             }
         }

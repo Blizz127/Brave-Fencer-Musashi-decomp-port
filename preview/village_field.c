@@ -8,23 +8,39 @@ void bfm_village_field_clear(BfmVillageField *field)
     *field = (BfmVillageField){0};
 }
 
-int bfm_village_field_load(BfmVillageField *field, const MusashiDiscMedia *disc,
-                           const uint8_t *scene, size_t size, uint32_t room)
+/* The two SC03 members place the same face, shadow and equipped-weapon
+ * resources at different addresses. Offsets below are relative to the
+ * first face texture coordinate table in each member. */
+static int load_field(BfmVillageField *field, const MusashiDiscMedia *disc,
+                      const uint8_t *scene, size_t size, uint32_t room,
+                      uint32_t face_table)
 {
-    /* The equipped models reference outlines and guard vertices in SC03/2. */
     const uint32_t base = 0x80128158u;
-    size_t blade_offset = 0x801885f8u - base;
-    if (!scene || size < blade_offset + 28) return 0;
-    field->guard = (const int8_t *)(scene + (0x801885e4u - base));
-    field->blade = (const int8_t *)(scene + blade_offset);
+    const size_t face = face_table - base;
+    if (!scene || face > size || size - face < 0x12d0 + 28) return 0;
+    field->guard = (const int8_t *)(scene + face + 0x12bc);
+    field->blade = (const int8_t *)(scene + face + 0x12d0);
     field->field = bfm_bedroom_field_load(scene, size, room, 300);
-    field->hero = bfm_bedroom_figure_load(disc, scene, size, room, 0x80187328u, 0x80188094u);
+    field->hero = bfm_bedroom_figure_load(disc, scene, size, room, face_table,
+                                          face_table + 0xd6c);
     if (!field->field || !field->hero ||
-        !bfm_castle_blade_load(&field->fusion, scene, size, 0x80188438u - base)) {
+        !bfm_castle_blade_load(&field->fusion, scene, size, face + 0x1110)) {
         bfm_village_field_clear(field);
         return 0;
     }
     return 1;
+}
+
+int bfm_village_field_load(BfmVillageField *field, const MusashiDiscMedia *disc,
+                           const uint8_t *scene, size_t size, uint32_t room)
+{
+    return load_field(field, disc, scene, size, room, 0x80187328u);
+}
+
+int bfm_village_field_load_lower(BfmVillageField *field, const MusashiDiscMedia *disc,
+                                 const uint8_t *scene, size_t size, uint32_t room)
+{
+    return load_field(field, disc, scene, size, room, 0x8018f338u);
 }
 
 int bfm_village_field_prepare(BfmVillageField *field, const BfmVillageCamera *camera,

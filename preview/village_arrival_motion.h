@@ -16,7 +16,7 @@ typedef enum {
 
 enum {
     BFM_VILLAGE_HIT = 1u, BFM_VILLAGE_CAMERA = 2u, BFM_VILLAGE_OPEN_MESSAGE = 4u,
-    BFM_VILLAGE_SHOW_HUD = 8u, BFM_VILLAGE_RELEASE = 16u
+    BFM_VILLAGE_SHOW_HUD = 8u, BFM_VILLAGE_RELEASE = 16u, BFM_VILLAGE_TRANSFER = 32u
 };
 
 typedef struct {
@@ -26,11 +26,22 @@ typedef struct {
     unsigned controlled, events;
     uint32_t message;
     unsigned movement; /* Cable updates since mounting, retained through impact. */
+    uint16_t destination;
+    uint8_t entrance;
 } BfmVillagePlayer;
 
 /* Borrow the unpacked SC03/2 room and the resident MAIN/10 type-0x101 payload. */
 BfmVillageMotion *bfm_village_motion_open(const uint8_t *scene, size_t scene_bytes,
     const uint8_t *main, size_t main_bytes, uint32_t room, unsigned entrance);
+/* The marked floor queues a descriptor. The destination restores integer XYZ
+ * and heading captured before the final upper-room movement pass. */
+const uint8_t *bfm_village_motion_transfer(const BfmVillageMotion *motion);
+BfmVillageMotion *bfm_village_motion_arrive(const BfmVillageMotion *departed,
+    const uint8_t *scene, size_t scene_bytes, uint32_t room);
+/* Submit one scripted root and advance the player model once, then use place
+ * on release to resume ordinary movement from the script endpoint. */
+int bfm_village_motion_staged(BfmVillageMotion *motion, const BfmBedroomRoot *root);
+int bfm_village_motion_place(BfmVillageMotion *motion, const BfmBedroomRoot *root);
 const BfmVillagePlayer *bfm_village_motion_player(const BfmVillageMotion *motion);
 /* Once per gameplay update. Pad axes are -127..127, right and down positive.
  * Camera yaw is target minus eye in X/Z, with +Z at zero. */

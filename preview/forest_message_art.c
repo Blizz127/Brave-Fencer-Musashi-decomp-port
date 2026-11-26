@@ -239,7 +239,7 @@ static void draw_message(const BfmForestMessageArt *art, int tail_x, int right, 
     if (!frame->text_visible) return;
     if (frame->portrait) draw_portrait(art, right, frame->portrait, pixels);
     int text_x = frame->style == 1 ? 52 : right ? 32 : 72;
-    if (frame->choices && frame->answer && frame->answer <= 3) draw_choice(text_x, frame->answer, pixels);
+    if (frame->choices && frame->answer && frame->answer <= 3) draw_choice(text_x, frame->choice_row + frame->answer, pixels);
     for (int row = 0; row < 3; ++row)
         for (unsigned col = 0; col < 36; ++col) {
             BfmForestMessageCell cell = frame->cells[row][col];

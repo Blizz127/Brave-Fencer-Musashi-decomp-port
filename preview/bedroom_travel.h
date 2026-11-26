@@ -27,6 +27,9 @@ BfmBedroomTravel *bfm_bedroom_travel_open(const uint8_t *scene, size_t bytes, ui
  * with shadow_visible cleared. Only the shadow fields are updated. */
 int bfm_bedroom_travel_air_shadow(const uint8_t *scene, size_t bytes,
                                   uint32_t room_address, BfmBedroomRoot *root);
+/* Take over an already positioned field actor for a scripted walk. */
+BfmBedroomTravel *bfm_bedroom_travel_from_root(const uint8_t *scene, size_t bytes,
+                                               uint32_t room, const BfmBedroomRoot *root);
 void bfm_bedroom_travel_free(BfmBedroomTravel *travel);
 const BfmBedroomRoot *bfm_bedroom_travel_root(const BfmBedroomTravel *travel);
 void bfm_bedroom_travel_look(BfmBedroomTravel *travel, int yaw);

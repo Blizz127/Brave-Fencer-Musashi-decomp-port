@@ -16,6 +16,9 @@ typedef struct {
 /* The expanded SC03 village member stays mounted while the field is active. */
 int bfm_village_field_load(BfmVillageField *field, const MusashiDiscMedia *disc,
                            const uint8_t *scene, size_t size, uint32_t room);
+/* Street and mayor's porch, mounted from SC03 member 1. */
+int bfm_village_field_load_lower(BfmVillageField *field, const MusashiDiscMedia *disc,
+                                 const uint8_t *scene, size_t size, uint32_t room);
 void bfm_village_field_clear(BfmVillageField *field);
 int bfm_village_field_prepare(BfmVillageField *field, const BfmVillageCamera *camera,
                               const BfmBedroomRoot *root, const BfmBedroomPose *pose,

@@ -62,3 +62,22 @@ void bfm_village_camera_begin(BfmVillageCamera *camera, const int16_t xyz[3])
     bfm_village_camera_step(camera, xyz, 0);
     bfm_village_camera_step(camera, xyz, 0);
 }
+
+void bfm_village_camera_lower(BfmVillageCamera *camera, const int16_t xyz[3],
+                              int entering)
+{
+    if (entering) {
+        *camera = (BfmVillageCamera){.focal = 500, .radius = 1200,
+                                     .yaw = 2048, .following = 1};
+        camera->target[1] = xyz[1];
+    }
+
+    int rise = xyz[1] - camera->target[1];
+    int step = rise / 4;
+    if (!step && rise)
+        step = rise > 0 ? 1 : -1;
+    camera->target[0] = xyz[0];
+    camera->target[1] += step;
+    camera->target[2] = xyz[2];
+    orbit(camera, 568);
+}

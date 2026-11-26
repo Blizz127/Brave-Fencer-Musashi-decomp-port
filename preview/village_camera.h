@@ -18,4 +18,9 @@ void bfm_village_camera_begin(BfmVillageCamera *camera, const int16_t xyz[3]);
 void bfm_village_camera_step(BfmVillageCamera *camera, const int16_t xyz[3],
                              int follow_event);
 
+/* Normal follow view on the northern ramp and the lower village street.
+ * Start at the transferred player position, then update once per world tick. */
+void bfm_village_camera_lower(BfmVillageCamera *camera, const int16_t xyz[3],
+                              int entering);
+
 #endif

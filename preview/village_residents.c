@@ -225,11 +225,18 @@ int bfm_village_residents_place_window(const BfmVillageResidents *residents,
     if (!residents || !view || !player || !anchor || !portrait_on_right) return 0;
     int16_t station[3];
     for (unsigned i = 0; i < 3; ++i) station[i] = (int16_t)residents->position[i];
+    return bfm_village_speaker_anchor(view, station, player, residents->tail_limits,
+                                     anchor, portrait_on_right);
+}
+
+int bfm_village_speaker_anchor(const BfmBedroomView *view, const int16_t station[3],
+                              const int16_t player[3], const uint8_t limits[12],
+                              int *anchor, int *portrait_on_right)
+{
     int speaker[3], listener[3];
     if (!bfm_bedroom_project(view, station, speaker) ||
         !bfm_bedroom_project(view, player, listener)) return 0;
     int right = speaker[0] >= listener[0];
-    const uint8_t *limits = residents->tail_limits;
     int scale = right ? -7232 : 7232;
     int position = (speaker[0] - 160) * 4096 / scale;
     /* The field balloons use separate inner and outer bands. The mounted

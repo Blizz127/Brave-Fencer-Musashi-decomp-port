@@ -604,18 +604,22 @@ static const BfmForestMessageFrame *advance_message(BfmBedroom *room, int confir
     return frame;
 }
 
-static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int x, int y, int talk_edge)
+static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int direction,
+                        int accept_edge, int x, int y, int talk_edge)
 {
     int result = BFM_BEDROOM_ADVANCED;
     int was_in_dialogue = room->message != NULL;
     advance_voice(room);
     if (room->message) {
+        if (bfm_field_message_choose(room->message, direction, confirm_edge && !accept_edge, accept_edge))
+            room->effect_request = accept_edge ? BFM_ROOM_ACCEPT_SOUND : BFM_ROOM_MOVE_SOUND;
         const BfmForestMessageFrame *frame = advance_message(room, confirm_edge, reveal_edge, &result);
         if (!frame) return 0;
         if (frame->events & BFM_FOREST_MESSAGE_CLOSED) {
+            unsigned answer = frame->choices ? frame->answer : 0;
             bfm_forest_message_free(room->message);
             room->message = NULL;
-            if (!bfm_village_arrival_continue(room->village)) return 0;
+            if (!bfm_village_arrival_message_closed(room->village, answer)) return 0;
         }
     }
     if (room->village_score_wait && --room->village_score_wait == 0) {
@@ -625,11 +629,9 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
     BfmForestMessage *opened = NULL;
     if (!bfm_village_arrival_step_input(room->village, room->run, x, y,
                                         talk_edge && !was_in_dialogue, &opened)) return 0;
-    if (opened) {
-        room->message = opened;
-        if (room->story_flags != room->entry.state.flags)
-            memcpy(room->story_flags, room->entry.state.flags, sizeof room->entry.state.flags);
-    }
+    if (opened) room->message = opened;
+    if (room->story_flags != room->entry.state.flags)
+        memcpy(room->story_flags, room->entry.state.flags, sizeof room->entry.state.flags);
     const BfmVillagePlayer *player = bfm_village_arrival_player(room->village);
     if (player->events & BFM_VILLAGE_CAMERA) {
         unsigned minute = half(room->entry.state.progress + 0x1a);
@@ -649,6 +651,9 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
     uint32_t (*frame)[320] = room->frames[room->presented];
     if (!bfm_village_arrival_draw(room->village, room->story_flags,
                 room->message ? bfm_forest_message_frame(room->message) : NULL, frame)) return 0;
+    memcpy(room->status.record + 0x18, room->entry.state.progress + 0x18, 4);
+    memcpy(room->status.record + 0x34, room->entry.state.progress + 0x34, 6);
+    room->status.record[0x42] = room->entry.state.progress[0x42];
     bfm_forest_hud_draw(room->hud, &room->status, frame);
     room->presented = (room->presented + 1) % 3;
     ++room->village_updates;
@@ -701,7 +706,8 @@ int bfm_bedroom_step_axes(BfmBedroom *room, int confirm_edge, int reveal_edge,
     room->effect_request = 0;
     room->slider_event = 0;
     int result = BFM_BEDROOM_ADVANCED;
-    if (room->village) return village_step(room, confirm_edge, reveal_edge, x, y, talk_edge);
+    if (room->village) return village_step(room, confirm_edge, reveal_edge, direction,
+                                            accept_edge, x, y, talk_edge);
     if (room->village_trip && room->cable_tick>=COURT_WIPE) return cable_trip_step(room);
     if (room->village_trip) {
         ++room->cable_tick;
@@ -985,7 +991,8 @@ int bfm_bedroom_step(BfmBedroom *room)
 int bfm_bedroom_draw(BfmBedroom *room, uint32_t pixels[240][320])
 {
     memcpy(pixels, room->frames[room->presented], sizeof room->frames[0]);
-    if (room->village && room->village_updates >= 18) return 1;
+    unsigned crossing = room->village ? bfm_village_arrival_transfer_tick(room->village) : 0;
+    if (room->village && room->village_updates >= 18 && !crossing) return 1;
     if (room->village_trip) {
         unsigned tick=room->cable_tick;
         int entering = room->village || (tick >= STATION_START && tick < STATION_START+19);
@@ -994,10 +1001,14 @@ int bfm_bedroom_draw(BfmBedroom *room, uint32_t pixels[240][320])
         int entry_loss = room->village ? 35 - 2*(int)room->village_updates
                                        : 37 - 2*((int)tick-STATION_START);
         unsigned wipe=tick>=STATION_WIPE ? STATION_WIPE : COURT_WIPE;
-        if (entering || (tick>=wipe && (tick<STATION_START || tick>=STATION_WIPE))) {
+        if (crossing || entering || (tick>=wipe && (tick<STATION_START || tick>=STATION_WIPE))) {
             for (unsigned y=0;y<240;++y) {
                 unsigned band=(y<120 ? y : 239-y)/8;
                 int loss=entering ? entry_loss : (int)((tick-wipe)/2)-(int)band;
+                if (crossing) {
+                    loss = crossing >= 145 ? 325 - 2*(int)crossing :
+                           ((int)crossing-36)/2 - (int)band;
+                }
                 if (loss<=0) continue;
                 for (unsigned x=0;x<320;++x) {
                     uint32_t pix=pixels[y][x], dark=0xff000000u;

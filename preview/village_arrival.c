@@ -3,6 +3,8 @@
 #include "forest_message_art.h"
 #include "scene_tiles.h"
 #include "village_field.h"
+#include "village_clock.h"
+#include "village_lower.h"
 #include "village_cable.h"
 #include "village_impact.h"
 #include "village_portrait.h"
@@ -17,6 +19,10 @@
 struct BfmVillageArrival {
     uint8_t scene[BFM_FIELD_SCENE_CAPACITY];
     size_t bytes, descriptor;
+    const MusashiDiscMedia *disc;
+    BfmBedroomEntry *entry;
+    BfmVillageLower *lower;
+    unsigned transfer_tick;
     uint16_t (*tiles)[1024];
     BfmVillageMotion *motion;
     BfmVillageCamera camera, presented_camera;
@@ -38,6 +44,7 @@ struct BfmVillageArrival {
 void bfm_village_arrival_free(BfmVillageArrival *a)
 {
     if (!a) return;
+    bfm_village_lower_free(a->lower);
     bfm_forest_message_art_free(a->message_art);
     bfm_village_residents_free(a->residents);
     bfm_village_impact_free(a->impact);
@@ -81,6 +88,8 @@ BfmVillageArrival *bfm_village_arrival_open(const MusashiDiscMedia *disc, BfmBed
     bfm_village_camera_step(&a->camera, spawn, 0);
     a->presented_camera = a->camera;
     *entry = next;
+    a->disc = disc;
+    a->entry = entry;
     a->record = &entry->state;
     return a;
 fail:
@@ -90,7 +99,7 @@ fail:
 
 const BfmVillagePlayer *bfm_village_arrival_player(const BfmVillageArrival *a)
 {
-    return bfm_village_motion_player(a->motion);
+    return a->lower ? bfm_village_lower_player(a->lower) : bfm_village_motion_player(a->motion);
 }
 
 int bfm_village_arrival_continue(BfmVillageArrival *a)
@@ -100,6 +109,20 @@ int bfm_village_arrival_continue(BfmVillageArrival *a)
         return 1;
     }
     return bfm_village_motion_continue(a->motion);
+}
+
+int bfm_village_arrival_message_closed(BfmVillageArrival *a, unsigned answer)
+{
+    if (a->lower) {
+        bfm_village_lower_close(a->lower, answer);
+        return 1;
+    }
+    return bfm_village_arrival_continue(a);
+}
+
+unsigned bfm_village_arrival_transfer_tick(const BfmVillageArrival *a)
+{
+    return a->transfer_tick;
 }
 
 BfmForestMessage *bfm_village_arrival_speech(const BfmVillageArrival *a)
@@ -113,8 +136,19 @@ BfmForestMessage *bfm_village_arrival_speech(const BfmVillageArrival *a)
 int bfm_village_arrival_step_input(BfmVillageArrival *a, BfmGameplayRun *run,
                                    int x, int y, int talk_edge, BfmForestMessage **opened)
 {
-    const BfmVillagePlayer *before = bfm_village_motion_player(a->motion);
     if (opened) *opened = NULL;
+    if (a->transfer_tick) {
+        /* The outgoing field freezes at its exit contact. The incoming mesh is
+         * ready before the crossfade makes its first scanout visible. */
+        if (++a->transfer_tick == 145) {
+            a->lower = bfm_village_lower_open(a->disc, a->entry, a->motion, a->tiles);
+            if (!a->lower) return 0;
+        }
+        if (a->transfer_tick < 161) return 1;
+        if (a->transfer_tick >= 166) a->transfer_tick = 0;
+    }
+    if (a->lower) return bfm_village_lower_step(a->lower, x, y, talk_edge, opened);
+    const BfmVillagePlayer *before = bfm_village_motion_player(a->motion);
     if (opened && before->controlled && talk_edge &&
         bfm_village_residents_begin_talk(a->residents, before->root.xyz, a->record, talk_edge)) {
         int16_t station[3];
@@ -133,6 +167,9 @@ int bfm_village_arrival_step_input(BfmVillageArrival *a, BfmGameplayRun *run,
         movement_yaw = bfm_village_motion_view_yaw(a->presented_camera.eye, a->presented_camera.target);
     if (!bfm_village_motion_step(a->motion, x, y, movement_yaw)) return 0;
     const BfmVillagePlayer *p = bfm_village_motion_player(a->motion);
+    if (p->events & BFM_VILLAGE_TRANSFER) a->transfer_tick = 1;
+    if (p->controlled && !a->transfer_tick && !bfm_village_residents_talking(a->residents))
+        bfm_village_clock_step(a->record, 0);
     bfm_village_cable_step(a->cable, p->movement, p->movement <= 81, p->root.xyz, run);
     bfm_village_impact_step(a->impact, p->events & BFM_VILLAGE_HIT, run);
     bfm_village_camera_step(&a->camera, p->root.xyz, p->events & BFM_VILLAGE_CAMERA);
@@ -195,6 +232,7 @@ static void draw_actors(void *context, int depth)
 int bfm_village_arrival_draw(BfmVillageArrival *a, const uint8_t flags[64],
                              const BfmForestMessageFrame *window, uint32_t pixels[240][320])
 {
+    if (a->lower) return bfm_village_lower_draw(a->lower, flags, window, pixels);
     const BfmVillagePlayer *p = bfm_village_motion_player(a->motion);
     BfmVillageCamera drawing = a->presented_camera;
     int shake = bfm_village_impact_shake_y(a->impact);

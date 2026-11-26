@@ -28,5 +28,6 @@ int bfm_castle_room_entry(const MusashiDiscMedia *disc, const uint8_t *transfer,
                       BfmBedroomEntry *entry);
 /* Loads the player body/motions from the resident MAIN member. Caller frees. */
 uint8_t *bfm_bedroom_effect_data(const MusashiDiscMedia *disc, unsigned member, size_t *size);
+uint8_t *bfm_village_event_data(const MusashiDiscMedia *disc, unsigned member, size_t *size);
 uint8_t *bfm_bedroom_player_data(const MusashiDiscMedia *disc, size_t *size);
 #endif

@@ -1,14 +1,14 @@
 /* SPDX-License-Identifier: MIT */
 #include "village_arrival_motion.h"
 #include "forest_motion.h"
-#include "room_walk_grid.h"
+#include "village_ground.h"
 
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
-enum { Q = 65536 };
+enum { Q = 65536, GRAVITY = 13*Q/8 };
 static const uint32_t scene_base = 0x80128158u, main_base = 0x800cedf8u;
 static const double angle_unit = 0.0015339807878856412;
 
@@ -26,7 +26,13 @@ struct BfmVillageMotion {
     unsigned key_count, key, delay, turn, countdown;
     uint32_t messages[2];
     BfmBedroomMotion *ordinary;
-    BfmRoomWalkGrid *walk;
+    BfmVillageGround *ground;
+    const uint8_t *outgoing, *transfer, *brake_keys;
+    unsigned brake_count, brake_frame, brake;
+    int airborne, landed;
+    int32_t fall_speed;
+    uint16_t material;
+    BfmBedroomRoot crossing;
     int64_t position[3];
     int32_t starting_speed, speed;
     int walking, pending, message_due;
@@ -146,9 +152,42 @@ static int publish_root(BfmVillageMotion *m)
         r->xyz[i] = (int16_t)whole;
     }
     if (!shadow(m,r)) return 0;
-    if (m->player.phase >= BFM_VILLAGE_SETTLE && r->shadow_visible)
+    if (m->player.phase >= BFM_VILLAGE_SETTLE && m->player.phase < BFM_VILLAGE_CONTROL && r->shadow_visible)
         memcpy(r->normal, r->shadow_normal, sizeof r->normal);
     return 1;
+}
+
+static int load_field(BfmVillageMotion *m, const uint8_t *room)
+{
+    uint32_t grid_address = read32(room+0x88);
+    m->grid = at(&m->scene, grid_address, 32);
+    if (!m->grid) return 0;
+    int width = read16(m->grid+4), depth = read16(m->grid+6);
+    uint32_t cell_offset = read32(m->grid+8);
+    if (width <= 0 || depth <= 0 || width > 512 || depth > 512 ||
+        cell_offset < 32 || cell_offset > UINT32_MAX-grid_address) return 0;
+    m->cells = at(&m->scene, grid_address+cell_offset, (size_t)width*depth*4);
+    if (!m->cells) return 0;
+    m->ground = bfm_village_ground_open(m->scene.data,m->scene.bytes,m->room);
+    m->ordinary = bfm_bedroom_motion_open(m->scene.data,m->scene.bytes,
+                                          m->resident.data,m->resident.bytes,m->room);
+    const uint8_t *bank = at(&m->resident,read32(room+0x4c),6*4);
+    if (!m->ground || !m->ordinary || !bank) return 0;
+    uint32_t address = read32(bank+5*4);
+    const uint8_t *brake = at(&m->resident,address,12);
+    if (!brake || read32(brake) != 4 || !at(&m->resident,read32(brake+4),4) ||
+        read32(brake+8) != 19 || address > UINT32_MAX-12-64*4) return 0;
+    m->brake_keys = brake+12;
+    for (unsigned i = 0; i < 64; ++i) {
+        const uint8_t *key = at(&m->resident,address+12+4*i,4);
+        if (!key) return 0;
+        if (read32(key) == 1) {
+            m->brake_count = i;
+            return i > 1;
+        }
+        if (!at(&m->resident,read32(key),256)) return 0;
+    }
+    return 0;
 }
 
 BfmVillageMotion *bfm_village_motion_open(const uint8_t *scene, size_t scene_bytes,
@@ -163,15 +202,7 @@ BfmVillageMotion *bfm_village_motion_open(const uint8_t *scene, size_t scene_byt
     const uint8_t *header = at(&m->scene, 0x801854b0u, 4);
     const uint8_t *room = at(&m->scene, room_address, 0xcc);
     if (!header || read32(header) != room_address || !room) goto fail;
-    uint32_t grid_address = read32(room+0x88);
-    m->grid = at(&m->scene, grid_address, 32);
-    if (!m->grid) goto fail;
-    int width = read16(m->grid+4), depth = read16(m->grid+6);
-    uint32_t cell_offset = read32(m->grid+8);
-    if (width <= 0 || depth <= 0 || width > 512 || depth > 512 ||
-        cell_offset < 32 || cell_offset > UINT32_MAX-grid_address) goto fail;
-    m->cells = at(&m->scene, grid_address+cell_offset, (size_t)width*depth*4);
-    if (!m->cells) goto fail;
+    if (!load_field(m,room)) goto fail;
     const uint8_t *entries = at(&m->scene, read32(room+0xc8), (entrance+1)*4);
     const uint8_t *entry = entries ? at(&m->scene, read32(entries+4*entrance), 24) : NULL;
     const uint8_t *velocity = at(&m->scene, 0x80187b0cu, 12);
@@ -182,9 +213,8 @@ BfmVillageMotion *bfm_village_motion_open(const uint8_t *scene, size_t scene_byt
     uint32_t back = read32(velocity+8);
     if (back < 0u-11u*Q || back == 0) goto fail;
     m->starting_speed = (int32_t)(0u-back);
-    m->ordinary = bfm_bedroom_motion_open(scene,scene_bytes,main,main_bytes,room_address);
-    m->walk = bfm_room_walk_grid_open(scene, scene_bytes, room_address);
-    if (!m->ordinary || !m->walk) goto fail;
+    m->outgoing = at(&m->scene,read32(entries+4),36);
+    if (!m->outgoing || read16(m->outgoing) != 0x1010 || m->outgoing[2] != 1) goto fail;
     place(m,entry+16);
     m->player.root.yaw = (unsigned)read16(entry+22) & 4095;
     m->player.root.busy = 1;
@@ -204,8 +234,10 @@ static int move(BfmVillageMotion *m, int speed, int vertical, int require_floor)
 {
     ForestPlayerState velocity = {0};
     velocity.field_2c.word = -speed;
-    velocity.local_y.word = vertical;
+
     if (!bfm_forest_level_velocity(&velocity, 0, (int16_t)m->player.root.yaw, 0)) return 0;
+    /* Gravity can pass the horizontal speed bound on a long fall. */
+    velocity.velocity[1] = (uint32_t)vertical;
     int64_t next[3];
     BfmBedroomRoot candidate = m->player.root;
     for (int i = 0; i < 3; ++i) {
@@ -216,13 +248,23 @@ static int move(BfmVillageMotion *m, int speed, int vertical, int require_floor)
         if (whole < INT16_MIN || whole > INT16_MAX) return require_floor;
         candidate.xyz[i] = (int16_t)whole;
     }
-    /* Follow the bounded terrace floor even where its grid cell also indexes a wall. */
     if (require_floor) {
-        if (!bfm_room_walk_grid_level_step(m->walk, m->player.root.xyz, candidate.xyz)) return 1;
-        if (!shadow(m,&candidate))
-            return 0;
-        if (!candidate.shadow_visible || candidate.shadow_xyz[1] != candidate.xyz[1] ||
-            candidate.shadow_normal[0] || candidate.shadow_normal[2]) return 1;
+        BfmForestContact floor;
+        BfmVillageGroundResult hit = m->airborne ?
+            bfm_village_ground_air(m->ground,m->player.root.xyz,candidate.xyz,&floor) :
+            bfm_village_ground_step(m->ground,m->player.root.xyz,candidate.xyz,&floor);
+        if (hit == BFM_VILLAGE_GROUND_BLOCKED) return 1;
+        if (hit == BFM_VILLAGE_GROUND_FOOTING) {
+            m->landed = m->airborne;
+            m->airborne = 0;
+            m->material = floor.flags;
+            memcpy(m->player.root.normal,floor.normal,sizeof floor.normal);
+        } else {
+            m->airborne = 1;
+            m->material = 0;
+            m->player.root.normal[0] = m->player.root.normal[2] = 0;
+            m->player.root.normal[1] = -4096;
+        }
         for (int i = 0; i < 3; ++i)
             next[i] = (int64_t)candidate.xyz[i]*Q + (next[i] & (Q-1));
     }
@@ -264,6 +306,16 @@ static int pad_axis(int angle, int power)
     return value < -127 ? -127 : value > 127 ? 127 : value;
 }
 
+/* The input service measures a single axis directly. For diagonals it
+ * quantizes the squared length to a base-four mantissa before taking its root. */
+static int pad_magnitude(int x, int z)
+{
+    if (!x || !z) return abs(x) + abs(z);
+    unsigned squared = (unsigned)(x*x + z*z), shift = 0;
+    while ((squared >> shift) > 255) shift += 2;
+    return (int)sqrt((double)((squared >> shift) << shift));
+}
+
 static int walk_toward(BfmVillageMotion *m, int dx, int dz, int power, int camera,
                        BfmBedroomAction *action)
 {
@@ -276,7 +328,7 @@ static int walk_toward(BfmVillageMotion *m, int dx, int dz, int power, int camer
         m->walking = 1;
         return 1;
     }
-    int magnitude = (int)hypot(px,pz);
+    int magnitude = pad_magnitude(px,pz);
     if (magnitude > 127) magnitude = 127;
     return move(m, 11*Q*magnitude/127, 0, 1);
 }
@@ -321,25 +373,48 @@ static int talking_input(BfmVillageMotion *m, int camera, BfmBedroomAction *acti
 
 static int ordinary_input(BfmVillageMotion *m, int x, int y, int camera, BfmBedroomAction *action)
 {
-    int magnitude = (int)hypot(x,y);
-    if (magnitude < 16) {
-        if (m->walking) *action = BFM_BEDROOM_STAND;
-        m->walking = 0;
+    int magnitude = pad_magnitude(x,y);
+    int steer = magnitude >= 16;
+    if (magnitude > 127) magnitude = 127;
+    if (steer) m->player.root.yaw = (unsigned)(camera+heading(-x,y)) & 4095;
+    if (m->landed) {
+        m->landed = 0;
+        m->walking = steer;
+        m->speed = ((m->speed+Q-1)/Q)*Q;
+        *action = steer ? BFM_BEDROOM_WALK : BFM_BEDROOM_STAND;
         return 1;
     }
-    if (magnitude > 127) magnitude = 127;
-    m->player.root.yaw = (unsigned)(camera+heading(-x,y)) & 4095;
-    if (!m->walking) {
+    if (!steer && !m->airborne) {
+        if (m->walking) {
+            *action = BFM_BEDROOM_STAND;
+            m->brake = m->speed == 11*Q;
+            m->brake_frame = 0;
+            m->walking = 0;
+        } else if (m->brake) {
+            if (++m->brake_frame < m->brake_count)
+                return move(m,4*Q,0,1);
+            m->brake = 0;
+        }
+        return 1;
+    }
+    m->brake = 0;
+    if (!m->walking && !m->airborne) {
         m->walking = 1;
         m->speed = m->starting_speed;
         *action = BFM_BEDROOM_WALK;
         return 1;
     }
-    m->speed += Q/16;
-    if (m->speed > 11*Q) m->speed = 11*Q;
-    int speed = m->speed*magnitude/127;
-    if (speed < 9*Q+Q/4) *action = BFM_BEDROOM_WALK;
-    return move(m,speed,0,1);
+    int was_airborne = m->airborne;
+    int speed = m->speed+Q/16;
+    int limit = m->airborne ? 11*Q+5*Q/8 : 11*Q;
+    m->speed = speed < limit ? speed : limit;
+    if (steer) speed = speed*magnitude/127;
+    if (!m->airborne && speed < 9*Q+Q/4) *action = BFM_BEDROOM_WALK;
+    if (m->airborne && m->fall_speed < 31*Q) m->fall_speed += GRAVITY;
+    if (!move(m,speed,m->airborne ? m->fall_speed : 0,1)) return 0;
+    if (m->airborne && !was_airborne) *action = BFM_BEDROOM_FALL;
+    if (m->landed) *action = BFM_BEDROOM_LAND;
+    return 1;
 }
 
 static int advance(BfmVillageMotion *m, int stick_x, int stick_y, int camera)
@@ -374,8 +449,13 @@ static int advance(BfmVillageMotion *m, int stick_x, int stick_y, int camera)
         ride_pose(m);
         break;
     case BFM_VILLAGE_IMPACT:
+        /* The riding action suspended ordinary fall. On restoring it the
+         * actor coasts for one update, then contacts the terrace. The contact
+         * fixes whole Y while retaining its fractional descent and gravity. */
         place(m,m->settle);
-        if (!move(m,m->speed,0,0)) return 0;
+        m->fall_speed += GRAVITY;
+        if (!move(m,m->speed,m->fall_speed,0)) return 0;
+        m->position[1] = (int64_t)read16(m->settle+2)*Q + (m->position[1] & (Q-1));
         p->phase = BFM_VILLAGE_SETTLE;
         m->countdown = m->delay+1;
         action = BFM_BEDROOM_ENTER;
@@ -425,13 +505,26 @@ static int advance(BfmVillageMotion *m, int stick_x, int stick_y, int camera)
         }
         break;
     case BFM_VILLAGE_CONTROL:
+        if (!m->transfer && m->outgoing && (m->material & 31) == 5) {
+            m->transfer = m->outgoing;
+            m->crossing = p->root;
+            p->destination = (uint16_t)read16(m->transfer);
+            p->entrance = m->transfer[2];
+            p->events |= BFM_VILLAGE_TRANSFER;
+        }
         if (m->talk != NO_TALK) {
             if (!talking_input(m,camera,&action)) return 0;
         } else if (!ordinary_input(m,stick_x,stick_y,camera,&action)) return 0;
         break;
     }
     if (!publish_root(m)) return 0;
-    return p->phase <= BFM_VILLAGE_IMPACT || bfm_bedroom_motion_step(m->ordinary,action,&p->pose);
+    if (p->phase <= BFM_VILLAGE_IMPACT) return 1;
+    if (!bfm_bedroom_motion_step(m->ordinary,action,&p->pose)) return 0;
+    if (m->brake) {
+        p->pose.pose = at(&m->resident,read32(m->brake_keys+4*m->brake_frame),256);
+        p->pose.show_lumina = 0;
+    }
+    return 1;
 }
 
 int bfm_village_motion_step(BfmVillageMotion *m, int x, int y, int camera_yaw)
@@ -441,6 +534,77 @@ int bfm_village_motion_step(BfmVillageMotion *m, int x, int y, int camera_yaw)
     if (!advance(&next,x,y,camera_yaw & 4095)) return 0;
     *m = next;
     return 1;
+}
+
+const uint8_t *bfm_village_motion_transfer(const BfmVillageMotion *m)
+{
+    return m ? m->transfer : NULL;
+}
+
+int bfm_village_motion_staged(BfmVillageMotion *m, const BfmBedroomRoot *root)
+{
+    if (!m || !root || m->player.phase != BFM_VILLAGE_CONTROL || m->talk != NO_TALK ||
+        root->yaw >= 4096) return 0;
+    BfmBedroomAction action = BFM_BEDROOM_NONE;
+    switch (root->locomotion_edge) {
+    case BFM_TRAVEL_WALK: action = BFM_BEDROOM_WALK; break;
+    case BFM_TRAVEL_FALL: action = BFM_BEDROOM_FALL; break;
+    case BFM_TRAVEL_LAND: action = BFM_BEDROOM_LAND; break;
+    case BFM_TRAVEL_STAND: action = BFM_BEDROOM_STAND; break;
+    case BFM_TRAVEL_NONE: break;
+    default: return 0;
+    }
+    BfmBedroomRoot next = *root;
+    if (!shadow(m,&next) || !bfm_bedroom_motion_step(m->ordinary,action,&m->player.pose))
+        return 0;
+    m->player.root = next;
+    m->player.events = 0;
+    return 1;
+}
+
+int bfm_village_motion_place(BfmVillageMotion *m, const BfmBedroomRoot *root)
+{
+    if (!m || !root || !m->player.controlled || m->talk != NO_TALK || root->yaw >= 4096)
+        return 0;
+    BfmVillageMotion next = *m;
+    for (unsigned i = 0; i < 3; ++i)
+        next.position[i] = (int64_t)root->xyz[i]*Q;
+    next.player.root = *root;
+    next.player.root.busy = 0;
+    next.player.root.locomotion_edge = BFM_TRAVEL_NONE;
+    next.airborne = next.landed = next.brake = next.walking = 0;
+    next.speed = next.fall_speed = 0;
+    next.material = 0;
+    if (!publish_root(&next) ||
+        !bfm_bedroom_motion_step(next.ordinary,BFM_BEDROOM_ENTER,&next.player.pose)) return 0;
+    *m = next;
+    return 1;
+}
+
+BfmVillageMotion *bfm_village_motion_arrive(const BfmVillageMotion *upper, const uint8_t *scene,
+                                            size_t bytes, uint32_t room_address)
+{
+    if (!upper || !upper->transfer || !scene) return NULL;
+    BfmVillageMotion *m = calloc(1,sizeof *m);
+    if (!m) return NULL;
+    m->scene = (Region){scene,bytes,scene_base};
+    m->resident = upper->resident;
+    m->room = room_address;
+    const uint8_t *header = at(&m->scene,0x8018d260u,4);
+    const uint8_t *room = at(&m->scene,room_address,0xcc);
+    if (!header || read32(header) != room_address || !room || !load_field(m,room)) goto fail;
+    const uint8_t *entries = at(&m->scene,read32(room+0xc8),8);
+    const uint8_t *entry = entries ? at(&m->scene,read32(entries+4),36) : NULL;
+    if (!entry || read16(entry) != 0x1011 || entry[2] != 1) goto fail;
+    m->player.phase = BFM_VILLAGE_CONTROL;
+    m->player.controlled = 1;
+    const uint8_t *velocity = at(&m->scene,0x8018fb1cu,12);
+    if (!velocity || read32(velocity+8) < 0u-11u*Q || !read32(velocity+8)) goto fail;
+    m->starting_speed = (int32_t)(0u-read32(velocity+8));
+    if (bfm_village_motion_place(m,&upper->crossing)) return m;
+fail:
+    bfm_village_motion_free(m);
+    return NULL;
 }
 
 int bfm_village_motion_continue(BfmVillageMotion *m)
@@ -504,7 +668,7 @@ void bfm_village_motion_free(BfmVillageMotion *m)
 {
     if (m) {
         bfm_bedroom_motion_free(m->ordinary);
-        bfm_room_walk_grid_free(m->walk);
+        bfm_village_ground_free(m->ground);
     }
     free(m);
 }

@@ -25,6 +25,7 @@ add_executable(musashi_native_boot
     village_arrival.c
     village_arrival_motion.c
     village_camera.c
+    village_clock.c
     village_talk_camera.c
     village_cable.c
     village_field.c
@@ -33,7 +34,16 @@ add_executable(musashi_native_boot
     village_impact.c
     village_impact_sound.c
     village_portrait.c
+    village_lower.c
+    village_lighting.c
+    village_ground.c
+    village_mayor_camera.c
+    village_mayor_door.c
+    village_mayor_cast.c
+    village_mayor.c
+    village_mayor_stage.c
     village_residents.c
+    village_street_scenery.c
     village_sky.c
     bedroom_score.c
     bedroom_award.c

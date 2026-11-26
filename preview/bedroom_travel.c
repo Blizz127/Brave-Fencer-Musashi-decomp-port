@@ -265,6 +265,26 @@ BfmBedroomTravel *bfm_bedroom_travel_open(const uint8_t *scene, size_t bytes, ui
     return t;
 }
 
+BfmBedroomTravel *bfm_bedroom_travel_from_root(const uint8_t *scene, size_t bytes,
+                                               uint32_t room_address, const BfmBedroomRoot *root)
+{
+    if (!scene || !root) return NULL;
+    const uint8_t *room = mounted(scene, bytes, room_address, 0xcc);
+    if (!room) return NULL;
+    BfmBedroomTravel *t = calloc(1, sizeof *t);
+    if (!t) return NULL;
+    t->root = *root;
+    t->root.busy = 0;
+    t->root.locomotion_edge = BFM_TRAVEL_NONE;
+    for (unsigned axis = 0; axis < 3; ++axis)
+        t->position[axis] = (int64_t)root->xyz[axis] * Q;
+    if (!room_floor(&t->floor, scene, bytes, room) || !project_shadow(&t->floor, &t->root)) {
+        free(t);
+        return NULL;
+    }
+    return t;
+}
+
 void bfm_bedroom_travel_free(BfmBedroomTravel *t)
 {
     free(t);

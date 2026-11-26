@@ -17,6 +17,11 @@ typedef struct {
 int bfm_village_talk_camera_begin(BfmVillageTalkCamera *talk, const uint8_t *scene,
                                   size_t bytes, const BfmVillageCamera *current);
 
+/* Start a resident-relative orbit from a mounted 8-byte placement and
+ * 16-byte conversation camera record, after the caller checks both spans. */
+int bfm_village_talk_camera_frame(BfmVillageTalkCamera *talk, const uint8_t *station,
+                                  const uint8_t *camera, const BfmVillageCamera *current);
+
 /* Signal the return cue after the conversation's final wait. */
 void bfm_village_talk_camera_release(BfmVillageTalkCamera *talk);
 

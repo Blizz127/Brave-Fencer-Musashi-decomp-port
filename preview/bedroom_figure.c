@@ -136,26 +136,40 @@ static Transform support_rotation(const int normal[3])
     return compose(&rise,&bank);
 }
 
-static int light_matrix(BfmBedroomFigure *figure, const uint8_t *room)
+int bfm_bedroom_figure_lights(BfmBedroomFigure *figure, const BfmBedroomLight lights[3])
 {
+    if (!figure || !lights) return 0;
+    int length[3];
     for (unsigned i = 0; i < 3; ++i) {
-        const uint8_t *source = room + 6 + 10*i;
-        int axis[3];
         uint64_t squared = 0;
         for (unsigned k = 0; k < 3; ++k) {
-            axis[k] = (int16_t)read16(source+2*k);
-            squared += (unsigned)(axis[k]*axis[k]);
+            int axis = lights[i].axis[k];
+            squared += (unsigned)(axis * axis);
         }
-        unsigned length = (unsigned)sqrt((double)quantize_length(squared));
-        if (!length) return 0;
+        length[i] = (int)sqrt((double)quantize_length(squared));
+        if (!length[i]) return 0;
+    }
+    for (unsigned i = 0; i < 3; ++i) {
         for (unsigned k = 0; k < 3; ++k) {
-            figure->direction[i][k] = -axis[k]*4096/(int)length;
-            figure->color[k][i] = source[6+k]*4096/255;
+            figure->direction[i][k] = -lights[i].axis[k]*4096/length[i];
+            figure->color[k][i] = lights[i].rgb[k]*4096/255;
         }
+    }
+    return 1;
+}
+
+static int light_matrix(BfmBedroomFigure *figure, const uint8_t *room)
+{
+    BfmBedroomLight lights[3];
+    for (unsigned i = 0; i < 3; ++i) {
+        const uint8_t *source = room + 6 + 10*i;
+        for (unsigned k = 0; k < 3; ++k)
+            lights[i].axis[k] = (int16_t)read16(source+2*k);
+        memcpy(lights[i].rgb,source+6,3);
         int ambient = (int16_t)read16(room+2*i);
         figure->ambient[i] = ambient - ((ambient % 16 + 16) % 16);
     }
-    return 1;
+    return bfm_bedroom_figure_lights(figure,lights);
 }
 
 static int read_shadow(ShadowRect *rect, const uint8_t *source)

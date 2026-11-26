@@ -14,6 +14,8 @@ const BfmVillagePlayer *bfm_village_arrival_player(const BfmVillageArrival *arri
 int bfm_village_arrival_step(BfmVillageArrival *arrival, BfmGameplayRun *run, int x, int y);
 int bfm_village_arrival_step_input(BfmVillageArrival *arrival, BfmGameplayRun *run,
                                    int x, int y, int talk_edge, BfmForestMessage **opened);
+unsigned bfm_village_arrival_transfer_tick(const BfmVillageArrival *arrival);
+int bfm_village_arrival_message_closed(BfmVillageArrival *arrival, unsigned answer);
 int bfm_village_arrival_continue(BfmVillageArrival *arrival);
 BfmForestMessage *bfm_village_arrival_speech(const BfmVillageArrival *arrival);
 int bfm_village_arrival_draw(BfmVillageArrival *arrival, const uint8_t flags[64],

@@ -30,6 +30,7 @@ typedef struct {
     unsigned focused, text_visible, wait_for_confirm;
     /* Opening and closing size, and blend from round to pointed corners. */
     unsigned border_step, border_scale, jagged_mix, style, portrait;
+    unsigned choice_row;
 } BfmForestMessageFrame;
 
 /* Open on the update where the doorway gives focus to its message slot.

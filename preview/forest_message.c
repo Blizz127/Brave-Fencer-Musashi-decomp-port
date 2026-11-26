@@ -121,7 +121,7 @@ static int print_update(BfmForestMessage *m)
             ++m->cursor;
             break;
         case 0x02: /* Open dialogue border */
-            if (left < 2 || !set_style(m, arg[0] == 10 ? 2 : arg[0]) || arg[1] > 3 ||
+            if (left < 2 || !set_style(m, arg[0] == 10 || arg[0] == 14 ? arg[0] - 8u : arg[0]) || arg[1] > 3 ||
                 ((arg[0] == 1) != (arg[1] == 0))) return 0;
             f->portrait = arg[1];
             m->cursor += 2;
@@ -232,6 +232,8 @@ static int print_update(BfmForestMessage *m)
             m->last_shortcut = 1;
             break;
         case 0x0c:
+            if (m->row >= 2) return 0;
+            f->choice_row = m->row;
             m->phase = BUILD_CHOICE;
             return 1;
         case 0x18:
@@ -283,11 +285,11 @@ static int build_choice(BfmForestMessage *m)
             if (m->column == 36) return 0;
             m->frame.cells[m->row][m->column++] = (BfmForestMessageCell){(uint8_t)ch, (uint8_t)m->ink};
             ++glyphs;
-        } else if (ch == 0x0a && m->row == 0) {
+        } else if (ch == 0x0a && m->row == m->frame.choice_row) {
             ++m->row;
             m->column = 0;
         } else if (ch == 0 || ch == 7) {
-            if (m->row != 1 || !m->column) return 0;
+            if (m->row != m->frame.choice_row + 1 || !m->column) return 0;
             m->frame.choices = 2;
             m->frame.answer = 1;
             m->phase = WAIT_CHOICE;

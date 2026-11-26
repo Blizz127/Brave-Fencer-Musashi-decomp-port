@@ -42,4 +42,7 @@ int bfm_village_residents_place_window(const BfmVillageResidents *residents,
                                        const BfmBedroomView *view, const int16_t player[3],
                                        int *anchor, int *portrait_on_right);
 void bfm_village_residents_close_talk(BfmVillageResidents *residents);
+int bfm_village_speaker_anchor(const BfmBedroomView *view, const int16_t speaker[3],
+                              const int16_t listener[3], const uint8_t limits[12],
+                              int *anchor, int *portrait_on_right);
 #endif

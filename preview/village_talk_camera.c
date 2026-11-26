@@ -37,8 +37,14 @@ int bfm_village_talk_camera_begin(BfmVillageTalkCamera *talk, const uint8_t *sce
         u32le(scene + cue_offset) != 0x21) return 0;
     uint32_t record = u32le(scene + cue_offset + 4);
     if (record < origin || record - origin > bytes - 16) return 0;
-    const uint8_t *camera = scene + (record - origin);
-    const uint8_t *station = scene + station_offset;
+    return bfm_village_talk_camera_frame(talk, scene + station_offset,
+                                        scene + (record - origin), current);
+}
+
+int bfm_village_talk_camera_frame(BfmVillageTalkCamera *talk, const uint8_t *station,
+                                  const uint8_t *camera, const BfmVillageCamera *current)
+{
+    if (!talk || !station || !camera || !current) return 0;
     int heading = s16le(station + 6), yaw = s16le(camera + 8);
     int distance = s16le(camera + 10), pitch = s16le(camera + 12);
     if (distance <= 0) return 0;
