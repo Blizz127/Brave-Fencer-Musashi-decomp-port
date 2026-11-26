@@ -8020,6 +8020,19 @@
       "span_sha256": "6cb15fbe27ad5978a8f58a8cc76c4f8243ba543c2b43001bb4f34f90d2d288d4"
     },
     {
+      "name": "func_80150C48",
+      "region": "sc01_0080",
+      "vram": 2148863048,
+      "size": 88,
+      "source": "src/overlays/sc01_0080/80150c48.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Clean-room C from the US Spiral Tower courtyard overlay. Queues the destination record and entry selected by transfer-floor contact.",
+      "source_sha256": "6ae0ba2d4c841534c364d999a457b71c9b1b2c659a5376f5ddc88b478bee08b5",
+      "span_sha256": "918e7db2141986db17be133b7d75fc133447cec99e701e1c76a3ac5256dd437c"
+    },
+    {
       "name": "func_8017DBF4",
       "region": "sc01_0080",
       "vram": 2149047284,
