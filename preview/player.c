@@ -368,7 +368,7 @@ static int play(Player *p, char *error, size_t size) {
                 }
                 p->flow.held = p->held | p->pressed;
             } else if (p->forest) {
-                p->forest_pressed |= p->pressed & (PAD_CROSS | PAD_SQUARE);
+                p->forest_pressed |= p->pressed;
             } else if (p->flow.phase == BFM_TITLE_BEDROOM) {
                 if (bfm_bedroom_endpoint(p->bedroom) && (p->pressed & (PAD_TRIANGLE | PAD_START | PAD_CROSS))) {
                     bfm_desktop_voice_stop(p->voice);
