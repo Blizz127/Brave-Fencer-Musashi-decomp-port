@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "forest_terrain.h"
 #include "forest_dust.h"
+#include "forest_tether_trails.h"
 #include "scene_tiles.h"
 #include "forest_raster.h"
 
@@ -336,6 +337,20 @@ static int project(const BfmForestCamera *camera, const int16_t xyz[3], ScreenPo
     return 1;
 }
 
+int bfm_forest_project_effect_quad(const BfmForestCamera *camera,
+                                   const int16_t corners[4][3], BfmForestDustCard *card)
+{
+    if (!camera || !camera->projection || !corners || !card) return 0;
+    ScreenPoint point;
+    for (unsigned i = 0; i < 4; ++i) {
+        if (!project(camera, corners[i], &point) || camera->projection >= 2 * point.z) return 0;
+        card->vertices[i].x = point.x;
+        card->vertices[i].y = point.y;
+    }
+    card->bucket = (unsigned)point.z / 4;
+    return 1;
+}
+
 static int cross(ScreenPoint a, ScreenPoint b, int x, int y)
 {
     return (b.x-a.x) * (y-a.y) - (b.y-a.y) * (x-a.x);
@@ -656,7 +671,7 @@ int bfm_forest_terrain_draw_entrance_with_effects(BfmForestTerrain *terrain,
 {
     if (!terrain || !camera || !camera->projection || !pixels || buffer > 1 ||
         actor_count > BFM_FOREST_ACTOR_LIMIT || (actor_count && !actors) ||
-        card_count > BFM_FOREST_EFFECT_CARDS || (card_count && !cards) ||
+        card_count > BFM_FOREST_EFFECT_CARDS + BFM_TETHER_CARDS || (card_count && !cards) ||
         ((model || actor_count) && !terrain->has_lighting))
         return 0;
     /* The actor uses the 220-line gameplay viewport. Terrain diagnostics

@@ -109,6 +109,7 @@ BfmForestShoreUpdate bfm_forest_shore_step(BfmForestShore *shore, const BfmFores
     if (!shore || !field || !player) return BFM_SHORE_INVALID;
     if (shore->beyond_bank) return BFM_SHORE_UNRESOLVED;
     int first_hit = shore->recoil_pending;
+    BfmForestShorePhase prior_phase = shore->motion.phase;
     if (first_hit &&
         (!bfm_forest_guard_clip_read(field, UINT32_C(0x801b02a8), 0xffff, &shore->recoil) ||
          shore->recoil.count != 16))
@@ -138,9 +139,10 @@ BfmForestShoreUpdate bfm_forest_shore_step(BfmForestShore *shore, const BfmFores
     bfm_forest_actor_root(motion->yaw, motion->position, &shore->root);
     /* The first hit pose draws at the preceding standing height. */
     if (first_hit) shore->root.translation[1] = prior_y;
-    /* Creating this placed soldier chooses a patrol timer. The admitted
-     * walking and notice actions do not consult its value. */
-    if (!shore->active && run) bfm_gameplay_random(run);
+    /* Both entering the room and recovering from recoil restart this
+     * soldier's walking interval, independently of the shorter notice delay. */
+    if (run && (!shore->active || (prior_phase == BFM_SHORE_RECOIL && motion->phase == BFM_SHORE_WALK)))
+        shore->motion.patrol_timer = 70 + (bfm_gameplay_random(run) & 31);
     shore->active = 1;
     return step_marker(shore, field) ? BFM_SHORE_UPDATED : BFM_SHORE_INVALID;
 }

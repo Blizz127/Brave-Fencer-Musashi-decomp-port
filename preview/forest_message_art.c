@@ -4,7 +4,7 @@
 
 #include <stdlib.h>
 
-enum { CORNERS = BFM_DIALOGUE_CORNERS, GLYPHS = 95, FONT_HEIGHT = 12 };
+enum { CORNERS = BFM_DIALOGUE_CORNERS, GLYPHS = 0x94 - 0x20, FONT_HEIGHT = 12 };
 enum { TAIL_OFFSET = 0x2030, FONT_OFFSET = 0x24cbc, CONTOUR_OFFSET = 0x257fc,
        FOREST_INSET = 0x5f094, BEDROOM_INSET = 0x5a928 };
 
@@ -266,7 +266,7 @@ static void draw_message(const BfmForestMessageArt *art, int tail_x, int right, 
 void bfm_forest_message_art_draw(const BfmForestMessageArt *art, const BfmForestMessageFrame *frame,
                                  uint32_t pixels[240][320])
 {
-    draw_message(art, 160, 0, 0, frame, pixels);
+    draw_message(art, 160, 0, frame && frame->style == 1, frame, pixels);
 }
 
 void bfm_bedroom_message_art_draw(const BfmForestMessageArt *art, const BfmForestMessageFrame *frame,

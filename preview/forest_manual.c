@@ -162,8 +162,7 @@ int bfm_forest_jump_begin(BfmForestJump *jump, const BfmForestField *field,
     int16_t probe[3] = {cached[0], cached[1], cached[2]};
     int hit;
     if (!bfm_forest_air_step(field, cached, probe, &ground, &hit) ||
-        abs(ground.height - cached[1]) > 4 || ground.slope != 0x2000 ||
-        (ground.flags && ground.flags != 0x2000))
+        abs(ground.height - cached[1]) > 4 || !bfm_forest_jump_surface(&ground))
         return 0;
     /* A moving jump keeps its running momentum; a standing jump takes
      * its first directed step at nine units. */

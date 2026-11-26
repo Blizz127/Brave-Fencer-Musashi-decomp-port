@@ -16,6 +16,7 @@ typedef struct {
     uint16_t x_fraction, z_fraction;
     uint16_t yaw;
     unsigned frame, notice_delay;
+    unsigned patrol_timer; /* Walking variant zero keeps the interval originally chosen at entry. */
     BfmForestShorePhase phase;
 } BfmForestShoreMotion;
 

@@ -27,6 +27,19 @@ int bfm_forest_speech_actor_begin(BfmForestSpeechActor *actor, const BfmForestFi
 int bfm_forest_speech_actor_tick(BfmForestSpeechActor *actor, int first, int second,
                                  int closed, BfmForestPose *pose);
 typedef enum {
+    BFM_FOREST_CLEARING_CONTINUE,
+    BFM_FOREST_CLEARING_CLIFF,
+    BFM_FOREST_CLEARING_RECOVER,
+    BFM_FOREST_CLEARING_FACE_SOLDIER
+} BfmForestClearingEvent;
+
+/* Advance the existing forest hero once per game update while the bridge
+ * event owns control. CLIFF opens with the first speech; RECOVER follows
+ * its dismissal. FACE_SOLDIER restores the stance when discovery opens. */
+int bfm_forest_clearing_pose_tick(BfmForestSpeechActor *actor, BfmForestClearingEvent event,
+                                  BfmForestPose *pose);
+
+typedef enum {
     BFM_FOREST_STANDING_CONTINUE,
     BFM_FOREST_STANDING_STOP,
     BFM_FOREST_STANDING_RUN_STOP

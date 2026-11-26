@@ -5,6 +5,9 @@
 #include "forest_manual.h"
 #include "forest_swing.h"
 #include "forest_fusion_power.h"
+#include "forest_lesson.h"
+#include "forest_lesson_fusion.h"
+#include "forest_lesson_camera.h"
 #include "forest_hud.h"
 #include "forest_message.h"
 #include "forest_message_art.h"
@@ -30,6 +33,7 @@ struct BfmForestWalk {
     BfmForestField *field;
     BfmGameplayRun standalone_gameplay;
     BfmGameplayRun *gameplay;
+    int ambient_status;
     const MusashiDiscMedia *disc;
     ForestPlayerState actor;
     BfmForestOpeningData data;
@@ -52,6 +56,10 @@ struct BfmForestWalk {
     unsigned swing_age;
     BfmForestSwing swing;
     BfmForestFusionPower fusion_power;
+    BfmForestLesson lesson;
+    BfmForestLessonFusion fusion;
+    BfmForestLessonCamera lens;
+    int shoulder_held, orbit[3];
     int at_boundary, blocked_x, blocked_y;
     BfmForestMessage *message;
     BfmForestMessageArt *message_art;
@@ -113,6 +121,7 @@ static int setup_cameras(BfmForestWalk *w)
     int c=(int)lround(cos(D_80126968*radians)*4096);
     axis[0]=floor_shift((int64_t)axis[0]*c,12); axis[1]=-(int)lround(sin(D_80126968*radians)*4096);
     axis[2]=floor_shift((int64_t)axis[2]*c,12); normalize_axis(axis);
+    memcpy(w->orbit, axis, sizeof w->orbit);
     for (unsigned a=0;a<3;++a) w->follow_offset[a]=floor_shift((int64_t)axis[a]*D_8012695C,12);
     return 1;
 }
@@ -252,9 +261,25 @@ fail:
     bfm_forest_walk_free(w); return NULL;
 }
 
-void bfm_forest_walk_bind_gameplay(BfmForestWalk *w, BfmGameplayRun *run)
+static int start_ambient(BfmForestWalk *w)
 {
-    if (w) w->gameplay = run ? run : &w->standalone_gameplay;
+    if (w->ambient_status) return w->ambient_status > 0;
+    /* Room placement precedes the player's first idle pose by one field
+     * update. The scenery advances while the player is taking that pose. */
+    bfm_forest_start_ambient(w->field, w->gameplay);
+    bfm_forest_submit_atmosphere(w->field, &w->camera, w->eye);
+    w->ambient_status = -1;
+    if (!bfm_forest_tick_shore_actor_with_run(w->field, w->cached, w->gameplay)) return 0;
+    bfm_forest_submit_atmosphere(w->field, &w->camera, w->eye);
+    w->ambient_status = 1;
+    return 1;
+}
+
+int bfm_forest_walk_bind_gameplay(BfmForestWalk *w, BfmGameplayRun *run)
+{
+    if (!w) return 0;
+    w->gameplay = run ? run : &w->standalone_gameplay;
+    return start_ambient(w);
 }
 
 void bfm_forest_walk_inherit_clock(BfmForestWalk *w, uint16_t first_tick)
@@ -266,6 +291,7 @@ void bfm_forest_walk_inherit_clock(BfmForestWalk *w, uint16_t first_tick)
 void bfm_forest_walk_free(BfmForestWalk *w)
 {
     if (w) {
+        bfm_forest_message_free(w->lesson.page);
         bfm_forest_hud_free(w->hud);
         bfm_forest_message_free(w->message);
         bfm_forest_message_art_free(w->message_art);
@@ -459,6 +485,7 @@ static int tick_swing(BfmForestWalk *w, int x, int y, int attack_pressed,
         hit->connected = bfm_forest_ground_strike(w->field, &w->root, key->tip, next->tip,
                                                   strength, &w->yaw, hit->position, hit->normal);
         if (hit->connected < 0) return 0;
+        if (hit->connected) hit->strength = strength;
         w->swing_connected = hit->connected;
     }
     /* The field display still shows the previous motion during the first two
@@ -468,13 +495,114 @@ static int tick_swing(BfmForestWalk *w, int x, int y, int attack_pressed,
     return visible && select_pose(w, visible->pose, w->swing.visible);
 }
 
+/* The scene's mover aligns the actor to its mark within sixteen world units.
+ * The approach uses ordinary swept floor contact for each stride. */
+static int tick_lesson_guide(BfmForestWalk *w)
+{
+    int dx = (int)w->lesson.mark[0] - w->cached[0];
+    int dz = (int)w->lesson.mark[2] - w->cached[2];
+    double distance = hypot((double)dx, (double)dz);
+    int16_t to[3] = {w->cached[0], w->cached[1], w->cached[2]};
+    int arrived = distance < 16;
+    if (distance > 0) {
+        w->yaw = (int16_t)((unsigned)lround(atan2(-dx, -dz) / radians) & 4095);
+        if (arrived) {
+            to[0] = w->lesson.mark[0];
+            to[2] = w->lesson.mark[2];
+        } else {
+            to[0] = (int16_t)(to[0] + lround(11 * dx / distance));
+            to[2] = (int16_t)(to[2] + lround(11 * dz / distance));
+        }
+        BfmForestContact floor;
+        if (!bfm_forest_ground(w->field, w->cached[0], w->cached[1], w->cached[2], &floor) ||
+            !bfm_forest_corridor_step(w->field, &floor, w->cached, to)) return 0;
+        memcpy(w->cached, to, sizeof to);
+        for (unsigned i = 0; i < 3; ++i)
+            w->actor.position[i] = (uint32_t)(uint16_t)to[i] << 16;
+    }
+    w->motion = arrived ? IDLE : RUN;
+    ++w->elapsed;
+    if (!update_pose(w)) return 0;
+    return arrived ? 2 : 1;
+}
+
+static int update_lesson_view(BfmForestWalk *w, BfmForestLessonStage before, int incoming_yaw)
+{
+    BfmForestLessonStage stage = w->lesson.stage;
+    if (stage == BFM_LESSON_LOOK && before == BFM_LESSON_TURN)
+        bfm_forest_lesson_camera_begin(&w->lens, D_8012695C, w->look_x, w->look_z, 0, 128);
+    if (stage >= BFM_LESSON_LOOK && stage <= BFM_LESSON_TEACH) {
+        BfmForestLensCue cue = BFM_FOREST_LENS_HOLD;
+        if (before == BFM_LESSON_LOOK) cue = BFM_FOREST_LENS_CLIFF;
+        if (before == BFM_LESSON_CLIFF_TALK && stage == BFM_LESSON_WAIT_SOLDIER)
+            cue = BFM_FOREST_LENS_RETURN;
+        if (before == BFM_LESSON_DISCOVERY_TALK) cue = BFM_FOREST_LENS_SOLDIER;
+        bfm_forest_lesson_camera_tick(&w->lens, cue, incoming_yaw);
+        if (stage >= BFM_LESSON_CLIFF_TALK) {
+            BfmForestClearingEvent event = BFM_FOREST_CLEARING_CONTINUE;
+            if (stage == BFM_LESSON_CLIFF_TALK && before != stage) event = BFM_FOREST_CLEARING_CLIFF;
+            if (stage == BFM_LESSON_WAIT_SOLDIER && before != stage) event = BFM_FOREST_CLEARING_RECOVER;
+            if (stage == BFM_LESSON_DISCOVERY_TALK && before != stage) event = BFM_FOREST_CLEARING_FACE_SOLDIER;
+            if (!bfm_forest_clearing_pose_tick(&w->speaker, event, &w->pose)) return 0;
+            w->frame = w->speaker.frame;
+            w->visible = w->speaker.visible;
+            memcpy(w->blade_anchors, w->speaker.blade_anchors, sizeof w->blade_anchors);
+        }
+        return bfm_forest_lesson_camera_view(&w->lens, w->cached, w->orbit,
+            (uint16_t)w->follow_projection, w->eye, w->target, &w->camera);
+    }
+    if (before == BFM_LESSON_TEACH && stage == BFM_LESSON_PRACTICE) {
+        w->look_x = w->lens.lead[0];
+        w->look_z = w->lens.lead[1];
+    }
+    return follow(w);
+}
+
 static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jump_held,
-                       int attack_pressed)
+                       int attack_pressed, int shoulder, int confirm_edge, int reveal_edge)
 {
     BfmForestDustEmission dust = BFM_FOREST_DUST_NONE;
     BfmForestHit hit = {0};
     BfmForestTransform previous_root = w->root;
     uint32_t sweep_pose = 0;
+    BfmForestLessonStage before = w->lesson.stage;
+    int incoming_yaw = w->yaw, square_edge = attack_pressed;
+    int owned = bfm_forest_lesson_owns_player(&w->lesson) ||
+        (w->fusion.award.phase > BFM_AWARD_IDLE && w->fusion.award.phase < BFM_AWARD_COMPLETE);
+    int at_mark = 0;
+    if (owned) {
+        x = y = jump_pressed = jump_held = attack_pressed = 0;
+        if (!w->jump.active && w->actor.state != 5) {
+            if (w->lesson.stage == BFM_LESSON_APPROACH) {
+                int guide = tick_lesson_guide(w);
+                if (!guide) return -1;
+                at_mark = guide == 2;
+            } else {
+                w->motion = IDLE;
+                ++w->elapsed;
+                if (!update_pose(w)) return -1;
+            }
+            w->actor.state = 0;
+            w->actor.phase = 1;
+            w->actor.field_2c.word = 0;
+            memset(w->actor.velocity, 0, sizeof w->actor.velocity);
+            memset(&w->manual, 0, sizeof w->manual);
+        }
+    }
+    int away = bfm_forest_lesson_blade_away(&w->fusion);
+    BfmForestCast *cast = &w->fusion.cast;
+    BfmForestCastEvent casting = BFM_CAST_GROUND;
+    if (!owned && before == BFM_LESSON_PRACTICE && !w->jump.active && !jump_pressed &&
+        (w->actor.state <= 1 || cast->action == BFM_CAST_STANCE || cast->action == BFM_CAST_THROW)) {
+        if (shoulder && !cast->stance.count &&
+            !bfm_forest_cast_load(cast, w->disc, w->data.animation_table)) return -1;
+        if (cast->action == BFM_CAST_GROUND) cast->visible = w->visible;
+        casting = bfm_forest_cast_tick(cast, &w->status, shoulder, square_edge, x || y, away);
+        if (casting != BFM_CAST_GROUND && casting != BFM_CAST_SWING) attack_pressed = 0;
+        if (w->actor.state == 17 || w->actor.state == 21) w->actor.state = 0;
+        if (casting == BFM_CAST_THROW || casting == BFM_CAST_LAUNCH) x = y = 0;
+    }
+    if (away) attack_pressed = 0;
     int continuing_stride = (x || y) && x == w->stride_x && y == w->stride_y;
     w->stride_x = w->stride_y = 0;
     bfm_forest_hud_tick(w->hud);
@@ -483,7 +611,7 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
                    (!w->jump.active && !jump_pressed && attack_pressed && w->actor.state <= 1);
     int launched = !swinging && !w->jump.active && jump_pressed &&
                    bfm_forest_jump_begin(&w->jump, w->field, &w->actor, w->cached);
-    if (!w->jump.active && !swinging) {
+    if (!owned && !w->jump.active && !swinging) {
         int grounded = tick_ground(w, x, y, 0, &dust);
         if (grounded < 0) return -1;
         if (!grounded && !bfm_forest_fall_begin(&w->jump, &w->manual, &w->actor)) return -1;
@@ -535,11 +663,57 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
             }
         }
     }
+    if (casting == BFM_CAST_STANCE || casting == BFM_CAST_THROW || casting == BFM_CAST_LAUNCH) {
+        w->actor.state = casting == BFM_CAST_STANCE ? 17 : 21;
+        if (!select_pose(w, cast->pose, cast->visible)) return -1;
+    }
+    int was_attached = w->lesson.tether.phase == BFM_TETHER_ATTACHED;
+    int absorption_edge = square_edge && w->lesson.tether.phase == BFM_TETHER_ATTACHED;
+    if (!bfm_forest_lesson_flight(&w->fusion, &w->lesson, w->field, &w->root, w->cached,
+            w->yaw, w->tick, square_edge, casting == BFM_CAST_LAUNCH)) return -1;
+    if (!bfm_forest_field_fusion_effects(w->field, w->disc, &w->fusion.flight, &w->lesson.tether,
+            was_attached, absorption_edge, w->cached, w->gameplay)) return -1;
+    if (bfm_forest_lesson_blade_away(&w->fusion))
+        w->visible &= ~((UINT32_C(1) << 21) | (UINT32_C(1) << 22));
+    BfmForestAward *award = &w->fusion.award;
+    if (w->fusion.flight.phase == BFM_FUSION_DONE && w->lesson.tether.phase == BFM_TETHER_EARNED) {
+        if (award->phase == BFM_AWARD_IDLE) {
+            if (!bfm_forest_award_begin(award, w->disc, cast, &w->lesson.tether, &w->status)) return -1;
+        } else {
+            BfmForestAwardPhase event = bfm_forest_award_tick(award, cast, &w->lesson.tether,
+                                                             &w->status, w->lesson.award_closed);
+            if (event == BFM_AWARD_ERROR) return -1;
+            if (event == BFM_AWARD_OPEN) w->lesson.award_ready = 1;
+        }
+        if (award->phase != BFM_AWARD_COMPLETE) {
+            if (!select_pose(w, award->pose, award->visible)) return -1;
+            w->actor.state = 22;
+        }
+    }
+    if (cast->stance.count) {
+        int gauge = -1;
+        if (w->lesson.tether.phase == BFM_TETHER_ATTACHED ||
+            (w->lesson.tether.phase == BFM_TETHER_EARNED && bfm_forest_lesson_blade_away(&w->fusion)))
+            gauge = (int)w->lesson.tether.meter;
+        bfm_forest_hud_gauges(w->hud, w->status.record[0x47], gauge);
+    }
     bfm_forest_voice_step(w->voice);
+    if (!bfm_forest_lesson_enter(&w->lesson, w->field, w->cached[2]) ||
+        !bfm_forest_lesson_step(&w->lesson, w->field, w->disc, &w->status, w->voice,
+                                &w->voice_generation, at_mark, &w->yaw, confirm_edge, reveal_edge))
+        return -1;
+    if (owned && !bfm_forest_lesson_owns_player(&w->lesson) &&
+        (award->phase == BFM_AWARD_IDLE || award->phase == BFM_AWARD_COMPLETE)) {
+        /* A dismissed lesson hands back a standing actor. Do not resume
+         * a run-stop animation or carry the dismissing Cross into a jump. */
+        if (tick_ground(w, 0, 0, 1, &dust) < 0) return -1;
+        w->jump_pressed = w->attack_pressed = w->control_polled = 0;
+    }
+    if (owned) update_root(w);
     ++w->tick;
     if (!bfm_forest_tick_sweep(w->field, w->disc, w->swing_sound, sweep_pose, &previous_root) ||
-        !follow(w) || !bfm_forest_tick_shore_actor_with_run(w->field, w->cached, w->gameplay) ||
-        !bfm_forest_submit_guard_and_impact(w->field, &hit, w->eye, &w->camera))
+        !update_lesson_view(w, before, incoming_yaw) || !bfm_forest_tick_shore_actor_with_run(w->field, w->cached, w->gameplay) ||
+        !bfm_forest_submit_guard_and_impact_with_run(w->field, &hit, w->eye, &w->camera, w->gameplay))
         return -1;
     w->hit_sound = hit.connected;
     bfm_forest_tick_dust(w->field, dust, w->cached, w->eye, w->yaw);
@@ -558,7 +732,9 @@ int bfm_forest_walk_swing_sound(const BfmForestWalk *w)
 
 int bfm_forest_walk_control(const BfmForestWalk *w)
 {
-    if (!w || !w->player_control) return 0;
+    if (!w || !w->player_control || bfm_forest_lesson_owns_player(&w->lesson) ||
+        (w->fusion.award.phase > BFM_AWARD_IDLE && w->fusion.award.phase < BFM_AWARD_COMPLETE))
+        return 0;
     return w->at_boundary ? 2 : 1;
 }
 
@@ -591,12 +767,13 @@ int bfm_forest_walk_tick_controls(BfmForestWalk *w, int x, int y,
                                    cross_held ? BFM_FOREST_CROSS : 0);
 }
 
-int bfm_forest_walk_tick_pad(BfmForestWalk *w, int x, int y,
+static int step_pad(BfmForestWalk *w, int x, int y,
                              uint16_t pressed, uint16_t held)
 {
     int cross_pressed = (pressed & BFM_FOREST_CROSS) != 0;
     int cross_held = (held & BFM_FOREST_CROSS) != 0;
     if(!w || x < -1 || x > 1 || y < -1 || y > 1) return -1;
+    if (!start_ambient(w)) return -1;
     /* The actor uses the previous completed controller poll. */
     int read_x = w->input_x, read_y = w->input_y;
     int jump_pressed = w->jump_pressed, jump_held = w->jump_held;
@@ -605,13 +782,21 @@ int bfm_forest_walk_tick_pad(BfmForestWalk *w, int x, int y,
      * Cross edge. Directions are live there, but a jump needs a fresh press. */
     w->jump_pressed = w->control_polled && cross_pressed;
     w->jump_held = cross_held;
+    int shoulder = w->shoulder_held;
+    w->shoulder_held = (held & BFM_FOREST_R1) != 0;
     int attack_pressed = w->attack_pressed;
     w->attack_pressed = w->control_polled && (pressed & BFM_FOREST_SQUARE);
     w->swing_sound = 0;
     w->hit_sound = 0;
     w->control_polled = w->player_control;
-    if (w->player_control) return tick_player(w, read_x, read_y, jump_pressed, jump_held, attack_pressed);
-    if (w->tick >= LAST_WALK_TICK) return tick_message(w, cross_pressed);
+    if (w->player_control)
+        return tick_player(w, read_x, read_y, jump_pressed, jump_held, attack_pressed, shoulder,
+                           cross_pressed, (pressed & BFM_FOREST_TRIANGLE) != 0);
+    if (w->tick >= LAST_WALK_TICK) {
+        int result = tick_message(w, cross_pressed);
+        if (result <= 0) return result;
+        return bfm_forest_tick_shore_actor_with_run(w->field, w->cached, w->gameplay) ? result : -1;
+    }
     ++w->tick;
     if(w->tick==1) {++w->elapsed;}
     else if(w->tick==2) {w->elapsed=0; w->motion=WALK; w->actor.field_2c.word=w->data.initial_velocity;}
@@ -634,7 +819,15 @@ int bfm_forest_walk_tick_pad(BfmForestWalk *w, int x, int y,
         unsigned next=speed< -0x94000 ? RUN : WALK;
         w->elapsed=next==w->motion?w->elapsed+1:0;w->motion=next;
     }
-    return follow(w) && update_pose(w) ? 1 : -1;
+    return follow(w) && update_pose(w) &&
+           bfm_forest_tick_shore_actor_with_run(w->field, w->cached, w->gameplay) ? 1 : -1;
+}
+
+int bfm_forest_walk_tick_pad(BfmForestWalk *w, int x, int y, uint16_t pressed, uint16_t held)
+{
+    int result = step_pad(w, x, y, pressed, held);
+    if (result > 0) bfm_forest_submit_atmosphere(w->field, &w->camera, w->eye);
+    return result;
 }
 
 int bfm_forest_walk_draw(BfmForestWalk *w,uint32_t pixels[240][320])
@@ -643,7 +836,8 @@ int bfm_forest_walk_draw(BfmForestWalk *w,uint32_t pixels[240][320])
     for(unsigned y=0;y<240;y++) for(unsigned x=0;x<320;x++) pixels[y][x]=UINT32_C(0xff000000);
     if(!w->tick) return 1;
     BfmForestBladeFrame blade = {.tick = w->tick};
-    int has_blade = bfm_forest_blade_transform(w->blade_anchors, &w->root, w->eye, &blade.world);
+    int has_blade = !bfm_forest_lesson_blade_away(&w->fusion) &&
+                    bfm_forest_blade_transform(w->blade_anchors, &w->root, w->eye, &blade.world);
     if (!bfm_forest_draw_entrance_player(w->field, &w->camera, &w->pose, &w->root,
                                          w->visible, w->tick % 2, has_blade ? &blade : NULL, pixels)) return 0;
     unsigned shade=w->tick<16?(255-w->tick*16)/8:0;
@@ -657,7 +851,9 @@ int bfm_forest_walk_draw(BfmForestWalk *w,uint32_t pixels[240][320])
         pixels[y][x]=result;
     }
     if (w->player_control) bfm_forest_hud_draw(w->hud, &w->status, pixels);
-    if (w->message && !w->player_control)
+    if (w->lesson.page)
+        bfm_forest_message_art_draw(w->message_art, bfm_forest_message_frame(w->lesson.page), pixels);
+    else if (w->message && !w->player_control)
         bfm_forest_message_art_draw(w->message_art, bfm_forest_message_frame(w->message), pixels);
     return 1;
 }

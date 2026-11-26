@@ -166,12 +166,11 @@ int bfm_forest_impact_start(BfmForestImpact *impact, const BfmForestField *field
     if (!tilt || !animation(&fresh.burst, field, UINT32_C(0x80189bac), UINT32_C(0x80189b6c), 8) ||
         !animation(&fresh.strip, field, UINT32_C(0x80189be8), UINT32_C(0x80189bb8), 6))
         return 0;
-    BfmForestTransform basis;
     int pitch, yaw;
     impact_face_normal(normal, &pitch, &yaw);
-    bfm_forest_actor_pitch_yaw((unsigned)pitch, (unsigned)yaw, contact, &basis);
+    bfm_forest_actor_pitch_yaw((unsigned)pitch, (unsigned)yaw, contact, &fresh.face);
     for (unsigned i = 0; i < 3; ++i)
-        fresh.origin[i] = contact[i] + down(-2 * basis.rotation[i][1] - 20 * basis.rotation[i][2], 12);
+        fresh.origin[i] = contact[i] + down(-2 * fresh.face.rotation[i][1] - 20 * fresh.face.rotation[i][2], 12);
     toward_eye(fresh.origin, eye, fresh.burst_origin);
     impact_strip_setup(fresh.strip_rotation, pitch, yaw, s16le(tilt), eye, fresh.origin);
     *impact = fresh;

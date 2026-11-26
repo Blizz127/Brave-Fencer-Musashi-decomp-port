@@ -21,6 +21,9 @@ void bfm_forest_hud_free(BfmForestHud *hud);
  * Advance once on that 30 Hz update and once per subsequent update. */
 void bfm_forest_hud_show(BfmForestHud *hud);
 void bfm_forest_hud_tick(BfmForestHud *hud);
+/* Supply current speed charge and a 0..128 absorption meter, or -1
+ * when the player has no tether. Both actions use the same HUD well. */
+void bfm_forest_hud_gauges(BfmForestHud *hud, unsigned charge, int absorption);
 void bfm_forest_hud_draw(const BfmForestHud *hud, const BfmForestStatus *status,
                          uint32_t pixels[240][320]);
 

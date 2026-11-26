@@ -25,6 +25,7 @@ struct BfmForestHud {
     uint8_t vitality[20], dial[20], weekday[7];
     uint16_t orb[7], digit[10];
     unsigned inset, remaining, hiding, modal;
+    unsigned field_gauges, fill, green, charge_color;
 };
 typedef struct {
     const BfmForestHud *hud;
@@ -199,6 +200,26 @@ static void rectangle(Canvas *c, int x, int y, int w, int h, uint32_t color)
             c->pixels[iy][ix] = color;
 }
 
+void bfm_forest_hud_gauges(BfmForestHud *hud, unsigned charge, int absorption)
+{
+    if (!hud) return;
+    unsigned value = absorption >= 0 ? (unsigned)absorption : charge;
+    if (value > 128) value = 128;
+    hud->field_gauges = 1;
+    if (absorption >= 0 && !hud->green) hud->fill = 0;
+    if (absorption >= 0) hud->green = 1;
+    if (hud->fill > value) {
+        unsigned difference = hud->fill - value;
+        unsigned step = value ? 3 : 8;
+        hud->fill -= difference < step ? difference : step;
+    } else {
+        hud->fill = value;
+    }
+    if (!hud->fill && absorption < 0) hud->green = 0;
+    if (charge == 128 && !hud->green) hud->charge_color = hud->charge_color % 3 + 1;
+    else hud->charge_color = 0;
+}
+
 static void ornaments(Canvas *c, const BfmForestStatusValues *v, int inset)
 {
     Sprite s[5];
@@ -216,9 +237,13 @@ static void ornaments(Canvas *c, const BfmForestStatusValues *v, int inset)
         s[4].uv = (s[4].uv & 255) | (v->bp < 100 ? (unsigned)c->hud->vitality[v->bp/5] << 8 : 0);
     /* The field HUD places the meter 256 pixels lower in a modal menu. */
     int meter_y = c->hud->modal ? 256 : 0;
-    int charge = v->charge * 3 / 8;
-    rectangle(c,8-inset,meter_y+129+inset,8,72,rgb(v->charge ? 0x5108 : 0x2108));
-    rectangle(c,8-inset,meter_y+201+inset-charge,8,charge,rgb(0x085f));
+    /* RGB555. Full stance charge cycles the three bright primaries. */
+    static const unsigned charge_tints[] = {0x085f, 0x18df, 0x1be6, 0x7cc6};
+    unsigned tint = c->hud->green ? 0x0be2 : charge_tints[c->hud->charge_color];
+    int charge = c->hud->field_gauges ? (int)(c->hud->fill * 9 / 16) : v->charge * 3 / 8;
+    int charge_active = c->hud->field_gauges ? (charge || c->hud->green) : v->charge;
+    rectangle(c,8-inset,meter_y+129+inset,8,72,rgb(charge_active ? 0x5108 : 0x2108));
+    rectangle(c,8-inset,meter_y+201+inset-charge,8,charge,rgb(tint));
     /* Frames overlap the orbs and the charge well in this layer. */
     for (int i = 4; i >= 0; --i) {
         s[i].x += i < 3 ? -inset : inset;

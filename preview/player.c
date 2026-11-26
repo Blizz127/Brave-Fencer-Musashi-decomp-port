@@ -60,7 +60,7 @@ static const char usage[] =
     "Continue reads a supplied raw 128 KiB card and supports the early castle bedroom wake.\n"
     "Enter/Start: start. Space/Cross: confirm or skip the opening. Arrows: select. "
     "D-pad, arrows or left stick: move in Giant Forest. A/Square: swing Fusion on the ground. "
-    "T/Triangle: back from files. Escape: quit.\n";
+    "Right Shift/R1: charge Fusion at the Gunshot lesson. T/Triangle: back from files. Escape: quit.\n";
 
 static uint16_t button_mask(unsigned int button) {
     switch (button) {
@@ -68,6 +68,7 @@ static uint16_t button_mask(unsigned int button) {
     case SDL_CONTROLLER_BUTTON_A: return PAD_CROSS;
     case SDL_CONTROLLER_BUTTON_B: return PAD_CIRCLE;
     case SDL_CONTROLLER_BUTTON_X: return PAD_SQUARE;
+    case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: return BFM_FOREST_R1;
     case SDL_CONTROLLER_BUTTON_DPAD_UP: return PAD_UP;
     case SDL_CONTROLLER_BUTTON_DPAD_DOWN: return PAD_DOWN;
     case SDL_CONTROLLER_BUTTON_DPAD_LEFT: return PAD_LEFT;
@@ -79,6 +80,7 @@ static uint16_t button_mask(unsigned int button) {
 
 static void update_input(Player *p) {
     uint16_t current = p->digital;
+    if (p->keys[SDL_SCANCODE_RSHIFT]) current |= BFM_FOREST_R1;
     if (p->keys[SDL_SCANCODE_RETURN] || p->keys[SDL_SCANCODE_KP_ENTER]) current |= PAD_START;
     if (p->keys[SDL_SCANCODE_SPACE] || p->keys[SDL_SCANCODE_X]) current |= PAD_CROSS;
     if (p->keys[SDL_SCANCODE_Z] || p->keys[SDL_SCANCODE_BACKSPACE]) current |= PAD_CIRCLE;
@@ -242,7 +244,7 @@ static int start_forest(Player *p, unsigned field)
     uint64_t forest_field;
     p->forest = bfm_opening_take_forest(p->opening, p->disc, field, &forest_field);
     if (!p->forest) return 0;
-    bfm_forest_walk_bind_gameplay(p->forest, &p->gameplay);
+    if (!bfm_forest_walk_bind_gameplay(p->forest, &p->gameplay)) return 0;
     bfm_opening_free(p->opening);
     p->opening = NULL;
     p->forest_start = forest_field ? p->phase_start + (forest_field * 1001 + 59) / 60

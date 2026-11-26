@@ -81,7 +81,7 @@ static int decode_faces(const SourcePart *part, MusashiForestPlayerFace *out, in
         unsigned allowed_bits = scene_materials ? 0x1e : 0x1c;
         if ((mode & ~allowed_bits) != 0x20 || mode == 0x24 ||
             (p[2] && (!scene_materials || p[2] != 4 || textured ||
-                      (!gouraud && !part->flat_vertex_inks))) ||
+                      (!gouraud && !part->flat_vertex_inks && !(mode & 2)))) ||
             p[0] != output || p[1] != input || length > available) return 0;
         MusashiForestPlayerFace face = {0};
         /* Distinct vertex inks require Gouraud output even when all the

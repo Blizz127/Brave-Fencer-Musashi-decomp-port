@@ -9,7 +9,16 @@
 enum { BFM_FOREST_DUST_CELLS = 10, BFM_FOREST_FOOT_DUST_CARDS = 9,
        BFM_FOREST_DUST_CARDS = BFM_FOREST_FOOT_DUST_CARDS + 1,
        BFM_FOREST_IMPACT_CARDS = 2, BFM_FOREST_SWEEP_CARDS = 15,
-       BFM_FOREST_EFFECT_CARDS = BFM_FOREST_DUST_CARDS + 1 + BFM_FOREST_IMPACT_CARDS + BFM_FOREST_SWEEP_CARDS };
+       BFM_FOREST_DAMAGE_NUMBERS = 2, BFM_FOREST_DAMAGE_DIGIT_CARDS = 4,
+       BFM_FOREST_STRIKE_SPARKS = 4, BFM_FOREST_SPARK_CARDS = 2 * BFM_FOREST_STRIKE_SPARKS,
+       /* Five entrance sprites plus at most 19 overlapping 30-update births. */
+       BFM_FOREST_DRIFT_CARDS = 24, BFM_FOREST_HALO_CARDS = 28,
+       BFM_FOREST_FALL_SLOTS = 128, BFM_FOREST_BANK_FLASH_CARDS = 24,
+       BFM_FOREST_EFFECT_CARDS = BFM_FOREST_DUST_CARDS + 1 + BFM_FOREST_IMPACT_CARDS +
+                                 BFM_FOREST_SWEEP_CARDS + BFM_FOREST_DRIFT_CARDS +
+                                 BFM_FOREST_HALO_CARDS + BFM_FOREST_FALL_SLOTS +
+                                 BFM_FOREST_SPARK_CARDS + BFM_FOREST_BANK_FLASH_CARDS +
+                                 BFM_FOREST_DAMAGE_NUMBERS * BFM_FOREST_DAMAGE_DIGIT_CARDS };
 
 typedef enum {
     BFM_FOREST_DUST_NONE,
@@ -36,6 +45,11 @@ typedef struct BfmForestDustCard {
     BfmForestRasterMaterial material;
     unsigned bucket, slot;
 } BfmForestDustCard;
+
+/* Project a four-corner world effect using the shared field divider and its
+ * last vertex's ordering depth. Material and vertex colors remain with the caller. */
+int bfm_forest_project_effect_quad(const BfmForestCamera *camera,
+                                   const int16_t corners[4][3], BfmForestDustCard *card);
 
 int bfm_forest_dust_load(BfmForestDust *dust, const MusashiDiscMedia *disc);
 

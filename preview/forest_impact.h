@@ -12,6 +12,7 @@ typedef struct {
 typedef struct {
     BfmForestImpactAnimation burst, strip;
     int32_t origin[3], burst_origin[3];
+    BfmForestTransform face;
     int16_t strip_rotation[3][3];
     unsigned cell;
 } BfmForestImpact;

@@ -15,7 +15,7 @@ struct BfmForestTrail {
     int16_t base[3], guard_at[3];
     int16_t spawn_floor;
     int trigger_distance, yaw, guard_yaw, pitch, angular_speed;
-    unsigned delay, bounces, key;
+    unsigned delay, bounces, key, scatter;
     BfmForestGuardClip run, swing;
     MusashiForestPlayerMesh *wood;
     BfmForestTransform trunk_root, guard_root;
@@ -80,6 +80,7 @@ void bfm_forest_trail_free(BfmForestTrail *trail)
 
 static void advance_trunk(BfmForestTrail *trail)
 {
+    if (trail->scatter) --trail->scatter;
     if (trail->trunk != FALLING) return;
     if (trail->delay && --trail->delay) return;
     if (trail->pitch >= 1024) {
@@ -91,6 +92,7 @@ static void advance_trunk(BfmForestTrail *trail)
     trail->pitch += trail->angular_speed;
     if (trail->bounces == 2 && trail->pitch >= 1024) {
         trail->trunk = SETTLED;
+        trail->scatter = 16;
         trail->pitch = 1024;
     }
     bfm_forest_actor_pitch_yaw(trail->pitch, trail->yaw, trail->base, &trail->trunk_root);
@@ -164,6 +166,11 @@ BfmForestTrailUpdate bfm_forest_trail_step(BfmForestTrail *trail, const int16_t 
     advance_trunk(trail);
     if (!advance_guard(trail)) return BFM_TRAIL_INVALID;
     return trail->guard == BEYOND_OBSERVED_RUN ? BFM_TRAIL_GUARD_BEYOND_RUN : BFM_TRAIL_UPDATED;
+}
+
+unsigned bfm_forest_trail_scatter(const BfmForestTrail *trail)
+{
+    return trail ? trail->scatter : 0;
 }
 
 const BfmForestActor *bfm_forest_trail_trunk(const BfmForestTrail *trail)

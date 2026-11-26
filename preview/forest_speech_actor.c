@@ -164,6 +164,29 @@ static int standing_motion(BfmForestSpeechActor *actor, unsigned slot, BfmForest
     return select_motion(actor, u32le(bytes), pose);
 }
 
+int bfm_forest_clearing_pose_tick(BfmForestSpeechActor *actor, BfmForestClearingEvent event,
+                                  BfmForestPose *pose)
+{
+    if (!actor || !actor->field || !pose) return 0;
+    switch (event) {
+    case BFM_FOREST_CLEARING_CLIFF:
+        if (!select_motion(actor, UINT32_C(0x8018a59c), pose)) return 0;
+        break;
+    case BFM_FOREST_CLEARING_RECOVER:
+        if (!select_motion(actor, UINT32_C(0x8018a5e4), pose)) return 0;
+        break;
+    case BFM_FOREST_CLEARING_FACE_SOLDIER:
+        /* On releasing the held gesture the standard player action selects
+         * its first stance frame at the end of this update. */
+        return standing_motion(actor, BASE_STANCE, pose);
+    case BFM_FOREST_CLEARING_CONTINUE:
+        break;
+    default:
+        return 0;
+    }
+    return advance(actor, pose, 0);
+}
+
 /* The ordinary standing action (SC01 member 77, 80159C84) makes its
  * decisions at the ends of mounted motions, including their loop marks. */
 int bfm_forest_standing_tick(BfmForestSpeechActor *actor, BfmForestStandingEvent event,

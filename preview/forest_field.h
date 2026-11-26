@@ -33,18 +33,25 @@ int bfm_forest_draw_player(BfmForestField *field, const BfmForestCamera *camera,
 int bfm_forest_draw_player_buffer(BfmForestField *field, const BfmForestCamera *camera,
                            const BfmForestPose *pose, const BfmForestTransform *root,
                            uint32_t visible_parts, unsigned buffer, uint32_t pixels[240][320]);
-/* Update the room-owned bank actor after a completed player movement tick. */
+/* Start permanent ambient placements on the first forest world update. */
+void bfm_forest_start_ambient(BfmForestField *field, BfmGameplayRun *run);
+void bfm_forest_submit_atmosphere(BfmForestField *field, const BfmForestCamera *camera,
+                                  const int32_t eye[3]);
 /* Advance already emitted cards and, for a real player action, its new card. */
 void bfm_forest_tick_dust(BfmForestField *field, BfmForestDustEmission event,
                           const int16_t player[3], const int32_t camera_eye[3], int yaw);
 typedef struct {
     int connected;
+    uint16_t strength;
     int16_t position[3], normal[3];
 } BfmForestHit;
 int bfm_forest_tick_sweep(BfmForestField *field, const MusashiDiscMedia *disc,
                           int begin, uint32_t logical_pose, const BfmForestTransform *previous_root);
 int bfm_forest_submit_guard_and_impact(BfmForestField *field, const BfmForestHit *hit,
                            const int32_t camera_eye[3], const BfmForestCamera *camera);
+int bfm_forest_submit_guard_and_impact_with_run(BfmForestField *field, const BfmForestHit *hit,
+                           const int32_t camera_eye[3], const BfmForestCamera *camera,
+                           BfmGameplayRun *run);
 int bfm_forest_tick_shore_actor_with_run(BfmForestField *field, const int16_t player[3],
                                         BfmGameplayRun *run);
 int bfm_forest_tick_shore_actor(BfmForestField *field, const int16_t player[3]);
@@ -99,7 +106,10 @@ BfmForestTopStep bfm_forest_raised_motion(const BfmForestField *field,
     const BfmForestContact *previous, const int16_t from[3], int16_t to[3],
     const uint32_t start_pos[3], const uint32_t end_pos[3]);
 
-/* Take a grounded step through the entrance and the adjoining slope.
+/* Whether this mounted floor can start or land an ordinary player jump. */
+int bfm_forest_jump_surface(const BfmForestContact *ground);
+
+/* Take a grounded step through the entrance, uphill trail and clearing.
  * The contact is the registered floor probe at the starting position. */
 int bfm_forest_corridor_step(const BfmForestField *field, const BfmForestContact *previous,
                              const int16_t from[3], int16_t to[3]);

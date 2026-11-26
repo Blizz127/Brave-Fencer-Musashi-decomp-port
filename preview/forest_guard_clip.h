@@ -3,7 +3,7 @@
 #define BFM_FOREST_GUARD_CLIP_H
 #include "forest_field.h"
 
-enum { BFM_GUARD_PARTS = 11, BFM_GUARD_POSE_BYTES = BFM_GUARD_PARTS * 8, BFM_GUARD_KEYS = 32 };
+enum { BFM_GUARD_PARTS = 11, BFM_GUARD_POSE_BYTES = BFM_GUARD_PARTS * 8, BFM_GUARD_KEYS = 40 };
 typedef struct {
     const uint8_t *pose[BFM_GUARD_KEYS];
     unsigned count;

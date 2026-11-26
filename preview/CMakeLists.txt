@@ -46,11 +46,30 @@ add_executable(musashi_native_boot
     scene_tiles.c
     forest_blade.c
     forest_entry.c
+    forest_drift.c
+    forest_rifles.c
+    forest_muzzle_fan.c
+    forest_glow_figures.c
+    forest_glows.c
+    forest_glow_halo.c
     forest_dust.c
+    forest_fall.c
+    forest_fall_projection.c
     forest_field.c
     forest_fusion_power.c
     forest_hud.c
     forest_status.c
+    forest_absorption.c
+    forest_lesson.c
+    forest_lesson_fusion.c
+    forest_cast.c
+    forest_award.c
+    forest_flight.c
+    forest_fusion_model.c
+    forest_tether_trails.c
+    forest_lesson_camera.c
+    forest_lesson_guard.c
+    forest_lesson_pages.c
     forest_manual.c
     forest_motion.c
     forest_marker.c
@@ -74,7 +93,9 @@ add_executable(musashi_native_boot
     forest_walk.c
     forest_swing.c
     forest_impact.c
+    forest_damage_digits.c
     forest_sweep.c
+    forest_sparks.c
     scene_payload.c
     "${bfm_root}/pc_port/forest_player_archive.c"
     "${bfm_root}/pc_port/forest_player_mesh.c"

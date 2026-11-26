@@ -110,11 +110,13 @@ static int print_update(BfmForestMessage *m)
                 m->resume = NULL;
                 break;
             }
+            if (m->notice) return 0;
             f->wait_for_confirm = 1;
             m->phase = WAIT_DISMISS;
             return 1;
         case 0x01: /* Ink */
-            if (left < 1 || (arg[0] != 1 && arg[0] != 2)) return 0;
+            if (left < 1 || (arg[0] != 1 && arg[0] != 2 &&
+                             arg[0] != 3 && arg[0] != 5)) return 0;
             m->ink = arg[0];
             ++m->cursor;
             break;
@@ -243,7 +245,7 @@ static int print_update(BfmForestMessage *m)
             }
             break;
         default:
-            if (op < 0x20 || op > 0x7e || m->column >= 36)
+            if (op < 0x20 || (op > 0x7e && (op < 0x90 || op > 0x93)) || m->column >= 36)
                 return 0;
             f->cells[m->row][m->column].glyph = (uint8_t)op;
             f->cells[m->row][m->column++].ink = (uint8_t)m->ink;
@@ -402,7 +404,7 @@ const BfmForestMessageFrame *bfm_field_message_tick(BfmForestMessage *m,
             m->phase = CLOSED;
         } else {
             f->border_step = f->border_step > 4 ? f->border_step - 2 : 0;
-            if (!m->notice) f->style = 2;
+            if (!m->notice && f->style != 1) f->style = 2;
         }
         break;
     case CLOSED:
