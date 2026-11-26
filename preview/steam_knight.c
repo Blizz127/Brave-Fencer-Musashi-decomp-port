@@ -96,7 +96,7 @@ BfmSteamKnight *bfm_steam_knight_open(const MusashiDiscMedia *disc,
     const size_t damage_palette = 0x80193a44u - 0x80128158u;
     if (damage_palette + 2 > size) goto fail;
     s->damage_palette = scene + damage_palette;
-    s->machine = bfm_steam_knight_machine_load(scene, size);
+    s->machine = bfm_steam_knight_machine_load_mounted(disc, scene, size);
     s->core_max = s->core_hp = 192;
     s->body_stage = s->weak_stage = 1;
     s->hud = bfm_steam_knight_hud_load(disc, scene, size, bfm_steam_knight_field_terrain(s->field));

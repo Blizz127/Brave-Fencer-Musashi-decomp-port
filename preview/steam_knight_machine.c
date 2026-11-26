@@ -26,6 +26,14 @@ static const struct { uint32_t table; unsigned index, keys; } chassis_program[] 
     [SMASH] = {0x80194ba0, 13, 12}, [SMASH_RISE] = {0x80194c08, 14, 6},
     [LOWER]   = {0x801949a8, 7, 5},  [RISE] = {0x801949d8, 8, 8}
 };
+enum { UPPER_ARRIVAL, UPPER_KNEE, UPPER_WINDUP, UPPER_LOWER, UPPER_RETURN, UPPER_CLIPS };
+static const struct { unsigned chassis, motion; uint32_t table; } upper_program[UPPER_CLIPS] = {
+    [UPPER_ARRIVAL] = {ARRIVAL, 13, UINT32_C(0x80195500)},
+    [UPPER_KNEE]    = {KNEEL_RIGHT, 21, UINT32_C(0x80195858)},
+    [UPPER_WINDUP]  = {FIRST_ACTION, 7, UINT32_C(0x80195358)},
+    [UPPER_LOWER]   = {LOWER, 8, UINT32_C(0x801953a0)},
+    [UPPER_RETURN]  = {RISE, 9, UINT32_C(0x801953d0)}
+};
 typedef struct {
     BfmForestPose *pose;
     unsigned count, terminal;
@@ -35,8 +43,9 @@ struct BfmSteamKnightMachine {
     MusashiForestPlayerMesh *lit_mesh[ASSEMBLIES], *lit_under_armor;
     unsigned core_light;
     uint64_t shell_white_from, shell_white_until;
-    MachineClip chassis[CLIPS], torso;
-    BfmForestTransform root, display_root;
+    MachineClip chassis[CLIPS], torso, upper[UPPER_CLIPS];
+    BfmForestTransform root, display_root, upper_heading;
+    unsigned upper_yaw;
     const BfmForestPose *display[ASSEMBLIES], *chassis_pose;
     unsigned entrance_age, outgoing_display, control_age, clip_epoch, clip_age;
     const MachineClip *selected;
@@ -87,8 +96,14 @@ static int decode_pose(const uint8_t *frame, unsigned parts, BfmForestPose *pose
     return 1;
 }
 
+typedef struct {
+    const uint8_t *data;
+    size_t bytes;
+    uint32_t origin, first, last;
+} PoseBank;
+
 static int load_clip(MachineClip *clip, const uint8_t *scene, size_t bytes, unsigned piece,
-                     uint32_t table, unsigned count)
+                     uint32_t table, unsigned count, const PoseBank *bank)
 {
     const uint8_t *program = record(scene, bytes, table, 8 * (count + 1));
     if (!program || !count || count > MAX_KEYS || u32le(program + 8 * count)) return 0;
@@ -97,14 +112,18 @@ static int load_clip(MachineClip *clip, const uint8_t *scene, size_t bytes, unsi
     unsigned stride = 12 * model[piece].parts;
     uint32_t first = piece == CHASSIS ? UINT32_C(0x801bdcd8) : UINT32_C(0x801d323c);
     uint32_t last = piece == CHASSIS ? UINT32_C(0x801d3128) : UINT32_C(0x801d3944);
+    PoseBank mounted = {scene, bytes, origin, first, last};
+    if (!bank) bank = &mounted;
     clip->pose = calloc(count, sizeof *clip->pose);
     if (!clip->pose) return 0;
     for (unsigned i = 0; i < count; ++i) {
         uint32_t key = u32le(program + 8*i);
-        if (key < first || key > last || (key - first) % stride ||
+        if (key < bank->first || key > bank->last || (key - bank->first) % stride ||
             u32le(program + 8*i + 4) != 2) return 0;
-        const uint8_t *frame = record(scene, bytes, key, stride);
-        if (!frame || !decode_pose(frame, model[piece].parts, &clip->pose[i])) return 0;
+        if (key < bank->origin || stride > bank->bytes || key - bank->origin > bank->bytes - stride)
+            return 0;
+        const uint8_t *frame = bank->data + (key - bank->origin);
+        if (!decode_pose(frame, model[piece].parts, &clip->pose[i])) return 0;
     }
     clip->count = count;
     clip->terminal = terminal;
@@ -156,12 +175,66 @@ BfmSteamKnightMachine *bfm_steam_knight_machine_load(const uint8_t *scene, size_
     if (!machine->white_chassis) goto failed;
     for (unsigned i = 0; i < CLIPS; ++i)
         if (!load_clip(&machine->chassis[i], scene, bytes, CHASSIS,
-                       chassis_program[i].table, chassis_program[i].keys)) goto failed;
-    if (!load_clip(&machine->torso, scene, bytes, TORSO, UINT32_C(0x801950d0), 16)) goto failed;
+                       chassis_program[i].table, chassis_program[i].keys, NULL)) goto failed;
+    if (!load_clip(&machine->torso, scene, bytes, TORSO, UINT32_C(0x801950d0), 16, NULL)) goto failed;
     return machine;
 failed:
     bfm_steam_knight_machine_free(machine);
     return NULL;
+}
+
+/* The uncompressed companion overlays the event-data region after SC02/5. */
+static int load_upper_motion(BfmSteamKnightMachine *machine, const MusashiDiscMedia *disc,
+                             const uint8_t *scene, size_t bytes)
+{
+    enum { SECTOR = 2048, MEMBER = 10, PAYLOAD = 71904 - SECTOR };
+    uint8_t directory[SECTOR], header[16];
+    size_t archive_size;
+    if (!musashi_disc_media_read_root_range(disc, "SC02.CD", 0, directory,
+                                             sizeof directory, &archive_size)) return 0;
+    uint32_t count = u32le(directory);
+    if (count <= MEMBER || count > (SECTOR - 8) / 8) return 0;
+    const uint8_t *entry = directory + 8 + 8 * MEMBER;
+    uint32_t sector = u32le(entry), extent = u32le(entry + 4);
+    if (!sector || sector > archive_size / SECTOR) return 0;
+    size_t start = (size_t)sector * SECTOR;
+    if (extent < SECTOR + PAYLOAD || extent > archive_size - start ||
+        !musashi_disc_media_read_root_range(disc, "SC02.CD", start, header, sizeof header, &archive_size) ||
+        u32le(header) != 0x434150 || u32le(header + 4) != 0x101 ||
+        u32le(header + 8) || u32le(header + 12) != SECTOR + PAYLOAD) return 0;
+    uint8_t *payload = malloc(PAYLOAD);
+    if (!payload) return 0;
+    PoseBank bank = {payload, PAYLOAD, UINT32_C(0x801e4c60),
+                     UINT32_C(0x801f2140), UINT32_C(0x801f5cc8)};
+    PoseBank base = {scene, bytes, origin, UINT32_C(0x801d323c), UINT32_C(0x801d6914)};
+    int loaded = musashi_disc_media_read_root_range(disc, "SC02.CD", start + SECTOR, payload,
+                                                     PAYLOAD, &archive_size);
+    const uint32_t directory_address = UINT32_C(0x801959ec);
+    for (unsigned i = 0; loaded && i < UPPER_CLIPS; ++i) {
+        unsigned body = upper_program[i].chassis;
+        const uint8_t *pair = record(scene, bytes, directory_address + 8 * upper_program[i].motion, 8);
+        loaded = pair && u32le(pair) == chassis_program[body].table &&
+                 u32le(pair + 4) == upper_program[i].table &&
+                 load_clip(&machine->upper[i], scene, bytes, TORSO, u32le(pair + 4),
+                           chassis_program[body].keys, i <= UPPER_KNEE ? &bank : &base);
+    }
+    const uint8_t *other_knee = record(scene, bytes, directory_address + 8 * 23, 8);
+    loaded = loaded && other_knee && u32le(other_knee) == chassis_program[KNEEL_LEFT].table &&
+             u32le(other_knee + 4) == upper_program[UPPER_KNEE].table;
+    free(payload);
+    return loaded;
+}
+
+BfmSteamKnightMachine *bfm_steam_knight_machine_load_mounted(const MusashiDiscMedia *disc,
+                                                             const uint8_t *scene, size_t bytes)
+{
+    if (!disc) return NULL;
+    BfmSteamKnightMachine *machine = bfm_steam_knight_machine_load(scene, bytes);
+    if (machine && !load_upper_motion(machine, disc, scene, bytes)) {
+        bfm_steam_knight_machine_free(machine);
+        return NULL;
+    }
+    return machine;
 }
 
 void bfm_steam_knight_machine_free(BfmSteamKnightMachine *machine)
@@ -169,6 +242,7 @@ void bfm_steam_knight_machine_free(BfmSteamKnightMachine *machine)
     if (!machine) return;
     for (unsigned i = 0; i < CLIPS; ++i) free(machine->chassis[i].pose);
     free(machine->torso.pose);
+    for (unsigned i = 0; i < UPPER_CLIPS; ++i) free(machine->upper[i].pose);
     musashi_forest_player_mesh_free(machine->lit_under_armor);
     musashi_forest_player_mesh_free(machine->under_armor);
     musashi_forest_player_mesh_free(machine->white_chassis);
@@ -280,8 +354,41 @@ static void mounted_upper_part(const BfmForestTransform *waist, const BfmForestT
     }
 }
 
+/* These upper keys already contain body-relative translations. Both knees
+ * select the same upper pose while their two chassis programs are mirrored. */
+static const BfmForestPose *paired_upper(const BfmSteamKnightMachine *machine,
+                                        const BfmForestPose *chassis)
+{
+    if (!machine->upper[UPPER_ARRIVAL].pose) return NULL;
+    if (machine->upper_yaw && machine->action == BFM_STEAM_MACHINE_NEUTRAL)
+        for (unsigned k = 0; k < machine->torso.count; ++k)
+            if (chassis == &machine->chassis[NEUTRAL].pose[k]) return &machine->torso.pose[k];
+    for (unsigned i = 0; i < UPPER_CLIPS; ++i) {
+        if (i >= UPPER_WINDUP && machine->action != BFM_STEAM_MACHINE_STREET_SHOT) continue;
+        if (i == UPPER_KNEE && machine->action != BFM_STEAM_MACHINE_KNEELING) continue;
+        const MachineClip *lower = &machine->chassis[upper_program[i].chassis];
+        const MachineClip *upper = &machine->upper[i];
+        for (unsigned k = 0; k < upper->count; ++k) {
+            if (chassis == &lower->pose[k] || (i == UPPER_KNEE &&
+                chassis == &machine->chassis[KNEEL_LEFT].pose[k])) return &upper->pose[k];
+        }
+    }
+    return NULL;
+}
+
 static void mount_torso(BfmSteamKnightMachine *machine, unsigned shown)
 {
+    const BfmForestPose *paired = paired_upper(machine, machine->display[CHASSIS]);
+    if (paired) {
+        if (machine->upper_yaw) {
+            static const BfmForestTransform zero = {0};
+            for (unsigned i = 0; i < model[TORSO].parts; ++i)
+                mounted_upper_part(&machine->upper_heading, &zero, &paired->local[i],
+                                   &machine->mounted_torso.local[i]);
+            machine->display[TORSO] = &machine->mounted_torso;
+        } else machine->display[TORSO] = paired;
+        return;
+    }
     const BfmForestTransform *waist = &machine->display[CHASSIS]->local[21];
     const BfmForestTransform *reference = &sample(&machine->chassis[NEUTRAL], shown)->local[21];
     const BfmForestPose *source = sample(&machine->torso, shown);
@@ -291,6 +398,16 @@ static void mount_torso(BfmSteamKnightMachine *machine, unsigned shown)
         mounted_upper_part(waist, reference, local, placed);
     }
     machine->display[TORSO] = &machine->mounted_torso;
+}
+
+int bfm_steam_knight_machine_set_upper_yaw(BfmSteamKnightMachine *machine, unsigned yaw)
+{
+    if (!machine || !machine->controlled || yaw >= 4096) return 0;
+    machine->upper_yaw = yaw;
+    bfm_forest_actor_root(yaw, (const int16_t[3]){0,0,0}, &machine->upper_heading);
+    unsigned age = machine->control_age;
+    mount_torso(machine, age < 2 ? machine->outgoing_display : (age - 2) % 32);
+    return 1;
 }
 
 static void selected_chassis(BfmSteamKnightMachine *machine, unsigned shown)
@@ -609,6 +726,18 @@ int bfm_steam_knight_machine_gauntlet_socket(const BfmSteamKnightMachine *machin
                                            BfmForestTransform *world)
 {
     if (!machine || !machine->active || !world) return 0;
+    const BfmForestPose *paired = paired_upper(machine, machine->chassis_pose);
+    if (paired) {
+        const BfmForestTransform *part = &paired->local[GAUNTLET];
+        BfmForestTransform turned;
+        if (machine->upper_yaw) {
+            static const BfmForestTransform zero = {0};
+            mounted_upper_part(&machine->upper_heading, &zero, part, &turned);
+            part = &turned;
+        }
+        world_part(machine, part, world);
+        return 1;
+    }
     unsigned tick = machine->controlled ? machine->control_age % 32 : entrance_clock(machine->entrance_age);
     const BfmForestTransform *waist = &machine->chassis_pose->local[21];
     const BfmForestTransform *reference = &sample(&machine->chassis[NEUTRAL], tick)->local[21];

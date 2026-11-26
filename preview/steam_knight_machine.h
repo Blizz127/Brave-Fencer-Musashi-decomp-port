@@ -6,6 +6,8 @@
 typedef struct BfmSteamKnightMachine BfmSteamKnightMachine;
 
 BfmSteamKnightMachine *bfm_steam_knight_machine_load(const uint8_t *scene, size_t bytes);
+BfmSteamKnightMachine *bfm_steam_knight_machine_load_mounted(const MusashiDiscMedia *disc,
+                                                             const uint8_t *scene, size_t bytes);
 void bfm_steam_knight_machine_free(BfmSteamKnightMachine *machine);
 /* Elapsed world updates from the ceiling cue, then from handover to Musashi. */
 void bfm_steam_knight_machine_present(BfmSteamKnightMachine *machine, unsigned elapsed);
@@ -17,6 +19,8 @@ size_t bfm_steam_knight_machine_actors(const BfmSteamKnightMachine *machine,
 /* The current logical center and basis of the mounted sphere, before any
  * displacement by its child. The externally supplied transform is borrowed
  * for the draw. Four actor slots cover both shell replacements and sphere. */
+/* The upper actor's relative heading is independent of its body and child. */
+int bfm_steam_knight_machine_set_upper_yaw(BfmSteamKnightMachine *machine, unsigned yaw);
 int bfm_steam_knight_machine_gauntlet_socket(const BfmSteamKnightMachine *machine,
                                            BfmForestTransform *world);
 size_t bfm_steam_knight_machine_gauntlet_actors(const BfmSteamKnightMachine *machine,
