@@ -8059,6 +8059,19 @@
       "span_sha256": "eb3ec69fbf67736c5721d7ba315232133a85bae33e84f652cfe1083a21be15d2"
     },
     {
+      "name": "func_8017DE38",
+      "region": "sc01_0080",
+      "vram": 2149047864,
+      "size": 120,
+      "source": "src/overlays/sc01_0080/8017de38.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Clean-room C from the US Spiral Tower courtyard overlay. Handles a hit in either active statue phase or calls the current phase handler.",
+      "source_sha256": "688d03cae2b1adfbd8f8957a6e709f5151da9926d26bb8c77dde08cf86c2ffab",
+      "span_sha256": "e25578dea999f9eed8392abf059f176d4011119e8ba342ba7a76ff9f93dbf27d"
+    },
+    {
       "name": "func_8017E1FC",
       "region": "sc01_0080",
       "vram": 2149048828,
