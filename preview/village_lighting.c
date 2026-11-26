@@ -64,18 +64,19 @@ static int palettes(const BfmVillageDaylight *light, uint16_t tiles[512][1024], 
     return changed;
 }
 
-int bfm_village_daylight_begin(BfmVillageDaylight *light, const uint8_t *scene, size_t bytes,
-                               uint32_t room, unsigned phase, uint16_t tiles[512][1024])
+static int begin_daylight(BfmVillageDaylight *light, const uint8_t *scene, size_t bytes,
+                          uint32_t room, uint32_t color_table, unsigned phase,
+                          uint16_t tiles[512][1024])
 {
     if (!light || !scene || !tiles || phase >= 5) return 0;
     const uint8_t *descriptor = mounted(scene, bytes, room, 0xa8);
     if (!descriptor || u32le(descriptor + 0xa4) != 1) return 0;
     BfmVillageDaylight next = {.scene = scene, .phase = phase,
         .lamps = {{{0,30,0},{0}}, {{0,7,20},{0}}, {{0,-18,0},{0}}}};
-    next.entry_colors = mounted(scene, bytes, UINT32_C(0x80185d3c), 60);
-    next.transition_colors = mounted(scene, bytes, UINT32_C(0x80185de4), 20);
-    next.lamp_colors = mounted(scene, bytes, UINT32_C(0x80185e2c), 45);
-    next.sky_colors = mounted(scene, bytes, UINT32_C(0x80185e64), 60);
+    next.entry_colors = mounted(scene, bytes, color_table, 60);
+    next.transition_colors = mounted(scene, bytes, color_table + 0xa8, 20);
+    next.lamp_colors = mounted(scene, bytes, color_table + 0xf0, 45);
+    next.sky_colors = mounted(scene, bytes, color_table + 0x128, 60);
     next.rectangles = mounted(scene, bytes, u32le(descriptor + 0xa0), 16);
     if (!next.entry_colors || !next.transition_colors || !next.lamp_colors ||
         !next.sky_colors || !next.rectangles) return 0;
@@ -100,6 +101,19 @@ int bfm_village_daylight_begin(BfmVillageDaylight *light, const uint8_t *scene, 
     palettes(&next, tiles, 1);
     *light = next;
     return 1;
+}
+
+int bfm_village_daylight_begin(BfmVillageDaylight *light, const uint8_t *scene, size_t bytes,
+                               uint32_t room, unsigned phase, uint16_t tiles[512][1024])
+{
+    return begin_daylight(light, scene, bytes, room, UINT32_C(0x80185d3c), phase, tiles);
+}
+
+int bfm_woods_daylight_begin(BfmVillageDaylight *light, const uint8_t *scene, size_t bytes,
+                             unsigned phase, uint16_t tiles[512][1024])
+{
+    return begin_daylight(light, scene, bytes, UINT32_C(0x8018ea38), UINT32_C(0x80188050),
+                          phase, tiles);
 }
 
 void bfm_village_daylight_step(BfmVillageDaylight *light, unsigned phase, uint16_t tiles[512][1024])

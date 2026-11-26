@@ -16,9 +16,11 @@ typedef struct {
     unsigned phase, blending, wait;
 } BfmVillageDaylight;
 
-/* The upper field owns its time-of-day palettes. The source colors in the
- * mounted scene remain available throughout a transition. */
+/* Each field supplies its own palette rectangles and color tables. Keep the
+ * mounted scene available throughout a transition. */
 int bfm_village_daylight_begin(BfmVillageDaylight *light, const uint8_t *scene, size_t bytes,
                                uint32_t room, unsigned phase, uint16_t tiles[512][1024]);
+int bfm_woods_daylight_begin(BfmVillageDaylight *light, const uint8_t *scene, size_t bytes,
+                             unsigned phase, uint16_t tiles[512][1024]);
 void bfm_village_daylight_step(BfmVillageDaylight *light, unsigned phase, uint16_t tiles[512][1024]);
 #endif
