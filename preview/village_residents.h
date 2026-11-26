@@ -12,14 +12,18 @@ typedef struct BfmVillageResidents BfmVillageResidents;
  * until the residents are freed. The figure queue supplies the room lighting
  * and depth ordering shared with Musashi and the terrain. */
 BfmVillageResidents *bfm_village_residents_load(const uint8_t *scene, size_t bytes,
-                                                 uint32_t room, uint32_t shadow);
+                                                 uint32_t room, uint32_t shadow,
+                                                 const BfmSaveRecord *state);
 void bfm_village_residents_free(BfmVillageResidents *residents);
 
 /* Call after preparing Musashi's figure for the current view. Age counts
  * village logic updates, independently of the number of presented frames. */
 int bfm_village_residents_add(const BfmVillageResidents *residents, BfmBedroomFigure *figure,
                               const BfmBedroomView *view, unsigned age);
-/* World transform of the active daylight station. */
+/* World transform while the resident is posted or walking. */
+int bfm_village_residents_step(BfmVillageResidents *residents, const BfmSaveRecord *state);
+int bfm_village_residents_contact(const BfmVillageResidents *residents, unsigned field_tick,
+                                  const int16_t previous[3], int16_t endpoint[3]);
 int bfm_village_residents_station(const BfmVillageResidents *residents, int16_t xyz[3], unsigned *yaw);
 
 /* Supply the focused Square edge only when the player has field control.

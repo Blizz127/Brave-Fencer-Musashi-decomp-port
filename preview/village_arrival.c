@@ -38,6 +38,7 @@ struct BfmVillageArrival {
     int start_talk_camera, latch_window, resident_anchor, resident_right;
     BfmVillageField view;
     BfmVillageResidents *residents;
+    unsigned resident_field_tick;
     BfmVillageGate *gate;
     BfmVillageCable *cable;
     BfmVillageImpact *impact;
@@ -91,7 +92,7 @@ static int mount_upper(BfmVillageArrival *a, const MusashiDiscMedia *disc, BfmBe
     a->cable = bfm_village_cable_load(a->scene, a->bytes, room);
     if (!a->message_art || !a->gate || !a->impact || !a->cable) return 0;
     if (!(next.state.flags[240 / 8] & 1u) && next.state.progress[8] == 10) {
-        a->residents = bfm_village_residents_load(a->scene, a->bytes, room, 0x80188094u);
+        a->residents = bfm_village_residents_load(a->scene, a->bytes, room, 0x80188094u, &next.state);
         if (!a->residents) return 0;
     }
     a->tiles = tiles;
@@ -229,6 +230,7 @@ int bfm_village_arrival_step_input(BfmVillageArrival *a, BfmGameplayRun *run,
      * player is already on the incoming actor list for its 17 fade-in updates. */
     unsigned reveal = bfm_village_arrival_reveal_tick(a);
     if (!a->transfer_tick || a->transfer_tick >= reveal - 2) ++a->scene_tick;
+    if (a->residents) ++a->resident_field_tick;
     if (a->transfer_tick) {
         /* The outgoing field freezes at its exit contact. The incoming mesh is
          * ready before the crossfade makes its first scanout visible. */
@@ -283,7 +285,11 @@ int bfm_village_arrival_step_input(BfmVillageArrival *a, BfmGameplayRun *run,
     int movement_yaw = (a->camera.yaw + 2048) & 4095;
     if (a->talk_camera.phase)
         movement_yaw = bfm_village_motion_view_yaw(a->presented_camera.eye, a->presented_camera.target);
-    if (!bfm_village_motion_step(a->motion, x, y, movement_yaw)) return 0;
+    int16_t previous[3];
+    memcpy(previous, before->root.xyz, sizeof previous);
+    if (!bfm_village_motion_step(a->motion, x, y, movement_yaw) ||
+        !bfm_village_motion_resident_contact(a->motion, a->residents, a->resident_field_tick, previous) ||
+        !bfm_village_residents_step(a->residents, a->record)) return 0;
     const BfmVillagePlayer *p = bfm_village_motion_player(a->motion);
     if (p->events & BFM_VILLAGE_TRANSFER) {
         a->ascending = 0;

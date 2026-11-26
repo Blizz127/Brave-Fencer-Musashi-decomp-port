@@ -52,6 +52,10 @@ const BfmVillagePlayer *bfm_village_motion_player(const BfmVillageMotion *motion
 /* Once per gameplay update. Pad axes are -127..127, right and down positive.
  * Camera yaw is target minus eye in X/Z, with +Z at zero. */
 int bfm_village_motion_step(BfmVillageMotion *motion, int stick_x, int stick_y, int camera_yaw);
+struct BfmVillageResidents;
+/* Resolve contact against the actor transform from the previous field update. */
+int bfm_village_motion_resident_contact(BfmVillageMotion *motion,
+    const struct BfmVillageResidents *residents, unsigned field_tick, const int16_t previous[3]);
 /* Signal music readiness or closure of the current message before the next step. */
 int bfm_village_motion_continue(BfmVillageMotion *motion);
 /* Start only after the resident has accepted Talk. The mounted conversation

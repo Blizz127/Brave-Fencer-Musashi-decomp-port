@@ -1,12 +1,14 @@
 /* SPDX-License-Identifier: MIT */
 #include "village_residents.h"
 #include "bedroom_visitor.h"
+#include "forest_guard_contact.h"
+#include "village_arrival_motion.h"
 #include "../pc_port/forest_player_bytes.h"
 
 #include <stdlib.h>
 #include <string.h>
 
-enum { IDLE_KEYS = 8, BODY_PARTS = 10, PLACEMENT_BYTES = 20 };
+enum { IDLE_KEYS = 8, WALK_KEYS = 16, BODY_PARTS = 10, PLACEMENT_BYTES = 20 };
 static const uint32_t scene_origin = UINT32_C(0x80128158);
 
 typedef enum { RESTING, ADMITTED, STARTING, SPEAKING, FINISHING, RETURNING } Conversation;
@@ -17,8 +19,15 @@ typedef struct {
 
 struct BfmVillageResidents {
     BfmBedroomVisitor *body;
+    const uint8_t *scene;
+    size_t bytes;
+    uint32_t room;
     int position[3], heading;
-    uint32_t idle[IDLE_KEYS], talk[IDLE_KEYS];
+    uint32_t idle[IDLE_KEYS], talk[IDLE_KEYS], walk[WALK_KEYS];
+    const uint8_t *station, *offstage, *route;
+    unsigned points, waypoint, walk_age;
+    enum { OFF_DUTY, WALKING_IN, ON_DUTY, WALKING_OUT } duty;
+    BfmForestGuardBox post_box, walk_box;
     Reply replies[3];
     const uint8_t *tail_limits;
     Conversation conversation;
@@ -47,12 +56,12 @@ static int has_hillside_resident(const uint8_t *scene, size_t bytes, const uint8
     return 0;
 }
 
-static int read_clip(const uint8_t *scene, size_t bytes, uint32_t address, uint32_t poses[IDLE_KEYS])
+static int read_clip(const uint8_t *scene, size_t bytes, uint32_t address, uint32_t *poses, unsigned count)
 {
-    const uint8_t *clip = record(scene, bytes, address, (IDLE_KEYS + 1) * 8);
-    if (!clip || u32le(clip + IDLE_KEYS * 8) || u32le(clip + IDLE_KEYS * 8 + 4) != 0xffffu)
+    const uint8_t *clip = record(scene, bytes, address, (count + 1) * 8);
+    if (!clip || u32le(clip + count * 8) || u32le(clip + count * 8 + 4) != 0xffffu)
         return 0;
-    for (unsigned i = 0; i < IDLE_KEYS; ++i) {
+    for (unsigned i = 0; i < count; ++i) {
         uint32_t tagged = u32le(clip + i * 8);
         poses[i] = tagged & ~UINT32_C(0x01000000);
         if (tagged >> 24 != 0x81 || u32le(clip + i * 8 + 4) != 1 ||
@@ -73,10 +82,35 @@ static int read_reply(const uint8_t *scene, size_t bytes, uint32_t address, size
     return 1;
 }
 
-BfmVillageResidents *bfm_village_residents_load(const uint8_t *scene, size_t bytes,
-                                                 uint32_t room, uint32_t shadow)
+static int read_box(const uint8_t *scene, size_t bytes, uint32_t address, BfmForestGuardBox *box)
 {
-    if (!scene || room != UINT32_C(0x8018c794)) return NULL;
+    const uint8_t *shape = record(scene, bytes, address, 16);
+    if (!shape || u32le(shape)) return 0;
+    for (unsigned axis = 0; axis < 3; ++axis) {
+        box->low[axis] = s16le(shape + 4 + axis * 4);
+        box->high[axis] = s16le(shape + 6 + axis * 4);
+        if (box->low[axis] > box->high[axis]) return 0;
+    }
+    return 1;
+}
+
+static int work_hours(const BfmSaveRecord *state)
+{
+    unsigned minute = u16le(state->progress + 0x1a);
+    return minute >= 9 * 60 && minute < 18 * 60;
+}
+
+static void set_station(BfmVillageResidents *r, const uint8_t *station)
+{
+    for (unsigned i = 0; i < 3; ++i) r->position[i] = s16le(station + i * 2);
+    r->heading = s16le(station + 6);
+}
+
+BfmVillageResidents *bfm_village_residents_load(const uint8_t *scene, size_t bytes,
+                                                 uint32_t room, uint32_t shadow,
+                                                 const BfmSaveRecord *state)
+{
+    if (!scene || !state || room != UINT32_C(0x8018c794)) return NULL;
     const uint8_t *descriptor = record(scene, bytes, room, 0xbc);
     if (!descriptor || !has_hillside_resident(scene, bytes, descriptor)) return NULL;
 
@@ -92,9 +126,22 @@ BfmVillageResidents *bfm_village_residents_load(const uint8_t *scene, size_t byt
     const uint8_t *lead = record(scene, bytes, UINT32_C(0x801898c4), 8);
     const uint8_t *tail = record(scene, bytes, UINT32_C(0x801898ec), 8);
     residents->tail_limits = record(scene, bytes, UINT32_C(0x80185c44), 12);
-    if (!residents->tail_limits || !lead || !tail || u32le(lead) != 15 || u32le(tail) != 15 ||
-        !read_clip(scene, bytes, u32le(kit + 4), residents->idle) ||
-        !read_clip(scene, bytes, u32le(kit + 12), residents->talk) ||
+    residents->station = station;
+    residents->scene = scene;
+    residents->bytes = bytes;
+    residents->room = room;
+    residents->offstage = record(scene, bytes, UINT32_C(0x80189904), 8);
+    const uint8_t *path = record(scene, bytes, UINT32_C(0x801bdc00), 4);
+    residents->points = path ? u32le(path) : 0;
+    if (residents->points >= 2 && residents->points <= 256)
+        residents->route = record(scene, bytes, UINT32_C(0x801bdc04), residents->points * 4);
+    if (!residents->offstage || !residents->route ||
+        !read_box(scene, bytes, UINT32_C(0x80189874), &residents->post_box) ||
+        !read_box(scene, bytes, UINT32_C(0x80189884), &residents->walk_box) ||
+        !residents->tail_limits || !lead || !tail || u32le(lead) != 15 || u32le(tail) != 15 ||
+        !read_clip(scene, bytes, u32le(kit + 4), residents->idle, IDLE_KEYS) ||
+        !read_clip(scene, bytes, u32le(kit + 8), residents->walk, WALK_KEYS) ||
+        !read_clip(scene, bytes, u32le(kit + 12), residents->talk, IDLE_KEYS) ||
         !read_reply(scene, bytes, UINT32_C(0x801a9ee0), 124, &residents->replies[0]) ||
         !read_reply(scene, bytes, UINT32_C(0x801a9f5c), 160, &residents->replies[1]) ||
         !read_reply(scene, bytes, UINT32_C(0x801a9ffc), 140, &residents->replies[2])) {
@@ -109,8 +156,8 @@ BfmVillageResidents *bfm_village_residents_load(const uint8_t *scene, size_t byt
         free(residents);
         return NULL;
     }
-    for (unsigned i = 0; i < 3; ++i) residents->position[i] = s16le(station + i * 2);
-    residents->heading = s16le(station + 6);
+    residents->duty = work_hours(state) ? ON_DUTY : OFF_DUTY;
+    set_station(residents, station);
     return residents;
 }
 
@@ -121,19 +168,118 @@ void bfm_village_residents_free(BfmVillageResidents *residents)
     free(residents);
 }
 
+static int target_heading(const BfmVillageResidents *r)
+{
+    const uint8_t *point = r->route + 4 * r->waypoint;
+    int32_t target[3] = {s16le(point), 0, s16le(point + 2)};
+    int32_t origin[3] = {r->position[0], 0, r->position[2]};
+    return bfm_village_motion_view_yaw(target, origin);
+}
+
+/* The walking actor casts straight down at its new X/Z. The field's shadow
+ * query uses this same vertical segment and two-unit surface clearance. */
+static int follow_ground(BfmVillageResidents *r, int walking)
+{
+    BfmBedroomRoot root = {0};
+    for (unsigned i = 0; i < 3; ++i) root.xyz[i] = (int16_t)r->position[i];
+    if (!walking) root.xyz[1] += 16;
+    if (!bfm_bedroom_travel_air_shadow(r->scene, r->bytes, r->room, &root)) return 0;
+    r->position[1] = root.shadow_visible ? root.shadow_xyz[1] : r->position[1] - (walking ? 16 : 0);
+    return 1;
+}
+
+int bfm_village_residents_step(BfmVillageResidents *r, const BfmSaveRecord *state)
+{
+    if (!r || r->conversation != RESTING) return 1;
+    int daytime = work_hours(state);
+    if (r->duty == OFF_DUTY || r->duty == ON_DUTY) {
+        if (daytime == (r->duty == ON_DUTY)) return 1;
+        set_station(r, daytime ? r->offstage : r->station);
+        r->duty = daytime ? WALKING_IN : WALKING_OUT;
+        r->waypoint = daytime ? r->points - 2 : 1;
+        r->walk_age = 0;
+        r->heading = target_heading(r);
+        return !daytime || follow_ground(r, 0);
+    }
+    if (r->waypoint == r->points) {
+        r->duty = r->duty == WALKING_IN ? ON_DUTY : OFF_DUTY;
+        set_station(r, r->station);
+        return 1;
+    }
+
+    int16_t position[3];
+    for (unsigned i = 0; i < 3; ++i) position[i] = (int16_t)r->position[i];
+    BfmForestTransform basis;
+    bfm_forest_actor_root((unsigned)r->heading, position, &basis);
+    int turn = target_heading(r) - r->heading;
+    if (turn > 2048) turn -= 4096;
+    if (turn < -2048) turn += 4096;
+    int amount = turn / 4;
+    if (!amount) amount = (turn > 0) - (turn < 0);
+    r->heading = (r->heading + amount) & 4095;
+    for (unsigned axis = 0; axis < 3; axis += 2) {
+        int delta = -6 * basis.rotation[axis][2];
+        r->position[axis] += delta / 4096 - (delta % 4096 < 0);
+    }
+    if (!follow_ground(r, 1)) return 0;
+    const uint8_t *goal = r->route + r->waypoint * 4;
+    int64_t dx = r->position[0] - s16le(goal), dz = r->position[2] - s16le(goal + 2);
+    if (dx * dx + dz * dz <= 16 * 16) {
+        if (r->duty == WALKING_OUT) ++r->waypoint;
+        else r->waypoint = r->waypoint ? r->waypoint - 1 : r->points;
+    }
+    ++r->walk_age;
+    return 1;
+}
+
+int bfm_village_residents_contact(const BfmVillageResidents *r, unsigned field_tick,
+                                  const int16_t previous[3], int16_t endpoint[3])
+{
+    if (!r || r->duty == OFF_DUTY || r->conversation != RESTING) return 0;
+    const BfmForestGuardBox *box = r->duty == ON_DUTY ? &r->post_box : &r->walk_box;
+    int16_t position[3], from[3], to[3], hit[3];
+    for (unsigned i = 0; i < 3; ++i) {
+        position[i] = (int16_t)r->position[i];
+        from[i] = previous[i];
+        to[i] = endpoint[i];
+    }
+    BfmForestTransform root;
+    bfm_forest_actor_root((unsigned)r->heading, position, &root);
+    from[1] -= 16;
+    to[1] -= 16;
+    if (!bfm_forest_body_slide(box, &root, from, to, hit)) return 0;
+    int16_t center[3];
+    if (bfm_forest_guard_contact(box, &root, from, from, center)) {
+        unsigned phase = (field_tick >> 5) & 3;
+        int dx = phase < 2 ? 7 : 8, dz = phase == 2 ? 7 : 8;
+        hit[0] += from[0] > center[0] ? dx : -dx;
+        hit[2] += from[2] > center[2] ? dz : -dz;
+        hit[1] = endpoint[1] - 16;
+    }
+    endpoint[0] = hit[0];
+    endpoint[1] = hit[1] + 16;
+    endpoint[2] = hit[2];
+    return 1;
+}
+
 int bfm_village_residents_add(const BfmVillageResidents *residents, BfmBedroomFigure *figure,
                               const BfmBedroomView *view, unsigned age)
 {
     if (!residents) return 0;
+    if (residents->duty == OFF_DUTY) return 1;
     const uint32_t *clip = residents->conversation >= STARTING ? residents->talk : residents->idle;
     unsigned key = (age - residents->pose_start) % IDLE_KEYS;
+    if (residents->duty == WALKING_IN || residents->duty == WALKING_OUT) {
+        clip = residents->walk;
+        key = residents->walk_age % WALK_KEYS;
+    }
     return bfm_bedroom_visitor_add(residents->body, figure, view, 0,
                                    residents->position, residents->heading, clip[key]);
 }
 
 int bfm_village_residents_station(const BfmVillageResidents *residents, int16_t xyz[3], unsigned *yaw)
 {
-    if (!residents || !xyz || !yaw) return 0;
+    if (!residents || residents->duty == OFF_DUTY || !xyz || !yaw) return 0;
     for (unsigned i = 0; i < 3; ++i) xyz[i] = (int16_t)residents->position[i];
     *yaw = (unsigned)residents->heading & 4095u;
     return 1;
@@ -142,10 +288,10 @@ int bfm_village_residents_station(const BfmVillageResidents *residents, int16_t 
 int bfm_village_residents_begin_talk(BfmVillageResidents *residents, const int16_t player[3],
                                      const BfmSaveRecord *state, int square_edge)
 {
-    if (!residents || !player || !state || !square_edge || residents->conversation != RESTING) return 0;
-    unsigned minute = u16le(state->progress + 0x1a);
+    if (!residents || residents->duty != ON_DUTY || !player || !state ||
+        !square_edge || residents->conversation != RESTING) return 0;
     uint32_t progress = u32le(state->progress + 8);
-    if (minute < 9 * 60 || minute >= 18 * 60 || (state->flags[240 / 8] & 1u) ||
+    if (!work_hours(state) || (state->flags[240 / 8] & 1u) ||
         progress == 133 || progress == 134) return 0;
     int64_t distance_squared = 0;
     for (unsigned i = 0; i < 3; ++i) {

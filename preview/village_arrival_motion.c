@@ -2,6 +2,7 @@
 #include "village_arrival_motion.h"
 #include "forest_motion.h"
 #include "village_ground.h"
+#include "village_residents.h"
 
 #include <limits.h>
 #include <math.h>
@@ -580,6 +581,19 @@ int bfm_village_motion_step(BfmVillageMotion *m, int x, int y, int camera_yaw)
 const uint8_t *bfm_village_motion_transfer(const BfmVillageMotion *m)
 {
     return m ? m->transfer : NULL;
+}
+
+int bfm_village_motion_resident_contact(BfmVillageMotion *m, const BfmVillageResidents *residents,
+                                        unsigned field_tick, const int16_t previous[3])
+{
+    if (!residents || !m->player.controlled || m->talk != NO_TALK) return 1;
+    int16_t xyz[3];
+    memcpy(xyz, m->player.root.xyz, sizeof xyz);
+    if (!bfm_village_residents_contact(residents, field_tick, previous, xyz)) return 1;
+    bfm_village_residents_contact(residents, field_tick, previous, xyz);
+    for (unsigned i = 0; i < 3; ++i)
+        m->position[i] = (int64_t)xyz[i] * Q + (m->position[i] & (Q - 1));
+    return publish_root(m);
 }
 
 int bfm_village_motion_staged(BfmVillageMotion *m, const BfmBedroomRoot *root)
