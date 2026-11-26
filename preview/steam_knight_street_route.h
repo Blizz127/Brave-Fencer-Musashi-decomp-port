@@ -41,6 +41,11 @@ int bfm_steam_street_route_choose(BfmSteamKnightStreetRoute *route, uint32_t fla
                                   int hp, int current_marker, BfmSteamStreetChoice *out);
 void bfm_steam_street_delay_tick(BfmSteamKnightStreetRoute *route);
 void bfm_steam_street_depth_crossed(BfmSteamKnightStreetRoute *route, uint32_t *flags);
+/* Pick a destination at the top of this jump, using the player's current
+ * position. The last unmarked jump returns to the start of the whole action. */
+int bfm_steam_street_jump_target(const BfmSteamKnightStreetRoute *route, int marker,
+    unsigned jumps_left, uint32_t flags, const int16_t action_start[3],
+    const int16_t body[3], const int16_t hero[3], int16_t xz[2]);
 /* Age zero displays the first pose at the inherited fractional actor root. */
 int bfm_steam_street_walk_begin(BfmSteamKnightStreetWalk *walk, const int32_t root_q12[3],
                                 uint32_t body_flags);

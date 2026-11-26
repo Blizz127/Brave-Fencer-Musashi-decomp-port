@@ -79,6 +79,11 @@ uint32_t bfm_steam_hero_flags(const BfmSteamKnightHeroMotion *h)
     return h ? h->actor.flags : 0;
 }
 
+const BfmForestField *bfm_steam_hero_surface(const BfmSteamKnightHeroMotion *h)
+{
+    return h ? h->surface : NULL;
+}
+
 static void rest(BfmSteamKnightHeroMotion *h)
 {
     memset(h->actor.velocity, 0, sizeof h->actor.velocity);
@@ -89,6 +94,24 @@ static void rest(BfmSteamKnightHeroMotion *h)
     h->ground = (BfmForestManual){.entry_velocity = h->start_speed};
     h->sample.body = h->sample.motion = h->sample.elapsed = 0;
     h->braced = h->previous_brace = 0;
+}
+
+BfmSteamCornerStep bfm_steam_hero_corner(BfmSteamKnightHeroMotion *h,
+                                         BfmSteamCorner *corner, int view_ready)
+{
+    if (!h || !corner) return BFM_CORNER_BLOCKED;
+    if (corner->phase == BFM_CORNER_ENTRY) rest(h);
+    /* The walk ends before the field starts turning. */
+    BfmSteamCornerStep step = bfm_steam_corner_step(corner, h->surface, &h->actor,
+        h->sample.feet, &h->sample.heading, 0, view_ready);
+    if (step != BFM_CORNER_CONTROLS && step != BFM_CORNER_BLOCKED) {
+        if (step == BFM_CORNER_WALK && h->sample.motion == WALK) ++h->sample.elapsed;
+        else h->sample.elapsed = 0;
+        h->sample.motion = step == BFM_CORNER_WALK ? WALK : STILL;
+        h->sample.body = 0;
+        h->sample.action = h->actor.state;
+    }
+    return step;
 }
 
 int bfm_steam_hero_place(BfmSteamKnightHeroMotion *h, const int16_t feet[3], int16_t heading)

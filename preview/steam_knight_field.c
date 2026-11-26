@@ -24,10 +24,13 @@ struct BfmSteamKnightField {
     unsigned broken_houses;
     int arena_ready;
     unsigned arena_round, arena_stage;
-    int16_t stomp_origin_z;
+    int16_t stomp_origin_x, stomp_origin_z;
+    int16_t town_body[3][3];
     double arena_radius;
     double town_radius_targets[3];
     unsigned town_radius_slot;
+    unsigned west_turn, west_delay;
+    int west_requested;
     BfmForestCamera arena_view;
     MusashiForestPlayerMesh *hero;
     RoomTransferDescriptor entrance;
@@ -168,9 +171,11 @@ int bfm_steam_knight_field_break_house(BfmSteamKnightField *field, unsigned hous
 {
     static const struct { uint32_t start, end; } houses[] = {
         {UINT32_C(0x801dc180), UINT32_C(0x801dcd04)},
-        {UINT32_C(0x801dcd04), UINT32_C(0x801dd2d4)}
+        {UINT32_C(0x801dcd04), UINT32_C(0x801dd2d4)},
+        {UINT32_C(0x801dd2d4), UINT32_C(0x801ddd30)},
+        {UINT32_C(0x801ddd30), UINT32_C(0x801de674)}
     };
-    if (!field || !field->damaged_mesh || house == 0 || house > 2) return 0;
+    if (!field || !field->damaged_mesh || house == 0 || house > sizeof houses / sizeof houses[0]) return 0;
     unsigned bit = 1u << (house - 1);
     if (field->broken_houses & bit) return 1;
     uint32_t start = houses[house - 1].start;
@@ -180,6 +185,9 @@ int bfm_steam_knight_field_break_house(BfmSteamKnightField *field, unsigned hous
     uint8_t *pending = bfm_steam_knight_house_mesh(field->damaged_mesh, field->damaged_size,
                                                   record, size, house, &bytes);
     if (!pending || !install_damaged_mesh(field, pending, bytes)) return 0;
+    /* The final west-street record replaces the same four sectors and
+     * already contains the rubble from the preceding landing. */
+    if (house == 4) field->broken_houses |= 1u << 2;
     field->broken_houses |= bit;
     return 1;
 }
@@ -378,6 +386,19 @@ void bfm_steam_knight_duel_camera(BfmForestCamera *camera)
     camera_at(camera, (const int16_t[3]){140, -2728, -3464});
 }
 
+void bfm_steam_knight_field_turn_west(BfmSteamKnightField *field)
+{
+    if (field && field->arena_ready && field->arena_round == 2 && !field->west_requested) {
+        field->west_requested = 1;
+        field->west_delay = 2;
+    }
+}
+
+int bfm_steam_knight_field_faces_west(const BfmSteamKnightField *field)
+{
+    return field && field->west_requested && field->west_turn == 1024;
+}
+
 void bfm_steam_knight_field_track_arena(BfmSteamKnightField *field, unsigned round,
                                        unsigned stage, const int16_t hero[3],
                                        const int16_t body[3])
@@ -386,8 +407,22 @@ void bfm_steam_knight_field_track_arena(BfmSteamKnightField *field, unsigned rou
     int town = round == 2;
     int stomp = town && stage == 6;
     int entering = !field->arena_ready || field->arena_round != round;
-    if (entering)
+    if (entering) {
         bfm_forest_terrain_set_forward_culling(field->terrain, town);
+        field->west_requested = 0;
+        field->west_turn = 0;
+    }
+    if (stomp && (entering || field->arena_stage != stage ||
+                  (field->west_requested && field->west_delay == 2)))
+        field->stomp_origin_x = body[0];
+    if (field->west_requested && field->west_turn < 1024) {
+        if (field->west_delay) {
+            --field->west_delay;
+        } else {
+            unsigned step = (1024 - field->west_turn) / 4;
+            field->west_turn += step ? step : 1;
+        }
+    }
     if (stomp && (entering || field->arena_stage != stage))
         field->stomp_origin_z = body[2];
 
@@ -404,13 +439,29 @@ void bfm_steam_knight_field_track_arena(BfmSteamKnightField *field, unsigned rou
     } else {
         target = 1156.0;
     }
+    int target_x = body[0], target_y = -2050;
+    int target_z = stomp && !field->west_turn ? field->stomp_origin_z : body[2];
     if (town) {
         if (entering) {
-            for (unsigned i = 0; i < 3; ++i) field->town_radius_targets[i] = target;
+            for (unsigned i = 0; i < 3; ++i) {
+                field->town_radius_targets[i] = target;
+                memcpy(field->town_body[i], body, sizeof field->town_body[i]);
+            }
             field->town_radius_slot = 0;
         }
         /* The view reacts three updates after the machine changes height. */
         unsigned slot = field->town_radius_slot;
+        /* During a leap keep the street-axis landing mark framed. The
+         * northbound view receives the machine's cross-street move late. */
+        if (stomp)
+            target_x = field->west_requested ? field->stomp_origin_x : field->town_body[slot][0];
+        if (field->west_requested && stage == 10) {
+            /* The rolling body carries the camera target into its bounce. */
+            target_x = field->town_body[slot][0];
+            target_y = field->town_body[slot][1];
+            target_z = field->town_body[slot][2];
+        }
+        memcpy(field->town_body[slot], body, sizeof field->town_body[slot]);
         double delayed = field->town_radius_targets[slot];
         field->town_radius_targets[slot] = target;
         field->town_radius_slot = (slot + 1) % 3;
@@ -421,15 +472,19 @@ void bfm_steam_knight_field_track_arena(BfmSteamKnightField *field, unsigned rou
 
     BfmForestCamera *view = &field->arena_view;
     BfmForestTransform axes;
-    bfm_forest_actor_pitch_yaw((unsigned)-569, town ? 0u : (unsigned)-512,
+    bfm_forest_actor_pitch_yaw((unsigned)-569, town ? 0u - field->west_turn : (unsigned)-512,
                                (const int16_t[3]){0, 0, 0}, &axes);
     for (unsigned i = 0; i < 3; ++i)
         for (unsigned j = 0; j < 3; ++j)
             view->rotation[i][j] = axes.rotation[j][i];
-    const int target_z = stomp ? field->stomp_origin_z : body[2];
-    const int focus[3] = {
-        body[0] + (town ? 2 : -121), -2050, target_z - (town ? 5 : 132)
-    };
+    /* Keep the small lateral and trailing offsets in camera-heading space
+     * as the street turns west. The first two venues keep their diagonal framing. */
+    int bias_x = -121, bias_z = -132;
+    if (town) {
+        bias_x = (int)lround((2.0 * view->rotation[0][0] + 5.0 * view->rotation[0][2]) / 4096.0);
+        bias_z = (int)lround((2.0 * view->rotation[0][2] - 5.0 * view->rotation[0][0]) / 4096.0);
+    }
+    const int focus[3] = {target_x + bias_x, target_y, target_z + bias_z};
     int16_t eye[3];
     for (unsigned i = 0; i < 3; ++i)
         eye[i] = (int16_t)lround(focus[i] - field->arena_radius * view->rotation[2][i] / 4096.0);

@@ -54,7 +54,12 @@ struct BfmSteamKnight {
         BfmSteamKnightLanding landing;
         unsigned neutral_age, jump_age, shot_age;
         int32_t shot_root[3];
-        int marker;
+        int marker, phase;
+        unsigned jumps_left, y_fraction;
+        int16_t jump_start[3];
+        int centering, hidden;
+        BfmSteamCorner corner;
+        int enter_corner;
         BfmSteamKnightFlail flail;
         BfmForestTransform head;
         int16_t endpoint[3];
@@ -270,7 +275,12 @@ static int transfer_tick(BfmSteamKnight *s)
             s->transfer_age = 0;
             s->core_hp = s->core_max;
             s->battle_flags &= 2;
-            if (s->round == 2) s->battle_flags |= 0x3004;
+            if (s->round == 2) {
+                s->battle_flags |= 0x3004;
+                s->street.phase = 24;
+                /* The street arrival retains a half-unit of vertical movement. */
+                s->street.y_fraction = 4;
+            }
         }
     }
     return bfm_steam_knight_machine_round_pose(s->machine, s->body_stage,
@@ -297,37 +307,101 @@ static int charged_spin_tick(BfmSteamKnight *s, const BfmSteamKnightHeroSample *
     return core_contact(s, &strike, roll.strength, &struck);
 }
 
+static int street_choose(BfmSteamKnight *s);
+
 static int street_jump_frame(BfmSteamKnight *s)
 {
-    return bfm_steam_knight_machine_street_jump(s->machine, &s->street.jump,
-                                                s->street.jump_age++, &s->street.landing);
+    BfmSteamKnightJump *jump = &s->street.jump;
+    unsigned age = s->street.jump_age;
+    unsigned apex = jump->rebound ? 33 : 28;
+    int marker = s->street.selected.marker;
+    if (s->street.centering) {
+        if (!bfm_steam_knight_machine_center_upper(s->machine)) return 1;
+        s->street.centering = 0;
+    }
+    if (age == 14 && marker >= 0) {
+        s->street.phase = 27;
+        s->street.enter_corner = 1;
+    }
+    if (age == apex) {
+        const int16_t *hero = bfm_steam_hero_sample(s->hero)->feet;
+        if (!bfm_steam_street_jump_target(&s->street.route, marker, s->street.jumps_left,
+                s->battle_flags, s->street.jump_start, jump->start, hero, jump->destination)) return 0;
+        s->street.hidden = 1;
+    }
+    if (age == apex + 17) s->street.hidden = 0;
+    if (age > apex + 16 && !jump->landing_age) {
+        int16_t previous[3], next[3];
+        int grounded;
+        unsigned fraction;
+        if (!bfm_steam_knight_machine_world_root(s->machine, previous) ||
+            !bfm_steam_knight_street_fall_y(jump, age, &next[1], &fraction)) return 0;
+        next[0] = jump->destination[0];
+        next[2] = jump->destination[1];
+        if (!bfm_forest_thrown_probe(bfm_steam_hero_surface(s->hero), previous, next, 0,
+                                     &grounded)) return 0;
+        if (grounded) {
+            jump->landing_age = age;
+            jump->landing_y = next[1];
+            jump->landing_fraction = fraction;
+            s->street.y_fraction = fraction;
+            s->battle_flags |= 0x20u;
+            if (marker >= 0) {
+                if (marker != s->street.marker || marker != 2 ||
+                    s->street.route.markers[marker].phase != 28 ||
+                    !bfm_steam_knight_field_break_house(s->field, 3)) return 0;
+                s->street.phase = s->street.route.markers[marker].phase;
+                ++s->street.marker;
+                s->battle_flags = (s->battle_flags & ~0x400u) | 0x800u;
+            }
+        }
+    }
+    if (jump->landing_age && age == jump->landing_age + 1)
+        s->battle_flags &= ~0x20u;
+    if (jump->landing_age && age == jump->landing_age + 6) {
+        --s->street.jumps_left;
+        int open = (s->battle_flags & 0x800u) || s->core_hp > 128;
+        jump->exposed = open && s->weak_stage == 2 && (s->battle_flags & 2u);
+        unsigned hold = open ? 48 : 16;
+        if (!s->street.jumps_left) hold *= 2;
+        if (s->battle_flags & 0x2000u) hold /= 2;
+        jump->release_after_landing = 7 + (int)hold;
+    }
+    ++s->street.jump_age;
+    return bfm_steam_knight_machine_street_jump(s->machine, jump, age, &s->street.landing);
 }
 
 static int street_begin_jump(BfmSteamKnight *s, int rebound)
 {
-    BfmSteamKnightJump *jump = &s->street.jump;
     int16_t origin[3];
     if (!bfm_steam_knight_machine_world_root(s->machine, origin)) return 0;
-    /* The opening lunge lands one stride away. Its closed rebound returns
-     * to the takeoff point inherited from the second gate. */
-    int16_t x = rebound ? jump->start[0] : origin[0];
-    int16_t z = rebound ? jump->start[2] : origin[2] - 84;
-    *jump = (BfmSteamKnightJump){.destination = {x, z}, .fraction_eighths = rebound ? 2 : 4,
-        .rebound = rebound, .exposed = !rebound, .release_after_landing = rebound ? 23 : 31};
+    BfmSteamStreetChoice choice = s->street.selected;
+    if (!rebound) {
+        memcpy(s->street.jump_start, origin, sizeof origin);
+        s->street.jumps_left = choice.marker >= 0 ? 1 :
+                              choice.action == BFM_STREET_CHOICE_SEVEN ? 3 : 2;
+    }
+    unsigned yaw = s->battle_flags & 0x800u ? 3072 : 0;
+    BfmSteamKnightJump *jump = &s->street.jump;
+    *jump = (BfmSteamKnightJump){.destination = {origin[0], origin[2]},
+        .yaw_before = yaw, .yaw_after = choice.marker >= 0 ? 3072 : yaw,
+        .fraction_eighths = s->street.y_fraction,
+        .rebound = rebound, .release_after_landing = -1, .use_room_floor = 1};
     memcpy(jump->start, origin, sizeof origin);
     s->body_stage = 6;
     s->battle_flags &= ~1u;
     s->street.jump_age = 0;
+    s->street.centering = 1;
     return street_jump_frame(s);
 }
-
-static int street_choose(BfmSteamKnight *s);
 
 static int street_shot_frame(BfmSteamKnight *s)
 {
     int marked = s->street.selected.action == BFM_STREET_MARKED_SHOT;
     unsigned age = s->street.shot_age++;
-    unsigned windup = marked ? 15 : 31;
+    unsigned windup = marked ? 31 : 47;
+    if (s->battle_flags & 0x2000u) windup -= 16;
+    if (marked && age && age <= windup) bfm_steam_knight_machine_center_upper(s->machine);
     int recovery = s->street.recovery_age;
     if (recovery == 16) return street_choose(s);
     if (s->street.resting && recovery < 0 && age > windup + 8) {
@@ -335,8 +409,9 @@ static int street_shot_frame(BfmSteamKnight *s)
         if (s->street.settled_age++ >= wait) recovery = 0;
     }
     if (age == windup) s->battle_flags &= ~1u;
+    unsigned body_yaw = s->battle_flags & 0x800u ? 3072 : 0;
     if (!bfm_steam_knight_machine_street_shot(s->machine, marked, age, recovery,
-                                              s->street.shot_root, 0)) return 0;
+                                              s->street.shot_root, body_yaw)) return 0;
     BfmForestTransform socket;
     if (!bfm_steam_knight_machine_gauntlet_socket(s->machine, &socket)) return 0;
     if (recovery >= 0) {
@@ -374,6 +449,7 @@ static int street_shot_frame(BfmSteamKnight *s)
         unsigned phase = (unsigned)s->street.route.markers[which].phase;
         if (phase != 25u + (unsigned)which ||
             !bfm_steam_knight_field_break_house(s->field, phase - 24)) return 0;
+        s->street.phase = (int)phase;
         ++s->street.marker;
     }
     for (unsigned i = 0; i < 3; ++i) s->street.endpoint[i] = (int16_t)s->street.head.translation[i];
@@ -386,7 +462,8 @@ static int street_choose(BfmSteamKnight *s)
     BfmSteamStreetChoice *choice = &s->street.selected;
     if (!bfm_steam_street_route_choose(&s->street.route, s->battle_flags, (int)s->core_hp,
                                        s->street.marker, choice)) return 0;
-    if (choice->action == BFM_STREET_JUMP) return street_begin_jump(s, 0);
+    if (choice->action == BFM_STREET_JUMP || choice->action == BFM_STREET_MARKED_JUMP ||
+        choice->action == BFM_STREET_CHOICE_SEVEN) return street_begin_jump(s, 0);
     if (choice->action == BFM_STREET_FORWARD) {
         int32_t root[3];
         if (!bfm_steam_knight_machine_root_q12(s->machine, root) ||
@@ -401,7 +478,7 @@ static int street_choose(BfmSteamKnight *s)
         s->battle_flags &= ~0x1000u;
         s->street.shot_age = 0;
         s->street.reach = 16;
-        s->street.orbit = 512;
+        s->street.orbit = ((s->battle_flags & 0x800u ? 3072u : 0u) + 512) & 4095;
         s->street.resting = s->street.detached = 0;
         s->street.settled_age = 0;
         s->street.recovery_age = -1;
@@ -430,11 +507,11 @@ static int street_tick(BfmSteamKnight *s)
         return street_choose(s);
     }
     if (s->body_stage == 3) return street_shot_frame(s);
-    unsigned grounded_at = s->street.jump.rebound ? 95 : 90;
-    unsigned finished = grounded_at + (unsigned)s->street.jump.release_after_landing + 8;
-    if (s->street.jump_age < finished) return street_jump_frame(s);
-    if (!s->street.jump.rebound) return street_begin_jump(s, 1);
-    return street_choose(s);
+    const BfmSteamKnightJump *jump = &s->street.jump;
+    if (jump->landing_age && jump->release_after_landing >= 0 &&
+        s->street.jump_age >= jump->landing_age + (unsigned)jump->release_after_landing + 8)
+        return s->street.jumps_left ? street_begin_jump(s, 1) : street_choose(s);
+    return street_jump_frame(s);
 }
 
 static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t held)
@@ -458,6 +535,9 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
     } else if (s->weak_stage == 2 && s->weak_age < 47) {
         ++s->weak_age;
     }
+    if (s->round == 2)
+        bfm_steam_knight_machine_track_upper(s->machine, bfm_steam_hero_sample(s->hero)->feet,
+                                            s->battle_flags);
     if (s->round == 2 && (s->body_stage == 1 || s->body_stage == 2 || s->body_stage == 3 || s->body_stage == 6)) {
         if (!street_tick(s)) return -1;
     } else if (s->body_stage == 1)
@@ -472,8 +552,12 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
     unsigned previous_action = player->action;
     int16_t previous_heading = player->heading;
     memcpy(previous, player->feet, sizeof previous);
+    BfmSteamCornerStep corner = bfm_steam_hero_corner(s->hero, &s->street.corner,
+                                               bfm_steam_knight_field_faces_west(s->field));
+    if (corner == BFM_CORNER_BLOCKED) return -1;
+    if (corner == BFM_CORNER_AT_MARK) bfm_steam_knight_field_turn_west(s->field);
     if (!bfm_steam_knight_machine_world_root(s->machine, machine_position)) return -1;
-    bfm_steam_knight_field_track_arena(s->field, s->round, s->body_stage, previous, machine_position);
+    bfm_steam_knight_field_track_arena(s->field, s->round, s->body_stage, player->feet, machine_position);
     BfmForestCamera camera;
     hall_camera(s, &camera);
     if (s->body_stage == 8 && bfm_steam_carry_try_grab(&s->carry, s->hero, pressed) &&
@@ -481,11 +565,22 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
     BfmSteamKnightHeroStrike strike = {0};
     BfmSteamFlameRay rays[BFM_ROTATION_RAYS];
     size_t ray_count = 0;
-    BfmSteamHeroLumina lumina = bfm_steam_hero_lumina(s->hero, &s->rotation, &e->run->player,
-                                                       &camera, x, y, pressed, held, rays, &ray_count);
-    if (lumina == BFM_STEAM_LUMINA_ERROR) return -1;
-    if ((lumina == BFM_STEAM_LUMINA_PASS || lumina == BFM_STEAM_LUMINA_SLASH) &&
-        !bfm_steam_hero_tick(s->hero, &camera, x, y, pressed, held, &strike)) return -1;
+    BfmSteamHeroLumina lumina = BFM_STEAM_LUMINA_PASS;
+    if (corner == BFM_CORNER_CONTROLS) {
+        lumina = bfm_steam_hero_lumina(s->hero, &s->rotation, &e->run->player,
+            &camera, x, y, pressed, held, rays, &ray_count);
+        if (lumina == BFM_STEAM_LUMINA_ERROR) return -1;
+        if ((lumina == BFM_STEAM_LUMINA_PASS || lumina == BFM_STEAM_LUMINA_SLASH) &&
+            !bfm_steam_hero_tick(s->hero, &camera, x, y, pressed, held, &strike)) return -1;
+    }
+    if (s->street.enter_corner) {
+        /* The player crosses to the street corner while the marked machine
+         * jumps to its own separate target across the pavement. */
+        const int16_t waypoint[3] = {-128, -2050, 2944};
+        s->street.enter_corner = 0;
+        if (!bfm_steam_corner_begin(&s->street.corner, waypoint) ||
+            bfm_steam_hero_corner(s->hero, &s->street.corner, 0) != BFM_CORNER_IDLE) return -1;
+    }
     if (!bfm_steam_weapons_tick(&s->weapons, ray_count ? &rays[ray_count - 1] : NULL)) return -1;
     if (previous_action == 13 && player->action == 14)
         bfm_forest_status_spend_bp(&e->run->player, 4);
@@ -758,7 +853,7 @@ int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
         if (i == BFM_STEAM_FILLET && clip == 2 &&
             !bfm_steam_knight_fillet_close_eyes(s->hostages, &actors[i])) return 0;
     }
-    if (!actor_count)
+    if (!actor_count && !s->street.hidden)
         actor_count = bfm_steam_knight_machine_gauntlet_actors(s->machine,
             s->street.detached ? &s->street.head : NULL, actors, sizeof actors / sizeof actors[0]);
     BfmForestDustCard cards[BFM_STEAM_ENTRY_LIGHT_CARDS + BFM_STEAM_FLAMES + BFM_STEAM_WEAPON_CARDS

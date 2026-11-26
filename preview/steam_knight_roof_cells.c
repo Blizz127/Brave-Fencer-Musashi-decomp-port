@@ -187,11 +187,15 @@ uint8_t *bfm_steam_knight_house_mesh(const uint8_t *mesh, size_t bytes,
 {
     if (!out_size) return NULL;
     *out_size = 0;
-    if (!record || size < 32 || (house != 1 && house != 2)) return NULL;
-    /* Both houses start with two adjacent columns. The left house also
-     * supplies the two sectors directly behind them. */
-    unsigned first_cell = house == 1 ? 2270u : 2336u;
+    static const unsigned first_sectors[] = {2270, 2336, 2398, 2398};
+    if (!record || size < 32 || !house || house > sizeof first_sectors / sizeof first_sectors[0])
+        return NULL;
+    /* Both west-street states use the same four sectors. Their packet bounds
+     * distinguish the landing from the later rolling impact. */
+    if ((house == 3 && size != 2652) || (house == 4 && size != 2372))
+        return NULL;
+    unsigned first_cell = first_sectors[house - 1];
     if (read32(record + 16) != first_cell * 4 ||
         read32(record + 28) != (first_cell + 1) * 4) return NULL;
-    return replace_cells(mesh, bytes, record, size, house == 1 ? 4 : 2, out_size);
+    return replace_cells(mesh, bytes, record, size, house == 2 ? 2 : 4, out_size);
 }

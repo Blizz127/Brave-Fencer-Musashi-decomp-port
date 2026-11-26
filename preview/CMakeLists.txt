@@ -203,6 +203,7 @@ add_executable(musashi_native_boot
     steam_knight_grip.c
     steam_knight_throw.c
     steam_knight_hero_motion.c
+    steam_knight_corner.c
     steam_knight_boss_hud.c
     steam_knight_rotation.c
     steam_knight_flames.c

@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 #include "steam_knight_machine.h"
 #include "forest_dust.h"
+#include "forest_shore_motion.h"
+#include <limits.h>
 #include <math.h>
 #include "../pc_port/forest_player_bytes.h"
 #include <stdlib.h>
@@ -210,6 +212,9 @@ static int load_upper_motion(BfmSteamKnightMachine *machine, const MusashiDiscMe
     int loaded = musashi_disc_media_read_root_range(disc, "SC02.CD", start + SECTOR, payload,
                                                      PAYLOAD, &archive_size);
     const uint32_t directory_address = UINT32_C(0x801959ec);
+    const uint8_t *idle = record(scene, bytes, directory_address, 8);
+    loaded = loaded && idle && u32le(idle) == chassis_program[NEUTRAL].table &&
+             u32le(idle + 4) == UINT32_C(0x801950d0);
     for (unsigned i = 0; loaded && i < UPPER_CLIPS; ++i) {
         unsigned body = upper_program[i].chassis;
         const uint8_t *pair = record(scene, bytes, directory_address + 8 * upper_program[i].motion, 8);
@@ -360,7 +365,7 @@ static const BfmForestPose *paired_upper(const BfmSteamKnightMachine *machine,
                                         const BfmForestPose *chassis)
 {
     if (!machine->upper[UPPER_ARRIVAL].pose) return NULL;
-    if (machine->upper_yaw && machine->action == BFM_STEAM_MACHINE_NEUTRAL)
+    if (machine->action == BFM_STEAM_MACHINE_NEUTRAL)
         for (unsigned k = 0; k < machine->torso.count; ++k)
             if (chassis == &machine->chassis[NEUTRAL].pose[k]) return &machine->torso.pose[k];
     for (unsigned i = 0; i < UPPER_CLIPS; ++i) {
@@ -408,6 +413,35 @@ int bfm_steam_knight_machine_set_upper_yaw(BfmSteamKnightMachine *machine, unsig
     unsigned age = machine->control_age;
     mount_torso(machine, age < 2 ? machine->outgoing_display : (age - 2) % 32);
     return 1;
+}
+
+void bfm_steam_knight_machine_track_upper(BfmSteamKnightMachine *machine,
+                                          const int16_t feet[3], uint32_t body_flags)
+{
+    if (!machine || !machine->controlled || !feet || (body_flags & 0x201u) != 1) return;
+    int dz = machine->root.translation[2] - feet[2];
+    int dx = feet[0] - machine->root.translation[0];
+    unsigned target = (bfm_forest_shore_bearing(dz, dx) + 3072) & 4095;
+    unsigned current = (machine->yaw + machine->upper_yaw) & 4095;
+    int delta = (int)target - (int)current;
+    if (delta > 2048) delta -= 4096;
+    else if (delta < -2048) delta += 4096;
+    if (!delta) return;
+    int step = delta / 8;
+    if (!step) step = delta > 0 ? 1 : -1;
+    bfm_steam_knight_machine_set_upper_yaw(machine, (machine->upper_yaw + step) & 4095);
+}
+
+int bfm_steam_knight_machine_center_upper(BfmSteamKnightMachine *machine)
+{
+    if (!machine || !machine->controlled) return 0;
+    unsigned yaw = machine->upper_yaw;
+    if (!yaw) return 1;
+    int step = yaw > 2048 ? 4096 - (int)yaw : -(int)yaw;
+    if (step < -256) step = -256;
+    else if (step > 256) step = 256;
+    bfm_steam_knight_machine_set_upper_yaw(machine, (yaw + step) & 4095);
+    return machine->upper_yaw == 0;
 }
 
 static void selected_chassis(BfmSteamKnightMachine *machine, unsigned shown)
@@ -868,7 +902,8 @@ typedef struct {
 static int street_sample(const BfmSteamKnightJump *jump, unsigned age, StreetSample *out)
 {
     unsigned apex = jump->rebound ? 33 : 28;
-    unsigned lands = apex + 62;
+    unsigned lands = jump->use_room_floor ?
+        (jump->landing_age ? jump->landing_age : UINT_MAX) : apex + 62;
     *out = (StreetSample){.clip = JUMP_START, .at_destination = age >= apex,
         .turn = age >= apex + 17, .landed = age == lands};
     if (age < 3) {
@@ -903,6 +938,22 @@ static int street_sample(const BfmSteamKnightJump *jump, unsigned age, StreetSam
     return 1;
 }
 
+int bfm_steam_knight_street_fall_y(const BfmSteamKnightJump *jump, unsigned age,
+                                   int16_t *y, unsigned *fraction_eighths)
+{
+    if (!jump || !y || !fraction_eighths || age > 512) return 0;
+    BfmSteamKnightJump air = *jump;
+    air.use_room_floor = 1;
+    air.landing_age = 0;
+    StreetSample step;
+    if (!street_sample(&air, age, &step)) return 0;
+    int value = jump->start[1] + (step.y8 >> 3);
+    if (value < INT16_MIN || value > INT16_MAX) return 0;
+    *y = (int16_t)value;
+    *fraction_eighths = (unsigned)step.y8 & 7;
+    return 1;
+}
+
 int bfm_steam_knight_machine_street_jump(BfmSteamKnightMachine *machine,
     const BfmSteamKnightJump *jump, unsigned active_age, BfmSteamKnightLanding *landing)
 {
@@ -911,7 +962,8 @@ int bfm_steam_knight_machine_street_jump(BfmSteamKnightMachine *machine,
         return 0;
     StreetSample now;
     if (!street_sample(jump, active_age, &now)) return 0;
-    int y = jump->start[1] + (now.y8 >> 3);
+    int y = jump->use_room_floor && jump->landing_age && active_age >= jump->landing_age ?
+            jump->landing_y : jump->start[1] + (now.y8 >> 3);
     if (y < INT16_MIN || y > INT16_MAX) return 0;
 
     if (machine->action != BFM_STEAM_MACHINE_JUMPING || active_age < machine->phase_age) {
@@ -934,7 +986,8 @@ int bfm_steam_knight_machine_street_jump(BfmSteamKnightMachine *machine,
     int16_t at[3] = {now.at_destination ? jump->destination[0] : jump->start[0],
                      (int16_t)y, now.at_destination ? jump->destination[1] : jump->start[2]};
     bfm_steam_knight_machine_set_world_root(machine, at);
-    machine->y_fraction = (unsigned)now.y8 & 7;
+    machine->y_fraction = jump->use_room_floor && jump->landing_age && active_age >= jump->landing_age ?
+                          jump->landing_fraction : (unsigned)now.y8 & 7;
     machine->yaw = now.turn ? jump->yaw_after : jump->yaw_before;
     bfm_forest_actor_root(machine->yaw, at, &machine->root);
     machine->display_root = machine->root;

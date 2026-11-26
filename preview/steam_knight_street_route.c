@@ -121,6 +121,39 @@ void bfm_steam_street_depth_crossed(BfmSteamKnightStreetRoute *r, uint32_t *flag
     }
 }
 
+static int lateral(int delta)
+{
+    return delta < -42 ? -84 : delta > 42 ? 84 : 0;
+}
+
+int bfm_steam_street_jump_target(const BfmSteamKnightStreetRoute *route, int marker,
+    unsigned jumps_left, uint32_t flags, const int16_t action_start[3],
+    const int16_t body[3], const int16_t hero[3], int16_t xz[2])
+{
+    if (!route || !action_start || !body || !hero || !xz || !jumps_left ||
+        marker < -1 || marker >= BFM_STREET_MARKERS) return 0;
+    if (marker >= 0) {
+        xz[0] = route->markers[marker].x;
+        xz[1] = route->markers[marker].z;
+    } else if (jumps_left == 1) {
+        xz[0] = action_start[0];
+        xz[1] = action_start[2];
+    } else if (flags & 0x800u) {
+        int cells = ((int16_t)(hero[0] - body[0]) + 42) / 84;
+        if (cells < 0) cells = 0;
+        if (cells > 3) cells = 3;
+        xz[0] = (int16_t)(body[0] + 84 * cells);
+        xz[1] = (int16_t)(2912 + lateral((int16_t)(hero[2] - 2912)));
+    } else {
+        int cells = ((int16_t)(hero[2] - body[2]) + 42) / 84;
+        if (cells < -3) cells = -3;
+        if (cells > 0) cells = 0;
+        xz[0] = (int16_t)(-128 + lateral((int16_t)(hero[0] + 128)));
+        xz[1] = (int16_t)(body[2] + 84 * cells);
+    }
+    return 1;
+}
+
 int bfm_steam_street_walk_begin(BfmSteamKnightStreetWalk *walk, const int32_t root_q12[3],
                                 uint32_t body_flags)
 {

@@ -16,11 +16,16 @@ void bfm_steam_knight_machine_reveal(BfmSteamKnightMachine *machine);
 void bfm_steam_knight_machine_handover(BfmSteamKnightMachine *machine);
 size_t bfm_steam_knight_machine_actors(const BfmSteamKnightMachine *machine,
                                       BfmForestActor *out, size_t capacity);
+/* The upper actor's relative heading is independent of its body and child. */
+int bfm_steam_knight_machine_set_upper_yaw(BfmSteamKnightMachine *machine, unsigned yaw);
+/* Ordinary body tracking runs before action dispatch. A marked action may
+ * then advance centering once; it can proceed when this returns one. */
+void bfm_steam_knight_machine_track_upper(BfmSteamKnightMachine *machine,
+                                          const int16_t feet[3], uint32_t body_flags);
+int bfm_steam_knight_machine_center_upper(BfmSteamKnightMachine *machine);
 /* The current logical center and basis of the mounted sphere, before any
  * displacement by its child. The externally supplied transform is borrowed
  * for the draw. Four actor slots cover both shell replacements and sphere. */
-/* The upper actor's relative heading is independent of its body and child. */
-int bfm_steam_knight_machine_set_upper_yaw(BfmSteamKnightMachine *machine, unsigned yaw);
 int bfm_steam_knight_machine_gauntlet_socket(const BfmSteamKnightMachine *machine,
                                            BfmForestTransform *world);
 size_t bfm_steam_knight_machine_gauntlet_actors(const BfmSteamKnightMachine *machine,
@@ -62,6 +67,9 @@ typedef struct {
     int16_t start[3], destination[2]; /* Ground XYZ, then destination XZ. */
     unsigned yaw_before, yaw_after, fraction_eighths;
     int rebound, exposed, release_after_landing; /* Negative holds landing key six. */
+    unsigned landing_age, landing_fraction;
+    int16_t landing_y;
+    int use_room_floor;
 } BfmSteamKnightJump;
 typedef struct {
     unsigned core_extension;
@@ -71,6 +79,9 @@ typedef struct {
 /* Submit the live street jump. A completed landing recovery returns zero. */
 int bfm_steam_knight_machine_street_jump(BfmSteamKnightMachine *machine,
     const BfmSteamKnightJump *jump, unsigned active_age, BfmSteamKnightLanding *landing);
+/* The room sweeps this unimpeded downward step against its mounted surfaces. */
+int bfm_steam_knight_street_fall_y(const BfmSteamKnightJump *jump, unsigned age,
+                                   int16_t *y, unsigned *fraction_eighths);
 /* Submit the street gait or explicitly enter its standing state. The
  * encounter owns displacement, direction, and the next action. */
 int bfm_steam_knight_machine_street_walk(BfmSteamKnightMachine *machine, unsigned active_age,

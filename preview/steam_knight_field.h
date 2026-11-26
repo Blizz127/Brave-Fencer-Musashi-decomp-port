@@ -23,6 +23,10 @@ void bfm_steam_knight_roof_camera(BfmForestCamera *camera);
 void bfm_steam_knight_machine_camera(BfmForestCamera *camera);
 void bfm_steam_knight_duel_camera(BfmForestCamera *camera);
 void bfm_steam_knight_title_camera(BfmForestCamera *camera, unsigned fields_since_landing);
+/* Signal once when the corner flight brings the hero to its marked position.
+ * Call before advancing the arena camera for that battle update. */
+void bfm_steam_knight_field_turn_west(BfmSteamKnightField *field);
+int bfm_steam_knight_field_faces_west(const BfmSteamKnightField *field);
 /* Advance once per battle update; input and drawing share the stored view. */
 void bfm_steam_knight_field_track_arena(BfmSteamKnightField *field, unsigned round,
                                        unsigned stage, const int16_t hero[3],
@@ -33,7 +37,8 @@ void bfm_steam_knight_field_arena_camera(const BfmSteamKnightField *field,
 int bfm_steam_knight_field_open_roof(BfmSteamKnightField *field);
 /* Gates 1 through 3 open in order after the roof. Repeating a gate is safe. */
 int bfm_steam_knight_field_break_gate(BfmSteamKnightField *field, unsigned gate);
-/* Each street house breaks once. 1 is on the left, 2 on the right. */
+/* Houses 1 and 2 flank the northbound street. Houses 3 and 4 share the
+ * western sectors; applying 4 also retains the rubble from 3. */
 int bfm_steam_knight_field_break_house(BfmSteamKnightField *field, unsigned house);
 /* Omit both hero arguments for a shot that hides Musashi. */
 int bfm_steam_knight_field_draw(BfmSteamKnightField *field, const BfmForestCamera *camera,

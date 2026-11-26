@@ -8,6 +8,7 @@
 #include "forest_swing.h"
 #include "forest_cast.h"
 #include "steam_knight_rotation.h"
+#include "steam_knight_corner.h"
 
 typedef struct BfmSteamKnightHeroMotion BfmSteamKnightHeroMotion;
 typedef struct {
@@ -36,6 +37,9 @@ int bfm_steam_hero_place(BfmSteamKnightHeroMotion *hero, const int16_t feet[3], 
 void bfm_steam_hero_free(BfmSteamKnightHeroMotion *hero);
 const BfmSteamKnightHeroSample *bfm_steam_hero_sample(const BfmSteamKnightHeroMotion *hero);
 uint32_t bfm_steam_hero_flags(const BfmSteamKnightHeroMotion *hero);
+const BfmForestField *bfm_steam_hero_surface(const BfmSteamKnightHeroMotion *hero);
+BfmSteamCornerStep bfm_steam_hero_corner(BfmSteamKnightHeroMotion *hero,
+                                         BfmSteamCorner *corner, int view_ready);
 /* One ordinary field update. x and y are the live controller axes (right/down
  * positive). Segments are valid only for this update's active blade window. */
 int bfm_steam_hero_tick(BfmSteamKnightHeroMotion *hero, const BfmForestCamera *camera,

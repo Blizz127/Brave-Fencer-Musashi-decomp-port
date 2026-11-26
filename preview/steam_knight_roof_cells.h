@@ -15,7 +15,7 @@ uint8_t *bfm_steam_knight_roof_mesh(const uint8_t *base_mesh, size_t base_size,
 uint8_t *bfm_steam_knight_gate_mesh(const uint8_t *mesh, size_t bytes,
                                     const uint8_t *record, size_t size, size_t *out_size);
 
-/* House 1 covers four street sectors. House 2 covers two. */
+/* House 2 covers two street sectors. Each other house record covers four. */
 uint8_t *bfm_steam_knight_house_mesh(const uint8_t *mesh, size_t bytes,
                                      const uint8_t *record, size_t size,
                                      unsigned house, size_t *out_size);
