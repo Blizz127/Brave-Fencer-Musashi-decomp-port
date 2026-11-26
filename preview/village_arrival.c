@@ -3,6 +3,7 @@
 #include "forest_message_art.h"
 #include "scene_tiles.h"
 #include "village_field.h"
+#include "village_impact.h"
 #include "village_greeting.h"
 #include "village_gate.h"
 #include "village_residents.h"
@@ -18,6 +19,10 @@ struct BfmVillageArrival {
     BfmVillageField view;
     BfmVillageResidents *residents;
     BfmVillageGate *gate;
+    BfmVillageImpact *impact;
+    BfmForestDustCard cards[BFM_VILLAGE_IMPACT_CARDS];
+    unsigned next_card, card_count;
+    BfmForestRaster surface;
     BfmForestMessageArt *message_art;
     unsigned age;
 };
@@ -27,6 +32,7 @@ void bfm_village_arrival_free(BfmVillageArrival *a)
     if (!a) return;
     bfm_forest_message_art_free(a->message_art);
     bfm_village_residents_free(a->residents);
+    bfm_village_impact_free(a->impact);
     bfm_village_gate_free(a->gate);
     bfm_village_motion_free(a->motion);
     bfm_village_field_clear(&a->view);
@@ -51,7 +57,8 @@ BfmVillageArrival *bfm_village_arrival_open(const MusashiDiscMedia *disc, BfmBed
         !bfm_scene_read_tiles(disc, "SC03.CD", next.scene_member, tiles)) goto fail;
     a->message_art = bfm_castle_message_art_load(disc, a->scene, a->bytes, tiles, 0x5da74);
     a->gate = bfm_village_gate_load(a->scene, a->bytes, room, next.state.progress[8], next.state.flags);
-    if (!a->message_art || !a->gate) goto fail;
+    a->impact = bfm_village_impact_open(a->scene, a->bytes, main, main_bytes);
+    if (!a->message_art || !a->gate || !a->impact) goto fail;
     if (!(next.state.flags[240 / 8] & 1u) && next.state.progress[8] == 10) {
         a->residents = bfm_village_residents_load(a->scene, a->bytes, room, 0x80188094u);
         if (!a->residents) goto fail;
@@ -83,19 +90,34 @@ BfmForestMessage *bfm_village_arrival_speech(const BfmVillageArrival *a)
                 phase == BFM_VILLAGE_FIRST_MESSAGE ? BFM_VILLAGE_ARRIVAL : BFM_VILLAGE_HUNGER);
 }
 
-int bfm_village_arrival_step(BfmVillageArrival *a, int x, int y)
+int bfm_village_arrival_step(BfmVillageArrival *a, BfmGameplayRun *run, int x, int y)
 {
     /* The camera's orbit yaw points from the target to the eye. */
     if (!bfm_village_motion_step(a->motion, x, y, (a->camera.yaw + 2048) & 4095)) return 0;
     const BfmVillagePlayer *p = bfm_village_motion_player(a->motion);
+    bfm_village_impact_step(a->impact, p->events & BFM_VILLAGE_HIT, run);
     bfm_village_camera_step(&a->camera, p->root.xyz, p->events & BFM_VILLAGE_CAMERA);
     ++a->age;
     return bfm_village_motion_face(a->motion, a->tiles);
 }
 
+static int far_card_first(const void *left, const void *right)
+{
+    const BfmForestDustCard *a = left, *b = right;
+    if (a->bucket != b->bucket) return a->bucket < b->bucket ? 1 : -1;
+    return (int)b->slot - (int)a->slot;
+}
+
 static void draw_actors(void *context, int depth)
 {
     BfmVillageArrival *a = context;
+    while (a->next_card < a->card_count && (int)a->cards[a->next_card].bucket >= depth) {
+        const BfmForestDustCard *card = &a->cards[a->next_card++];
+        int farther = (int)card->bucket + 1;
+        bfm_village_gate_draw_to(a->gate, farther);
+        bfm_bedroom_figure_draw_to(a->view.hero, farther);
+        bfm_forest_raster_face(&a->surface, &card->material, card->vertices);
+    }
     bfm_village_gate_draw_to(a->gate, depth);
     bfm_bedroom_figure_draw_to(a->view.hero, depth);
 }
@@ -104,13 +126,21 @@ int bfm_village_arrival_draw(BfmVillageArrival *a, const uint8_t flags[64],
                              const BfmForestMessageFrame *window, uint32_t pixels[240][320])
 {
     const BfmVillagePlayer *p = bfm_village_motion_player(a->motion);
+    BfmVillageCamera drawing = a->camera;
+    int shake = bfm_village_impact_shake_y(a->impact);
+    drawing.eye[1] += shake;
+    drawing.target[1] += shake;
     if (!bfm_village_sky_draw(a->scene + a->descriptor, a->bytes - a->descriptor, pixels) ||
-        !bfm_village_field_prepare(&a->view, &a->camera, &p->root, &p->pose, flags, a->age,
+        !bfm_village_field_prepare(&a->view, &drawing, &p->root, &p->pose, flags, a->age,
                                    a->tiles, &pixels[0][0])) return 0;
     const BfmBedroomView *camera = bfm_bedroom_field_view(a->view.field);
     if (!bfm_village_gate_prepare(a->gate, camera, a->tiles, &pixels[0][0])) return 0;
     if (a->residents && !bfm_village_residents_add(a->residents, a->view.hero, camera, a->age))
         return 0;
+    a->surface = (BfmForestRaster){.tiles=a->tiles, .pixels=pixels, .top=10, .bottom=229};
+    a->next_card = 0;
+    a->card_count = bfm_village_impact_project(a->impact, camera, a->cards);
+    qsort(a->cards, a->card_count, sizeof *a->cards, far_card_first);
     bfm_bedroom_field_draw(a->view.field, a->tiles, &pixels[0][0],
                            draw_actors, a);
     if (window) {

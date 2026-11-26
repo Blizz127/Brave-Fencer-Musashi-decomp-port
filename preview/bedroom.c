@@ -621,7 +621,7 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
         if (!apply(room, BFM_BED_SOUND_READY, 0) || !bfm_village_arrival_continue(room->village))
             return 0;
     }
-    if (!bfm_village_arrival_step(room->village, x, y)) return 0;
+    if (!bfm_village_arrival_step(room->village, room->run, x, y)) return 0;
     const BfmVillagePlayer *player = bfm_village_arrival_player(room->village);
     if (player->events & BFM_VILLAGE_CAMERA) {
         unsigned minute = half(room->entry.state.progress + 0x1a);

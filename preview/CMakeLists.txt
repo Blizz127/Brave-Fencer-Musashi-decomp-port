@@ -28,6 +28,7 @@ add_executable(musashi_native_boot
     village_field.c
     village_gate.c
     village_greeting.c
+    village_impact.c
     village_impact_sound.c
     village_residents.c
     village_sky.c
