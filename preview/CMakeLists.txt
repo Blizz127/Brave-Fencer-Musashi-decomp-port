@@ -54,6 +54,7 @@ add_executable(musashi_native_boot
     forest_marker.c
     forest_shore.c
     forest_guard_clip.c
+    forest_guard_contact.c
     forest_trail.c
     forest_shore_motion.c
     forest_shore_figures.c
@@ -69,6 +70,8 @@ add_executable(musashi_native_boot
     forest_message_art.c
     forest_message.c
     forest_walk.c
+    forest_swing.c
+    forest_impact.c
     scene_payload.c
     "${bfm_root}/pc_port/forest_player_archive.c"
     "${bfm_root}/pc_port/forest_player_mesh.c"

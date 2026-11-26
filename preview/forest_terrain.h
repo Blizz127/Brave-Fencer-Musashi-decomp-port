@@ -53,6 +53,8 @@ typedef struct {
     const BfmForestPose *pose;
     const BfmForestTransform *root;
     uint32_t visible_parts;
+    /* A buffered submission owns the camera that produced its screen coordinates. */
+    const BfmForestCamera *submitted_camera;
 } BfmForestActor;
 
 int bfm_forest_terrain_draw_entrance_with_actor(BfmForestTerrain *terrain,

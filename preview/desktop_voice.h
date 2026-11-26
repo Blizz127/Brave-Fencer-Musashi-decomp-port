@@ -23,6 +23,10 @@ int bfm_desktop_voice_pump(DesktopVoice *voice, unsigned field, unsigned *bank, 
 /* Arm the mounted incoming score at its opening-clock SDL time. Repeated
  * frames and later dialogue generations retain the same music cursor. */
 void bfm_desktop_voice_forest_score(DesktopVoice *voice, const MusashiDiscMedia *disc, Uint64 start);
+/* Play the mounted common-bank sound for an accepted first Fusion swing. */
+void bfm_desktop_voice_forest_swing(DesktopVoice *voice);
+/* A separate area-bank effect plays when the guard actually takes a hit. */
+void bfm_desktop_voice_forest_hit(DesktopVoice *voice);
 struct BfmBedroomEffects;
 void bfm_desktop_voice_room_effect(DesktopVoice *voice, struct BfmBedroomEffects *effects, unsigned command);
 struct BfmForestScore;

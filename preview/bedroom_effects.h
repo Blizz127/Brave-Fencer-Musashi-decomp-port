@@ -5,6 +5,8 @@
 
 typedef struct BfmBedroomEffects BfmBedroomEffects;
 enum { BFM_ROOM_AWARD_SOUND = 0x6a6, BFM_ROOM_MOVE_SOUND = 0x62f, BFM_ROOM_ACCEPT_SOUND = 0x630 };
+enum { BFM_FOREST_SWING_SOUND = 0x400, BFM_FOREST_HIT_SOUND = 0x437 };
+BfmBedroomEffects *bfm_forest_swing_sound_load(const MusashiDiscMedia *disc);
 BfmBedroomEffects *bfm_bedroom_effects_load(const MusashiDiscMedia *disc, unsigned member, uint32_t room);
 void bfm_bedroom_effects_free(BfmBedroomEffects *effects);
 /* Serialized with the sound callback. All source decoding occurs during load. */

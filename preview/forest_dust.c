@@ -40,12 +40,14 @@ int bfm_forest_dust_load(BfmForestDust *dust, const MusashiDiscMedia *disc)
     return 1;
 }
 
-static void advance(BfmForestDustParticle *p)
+static void advance(BfmForestDustParticle *p, int damp)
 {
     for (unsigned i = 0; i < 3; ++i)
         p->position[i] += p->velocity[i];
-    p->velocity[0] = floor_units((int64_t)p->velocity[0] * 3, 2);
-    p->velocity[2] = floor_units((int64_t)p->velocity[2] * 3, 2);
+    if (damp) {
+        p->velocity[0] = floor_units((int64_t)p->velocity[0] * 3, 2);
+        p->velocity[2] = floor_units((int64_t)p->velocity[2] * 3, 2);
+    }
     ++p->cell;
 }
 
@@ -54,10 +56,10 @@ void bfm_forest_dust_tick(BfmForestDust *dust, BfmForestDustEmission event,
 {
     if (!dust || !dust->width) return;
     BfmForestDustParticle *available = NULL;
-    for (unsigned i = 0; i < BFM_FOREST_DUST_CARDS; ++i) {
+    for (unsigned i = 0; i < BFM_FOREST_FOOT_DUST_CARDS; ++i) {
         BfmForestDustParticle *p = &dust->particles[i];
-        if (p->cell == BFM_FOREST_DUST_CARDS) p->cell = 0;
-        else if (p->cell != 0) advance(p);
+        if (p->cell == BFM_FOREST_DUST_CELLS - 1) p->cell = 0;
+        else if (p->cell != 0) advance(p, 1);
         if (!p->cell && !available) available = p;
     }
     if (!available || !player || !eye ||
@@ -85,15 +87,36 @@ void bfm_forest_dust_tick(BfmForestDust *dust, BfmForestDustEmission event,
     available->velocity[0] = (int32_t)lround(4096 * sin(angle)) * direction;
     available->velocity[1] = -65536;
     available->velocity[2] = (int32_t)lround(4096 * cos(angle)) * direction;
-    advance(available);
+    advance(available, 1);
 }
 
-unsigned bfm_forest_dust_project(const BfmForestDust *dust, const BfmForestCamera *camera,
-                                 BfmForestDustCard out[BFM_FOREST_DUST_CARDS])
+void bfm_forest_dust_recoil_start(BfmForestDust *dust, const int32_t root[3], int attacker_yaw)
+{
+    if (!dust || !dust->width || !root) return;
+    BfmForestDustParticle *p = &dust->particles[BFM_FOREST_FOOT_DUST_CARDS];
+    double angle = ((unsigned)attacker_yaw & 4095u) * (6.28318530717958647693 / 4096);
+    for (unsigned axis = 0; axis < 3; ++axis) p->position[axis] = (int64_t)root[axis] * 65536;
+    p->velocity[0] = (int32_t)lround(4096 * sin(angle)) * -256;
+    p->velocity[1] = 0;
+    p->velocity[2] = (int32_t)lround(4096 * cos(angle)) * -256;
+    p->cell = 0;
+    advance(p, 0);
+}
+
+void bfm_forest_dust_recoil_advance(BfmForestDust *dust)
+{
+    if (!dust) return;
+    BfmForestDustParticle *p = &dust->particles[BFM_FOREST_FOOT_DUST_CARDS];
+    if (p->cell == BFM_FOREST_DUST_CELLS - 1) p->cell = 0;
+    else if (p->cell) advance(p, 0);
+}
+
+static unsigned project(const BfmForestDust *dust, const BfmForestCamera *camera,
+                        unsigned first, unsigned end, BfmForestDustCard *out)
 {
     if (!dust || !camera || !out || !camera->projection) return 0;
     unsigned count = 0;
-    for (unsigned i = 0; i < BFM_FOREST_DUST_CARDS; ++i) {
+    for (unsigned i = first; i < end; ++i) {
         const BfmForestDustParticle *p = &dust->particles[i];
         if (!p->cell || p->cell >= BFM_FOREST_DUST_CELLS) continue;
         int32_t world[3];
@@ -112,7 +135,8 @@ unsigned bfm_forest_dust_project(const BfmForestDust *dust, const BfmForestCamer
         int z = (int)view[2];
         int64_t reciprocal = ((int64_t)camera->projection * 65536 + z / 2) / z;
         if (reciprocal > 131071) reciprocal = 131071;
-        int scale = (int)(2 * reciprocal / 16);
+        int size = i == BFM_FOREST_FOOT_DUST_CARDS ? 3 : 2;
+        int scale = (int)(size * reciprocal / 16);
         int x = 160 + floor_units(view[0] * reciprocal, 16) +
                       floor_units((int64_t)dust->left * scale, 12);
         int y = 120 + floor_units(view[1] * reciprocal, 16) +
@@ -136,4 +160,17 @@ unsigned bfm_forest_dust_project(const BfmForestDust *dust, const BfmForestCamer
         }
     }
     return count;
+}
+
+
+unsigned bfm_forest_dust_project(const BfmForestDust *dust, const BfmForestCamera *camera,
+                                 BfmForestDustCard out[BFM_FOREST_FOOT_DUST_CARDS])
+{
+    return project(dust, camera, 0, BFM_FOREST_FOOT_DUST_CARDS, out);
+}
+
+unsigned bfm_forest_dust_recoil_project(const BfmForestDust *dust, const BfmForestCamera *camera,
+                                        BfmForestDustCard *out)
+{
+    return project(dust, camera, BFM_FOREST_FOOT_DUST_CARDS, BFM_FOREST_DUST_CARDS, out);
 }

@@ -3,6 +3,7 @@
 #include "forest_opening_data.h"
 #include "forest_motion.h"
 #include "forest_manual.h"
+#include "forest_swing.h"
 #include "forest_hud.h"
 #include "forest_message.h"
 #include "forest_message_art.h"
@@ -44,6 +45,9 @@ struct BfmForestWalk {
     BfmForestHud *hud;
     int player_control, input_x, input_y;
     int jump_pressed, jump_held, control_polled;
+    int attack_pressed, swing_sound, hit_sound, swing_recover, swing_connected;
+    unsigned swing_age;
+    BfmForestSwing swing;
     int at_boundary, blocked_x, blocked_y;
     BfmForestMessage *message;
     BfmForestMessageArt *message_art;
@@ -394,16 +398,60 @@ static int select_jump_pose(BfmForestWalk *w)
     return frame && select_pose(w, frame, poses->visible);
 }
 
-static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jump_held)
+/* The grounded attack stops movement. The end of the mounted strike window
+ * allows a new direction to take over while the last keys are playing. */
+static int tick_swing(BfmForestWalk *w, int x, int y, BfmForestDustEmission *dust,
+                      BfmForestHit *hit)
+{
+    if (w->actor.state != 5) {
+        if (!w->swing.count && !bfm_forest_swing_load(w->disc, &w->swing)) return 0;
+        w->swing_age = 0;
+        w->swing_recover = 0;
+        w->swing_connected = 0;
+        w->swing_sound = 1;
+        w->actor.state = 5;
+        w->actor.phase = 1;
+        w->manual.moving = w->manual.after_jump = 0;
+        w->actor.field_24.word = w->actor.field_2c.word = w->actor.local_y.word = 0;
+        memset(w->actor.velocity, 0, sizeof w->actor.velocity);
+    } else {
+        ++w->swing_age;
+    }
+    const BfmForestSwingFrame *key = bfm_forest_swing_frame(&w->swing, w->swing_age);
+    if (key && key->marker && !key->window) w->swing_recover = 1;
+    if (!key || ((x || y) && w->swing_recover)) {
+        w->actor.state = 0;
+        return tick_ground(w, x, y, 1, dust) > 0;
+    }
+    if (key->window && !w->swing_connected) {
+        const BfmForestSwingFrame *next = bfm_forest_swing_frame(&w->swing, w->swing_age + 1);
+        if (!next) return 0;
+        hit->connected = bfm_forest_first_strike(w->field, &w->root, key->tip, next->tip,
+                                                &w->yaw, hit->position, hit->normal);
+        if (hit->connected < 0) return 0;
+        w->swing_connected = hit->connected;
+    }
+    /* The field display still shows the previous motion during the first two
+     * updates after the Square edge. */
+    if (w->swing_age < 2) return 1;
+    const BfmForestSwingFrame *visible = bfm_forest_swing_frame(&w->swing, w->swing_age - 2);
+    return visible && select_pose(w, visible->pose, w->swing.visible);
+}
+
+static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jump_held,
+                       int attack_pressed)
 {
     BfmForestDustEmission dust = BFM_FOREST_DUST_NONE;
+    BfmForestHit hit = {0};
     int continuing_stride = (x || y) && x == w->stride_x && y == w->stride_y;
     w->stride_x = w->stride_y = 0;
     bfm_forest_hud_tick(w->hud);
     bfm_forest_fall_begin(&w->jump, &w->manual, &w->actor);
-    int launched = !w->jump.active && jump_pressed &&
+    int swinging = w->actor.state == 5 ||
+                   (!w->jump.active && !jump_pressed && attack_pressed && w->actor.state <= 1);
+    int launched = !swinging && !w->jump.active && jump_pressed &&
                    bfm_forest_jump_begin(&w->jump, w->field, &w->actor, w->cached);
-    if (!w->jump.active) {
+    if (!w->jump.active && !swinging) {
         int grounded = tick_ground(w, x, y, 0, &dust);
         if (grounded < 0) return -1;
         if (!grounded && !bfm_forest_fall_begin(&w->jump, &w->manual, &w->actor)) return -1;
@@ -411,7 +459,9 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
     if (w->jump.active && w->jump.walk_off && !w->stride_poses.visible &&
         !bfm_forest_walkoff_poses_load(w->disc, w->data.animation_table, &w->stride_poses))
         return -1;
-    if (launched) {
+    if (swinging) {
+        if (!tick_swing(w, x, y, &dust, &hit)) return -1;
+    } else if (launched) {
         w->stride_jump = continuing_stride;
         if (w->stride_jump) {
             if (!w->stride_poses.visible &&
@@ -454,10 +504,22 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
     }
     bfm_forest_voice_step(w->voice);
     ++w->tick;
-    if (!follow(w) || !bfm_forest_tick_shore_actor(w->field, w->cached))
+    if (!follow(w) || !bfm_forest_tick_shore_actor(w->field, w->cached) ||
+        !bfm_forest_submit_guard_and_impact(w->field, &hit, w->eye, &w->camera))
         return -1;
+    w->hit_sound = hit.connected;
     bfm_forest_tick_dust(w->field, dust, w->cached, w->eye, w->yaw);
     return 1;
+}
+
+int bfm_forest_walk_hit_sound(const BfmForestWalk *w)
+{
+    return w && w->hit_sound;
+}
+
+int bfm_forest_walk_swing_sound(const BfmForestWalk *w)
+{
+    return w && w->swing_sound;
 }
 
 int bfm_forest_walk_control(const BfmForestWalk *w)
@@ -491,6 +553,15 @@ int bfm_forest_walk_tick_axes(BfmForestWalk *w, int x, int y, int confirm_edge)
 int bfm_forest_walk_tick_controls(BfmForestWalk *w, int x, int y,
                                   int cross_pressed, int cross_held)
 {
+    return bfm_forest_walk_tick_pad(w, x, y, cross_pressed ? BFM_FOREST_CROSS : 0,
+                                   cross_held ? BFM_FOREST_CROSS : 0);
+}
+
+int bfm_forest_walk_tick_pad(BfmForestWalk *w, int x, int y,
+                             uint16_t pressed, uint16_t held)
+{
+    int cross_pressed = (pressed & BFM_FOREST_CROSS) != 0;
+    int cross_held = (held & BFM_FOREST_CROSS) != 0;
     if(!w || x < -1 || x > 1 || y < -1 || y > 1) return -1;
     /* The actor uses the previous completed controller poll. */
     int read_x = w->input_x, read_y = w->input_y;
@@ -500,8 +571,12 @@ int bfm_forest_walk_tick_controls(BfmForestWalk *w, int x, int y,
      * Cross edge. Directions are live there, but a jump needs a fresh press. */
     w->jump_pressed = w->control_polled && cross_pressed;
     w->jump_held = cross_held;
+    int attack_pressed = w->attack_pressed;
+    w->attack_pressed = w->control_polled && (pressed & BFM_FOREST_SQUARE);
+    w->swing_sound = 0;
+    w->hit_sound = 0;
     w->control_polled = w->player_control;
-    if (w->player_control) return tick_player(w, read_x, read_y, jump_pressed, jump_held);
+    if (w->player_control) return tick_player(w, read_x, read_y, jump_pressed, jump_held, attack_pressed);
     if (w->tick >= LAST_WALK_TICK) return tick_message(w, cross_pressed);
     ++w->tick;
     if(w->tick==1) {++w->elapsed;}

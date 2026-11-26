@@ -1,8 +1,11 @@
 /* SPDX-License-Identifier: MIT */
 #include "forest_field.h"
 #include "forest_shore.h"
+#include "forest_shore_motion.h"
+#include "forest_guard_contact.h"
 #include "forest_trail.h"
 #include "forest_shore_figures.h"
+#include "forest_impact.h"
 #include "forest_opening_data.h"
 #include "forest_message_art.h"
 #include "forest_floor.h"
@@ -11,6 +14,7 @@
 
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
 enum {
     FOREST_ROOM = 0x3008,
@@ -30,6 +34,17 @@ typedef struct {
     uint32_t on_enter, message;
 } ForestEntrance;
 
+/* The original scanout trails these submitted field actors and effects by two
+ * updates. Their logical collision and animation states continue immediately. */
+typedef struct {
+    BfmForestTransform guard_root;
+    BfmForestPose guard_pose;
+    uint32_t guard_parts;
+    BfmForestCamera camera;
+    BfmForestDustCard cards[2 + BFM_FOREST_IMPACT_CARDS]; /* recoil dust, notice and contact */
+    unsigned count;
+} BfmForestSubmittedFrame;
+
 struct BfmForestField {
     FloorGrid grid;
     const FloorPlane *first_descent;
@@ -38,8 +53,13 @@ struct BfmForestField {
     BfmForestBlade blade;
     BfmForestDust dust;
     BfmForestShore *shore;
+    BfmForestGuardBox guard_box;
+    int first_shore_hit;
     BfmForestTrail *trail;
     BfmForestShoreFigures *shore_figures;
+    BfmForestImpact impact;
+    BfmForestSubmittedFrame submitted[3];
+    unsigned next_frame;
     BfmForestOpeningData opening;
     uint8_t *scene;
     size_t scene_size;
@@ -279,7 +299,7 @@ BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t roo
         field->scene_size = bytes;
         if (field->player)
             field->shore = bfm_forest_shore_open(field, scene, bytes, scene_base, descriptor);
-        if (field->shore) {
+        if (field->shore && bfm_forest_guard_box_load(field, &field->guard_box)) {
             field->shore_figures = bfm_forest_shore_figures_open(field);
             field->trail = bfm_forest_trail_open(field, field->shore);
         }
@@ -320,6 +340,83 @@ void bfm_forest_tick_dust(BfmForestField *field, BfmForestDustEmission event,
     bfm_forest_dust_tick(&field->dust, event, player, camera_eye, yaw);
 }
 
+/* Apply the field model's signed fixed-point transform to a collision point. */
+static int strike_world_point(const BfmForestTransform *root, const int local[3],
+                              int16_t world[3])
+{
+    for (unsigned row = 0; row < 3; ++row) {
+        int sum = 0;
+        for (unsigned axis = 0; axis < 3; ++axis)
+            sum += root->rotation[row][axis] * local[axis];
+        int64_t at = (int64_t)root->translation[row] + sum / 4096 - (sum % 4096 < 0);
+        if (at < INT16_MIN || at > INT16_MAX) return 0;
+        world[row] = (int16_t)at;
+    }
+    return 1;
+}
+
+int bfm_forest_first_strike(BfmForestField *field, const BfmForestTransform *player_root,
+                            const int8_t tip[3], const int8_t next_tip[3], int16_t *yaw,
+                            int16_t effect_position[3], int16_t effect_normal[3])
+{
+    if (!field || !player_root || !tip || !next_tip || !yaw || field->first_shore_hit)
+        return 0;
+    const BfmForestActor *guard = bfm_forest_shore_actor(field->shore);
+    const int origin[3] = {0, -30, 0};
+    int16_t start[3], end[3], center[3];
+    if (!guard || !strike_world_point(player_root, origin, start)) return 0;
+    int points[3][3], squared = 0;
+    for (unsigned axis = 0; axis < 3; ++axis) {
+        int delta = (int)next_tip[axis] - tip[axis];
+        squared += delta * delta;
+        points[0][axis] = tip[axis];
+        points[1][axis] = tip[axis] + delta / 3;
+        points[2][axis] = next_tip[axis] - delta / 3;
+    }
+    /* The field adds two probes when its quantized distance reaches 65.
+     * Across signed-byte endpoints the first qualifying squared length is 4288. */
+    unsigned probes = squared >= 4288 ? 3 : 1;
+    for (unsigned i = 0; i < probes; ++i) {
+        if (!strike_world_point(player_root, points[i], end) ||
+            !bfm_forest_guard_contact_point(&field->guard_box, guard->root, start, end,
+                                            center, effect_position, effect_normal))
+            continue;
+        bfm_forest_dust_recoil_start(&field->dust, guard->root->translation, *yaw);
+        bfm_forest_shore_recoil(field->shore, (uint16_t)*yaw);
+        *yaw = (int16_t)bfm_forest_shore_bearing(player_root->translation[0] - center[0],
+                                                 player_root->translation[2] - center[2]);
+        field->first_shore_hit = 1;
+        return 1;
+    }
+    return 0;
+}
+
+int bfm_forest_submit_guard_and_impact(BfmForestField *field, const BfmForestHit *hit,
+                           const int32_t camera_eye[3], const BfmForestCamera *camera)
+{
+    if (hit->connected) {
+        if (!bfm_forest_impact_start(&field->impact, field, hit->position, hit->normal,
+                                     camera_eye)) return 0;
+    } else {
+        bfm_forest_dust_recoil_advance(&field->dust);
+        bfm_forest_impact_advance(&field->impact);
+    }
+    BfmForestSubmittedFrame *frame = &field->submitted[field->next_frame];
+    frame->camera = *camera;
+    frame->count = bfm_forest_dust_recoil_project(&field->dust, camera, frame->cards);
+    if (bfm_forest_marker_project(bfm_forest_shore_marker(field->shore), camera,
+                                  &frame->cards[frame->count])) ++frame->count;
+    frame->count += bfm_forest_impact_project(&field->impact, camera, frame->cards + frame->count);
+    const BfmForestActor *guard = bfm_forest_shore_actor(field->shore);
+    frame->guard_parts = guard ? guard->visible_parts : 0;
+    if (guard) {
+        frame->guard_root = *guard->root;
+        frame->guard_pose = *guard->pose;
+    }
+    field->next_frame = (field->next_frame + 1) % 3;
+    return 1;
+}
+
 int bfm_forest_tick_shore_actor(BfmForestField *field, const int16_t player[3])
 {
     if (!field || !player || bfm_forest_shore_step(field->shore, field, player) == BFM_SHORE_INVALID)
@@ -341,12 +438,14 @@ int bfm_forest_draw_entrance_player(BfmForestField *field, const BfmForestCamera
     count += bfm_forest_shore_figures_actors(field->shore_figures, actors + count, 4);
     const BfmForestActor *crossing = bfm_forest_trail_guard(field->trail);
     if (crossing) actors[count++] = *crossing;
-    const BfmForestActor *guard = bfm_forest_shore_actor(field->shore);
-    if (guard) actors[count++] = *guard;
+    const BfmForestSubmittedFrame *submitted = &field->submitted[field->next_frame];
+    if (submitted->guard_parts)
+        actors[count++] = (BfmForestActor){bfm_forest_shore_guard_mesh(field->shore),
+            &submitted->guard_pose, &submitted->guard_root, submitted->guard_parts, &submitted->camera};
     BfmForestDustCard cards[BFM_FOREST_EFFECT_CARDS];
     unsigned card_count = bfm_forest_dust_project(&field->dust, camera, cards);
-    if (bfm_forest_marker_project(bfm_forest_shore_marker(field->shore), camera,
-                                  &cards[card_count])) ++card_count;
+    memcpy(cards + card_count, submitted->cards, submitted->count * sizeof *cards);
+    card_count += submitted->count;
     return bfm_forest_terrain_draw_entrance_with_effects(field->terrain, camera,
                field->player, pose, root, visible_parts, &field->blade, buffer, frame,
                actors, count, cards, card_count, pixels);

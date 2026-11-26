@@ -6,8 +6,10 @@
 #include "forest_terrain.h"
 #include "musashi_disc_media.h"
 
-enum { BFM_FOREST_DUST_CELLS = 10, BFM_FOREST_DUST_CARDS = 9,
-       BFM_FOREST_EFFECT_CARDS = BFM_FOREST_DUST_CARDS + 1 };
+enum { BFM_FOREST_DUST_CELLS = 10, BFM_FOREST_FOOT_DUST_CARDS = 9,
+       BFM_FOREST_DUST_CARDS = BFM_FOREST_FOOT_DUST_CARDS + 1,
+       BFM_FOREST_IMPACT_CARDS = 2,
+       BFM_FOREST_EFFECT_CARDS = BFM_FOREST_DUST_CARDS + 1 + BFM_FOREST_IMPACT_CARDS };
 
 typedef enum {
     BFM_FOREST_DUST_NONE,
@@ -42,7 +44,13 @@ int bfm_forest_dust_load(BfmForestDust *dust, const MusashiDiscMedia *disc);
 void bfm_forest_dust_tick(BfmForestDust *dust, BfmForestDustEmission event,
                           const int16_t player[3], const int32_t eye[3], int yaw);
 
+/* Guard recoil starts on the struck actor and advances on subsequent updates. */
+void bfm_forest_dust_recoil_start(BfmForestDust *dust, const int32_t root[3], int attacker_yaw);
+void bfm_forest_dust_recoil_advance(BfmForestDust *dust);
+
 /* Output uses the field's ordering buckets and ascending particle slots. */
 unsigned bfm_forest_dust_project(const BfmForestDust *dust, const BfmForestCamera *camera,
-                                 BfmForestDustCard out[BFM_FOREST_DUST_CARDS]);
+                                 BfmForestDustCard out[BFM_FOREST_FOOT_DUST_CARDS]);
+unsigned bfm_forest_dust_recoil_project(const BfmForestDust *dust, const BfmForestCamera *camera,
+                                        BfmForestDustCard *out);
 #endif

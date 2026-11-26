@@ -24,7 +24,7 @@ typedef struct VoiceClip {
 struct DesktopVoice {
     PalaceVoice *decoder;
     const ForestVoice *active_source;
-    BfmBedroomEffects *room_effects;
+    BfmBedroomEffects *room_effects, *forest_swing;
     BfmPalaceEffects *effects;
     BfmForestScore *forest_score, *room_score, *fading_score;
     Uint64 forest_score_start;
@@ -220,6 +220,8 @@ static void stop_voice(DesktopVoice *v, int leaving_room)
     if (leaving_room) {
         v->room_score = v->fading_score = NULL;
         v->room_effects = NULL;
+        bfm_bedroom_effects_free(v->forest_swing);
+        v->forest_swing = NULL;
     }
     v->court = COURT_IDLE;
     v->forest_generation = 0;
@@ -256,6 +258,16 @@ void bfm_desktop_voice_room_effect(DesktopVoice *v, BfmBedroomEffects *effects, 
     }
 }
 
+void bfm_desktop_voice_forest_swing(DesktopVoice *v)
+{
+    if (v) bfm_desktop_voice_room_effect(v, v->forest_swing, BFM_FOREST_SWING_SOUND);
+}
+
+void bfm_desktop_voice_forest_hit(DesktopVoice *v)
+{
+    if (v) bfm_desktop_voice_room_effect(v, v->forest_swing, BFM_FOREST_HIT_SOUND);
+}
+
 void bfm_desktop_voice_room_score(DesktopVoice *v, BfmForestScore *score)
 {
     if (!v || v->room_score == score) return;
@@ -275,6 +287,7 @@ void bfm_desktop_voice_forest_score(DesktopVoice *v, const MusashiDiscMedia *dis
     /* The card has faded and the prior court sound is silent. Prepare
      * the mounted score with the device paused, ahead of its first note. */
     bfm_desktop_voice_stop(v);
+    v->forest_swing = bfm_forest_swing_sound_load(disc);
     if (!v->forest_score)
         v->forest_score = bfm_forest_score_load(disc, BFM_PALACE_VOICE_RATE);
     v->forest_score_requested = 1;

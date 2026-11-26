@@ -10,8 +10,9 @@ struct BfmForestShore {
     int16_t spawn[3];
     int active, beyond_bank;
     MusashiForestPlayerMesh *mesh;
-    BfmForestGuardClip walk, notice;
+    BfmForestGuardClip walk, notice, recoil;
     BfmForestShoreMotion motion;
+    int recoil_pending;
     BfmForestMarker marker;
     int marker_key_seen, previously_close;
     BfmForestTransform root;
@@ -44,6 +45,23 @@ BfmForestShore *bfm_forest_shore_open(const BfmForestField *field,
     }
     shore->draw = (BfmForestActor){shore->mesh, &shore->pose, &shore->root, (1u << BFM_GUARD_PARTS) - 1};
     return shore;
+}
+
+void bfm_forest_shore_recoil(BfmForestShore *shore, uint16_t attacker_yaw)
+{
+    if (!shore || !shore->active || shore->beyond_bank || shore->motion.phase == BFM_SHORE_RECOIL)
+        return;
+    shore->motion.yaw = (uint16_t)((attacker_yaw + 2048) & 4095);
+    shore->motion.phase = BFM_SHORE_RECOIL;
+    shore->motion.frame = 0;
+    shore->motion.recoil_vy_q16 = 0;
+    shore->recoil_pending = 1;
+}
+
+static const BfmForestGuardClip *current_clip(const BfmForestShore *shore)
+{
+    if (shore->motion.phase == BFM_SHORE_RECOIL) return &shore->recoil;
+    return shore->motion.phase == BFM_SHORE_WALK ? &shore->walk : &shore->notice;
 }
 
 void bfm_forest_shore_free(BfmForestShore *shore)
@@ -80,14 +98,22 @@ BfmForestShoreUpdate bfm_forest_shore_step(BfmForestShore *shore, const BfmFores
 {
     if (!shore || !field || !player) return BFM_SHORE_INVALID;
     if (shore->beyond_bank) return BFM_SHORE_UNRESOLVED;
+    int first_hit = shore->recoil_pending;
+    if (first_hit &&
+        (!bfm_forest_guard_clip_read(field, UINT32_C(0x801b02a8), 0xffff, &shore->recoil) ||
+         shore->recoil.count != 16))
+        return BFM_SHORE_INVALID;
+    int16_t prior_y = shore->motion.position[1];
     if (!shore->active) {
         int gap = abs((int)player[2] - shore->spawn[2]);
         /* The room-selected placement predicate admits this Z band. */
         if (gap < 705 || gap >= 768) return BFM_SHORE_UPDATED;
         if (!bfm_forest_shore_begin(&shore->motion, field, shore->spawn)) return BFM_SHORE_INVALID;
     } else {
-        unsigned count = shore->motion.phase == BFM_SHORE_WALK ? shore->walk.count : shore->notice.count;
-        if (!bfm_forest_shore_tick(&shore->motion, field, player, count)) {
+        int updated = first_hit ? bfm_forest_shore_recoil_height(&shore->motion, field) :
+            bfm_forest_shore_tick(&shore->motion, field, player, current_clip(shore)->count);
+        shore->recoil_pending = 0;
+        if (!updated) {
             /* The known walk covers the far slope and bank. Other footing
              * needs its own actor action and must not interrupt the player. */
             shore->beyond_bank = 1;
@@ -95,11 +121,13 @@ BfmForestShoreUpdate bfm_forest_shore_step(BfmForestShore *shore, const BfmFores
         }
     }
     const BfmForestShoreMotion *motion = &shore->motion;
-    const BfmForestGuardClip *clip = motion->phase == BFM_SHORE_WALK ? &shore->walk : &shore->notice;
+    const BfmForestGuardClip *clip = current_clip(shore);
     if (motion->frame >= clip->count ||
         !bfm_forest_actor_pose_decode(clip->pose[motion->frame], BFM_GUARD_POSE_BYTES, BFM_GUARD_PARTS, &shore->pose))
         return BFM_SHORE_INVALID;
     bfm_forest_actor_root(motion->yaw, motion->position, &shore->root);
+    /* The first hit pose draws at the preceding standing height. */
+    if (first_hit) shore->root.translation[1] = prior_y;
     shore->active = 1;
     return step_marker(shore, field, player) ? BFM_SHORE_UPDATED : BFM_SHORE_INVALID;
 }

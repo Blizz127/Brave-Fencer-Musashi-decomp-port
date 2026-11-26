@@ -678,7 +678,8 @@ int bfm_forest_terrain_draw_entrance_with_effects(BfmForestTerrain *terrain,
         const BfmForestActor *actor = &actors[i];
         if (!actor->mesh || !actor->pose || !actor->root ||
             (actor->visible_parts >> MUSASHI_FOREST_PLAYER_PARTS) ||
-            !collect_model(terrain, camera, actor->mesh, actor->pose, actor->root,
+            !collect_model(terrain, actor->submitted_camera ? actor->submitted_camera : camera,
+                           actor->mesh, actor->pose, actor->root,
                            actor->visible_parts, FOREST_ROOM_MODEL, &count)) return 0;
     }
     if (frame && (!blade || !collect_blade(terrain, camera, blade, frame, &count))) return 0;

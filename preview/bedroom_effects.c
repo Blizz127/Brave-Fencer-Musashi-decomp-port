@@ -55,9 +55,15 @@ static int read_data(const Sources *s, uint32_t address, uint8_t *out, size_t co
  * Common button sounds already point to a resident effect table. */
 static int description(const Sources *s, unsigned command, uint32_t *address)
 {
-    uint8_t entry[4], header[28], pointer[4], value[2];
-    if (!read_data(s, 0x8006451cu+4*command, entry, sizeof entry) ||
-        !read_data(s, 0x800c8500u, header, sizeof header) || half(header) != s->group) return 0;
+    uint8_t entry[4], pointer[4], value[2];
+    const uint8_t *header = NULL;
+    if (!read_data(s, 0x8006451cu+4*command, entry, sizeof entry)) return 0;
+    if (s->data || entry[0] == 6 || entry[1]) {
+        /* Each area sound payload ends with its 28-byte selector directory. */
+        if (!s->data || s->bytes < 28) return 0;
+        header = s->data + s->bytes - 28;
+        if (half(header) != s->group) return 0;
+    }
     if (entry[0] == 6) {
         unsigned first = half(header+4), columns = half(header+14), row = entry[3];
         if (entry[2] != 3 || s->key < first || s->key-first >= half(header+2) ||
@@ -209,6 +215,36 @@ done:
     return result;
 }
 
+static int load_tables(Sources *s)
+{
+    return read_data(s,0x8006aa30u,s->volume,sizeof s->volume) &&
+           read_data(s,0x8006ab30u,s->pitch,sizeof s->pitch);
+}
+
+BfmBedroomEffects *bfm_forest_swing_sound_load(const MusashiDiscMedia *disc)
+{
+    Sources s = {.disc=disc};
+    s.common = bfm_archive_sound_bank_load(disc,"MAIN.CD",2);
+    BfmBedroomEffects *e = calloc(1,sizeof *e);
+    if (!e || !s.common || !load_tables(&s) || !prepare(&s,BFM_FOREST_SWING_SOUND,&e->clips[0])) {
+        bfm_bedroom_effects_free(e);
+        e = NULL;
+    }
+    if (e) {
+        /* Giant Forest uses area group 1 and the first room sound bank. */
+        s.key = 1;
+        s.group = 1;
+        uint8_t *area = bfm_bedroom_effect_data(disc,77,&s.bytes);
+        s.data = area;
+        s.scene = bfm_archive_sound_bank_load(disc,"SC01.CD",77);
+        if (area && s.scene) prepare(&s,BFM_FOREST_HIT_SOUND,&e->clips[1]);
+        bfm_palace_sound_bank_free(s.scene);
+        free(area);
+    }
+    bfm_palace_sound_bank_free(s.common);
+    return e;
+}
+
 BfmBedroomEffects *bfm_bedroom_effects_load(const MusashiDiscMedia *disc, unsigned member, uint32_t room)
 {
     Sources s = {.disc=disc,.key=room>>16,.group=(room>>12)&15};
@@ -218,8 +254,7 @@ BfmBedroomEffects *bfm_bedroom_effects_load(const MusashiDiscMedia *disc, unsign
     s.scene = bfm_archive_sound_bank_load(disc,"SC01.CD",member);
     BfmBedroomEffects *e = calloc(1,sizeof *e);
     if (!e || !data || !s.common || !s.scene ||
-        !read_data(&s,0x8006aa30u,s.volume,sizeof s.volume) ||
-        !read_data(&s,0x8006ab30u,s.pitch,sizeof s.pitch) ||
+        !load_tables(&s) ||
         !prepare(&s,BFM_ROOM_AWARD_SOUND,&e->clips[0]) ||
         !prepare(&s,BFM_ROOM_MOVE_SOUND,&e->clips[1]) ||
         !prepare(&s,BFM_ROOM_ACCEPT_SOUND,&e->clips[2]) ||

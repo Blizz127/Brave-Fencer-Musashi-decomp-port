@@ -9,6 +9,8 @@ typedef struct BfmForestShore BfmForestShore;
 BfmForestShore *bfm_forest_shore_open(const BfmForestField *field,
     const uint8_t *scene, size_t bytes, uint32_t origin, const uint8_t *descriptor);
 void bfm_forest_shore_free(BfmForestShore *shore);
+/* Call before the guard update on a confirmed nonlethal first hit. */
+void bfm_forest_shore_recoil(BfmForestShore *shore, uint16_t attacker_yaw);
 /* Outside the supported bank, the field can continue independently. */
 typedef enum { BFM_SHORE_INVALID, BFM_SHORE_UPDATED, BFM_SHORE_UNRESOLVED } BfmForestShoreUpdate;
 BfmForestShoreUpdate bfm_forest_shore_step(BfmForestShore *shore, const BfmForestField *field,

@@ -36,7 +36,18 @@ int bfm_forest_draw_player_buffer(BfmForestField *field, const BfmForestCamera *
 /* Advance already emitted cards and, for a real player action, its new card. */
 void bfm_forest_tick_dust(BfmForestField *field, BfmForestDustEmission event,
                           const int16_t player[3], const int32_t camera_eye[3], int yaw);
+typedef struct {
+    int connected;
+    int16_t position[3], normal[3];
+} BfmForestHit;
+int bfm_forest_submit_guard_and_impact(BfmForestField *field, const BfmForestHit *hit,
+                           const int32_t camera_eye[3], const BfmForestCamera *camera);
 int bfm_forest_tick_shore_actor(BfmForestField *field, const int16_t player[3]);
+/* Resolve the first sword impact using the current and next action key.
+ * A hit turns the player and guard. Both world-space effect outputs are optional. */
+int bfm_forest_first_strike(BfmForestField *field, const BfmForestTransform *player_root,
+                            const int8_t tip[3], const int8_t next_tip[3], int16_t *yaw,
+                            int16_t effect_position[3], int16_t effect_normal[3]);
 int bfm_forest_draw_entrance_player(BfmForestField *field, const BfmForestCamera *camera,
                            const BfmForestPose *pose, const BfmForestTransform *root,
                            uint32_t visible_parts, unsigned buffer, const BfmForestBladeFrame *frame,

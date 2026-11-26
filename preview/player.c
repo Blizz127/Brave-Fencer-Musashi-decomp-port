@@ -18,7 +18,7 @@ enum { TITLE_W = 640, TITLE_H = 480, OPENING_W = 320, OPENING_H = 240 };
 enum { LOADING_VISIBLE_FIELDS = 115 };
 enum { PAD_START = 1u << 3, PAD_UP = 1u << 4, PAD_RIGHT = 1u << 5, PAD_DOWN = 1u << 6,
        PAD_LEFT = 1u << 7, PAD_TRIANGLE = 1u << 12,
-       PAD_CIRCLE = 1u << 13, PAD_CROSS = 1u << 14 };
+       PAD_CIRCLE = 1u << 13, PAD_CROSS = BFM_FOREST_CROSS, PAD_SQUARE = BFM_FOREST_SQUARE };
 
 typedef struct Player {
     MusashiDiscMedia *disc;
@@ -27,7 +27,8 @@ typedef struct Player {
     BfmForestWalk *forest;
     uint64_t forest_start;
     unsigned forest_updates;
-    int forest_confirm, control_message;
+    uint16_t forest_pressed;
+    int control_message;
     SDL_Window *window;
     SDL_Renderer *renderer;
     SDL_Texture *texture;
@@ -56,13 +57,15 @@ static const char usage[] =
     "a CUE with all its BIN tracks alongside is supported.\n"
     "Continue reads a supplied raw 128 KiB card and supports the early castle bedroom wake.\n"
     "Enter/Start: start. Space/Cross: confirm or skip the opening. Arrows: select. "
-    "D-pad, arrows or left stick: move in Giant Forest. T/Triangle: back from files. Escape: quit.\n";
+    "D-pad, arrows or left stick: move in Giant Forest. A/Square: swing Fusion on the ground. "
+    "T/Triangle: back from files. Escape: quit.\n";
 
 static uint16_t button_mask(unsigned int button) {
     switch (button) {
     case SDL_CONTROLLER_BUTTON_START: return PAD_START;
     case SDL_CONTROLLER_BUTTON_A: return PAD_CROSS;
     case SDL_CONTROLLER_BUTTON_B: return PAD_CIRCLE;
+    case SDL_CONTROLLER_BUTTON_X: return PAD_SQUARE;
     case SDL_CONTROLLER_BUTTON_DPAD_UP: return PAD_UP;
     case SDL_CONTROLLER_BUTTON_DPAD_DOWN: return PAD_DOWN;
     case SDL_CONTROLLER_BUTTON_DPAD_LEFT: return PAD_LEFT;
@@ -82,6 +85,7 @@ static void update_input(Player *p) {
     if (p->keys[SDL_SCANCODE_LEFT] || p->axis_x < -16384) current |= PAD_LEFT;
     if (p->keys[SDL_SCANCODE_RIGHT] || p->axis_x > 16384) current |= PAD_RIGHT;
     if (p->keys[SDL_SCANCODE_T]) current |= PAD_TRIANGLE;
+    if (p->keys[SDL_SCANCODE_A]) current |= PAD_SQUARE;
     p->pressed |= current & (uint16_t)~p->held;
     p->held = current;
 }
@@ -238,7 +242,8 @@ static int start_forest(Player *p, unsigned field)
     p->forest_start = forest_field ? p->phase_start + (forest_field * 1001 + 59) / 60
                                    : SDL_GetTicks64();
     p->forest_updates = 0;
-    p->forest_confirm = p->control_message = 0;
+    p->forest_pressed = 0;
+    p->control_message = 0;
     SDL_SetWindowTitle(p->window, "Brave Fencer Musashi - Giant Forest");
     return 1;
 }
@@ -250,10 +255,11 @@ static int forest_frame(Player *p)
     while (p->forest_updates < wanted) {
         int x = !!(p->held & PAD_RIGHT) - !!(p->held & PAD_LEFT);
         int y = !!(p->held & PAD_DOWN) - !!(p->held & PAD_UP);
-        running = bfm_forest_walk_tick_controls(p->forest, x, y, p->forest_confirm,
-                                                !!(p->held & PAD_CROSS));
-        p->forest_confirm = 0;
+        running = bfm_forest_walk_tick_pad(p->forest, x, y, p->forest_pressed, p->held);
+        p->forest_pressed = 0;
         if (running < 0) return -1;
+        if (bfm_forest_walk_swing_sound(p->forest)) bfm_desktop_voice_forest_swing(p->voice);
+        if (bfm_forest_walk_hit_sound(p->forest)) bfm_desktop_voice_forest_hit(p->voice);
         if (!running) break;
         ++p->forest_updates;
     }
@@ -338,7 +344,7 @@ static int play(Player *p, char *error, size_t size) {
                 }
                 p->flow.held = p->held | p->pressed;
             } else if (p->forest) {
-                if (p->pressed & PAD_CROSS) p->forest_confirm = 1;
+                p->forest_pressed |= p->pressed & (PAD_CROSS | PAD_SQUARE);
             } else if (p->flow.phase == BFM_TITLE_BEDROOM) {
                 if (bfm_bedroom_endpoint(p->bedroom) && (p->pressed & (PAD_TRIANGLE | PAD_START | PAD_CROSS))) {
                     bfm_desktop_voice_stop(p->voice);
