@@ -3,6 +3,9 @@
 #define BFM_FOREST_TRAIL_H
 #include "forest_shore.h"
 
+/* Decode one rigid trunk from its mounted room model list. */
+MusashiForestPlayerMesh *bfm_forest_trunk_mesh(const BfmForestField *field, uint32_t table);
+
 typedef struct BfmForestTrail BfmForestTrail;
 /* Field and shore assets outlive this first-trail encounter. */
 BfmForestTrail *bfm_forest_trail_open(const BfmForestField *field, const BfmForestShore *shore);

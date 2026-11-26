@@ -2,6 +2,8 @@
 #include "forest_terrain.h"
 #include "forest_dust.h"
 #include "forest_tether_trails.h"
+#include "forest_muzzle_art.h"
+#include "forest_shot_effects.h"
 #include "scene_tiles.h"
 #include "forest_raster.h"
 
@@ -395,6 +397,20 @@ static int compose(const BfmForestTransform *parent, const BfmForestTransform *c
     return 1;
 }
 
+int bfm_forest_effect_camera(const BfmForestCamera *camera, const BfmForestTransform *model,
+                             BfmForestCamera *local)
+{
+    if (!camera || !camera->projection || !model || !local) return 0;
+    BfmForestTransform view, eye;
+    memcpy(view.rotation, camera->rotation, sizeof view.rotation);
+    memcpy(view.translation, camera->translation, sizeof view.translation);
+    if (!compose(&view, model, &eye)) return 0;
+    memcpy(local->rotation, eye.rotation, sizeof local->rotation);
+    memcpy(local->translation, eye.translation, sizeof local->translation);
+    local->projection = camera->projection;
+    return 1;
+}
+
 static uint32_t light_vertex(const BfmForestTerrain *terrain, const int32_t light[3][3],
                              const MusashiForestPlayerVector *normal, const uint8_t rgb[3])
 {
@@ -437,14 +453,9 @@ static int collect_blade(BfmForestTerrain *terrain, const BfmForestCamera *camer
                          const BfmForestBlade *blade, const BfmForestBladeFrame *frame,
                          size_t *count)
 {
-    BfmForestTransform view, eye;
-    memcpy(view.rotation, camera->rotation, sizeof(view.rotation));
-    memcpy(view.translation, camera->translation, sizeof(view.translation));
-    if (!compose(&view, &frame->world, &eye) || *count > SIZE_MAX - 8 ||
+    BfmForestCamera local;
+    if (!bfm_forest_effect_camera(camera, &frame->world, &local) || *count > SIZE_MAX - 8 ||
         !reserve_faces(terrain, *count + 8)) return 0;
-    BfmForestCamera local = {.projection = camera->projection};
-    memcpy(local.rotation, eye.rotation, sizeof(local.rotation));
-    memcpy(local.translation, eye.translation, sizeof(local.translation));
     for (unsigned id = 0; id < 8; ++id) {
         ProjectedFace *face = &terrain->draw[*count];
         int16_t xyz[4][3];
@@ -671,7 +682,9 @@ int bfm_forest_terrain_draw_entrance_with_effects(BfmForestTerrain *terrain,
 {
     if (!terrain || !camera || !camera->projection || !pixels || buffer > 1 ||
         actor_count > BFM_FOREST_ACTOR_LIMIT || (actor_count && !actors) ||
-        card_count > BFM_FOREST_EFFECT_CARDS + BFM_TETHER_CARDS || (card_count && !cards) ||
+        card_count > BFM_FOREST_EFFECT_CARDS + BFM_TETHER_CARDS +
+                     BFM_FOREST_MUZZLE_CARDS + BFM_GUNSHOT_FAN_CARDS + BFM_FOREST_SHOT_EFFECT_CARDS ||
+        (card_count && !cards) ||
         ((model || actor_count) && !terrain->has_lighting))
         return 0;
     /* The actor uses the 220-line gameplay viewport. Terrain diagnostics

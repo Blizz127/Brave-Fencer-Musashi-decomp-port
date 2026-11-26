@@ -17,6 +17,9 @@ typedef struct {
     unsigned cell;
 } BfmForestImpact;
 
+/* Decode the field effect's packed Q12 contact normal into its pointing angles. */
+void bfm_forest_impact_angles(const int16_t surface[3], int *pitch, int *yaw);
+
 /* Issue once for a confirmed grounded Fusion strike. Contact and its outward
  * Q12 normal come from the resolved hit surface. The room owns the borrowed
  * animation records and must outlive the effect. Cell zero draws immediately. */

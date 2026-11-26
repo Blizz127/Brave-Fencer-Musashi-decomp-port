@@ -240,6 +240,15 @@ BfmBedroomEffects *bfm_forest_swing_sound_load(const MusashiDiscMedia *disc)
         if (area && s.scene) prepare(&s,BFM_FOREST_HIT_SOUND,&e->clips[1]);
         bfm_palace_sound_bank_free(s.scene);
         free(area);
+        /* The direct firing command selects the equipped skill's bank and
+         * uses the resident pitch and volume tables already read above. */
+        s.data = NULL;
+        s.bytes = 0;
+        s.group = 0;
+        s.key = 5;
+        s.scene = bfm_archive_sound_bank_load(disc,"MAIN.CD",15);
+        if (s.scene) prepare(&s,BFM_FOREST_GUNSHOT_SOUND,&e->clips[2]);
+        bfm_palace_sound_bank_free(s.scene);
     }
     bfm_palace_sound_bank_free(s.common);
     return e;
@@ -280,9 +289,9 @@ void bfm_bedroom_effects_start(BfmBedroomEffects *e, unsigned command)
 {
     if (!e || !command) return;
     for (unsigned i=0; i<sizeof e->clips/sizeof *e->clips; ++i) if (e->clips[i].id == command) {
-        /* The resident menu reissues an identical command in its own voice
-         * slot. Distinct button commands may overlap until their releases. */
-        if (i >= 3) {
+        /* Repeated menu commands and rapid Gunshot fire restart the active
+         * instance of that command. Other active sounds keep their cursors. */
+        if (i >= 3 || command == BFM_FOREST_GUNSHOT_SOUND) {
             for (unsigned j=0; j<VOICES; ++j) {
                 if (e->playing[j].clip == &e->clips[i]) {
                     e->playing[j].frame = 0;

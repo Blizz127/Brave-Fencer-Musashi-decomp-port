@@ -8,6 +8,9 @@
 #include "forest_lesson.h"
 #include "forest_lesson_fusion.h"
 #include "forest_lesson_camera.h"
+#include "forest_gunshot.h"
+#include "forest_bullet.h"
+#include "forest_bridge_retreat.h"
 #include "forest_hud.h"
 #include "forest_message.h"
 #include "forest_message_art.h"
@@ -29,6 +32,8 @@ typedef struct {
     uint32_t visible;
 } Motion;
 
+typedef struct { int edge, held, stick; } GunshotInput;
+
 struct BfmForestWalk {
     BfmForestField *field;
     BfmGameplayRun standalone_gameplay;
@@ -48,7 +53,6 @@ struct BfmForestWalk {
     BfmForestJump jump;
     BfmForestSpeechActor speaker;
     BfmForestManual manual;
-    BfmForestStatus status;
     BfmForestHud *hud;
     int player_control, input_x, input_y;
     int jump_pressed, jump_held, control_polled;
@@ -59,6 +63,12 @@ struct BfmForestWalk {
     BfmForestLesson lesson;
     BfmForestLessonFusion fusion;
     BfmForestLessonCamera lens;
+    BfmForestGunshot gun;
+    BfmForestBullets bullets;
+    BfmForestBridgeRetreat retreat;
+    GunshotInput gun_input;
+    unsigned bridge_phase;
+    int gunshot_fired, retreat_control;
     int shoulder_held, orbit[3];
     int at_boundary, blocked_x, blocked_y;
     BfmForestMessage *message;
@@ -220,12 +230,20 @@ static void update_root(BfmForestWalk *w)
 
 static int select_pose(BfmForestWalk *w, uint32_t frame, uint32_t visible)
 {
+    enum { ANCHOR_BYTES = 16, POSE_BYTES = 240 };
+    if (frame < ANCHOR_BYTES || (frame & 3)) return 0;
     if (frame != w->frame) {
-        ForestPlayerArchive archive;
-        if (frame < 16 || !bfm_forest_pose_load(w->disc, frame, &w->pose) ||
-            !forest_player_archive_open(w->disc, &archive) ||
-            !forest_player_archive_read(&archive, frame - 16, (uint8_t *)w->blade_anchors,
-                                        sizeof(w->blade_anchors))) return 0;
+        uint8_t resident[ANCHOR_BYTES + POSE_BYTES];
+        uint32_t start = frame - ANCHOR_BYTES;
+        const uint8_t *key = bfm_forest_gunshot_bytes(&w->fusion.award, start, sizeof resident);
+        if (!key) {
+            ForestPlayerArchive archive;
+            if (!forest_player_archive_open(w->disc, &archive) ||
+                !forest_player_archive_read(&archive, start, resident, sizeof resident)) return 0;
+            key = resident;
+        }
+        if (!bfm_forest_pose_decode(key + ANCHOR_BYTES, POSE_BYTES, &w->pose)) return 0;
+        memcpy(w->blade_anchors, key, sizeof w->blade_anchors);
     }
     w->frame=frame; w->visible=visible;
     update_root(w);
@@ -250,12 +268,13 @@ BfmForestWalk *bfm_forest_walk_open(const MusashiDiscMedia *disc,const RoomTrans
     w->look_z = -(int)lround(cos(w->yaw * radians) * 4096) / 32;
     ForestPlayerArchive archive;
     w->hud = bfm_forest_open_hud(w->field, disc);
-    if (!w->hud || !bfm_forest_status_load(disc, &w->status) || !bfm_forest_opening_data(w->field,&w->data) ||
+    if (!w->hud || !bfm_forest_status_load(disc, &w->gameplay->player) || !bfm_forest_opening_data(w->field,&w->data) ||
         !forest_player_archive_open(disc,&archive) || !setup_cameras(w) ||
         !load_motion(&archive,w->data.animation_table,IDLE,&w->idle) ||
         !load_motion(&archive,w->data.animation_table,WALK,&w->walk) ||
         !load_motion(&archive,w->data.animation_table,RUN,&w->run)) goto fail;
     w->motion=IDLE; w->elapsed=1;
+    w->gameplay->has_player = 1;
     if(update_pose(w)) return w;
 fail:
     bfm_forest_walk_free(w); return NULL;
@@ -278,7 +297,12 @@ static int start_ambient(BfmForestWalk *w)
 int bfm_forest_walk_bind_gameplay(BfmForestWalk *w, BfmGameplayRun *run)
 {
     if (!w) return 0;
-    w->gameplay = run ? run : &w->standalone_gameplay;
+    if (!run) run = &w->standalone_gameplay;
+    if (!run->has_player || run == &w->standalone_gameplay) {
+        run->player = w->gameplay->player;
+        run->has_player = 1;
+    }
+    w->gameplay = run;
     return start_ambient(w);
 }
 
@@ -475,7 +499,7 @@ static int tick_swing(BfmForestWalk *w, int x, int y, int attack_pressed,
     /* The grounded action rolls strength before testing the blade. A miss
      * or a recovering target still advances the shared gameplay stream. */
     uint16_t strength;
-    if (!bfm_forest_fusion_strength(&w->fusion_power, &w->status, w->actor.strike_index,
+    if (!bfm_forest_fusion_strength(&w->fusion_power, &w->gameplay->player, w->actor.strike_index,
                                     bfm_gameplay_story_flag(w->gameplay, 0x81),
                                     bfm_gameplay_random(w->gameplay), &strength)) return 0;
     if (w->actor.field_1a8) ++w->actor.strike_updates;
@@ -558,8 +582,26 @@ static int update_lesson_view(BfmForestWalk *w, BfmForestLessonStage before, int
     return follow(w);
 }
 
+static int bridge_control(BfmForestWalk *w, BfmForestRetreatPad *pad)
+{
+    unsigned prior = w->bridge_phase;
+    if (prior < 2 && w->lesson.stage >= BFM_LESSON_DISCOVERY_TALK) prior = 1;
+    if (prior < 2 && bfm_forest_status_values(&w->gameplay->player).ability == 8) prior = 2;
+    w->bridge_phase = bfm_forest_field_bridge_step(w->field, prior);
+    bfm_forest_field_advance_gunshots(w->field, &w->bullets, w->eye, w->gameplay);
+    if (prior == 2 && w->bridge_phase == 3) {
+        bfm_forest_bridge_retreat_contact(&w->retreat, prior, 1);
+        *pad = (BfmForestRetreatPad){0};
+        return 1;
+    }
+    return bfm_forest_bridge_retreat_controls(&w->retreat, w->actor.state,
+        w->jump.active && !w->jump.landed, w->target[0] - w->eye[0],
+        w->target[2] - w->eye[2], &w->yaw, pad);
+}
+
 static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jump_held,
-                       int attack_pressed, int shoulder, int confirm_edge, int reveal_edge)
+                       int attack_pressed, int shoulder, GunshotInput circle,
+                       int confirm_edge, int reveal_edge)
 {
     BfmForestDustEmission dust = BFM_FOREST_DUST_NONE;
     BfmForestHit hit = {0};
@@ -570,6 +612,23 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
     int owned = bfm_forest_lesson_owns_player(&w->lesson) ||
         (w->fusion.award.phase > BFM_AWARD_IDLE && w->fusion.award.phase < BFM_AWARD_COMPLETE);
     int at_mark = 0;
+    BfmForestRetreatPad script_pad;
+    w->retreat_control = bridge_control(w, &script_pad);
+    if (w->retreat_control) {
+        x = script_pad.x;
+        y = script_pad.y;
+        jump_pressed = script_pad.cross_pressed;
+        jump_held = script_pad.cross_held;
+        attack_pressed = square_edge = shoulder = confirm_edge = reveal_edge = 0;
+        circle = (GunshotInput){0};
+        if (script_pad.cross_pressed) {
+            /* The room ends its scripted stride before the directed jump. */
+            w->actor.state = 0;
+            w->actor.field_24.word = w->actor.local_y.word = w->actor.field_2c.word = 0;
+            memset(w->actor.velocity, 0, sizeof w->actor.velocity);
+            w->stride_x = w->stride_y = w->manual.moving = 0;
+        }
+    }
     if (owned) {
         x = y = jump_pressed = jump_held = attack_pressed = 0;
         if (!w->jump.active && w->actor.state != 5) {
@@ -597,12 +656,29 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
         if (shoulder && !cast->stance.count &&
             !bfm_forest_cast_load(cast, w->disc, w->data.animation_table)) return -1;
         if (cast->action == BFM_CAST_GROUND) cast->visible = w->visible;
-        casting = bfm_forest_cast_tick(cast, &w->status, shoulder, square_edge, x || y, away);
+        casting = bfm_forest_cast_tick(cast, &w->gameplay->player, shoulder, square_edge, x || y, away);
         if (casting != BFM_CAST_GROUND && casting != BFM_CAST_SWING) attack_pressed = 0;
         if (w->actor.state == 17 || w->actor.state == 21) w->actor.state = 0;
         if (casting == BFM_CAST_THROW || casting == BFM_CAST_LAUNCH) x = y = 0;
     }
     if (away) attack_pressed = 0;
+    int interrupted = owned || w->retreat_control || w->jump.active || jump_pressed ||
+        (w->actor.state > 1 && w->actor.state != 23);
+    if (!interrupted && circle.edge && !w->gun.cost &&
+        bfm_forest_status_values(&w->gameplay->player).ability == 8 &&
+        (!bfm_forest_prepare_equipped_gunshot(&w->fusion.award, w->disc, &w->gameplay->player) ||
+         !bfm_forest_gunshot_load(&w->gun, w->field, &w->fusion.award, w->data.animation_table)))
+        return -1;
+    BfmForestGunshotEvent shot = bfm_forest_gunshot_tick(&w->gun, &w->gameplay->player,
+                                                         circle.edge, circle.held, interrupted);
+    if (w->actor.state == 23) w->actor.state = 0;
+    if (shot != BFM_GUNSHOT_GROUND) {
+        w->yaw = bfm_forest_gunshot_aim(&w->gun, &w->camera, x, y, circle.stick, w->yaw);
+        x = y = attack_pressed = 0;
+        w->actor.field_2c.word = 0;
+        w->actor.velocity[0] = w->actor.velocity[2] = 0;
+        memset(&w->manual, 0, sizeof w->manual);
+    }
     int continuing_stride = (x || y) && x == w->stride_x && y == w->stride_y;
     w->stride_x = w->stride_y = 0;
     bfm_forest_hud_tick(w->hud);
@@ -663,6 +739,15 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
             }
         }
     }
+    if (shot != BFM_GUNSHOT_GROUND) {
+        w->actor.state = 23;
+        if (!select_pose(w, w->gun.pose, w->visible & ~((UINT32_C(1) << 24) | (UINT32_C(1) << 25))))
+            return -1;
+        if (shot == BFM_GUNSHOT_FIRED) {
+            if (!bfm_forest_bullet_launch(&w->bullets, &w->root, 0, w->yaw, 0)) return -1;
+            w->gunshot_fired = 1;
+        }
+    }
     if (casting == BFM_CAST_STANCE || casting == BFM_CAST_THROW || casting == BFM_CAST_LAUNCH) {
         w->actor.state = casting == BFM_CAST_STANCE ? 17 : 21;
         if (!select_pose(w, cast->pose, cast->visible)) return -1;
@@ -671,6 +756,8 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
     int absorption_edge = square_edge && w->lesson.tether.phase == BFM_TETHER_ATTACHED;
     if (!bfm_forest_lesson_flight(&w->fusion, &w->lesson, w->field, &w->root, w->cached,
             w->yaw, w->tick, square_edge, casting == BFM_CAST_LAUNCH)) return -1;
+    if (!bfm_forest_field_gunshot_art(w->field, &w->fusion.award, &w->root, w->eye,
+                                     w->gameplay, w->gunshot_fired)) return -1;
     if (!bfm_forest_field_fusion_effects(w->field, w->disc, &w->fusion.flight, &w->lesson.tether,
             was_attached, absorption_edge, w->cached, w->gameplay)) return -1;
     if (bfm_forest_lesson_blade_away(&w->fusion))
@@ -678,10 +765,10 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
     BfmForestAward *award = &w->fusion.award;
     if (w->fusion.flight.phase == BFM_FUSION_DONE && w->lesson.tether.phase == BFM_TETHER_EARNED) {
         if (award->phase == BFM_AWARD_IDLE) {
-            if (!bfm_forest_award_begin(award, w->disc, cast, &w->lesson.tether, &w->status)) return -1;
+            if (!bfm_forest_award_begin(award, w->disc, cast, &w->lesson.tether, &w->gameplay->player)) return -1;
         } else {
             BfmForestAwardPhase event = bfm_forest_award_tick(award, cast, &w->lesson.tether,
-                                                             &w->status, w->lesson.award_closed);
+                                                             &w->gameplay->player, w->lesson.award_closed);
             if (event == BFM_AWARD_ERROR) return -1;
             if (event == BFM_AWARD_OPEN) w->lesson.award_ready = 1;
         }
@@ -695,11 +782,11 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
         if (w->lesson.tether.phase == BFM_TETHER_ATTACHED ||
             (w->lesson.tether.phase == BFM_TETHER_EARNED && bfm_forest_lesson_blade_away(&w->fusion)))
             gauge = (int)w->lesson.tether.meter;
-        bfm_forest_hud_gauges(w->hud, w->status.record[0x47], gauge);
+        bfm_forest_hud_gauges(w->hud, w->gameplay->player.record[0x47], gauge);
     }
     bfm_forest_voice_step(w->voice);
     if (!bfm_forest_lesson_enter(&w->lesson, w->field, w->cached[2]) ||
-        !bfm_forest_lesson_step(&w->lesson, w->field, w->disc, &w->status, w->voice,
+        !bfm_forest_lesson_step(&w->lesson, w->field, w->disc, &w->gameplay->player, w->voice,
                                 &w->voice_generation, at_mark, &w->yaw, confirm_edge, reveal_edge))
         return -1;
     if (owned && !bfm_forest_lesson_owns_player(&w->lesson) &&
@@ -725,6 +812,11 @@ int bfm_forest_walk_hit_sound(const BfmForestWalk *w)
     return w && w->hit_sound;
 }
 
+int bfm_forest_walk_gunshot_sound(const BfmForestWalk *w)
+{
+    return w && w->gunshot_fired;
+}
+
 int bfm_forest_walk_swing_sound(const BfmForestWalk *w)
 {
     return w && w->swing_sound;
@@ -732,7 +824,7 @@ int bfm_forest_walk_swing_sound(const BfmForestWalk *w)
 
 int bfm_forest_walk_control(const BfmForestWalk *w)
 {
-    if (!w || !w->player_control || bfm_forest_lesson_owns_player(&w->lesson) ||
+    if (!w || !w->player_control || w->retreat_control || bfm_forest_lesson_owns_player(&w->lesson) ||
         (w->fusion.award.phase > BFM_AWARD_IDLE && w->fusion.award.phase < BFM_AWARD_COMPLETE))
         return 0;
     return w->at_boundary ? 2 : 1;
@@ -770,6 +862,12 @@ int bfm_forest_walk_tick_controls(BfmForestWalk *w, int x, int y,
 static int step_pad(BfmForestWalk *w, int x, int y,
                              uint16_t pressed, uint16_t held)
 {
+    return bfm_forest_walk_tick_controller(w, x, y, pressed, held, 0);
+}
+
+int bfm_forest_walk_tick_controller(BfmForestWalk *w, int x, int y, uint16_t pressed,
+                                    uint16_t held, int stick_direction)
+{
     int cross_pressed = (pressed & BFM_FOREST_CROSS) != 0;
     int cross_held = (held & BFM_FOREST_CROSS) != 0;
     if(!w || x < -1 || x > 1 || y < -1 || y > 1) return -1;
@@ -782,6 +880,10 @@ static int step_pad(BfmForestWalk *w, int x, int y,
      * Cross edge. Directions are live there, but a jump needs a fresh press. */
     w->jump_pressed = w->control_polled && cross_pressed;
     w->jump_held = cross_held;
+    GunshotInput circle = w->gun_input;
+    w->gun_input = (GunshotInput){w->control_polled && (pressed & BFM_FOREST_CIRCLE),
+                                  (held & BFM_FOREST_CIRCLE) != 0, stick_direction};
+    w->gunshot_fired = 0;
     int shoulder = w->shoulder_held;
     w->shoulder_held = (held & BFM_FOREST_R1) != 0;
     int attack_pressed = w->attack_pressed;
@@ -790,7 +892,7 @@ static int step_pad(BfmForestWalk *w, int x, int y,
     w->hit_sound = 0;
     w->control_polled = w->player_control;
     if (w->player_control)
-        return tick_player(w, read_x, read_y, jump_pressed, jump_held, attack_pressed, shoulder,
+        return tick_player(w, read_x, read_y, jump_pressed, jump_held, attack_pressed, shoulder, circle,
                            cross_pressed, (pressed & BFM_FOREST_TRIANGLE) != 0);
     if (w->tick >= LAST_WALK_TICK) {
         int result = tick_message(w, cross_pressed);
@@ -850,7 +952,7 @@ int bfm_forest_walk_draw(BfmForestWalk *w,uint32_t pixels[240][320])
         }
         pixels[y][x]=result;
     }
-    if (w->player_control) bfm_forest_hud_draw(w->hud, &w->status, pixels);
+    if (w->player_control) bfm_forest_hud_draw(w->hud, &w->gameplay->player, pixels);
     if (w->lesson.page)
         bfm_forest_message_art_draw(w->message_art, bfm_forest_message_frame(w->lesson.page), pixels);
     else if (w->message && !w->player_control)

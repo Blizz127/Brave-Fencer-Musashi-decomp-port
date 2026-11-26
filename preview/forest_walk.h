@@ -6,7 +6,7 @@
 
 typedef struct BfmForestWalk BfmForestWalk;
 
-enum { BFM_FOREST_R1 = 1u << 11, BFM_FOREST_TRIANGLE = 1u << 12, BFM_FOREST_CROSS = 1u << 14, BFM_FOREST_SQUARE = 1u << 15 };
+enum { BFM_FOREST_R1 = 1u << 11, BFM_FOREST_TRIANGLE = 1u << 12, BFM_FOREST_CIRCLE = 1u << 13, BFM_FOREST_CROSS = 1u << 14, BFM_FOREST_SQUARE = 1u << 15 };
 
 /* The door owns this short automatic walk. Caller hands over the transfer
  * resolved from its active opening scene when the chapter card has finished. */
@@ -23,6 +23,8 @@ int bfm_forest_walk_tick(BfmForestWalk *walk);
 int bfm_forest_walk_tick_input(BfmForestWalk *walk, int confirm_edge);
 int bfm_forest_walk_tick_pad(BfmForestWalk *walk, int x, int y,
                              uint16_t pressed, uint16_t held);
+int bfm_forest_walk_tick_controller(BfmForestWalk *walk, int x, int y, uint16_t pressed,
+                                    uint16_t held, int stick_direction);
 int bfm_forest_walk_tick_axes(BfmForestWalk *walk, int x, int y, int confirm_edge);
 /* Cross is an edge for dialogue and a button with a duration during a jump. */
 int bfm_forest_walk_tick_controls(BfmForestWalk *walk, int x, int y,
@@ -30,6 +32,7 @@ int bfm_forest_walk_tick_controls(BfmForestWalk *walk, int x, int y,
 /* 0 during the door event, 1 under player control, 2 at the preview boundary. */
 int bfm_forest_walk_control(const BfmForestWalk *walk);
 /* True on the update that requests the grounded Fusion sound. */
+int bfm_forest_walk_gunshot_sound(const BfmForestWalk *walk);
 int bfm_forest_walk_swing_sound(const BfmForestWalk *walk);
 int bfm_forest_walk_hit_sound(const BfmForestWalk *walk);
 struct ForestVoice;

@@ -15,6 +15,7 @@ typedef struct {
     int16_t normal[3];
     uint16_t flags;
     uint16_t slope;
+    unsigned bridge;
 } BfmForestContact;
 
 /* Build the terrain, floor and player-model owners for the actual Giant Forest room
@@ -54,6 +55,15 @@ int bfm_forest_submit_guard_and_impact_with_run(BfmForestField *field, const Bfm
                            BfmGameplayRun *run);
 int bfm_forest_tick_shore_actor_with_run(BfmForestField *field, const int16_t player[3],
                                         BfmGameplayRun *run);
+/* Advance the room controller and its registered logs before this update's
+ * projectiles. A shot updates only the bodies its world-space segment hits. */
+unsigned bfm_forest_field_bridge_step(BfmForestField *field, unsigned room_phase);
+/* Both contact outputs are written only on a hit. The Q12 normal is suitable
+ * for orienting an impact effect at the clipped endpoint. */
+int bfm_forest_bridge_impact(void *field, const int16_t from[3], const int16_t to[3],
+                             int16_t hit[3], int16_t normal[3]);
+int bfm_forest_bridge_shot(void *field, const int16_t from[3], const int16_t to[3],
+                           int16_t hit[3]);
 int bfm_forest_tick_shore_actor(BfmForestField *field, const int16_t player[3]);
 /* Resolve the first sword impact using the current and next action key.
  * A hit turns the player and guard. Both world-space effect outputs are optional. */
@@ -105,6 +115,11 @@ BfmForestTopStep bfm_forest_raised_step(const BfmForestField *field,
 BfmForestTopStep bfm_forest_raised_motion(const BfmForestField *field,
     const BfmForestContact *previous, const int16_t from[3], int16_t to[3],
     const uint32_t start_pos[3], const uint32_t end_pos[3]);
+
+/* Continue a stride across a supporting room actor. The falling action takes
+ * the first unsupported stride when the foot clears the rim. */
+BfmForestTopStep bfm_forest_step_on_bridge(const BfmForestField *field,
+                                           const int16_t from[3], int16_t to[3]);
 
 /* Whether this mounted floor can start or land an ordinary player jump. */
 int bfm_forest_jump_surface(const BfmForestContact *ground);

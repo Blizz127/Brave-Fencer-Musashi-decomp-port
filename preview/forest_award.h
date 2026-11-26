@@ -31,4 +31,13 @@ int bfm_forest_award_begin(BfmForestAward *award, const MusashiDiscMedia *disc,
  * resident record on the final release update and hands control back. */
 BfmForestAwardPhase bfm_forest_award_tick(BfmForestAward *award, const BfmForestCast *cast,
     BfmForestTether *tether, BfmForestStatus *status, int closed);
+
+/* Prepare the mounted skill after an earned player enters another room. */
+int bfm_forest_prepare_equipped_gunshot(BfmForestAward *award, const MusashiDiscMedia *disc,
+                                      const BfmForestStatus *status);
+
+/* Gunshot scripts and player poses share the earned skill's mounted PAC1
+ * payload. The returned span borrows the award's retained package. */
+const uint8_t *bfm_forest_gunshot_bytes(const BfmForestAward *award, uint32_t address,
+                                       size_t size);
 #endif

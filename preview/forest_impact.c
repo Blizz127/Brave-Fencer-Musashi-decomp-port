@@ -57,7 +57,7 @@ static int streak_angle(int64_t y, int64_t x)
     return (x || y) ? (int)lround(atan2((double)y, (double)x) * (2048.0 / acos(-1.0))) : 0;
 }
 
-static void impact_face_normal(const int16_t surface[3], int *pitch, int *yaw)
+void bfm_forest_impact_angles(const int16_t surface[3], int *pitch, int *yaw)
 {
     int direction[3];
     for (unsigned k = 0; k < 3; ++k) {
@@ -167,7 +167,7 @@ int bfm_forest_impact_start(BfmForestImpact *impact, const BfmForestField *field
         !animation(&fresh.strip, field, UINT32_C(0x80189be8), UINT32_C(0x80189bb8), 6))
         return 0;
     int pitch, yaw;
-    impact_face_normal(normal, &pitch, &yaw);
+    bfm_forest_impact_angles(normal, &pitch, &yaw);
     bfm_forest_actor_pitch_yaw((unsigned)pitch, (unsigned)yaw, contact, &fresh.face);
     for (unsigned i = 0; i < 3; ++i)
         fresh.origin[i] = contact[i] + down(-2 * fresh.face.rotation[i][1] - 20 * fresh.face.rotation[i][2], 12);

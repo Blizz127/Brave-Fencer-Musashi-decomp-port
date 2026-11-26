@@ -19,7 +19,7 @@ enum { TITLE_W = 640, TITLE_H = 480, OPENING_W = 320, OPENING_H = 240 };
 enum { LOADING_VISIBLE_FIELDS = 115 };
 enum { PAD_START = 1u << 3, PAD_UP = 1u << 4, PAD_RIGHT = 1u << 5, PAD_DOWN = 1u << 6,
        PAD_LEFT = 1u << 7, PAD_TRIANGLE = 1u << 12,
-       PAD_CIRCLE = 1u << 13, PAD_CROSS = BFM_FOREST_CROSS, PAD_SQUARE = BFM_FOREST_SQUARE };
+       PAD_CIRCLE = BFM_FOREST_CIRCLE, PAD_CROSS = BFM_FOREST_CROSS, PAD_SQUARE = BFM_FOREST_SQUARE };
 
 typedef struct Player {
     MusashiDiscMedia *disc;
@@ -60,7 +60,7 @@ static const char usage[] =
     "Continue reads a supplied raw 128 KiB card and supports the early castle bedroom wake.\n"
     "Enter/Start: start. Space/Cross: confirm or skip the opening. Arrows: select. "
     "D-pad, arrows or left stick: move in Giant Forest. A/Square: swing Fusion on the ground. "
-    "Right Shift/R1: charge Fusion at the Gunshot lesson. T/Triangle: back from files. Escape: quit.\n";
+    "Right Shift/R1: charge Fusion. Z/Circle: fire earned Gunshot. T/Triangle: back from files. Escape: quit.\n";
 
 static uint16_t button_mask(unsigned int button) {
     switch (button) {
@@ -117,6 +117,7 @@ static void phase_changed(Player *p) {
     case BFM_TITLE_PROMPT: caption = "Brave Fencer Musashi"; break;
     case BFM_TITLE_MENU: caption = "Brave Fencer Musashi - Start / Continue"; break;
     case BFM_TITLE_LOADING:
+        p->gameplay.has_player = 0;
         memset(p->gameplay.story_flags, 0, sizeof p->gameplay.story_flags);
         caption = "Brave Fencer Musashi - Loading New Game";
         break;
@@ -263,10 +264,13 @@ static int forest_frame(Player *p)
     while (p->forest_updates < wanted) {
         int x = !!(p->held & PAD_RIGHT) - !!(p->held & PAD_LEFT);
         int y = !!(p->held & PAD_DOWN) - !!(p->held & PAD_UP);
-        running = bfm_forest_walk_tick_pad(p->forest, x, y, p->forest_pressed, p->held);
+        int stick = p->axis_x < -16384 || p->axis_x > 16384 ||
+                    p->axis_y < -16384 || p->axis_y > 16384;
+        running = bfm_forest_walk_tick_controller(p->forest, x, y, p->forest_pressed, p->held, stick);
         p->forest_pressed = 0;
         if (running < 0) return -1;
         if (bfm_forest_walk_swing_sound(p->forest)) bfm_desktop_voice_forest_swing(p->voice);
+        if (bfm_forest_walk_gunshot_sound(p->forest)) bfm_desktop_voice_forest_gunshot(p->voice);
         if (bfm_forest_walk_hit_sound(p->forest)) bfm_desktop_voice_forest_hit(p->voice);
         if (!running) break;
         ++p->forest_updates;

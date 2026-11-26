@@ -19,6 +19,10 @@ typedef struct {
 int bfm_forest_camera_look_at(const int32_t eye[3], const int32_t target[3],
                              uint16_t projection, BfmForestCamera *out);
 
+/* Compose a local effect with the same camera transform as a field model. */
+int bfm_forest_effect_camera(const BfmForestCamera *camera, const BfmForestTransform *model,
+                             BfmForestCamera *local);
+
 BfmForestTerrain *bfm_forest_terrain_load(const MusashiDiscMedia *disc,
                                           const uint8_t *mesh, size_t bytes);
 /* Set the active room descriptor's ambient and directional lights. */

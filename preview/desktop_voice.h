@@ -27,6 +27,8 @@ void bfm_desktop_voice_forest_score(DesktopVoice *voice, const MusashiDiscMedia 
 void bfm_desktop_voice_forest_swing(DesktopVoice *voice);
 /* A separate area-bank effect plays when the guard actually takes a hit. */
 void bfm_desktop_voice_forest_hit(DesktopVoice *voice);
+/* Invoke on the earned skill's firing marker once the shot spends BP. */
+void bfm_desktop_voice_forest_gunshot(DesktopVoice *voice);
 struct BfmBedroomEffects;
 void bfm_desktop_voice_room_effect(DesktopVoice *voice, struct BfmBedroomEffects *effects, unsigned command);
 struct BfmForestScore;

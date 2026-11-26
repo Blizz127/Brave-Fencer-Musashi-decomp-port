@@ -23,9 +23,8 @@ struct BfmForestTrail {
     BfmForestActor trunk_draw, guard_draw;
 };
 
-static MusashiForestPlayerMesh *load_trunk(const BfmForestField *field)
+MusashiForestPlayerMesh *bfm_forest_trunk_mesh(const BfmForestField *field, uint32_t table)
 {
-    const uint32_t table = UINT32_C(0x801d15c4);
     const uint8_t *list = bfm_forest_room_bytes(field, table, 8);
     if (!list || u32le(list + 4) != 0) return NULL;
     uint32_t first = u32le(list);
@@ -56,7 +55,7 @@ BfmForestTrail *bfm_forest_trail_open(const BfmForestField *field, const BfmFore
     trail->spawn_floor = floor.height;
     trail->yaw = u16le(row + 12);
     trail->trigger_distance = (int)u32le(range);
-    trail->wood = load_trunk(field);
+    trail->wood = bfm_forest_trunk_mesh(field, UINT32_C(0x801d15c4));
     if (!trail->wood ||
         !bfm_forest_guard_clip_read(field, UINT32_C(0x801affc0), 0xffff, &trail->run) ||
         !bfm_forest_guard_clip_read(field, UINT32_C(0x8018ab24), 0xfffe, &trail->swing) ||

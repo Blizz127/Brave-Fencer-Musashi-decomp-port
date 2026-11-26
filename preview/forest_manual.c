@@ -12,7 +12,7 @@ enum { WALK = 7, RUN = 8, Q16 = 65536, ACCELERATION = Q16 / 16 };
 
 /* Resolve a screen vector on the level ground. The camera can pitch, so
  * normalize its two projected axes separately before combining them. */
-static int ground_heading(const BfmForestCamera *camera, int x, int y, int16_t *yaw)
+int bfm_forest_manual_heading(const BfmForestCamera *camera, int x, int y, int16_t *yaw)
 {
     double rx = camera->rotation[0][0], rz = camera->rotation[0][2];
     double fx = camera->rotation[2][0], fz = camera->rotation[2][2];
@@ -32,7 +32,7 @@ static int ground_heading(const BfmForestCamera *camera, int x, int y, int16_t *
 /* Resolve the free Q16 position on the registered room floor. Only commit
  * the integrated actor and its integer position after a complete step. */
 static BfmForestTopStep step_on_floor(const BfmForestField *field,
-    const BfmForestContact *ground, ForestPlayerState *next, int16_t cached[3], int can_fall)
+    const BfmForestContact *ground, ForestPlayerState *next, int16_t cached[3], int can_fall, int on_bridge)
 {
     BfmForestTopStep support = BFM_FOREST_TOP_GROUNDED;
     uint32_t start_pos[3];
@@ -40,7 +40,11 @@ static BfmForestTopStep step_on_floor(const BfmForestField *field,
     func_801473EC(next);
     int16_t end[3] = {(int16_t)(next->position[0] >> 16), cached[1],
                       (int16_t)(next->position[2] >> 16)};
-    if (ground->flags == 0x2000) {
+    if (ground->bridge || on_bridge) {
+        support = bfm_forest_step_on_bridge(field, cached, end);
+        if (support != BFM_FOREST_TOP_GROUNDED)
+            return can_fall ? support : BFM_FOREST_TOP_BLOCKED;
+    } else if (ground->flags == 0x2000) {
         support = bfm_forest_raised_motion(field, ground, cached, end, start_pos, next->position);
         if (support == BFM_FOREST_TOP_BLOCKED ||
             (!can_fall && support != BFM_FOREST_TOP_GROUNDED))
@@ -66,7 +70,7 @@ int bfm_forest_manual_coast(const BfmForestField *field, ForestPlayerState *acto
         return 0;
     ForestPlayerState next = *actor;
     if (!bfm_forest_level_velocity(&next, 0, yaw, 0) ||
-        step_on_floor(field, &ground, &next, cached, 0) != BFM_FOREST_TOP_GROUNDED)
+        step_on_floor(field, &ground, &next, cached, 0, 0) != BFM_FOREST_TOP_GROUNDED)
         return 0;
     *actor = next;
     return 1;
@@ -103,7 +107,7 @@ BfmForestManualResult bfm_forest_manual_tick(BfmForestManual *state,
     }
 
     int16_t next_yaw;
-    if (!ground_heading(camera, screen_x, screen_y, &next_yaw))
+    if (!bfm_forest_manual_heading(camera, screen_x, screen_y, &next_yaw))
         return BFM_FOREST_MANUAL_ERROR;
     if (!state->moving) {
         BfmForestOpeningData data;
@@ -134,7 +138,7 @@ BfmForestManualResult bfm_forest_manual_tick(BfmForestManual *state,
     if (speed < -11 * Q16)
         speed = -11 * Q16;
     next.field_2c.word = speed;
-    BfmForestTopStep support = step_on_floor(field, &ground, &next, cached, state->last_descent > 0);
+    BfmForestTopStep support = step_on_floor(field, &ground, &next, cached, state->last_descent > 0, state->on_bridge);
     if (support == BFM_FOREST_TOP_BLOCKED)
         return BFM_FOREST_MANUAL_BOUNDARY;
 
@@ -146,6 +150,7 @@ BfmForestManualResult bfm_forest_manual_tick(BfmForestManual *state,
     state->elapsed = motion == state->motion ? state->elapsed + 1 : 0;
     state->motion = motion;
     state->after_jump = 0;
+    state->on_bridge = ground.bridge || (state->on_bridge && abs(ground.height - cached[1]) > 4);
     state->left_support = support == BFM_FOREST_TOP_LEFT;
     memcpy(state->ground_normal, ground.normal, sizeof state->ground_normal);
     *actor = next;
@@ -185,6 +190,7 @@ int bfm_forest_fall_begin(BfmForestJump *jump, BfmForestManual *manual,
         return 0;
     *jump = (BfmForestJump){.active = 1, .descending = 1, .steering = 1,
                             .walk_off = 1};
+    manual->on_bridge = 0;
     manual->left_support = 0;
     actor->state = 3;
     actor->local_y.word = manual->last_descent;
@@ -221,7 +227,7 @@ BfmForestJumpResult bfm_forest_jump_tick(BfmForestJump *jump, const BfmForestFie
     ForestPlayerState next = *actor;
     int16_t next_yaw = *yaw;
     if (x || y) {
-        if (!ground_heading(camera, x, y, &next_yaw))
+        if (!bfm_forest_manual_heading(camera, x, y, &next_yaw))
             return BFM_FOREST_JUMP_BOUNDARY;
         next_jump.steering = 1;
         next_jump.neutral_ticks = 0;
@@ -296,7 +302,7 @@ void bfm_forest_jump_resume(BfmForestManual *manual, const BfmForestJump *jump,
 {
     if (!manual || !jump || !actor || jump->active || !jump->landed)
         return;
-    *manual = (BfmForestManual){.last_descent = jump->touchdown_velocity};
+    *manual = (BfmForestManual){.last_descent = jump->touchdown_velocity, .on_bridge = jump->ground.bridge};
     memcpy(manual->ground_normal, jump->ground.normal, sizeof manual->ground_normal);
     /* The first subsequent step selects the locomotion clip at frame zero. */
     if (actor->state == 1)

@@ -44,6 +44,7 @@ add_executable(musashi_native_boot
     hero_smoke.c
     palace_dialogue.c
     scene_tiles.c
+    forest_bullet_art.c
     forest_blade.c
     forest_entry.c
     forest_drift.c
@@ -55,6 +56,10 @@ add_executable(musashi_native_boot
     forest_dust.c
     forest_fall.c
     forest_fall_projection.c
+    forest_bridge_floor.c
+    forest_upper_trunks.c
+    forest_bridge.c
+    forest_bridge_targets.c
     forest_field.c
     forest_fusion_power.c
     forest_hud.c
@@ -64,6 +69,9 @@ add_executable(musashi_native_boot
     forest_lesson_fusion.c
     forest_cast.c
     forest_award.c
+    forest_gunshot.c
+    forest_bridge_retreat.c
+    forest_bullet.c
     forest_flight.c
     forest_fusion_model.c
     forest_tether_trails.c
@@ -82,6 +90,11 @@ add_executable(musashi_native_boot
     forest_shore_pose.c
     forest_pose.c
     forest_raster.c
+    forest_muzzle_art.c
+    forest_shot_effects.c
+    forest_shot_impact.c
+    forest_shot_spark.c
+    forest_shot_flash.c
     forest_terrain.c
     forest_speech_actor.c
     disc_voice.c

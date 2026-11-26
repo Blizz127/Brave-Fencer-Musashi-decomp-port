@@ -4,8 +4,11 @@
 
 #include "forest_field.h"
 
+/* Resolve a screen direction into the model's 12-bit heading without walking. */
+int bfm_forest_manual_heading(const BfmForestCamera *camera, int x, int y, int16_t *yaw);
+
 typedef struct {
-    int moving, after_jump, left_support;
+    int moving, after_jump, left_support, on_bridge;
     int32_t last_descent;
     unsigned motion, elapsed;
     int16_t ground_normal[3];

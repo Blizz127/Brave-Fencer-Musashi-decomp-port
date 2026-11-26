@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "forest_field.h"
+#include "forest_bridge.h"
+#include "forest_upper_trunks.h"
 #include "forest_shore.h"
 #include "forest_drift.h"
 #include "forest_glow_halo.h"
@@ -11,6 +13,8 @@
 #include "forest_guard_contact.h"
 #include "forest_lesson_guard.h"
 #include "forest_fusion_model.h"
+#include "forest_muzzle_art.h"
+#include "forest_shot_effects.h"
 #include "forest_lesson_fusion.h"
 #include "forest_tether_trails.h"
 #include "forest_trail.h"
@@ -59,8 +63,9 @@ typedef struct {
     BfmForestDustCard cards[2 + BFM_FOREST_IMPACT_CARDS + BFM_FOREST_SWEEP_CARDS + BFM_FOREST_SPARK_CARDS +
                             BFM_FOREST_DAMAGE_NUMBERS * BFM_FOREST_DAMAGE_DIGIT_CARDS];
     unsigned count;
-    BfmForestDustCard tether_cards[BFM_TETHER_CARDS];
-    size_t tether_count;
+    BfmForestDustCard skill_cards[BFM_TETHER_CARDS + BFM_FOREST_MUZZLE_CARDS +
+                                BFM_GUNSHOT_FAN_CARDS + BFM_FOREST_SHOT_EFFECT_CARDS];
+    size_t skill_count;
 } BfmForestSubmittedFrame;
 
 typedef struct {
@@ -75,6 +80,8 @@ typedef struct {
 
 struct BfmForestField {
     FloorGrid grid;
+    BfmForestBridge bridge;
+    BfmForestUpperTrunks *upper_trunks;
     const FloorPlane *first_descent;
     int bank_start_z, bank_end_z, bank_height;
     unsigned far_bank_cells;
@@ -92,6 +99,9 @@ struct BfmForestField {
     BfmForestLessonGuard *lesson_guard;
     BfmFusionModel *fusion_model;
     BfmForestTetherTrails tether_trails;
+    BfmForestMuzzleArt muzzle;
+    BfmForestBulletArt flare;
+    BfmForestShotEffects shot_effects;
     const BfmForestActor *fusion_actor;
     BfmForestGuardBox guard_box;
     int first_shore_hit;
@@ -297,6 +307,8 @@ void bfm_forest_field_free(BfmForestField *field)
     if (field) {
         bfm_forest_rifles_free(field->rifles);
         bfm_forest_glow_figures_free(field->light_figures);
+        bfm_forest_upper_trunks_free(field->upper_trunks);
+        bfm_forest_bridge_targets_free(field->bridge.targets);
         bfm_forest_shore_figures_free(field->shore_figures);
         bfm_forest_trail_free(field->trail);
         bfm_forest_lesson_guard_free(field->lesson_guard);
@@ -353,11 +365,13 @@ BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t roo
             field->light_figures = bfm_forest_glow_figures_open(field);
             field->rifles = bfm_forest_rifles_open(field);
             field->trail = bfm_forest_trail_open(field, field->shore);
+            field->upper_trunks = bfm_forest_upper_trunks_open(field);
         }
     } else {
         free(scene);
     }
     if (field && (!field->shore_figures || !field->trail || !field->light_figures || !field->rifles ||
+                  !field->upper_trunks || !bfm_forest_bridge_load(&field->bridge, field) ||
                   !bfm_forest_dust_load(&field->dust, disc))) {
         bfm_forest_field_free(field);
         field = NULL;
@@ -566,8 +580,14 @@ int bfm_forest_submit_guard_and_impact_with_run(BfmForestField *field, const Bfm
         frame->guard_root = *guard->root;
         frame->guard_pose = *guard->pose;
     }
-    frame->tether_count = bfm_forest_tether_trails_project(&field->tether_trails, camera,
-                                                          frame->tether_cards, BFM_TETHER_CARDS);
+    frame->skill_count = bfm_forest_tether_trails_project(&field->tether_trails, camera,
+                                                          frame->skill_cards, BFM_TETHER_CARDS);
+    frame->skill_count += bfm_forest_muzzle_project(&field->muzzle, camera,
+        frame->skill_cards + frame->skill_count, BFM_FOREST_MUZZLE_CARDS);
+    frame->skill_count += bfm_forest_bullet_art_project(&field->flare, camera,
+        frame->skill_cards + frame->skill_count, BFM_GUNSHOT_FAN_CARDS);
+    frame->skill_count += bfm_forest_shot_effects_project(&field->shot_effects, &field->dust, camera,
+        frame->skill_cards + frame->skill_count, BFM_FOREST_SHOT_EFFECT_CARDS);
     frame->fusion_actor.visible_parts = 0;
     if (field->fusion_actor) {
         frame->fusion_root = *field->fusion_actor->root;
@@ -579,9 +599,42 @@ int bfm_forest_submit_guard_and_impact_with_run(BfmForestField *field, const Bfm
     return 1;
 }
 
+int bfm_forest_field_gunshot_art(BfmForestField *field, const BfmForestAward *award,
+    const BfmForestTransform *root, const int32_t eye[3], BfmGameplayRun *run, int fired)
+{
+    bfm_forest_muzzle_tick(&field->muzzle);
+    bfm_forest_bullet_art_tick(&field->flare);
+    if (!fired) return 1;
+    if (!field->muzzle.fan.loaded) {
+        if (!bfm_forest_muzzle_load(&field->muzzle, award)) return 0;
+        field->flare = field->muzzle.fan;
+    }
+    int16_t emitter[3];
+    if (!bfm_forest_muzzle_fire(&field->muzzle, root, bfm_gameplay_random(run), emitter)) return 0;
+    bfm_forest_bullet_art_fire(&field->flare, emitter, eye);
+    return 1;
+}
+
 static unsigned trail_scatter(void *run)
 {
     return bfm_gameplay_random(run);
+}
+
+void bfm_forest_field_advance_gunshots(BfmForestField *field, BfmForestBullets *bullets,
+    const int32_t eye[3], BfmGameplayRun *run)
+{
+    BfmBulletEvent events[BFM_FOREST_BULLETS];
+    bfm_forest_shot_effects_tick(&field->shot_effects, eye, trail_scatter, run);
+    unsigned ability = run->player.record[0x49] & 0x7fu;
+    size_t count = bfm_forest_bullets_tick(bullets, ability, bfm_forest_bridge_impact, field, events);
+    for (size_t i = 0; i < count; ++i) {
+        const BfmBulletEvent *event = &events[i];
+        if (event->kind == BFM_BULLET_ACTOR_HIT)
+            bfm_forest_shot_effects_hit(&field->shot_effects, event->position, event->normal,
+                                        eye, trail_scatter, run);
+        else if (event->kind == BFM_BULLET_FADE)
+            bfm_forest_shot_effects_expire(&field->shot_effects, event->position, eye);
+    }
 }
 
 int bfm_forest_field_fusion_effects(BfmForestField *field, const MusashiDiscMedia *disc,
@@ -628,6 +681,25 @@ void bfm_forest_field_remove_gun_guard(BfmForestField *field)
     field->lesson_guard = NULL;
 }
 
+unsigned bfm_forest_field_bridge_step(BfmForestField *field, unsigned room_phase)
+{
+    return field ? bfm_forest_bridge_advance(&field->bridge, room_phase) : room_phase;
+}
+
+int bfm_forest_bridge_impact(void *context, const int16_t from[3], const int16_t to[3],
+                             int16_t hit[3], int16_t normal[3])
+{
+    BfmForestField *field = context;
+    return field && from && to && hit &&
+           bfm_forest_bridge_contact(&field->bridge, from, to, hit, normal);
+}
+
+int bfm_forest_bridge_shot(void *context, const int16_t from[3], const int16_t to[3],
+                           int16_t hit[3])
+{
+    return bfm_forest_bridge_impact(context, from, to, hit, NULL);
+}
+
 int bfm_forest_tick_shore_actor(BfmForestField *field, const int16_t player[3])
 {
     return bfm_forest_tick_shore_actor_with_run(field, player, NULL);
@@ -644,6 +716,8 @@ int bfm_forest_tick_shore_actor_with_run(BfmForestField *field, const int16_t pl
     bfm_forest_glows_move(&field->lights, player[2], run);
     if (bfm_forest_shore_step(field->shore, field, player, run) == BFM_SHORE_INVALID)
         return 0;
+    bfm_forest_upper_trunks_tick(field->upper_trunks, player[2]);
+    bfm_forest_bridge_approach(&field->bridge, player[2]);
     bfm_forest_shore_figures_tick(field->shore_figures, player);
     if (bfm_forest_trail_step(field->trail, player) == BFM_TRAIL_INVALID) return 0;
     if (run) {
@@ -669,8 +743,17 @@ int bfm_forest_draw_entrance_player(BfmForestField *field, const BfmForestCamera
                            uint32_t pixels[240][320])
 {
     if (!field || !pose || !root) return 0;
-    BfmForestActor actors[9 + BFM_FOREST_GLOWS + BFM_FOREST_BANK_RIFLES];
+    BfmForestActor actors[9 + BFM_FOREST_GLOWS + BFM_FOREST_BANK_RIFLES +
+                          BFM_FOREST_BRIDGE_TARGET_COUNT + BFM_FOREST_UPPER_TRUNKS];
     size_t count = 0;
+    for (unsigned i = 0; i < BFM_FOREST_UPPER_TRUNKS; ++i) {
+        const BfmForestActor *trunk = bfm_forest_upper_trunk(field->upper_trunks, i);
+        if (trunk) actors[count++] = *trunk;
+    }
+    for (unsigned role = 0; role < BFM_FOREST_BRIDGE_TARGET_COUNT; ++role) {
+        if (field->bridge.logs[role].state != BFM_LOG_UNPLACED)
+            actors[count++] = *bfm_forest_bridge_targets_actor(field->bridge.targets, role);
+    }
     const BfmForestActor *lesson = bfm_forest_lesson_guard_actor(field->lesson_guard);
     if (lesson) actors[count++] = *lesson;
     const BfmForestActor *trunk = bfm_forest_trail_trunk(field->trail);
@@ -683,7 +766,8 @@ int bfm_forest_draw_entrance_player(BfmForestField *field, const BfmForestCamera
     if (submitted->guard_parts)
         actors[count++] = (BfmForestActor){bfm_forest_shore_guard_mesh(field->shore),
             &submitted->guard_pose, &submitted->guard_root, submitted->guard_parts, &submitted->camera};
-    BfmForestDustCard cards[BFM_FOREST_EFFECT_CARDS + BFM_TETHER_CARDS];
+    BfmForestDustCard cards[BFM_FOREST_EFFECT_CARDS + BFM_TETHER_CARDS +
+                            BFM_FOREST_MUZZLE_CARDS + BFM_GUNSHOT_FAN_CARDS + BFM_FOREST_SHOT_EFFECT_CARDS];
     unsigned card_count = bfm_forest_dust_project(&field->dust, camera, cards);
     memcpy(cards + card_count, submitted->cards, submitted->count * sizeof *cards);
     card_count += submitted->count;
@@ -693,8 +777,8 @@ int bfm_forest_draw_entrance_player(BfmForestField *field, const BfmForestCamera
     memcpy(cards + card_count, atmosphere->cards, atmosphere->count * sizeof *cards);
     card_count += atmosphere->count;
     card_count += bfm_forest_drift_project(&field->drift, cards + card_count);
-    memcpy(cards + card_count, submitted->tether_cards, submitted->tether_count * sizeof *cards);
-    card_count += (unsigned)submitted->tether_count;
+    memcpy(cards + card_count, submitted->skill_cards, submitted->skill_count * sizeof *cards);
+    card_count += (unsigned)submitted->skill_count;
     return bfm_forest_terrain_draw_entrance_with_effects(field->terrain, camera,
                field->player, pose, root, visible_parts, &field->blade, buffer, frame,
                actors, count, cards, card_count, pixels);
@@ -734,6 +818,20 @@ FloorPoint D_801152A8;
 FloorGrid *D_801D94F0;
 u16 D_801D9500;
 
+static int trunk_support(const BfmForestField *field, BfmForestBridgeProbe probe,
+                         const int16_t from[3], const int16_t to[3], BfmForestContact *floor)
+{
+    int hit = bfm_forest_bridge_support(&field->bridge, probe, from, to, floor);
+    BfmForestBridgeSurface upper;
+    if (field->upper_trunks && bfm_forest_upper_trunks_surface(field->upper_trunks, probe,
+            from, to, &upper) && (!hit || upper.height < floor->height)) {
+        *floor = (BfmForestContact){.height = upper.height,
+            .normal = {upper.normal[0], upper.normal[1], upper.normal[2]}, .bridge = 1};
+        return 1;
+    }
+    return hit;
+}
+
 int bfm_forest_ground(const BfmForestField *field, int16_t x, int16_t y,
                       int16_t z, BfmForestContact *contact)
 {
@@ -743,12 +841,22 @@ int bfm_forest_ground(const BfmForestField *field, int16_t x, int16_t y,
     D_801D94F0 = (FloorGrid *)&field->grid;
     u32 slope = func_80134510(&point);
     D_801D94F0 = NULL;
-    if (!slope)
-        return 0;
-    *contact = (BfmForestContact){(int16_t)point.y,
-        {(int16_t)D_801152A8.x, (int16_t)D_801152A8.y, (int16_t)D_801152A8.z},
-        D_801D9500, (uint16_t)slope};
-    return 1;
+    if (slope)
+        *contact = (BfmForestContact){(int16_t)point.y,
+            {(int16_t)D_801152A8.x, (int16_t)D_801152A8.y, (int16_t)D_801152A8.z},
+            D_801D9500, (uint16_t)slope, 0};
+    if (y >= INT16_MIN + 16) {
+        int16_t near[3] = {x, (int16_t)(y - 16), z};
+        int bottom = near[1] + 768;
+        int16_t far[3] = {x, (int16_t)(bottom < INT16_MAX ? bottom : INT16_MAX), z};
+        BfmForestContact log;
+        if (trunk_support(field, BFM_BRIDGE_FLOOR_SEGMENT, near, far, &log) &&
+            (!slope || log.height < contact->height)) {
+            *contact = log;
+            return 1;
+        }
+    }
+    return slope != 0;
 }
 
 typedef struct {
@@ -1330,7 +1438,7 @@ static int dry_trail_surface(const BfmForestContact *ground)
 
 int bfm_forest_jump_surface(const BfmForestContact *ground)
 {
-    return ground && (dry_trail_surface(ground) ||
+    return ground && (ground->bridge || dry_trail_surface(ground) ||
                       (ground->slope == 0x2000 && ground->flags == 0x2000));
 }
 
@@ -1364,6 +1472,27 @@ int bfm_forest_corridor_step(const BfmForestField *field, const BfmForestContact
     to[1] = support.height;
     to[2] = foot[2];
     return 1;
+}
+
+BfmForestTopStep bfm_forest_step_on_bridge(const BfmForestField *field,
+                                           const int16_t from[3], int16_t to[3])
+{
+    int16_t foot[3] = {to[0], to[1], to[2]};
+    const FloorGrid *grid = &field->grid;
+    if (!resolve_walls(grid, contact_cell(grid, from), from, foot, 1))
+        return BFM_FOREST_TOP_BLOCKED;
+    BfmForestContact contact;
+    if (!trunk_support(field, BFM_BRIDGE_FLOOR_STRIDE, from, foot, &contact)) {
+        if (!bfm_forest_ground(field, foot[0], from[1], foot[2], &contact))
+            return BFM_FOREST_TOP_BLOCKED;
+        if (contact.height > from[1] + 4) return BFM_FOREST_TOP_FREE;
+        if (!dry_trail_surface(&contact) || abs(contact.height - from[1]) > 4)
+            return BFM_FOREST_TOP_BLOCKED;
+    }
+    to[0] = foot[0];
+    to[1] = contact.height;
+    to[2] = foot[2];
+    return BFM_FOREST_TOP_GROUNDED;
 }
 
 int bfm_forest_doorway_step(const BfmForestField *field, const int16_t origin[3],
@@ -1467,7 +1596,7 @@ int bfm_forest_air_step(const BfmForestField *field, const int16_t from[3],
     }
     if (hit) {
         int64_t nx = ground.normal[0], ny = ground.normal[1], nz = ground.normal[2];
-        if (nx || nz) {
+        if ((nx || nz) && !ground.bridge) {
             const FloorPlane *plane = support_plane(grid, contact_cell(grid, end), &ground, end);
             if (!plane)
                 return 0;

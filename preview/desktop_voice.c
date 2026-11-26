@@ -268,6 +268,11 @@ void bfm_desktop_voice_forest_hit(DesktopVoice *v)
     if (v) bfm_desktop_voice_room_effect(v, v->forest_swing, BFM_FOREST_HIT_SOUND);
 }
 
+void bfm_desktop_voice_forest_gunshot(DesktopVoice *v)
+{
+    if (v) bfm_desktop_voice_room_effect(v, v->forest_swing, BFM_FOREST_GUNSHOT_SOUND);
+}
+
 void bfm_desktop_voice_room_score(DesktopVoice *v, BfmForestScore *score)
 {
     if (!v || v->room_score == score) return;
