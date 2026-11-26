@@ -91,6 +91,11 @@ add_executable(musashi_native_boot
     forest_bridge_targets.c
     tower_camera.c
     tower_field.c
+    tower_interior.c
+    tower_interior_bell.c
+    tower_interior_fixtures.c
+    tower_ascent_door.c
+    tower_interior_note.c
     tower_figures.c
     tower_pylons.c
     tower_press_effect.c

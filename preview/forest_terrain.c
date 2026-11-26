@@ -52,11 +52,12 @@ static uint32_t le32(const uint8_t *p)
 }
 
 static int decode_face(Face *face, const uint8_t *record, const uint8_t *vertices,
-                       size_t vertex_count, const uint8_t *materials, size_t material_bytes)
+                       size_t vertex_count, const uint8_t *materials, size_t material_bytes, int shared_vertices)
 {
     uint32_t ref = le32(record);
     size_t off = ref & 0xffffff;
-    unsigned mode = le16(record + 10) & 15;
+    uint16_t last = le16(record + 10);
+    unsigned mode = last & (shared_vertices ? 7u : 15u);
     if ((off & 15) || off >= material_bytes || (mode != 2 && mode != 6))
         return 0;
     const uint8_t *mat = materials + off;
@@ -71,7 +72,8 @@ static int decode_face(Face *face, const uint8_t *record, const uint8_t *vertice
         return 0;
     static const uint8_t uv_offset[] = {4, 8, 12, 14};
     for (unsigned i = 0; i < face->count; ++i) {
-        unsigned vertex = i < 3 ? le16(record + 4 + 2*i) : (le16(record + 10) >> 4) * 8u;
+        unsigned vertex = i < 3 ? le16(record + 4 + 2*i) :
+            shared_vertices ? (last & ~7u) : (last >> 4) * 8u;
         if ((vertex & 7) || vertex / 8 >= vertex_count)
             return 0;
         for (unsigned axis = 0; axis < 3; ++axis)
@@ -82,8 +84,57 @@ static int decode_face(Face *face, const uint8_t *record, const uint8_t *vertice
     return 1;
 }
 
+/* Interior sectors share a material and vertex pool; each directory entry
+ * owns a contiguous face run and signed world bounding box. */
+static int load_grouped_faces(BfmForestTerrain *terrain, const uint8_t *mesh, size_t bytes)
+{
+    if (bytes < 20) return 0;
+    const uint8_t *root = mesh + 20;
+    size_t size = bytes - 20;
+    unsigned groups = le32(mesh + 8);
+    size_t material = le32(mesh + 12), vertex = le32(mesh + 16);
+    if (!groups || groups > size / 20 || material != 20u * groups || vertex < material ||
+        vertex > size || (vertex - material) % 16) return 0;
+    size_t first = le32(root + 16);
+    if (first < vertex || first > size || (first - vertex) % 8) return 0;
+    size_t cursor = first;
+    for (unsigned i = 0; i < groups; ++i) {
+        const uint8_t *entry = root + 20 * i;
+        size_t count = le32(entry + 12);
+        if (le32(entry + 16) != cursor || count > (size - cursor) / 12) return 0;
+        cursor += count * 12;
+    }
+    terrain->cell_count = groups;
+    terrain->capacity = terrain->count = (cursor - first) / 12;
+    if (!terrain->count) return 0;
+    terrain->cells = calloc(groups, sizeof *terrain->cells);
+    terrain->faces = calloc(terrain->count, sizeof *terrain->faces);
+    terrain->draw = calloc(terrain->capacity, sizeof *terrain->draw);
+    if (!terrain->cells || !terrain->faces || !terrain->draw) return 0;
+    unsigned used = 0;
+    for (unsigned i = 0; i < groups; ++i) {
+        const uint8_t *entry = root + 20 * i;
+        TerrainCell *cell = &terrain->cells[i];
+        for (unsigned a = 0; a < 3; ++a) {
+            cell->bounds[a][0] = (int16_t)le16(entry + 4*a);
+            cell->bounds[a][1] = (int16_t)le16(entry + 4*a + 2);
+            if (cell->bounds[a][0] > cell->bounds[a][1]) return 0;
+        }
+        cell->first = used;
+        cell->count = le32(entry + 12);
+        for (unsigned j = 0; j < cell->count; ++j, ++used) {
+            const uint8_t *face = root + first + 12 * used;
+            if (!decode_face(&terrain->faces[used], face, root + vertex, (first - vertex) / 8,
+                             root + material, vertex - material, 1)) return 0;
+        }
+    }
+    return 1;
+}
+
 static int load_faces(BfmForestTerrain *terrain, const uint8_t *mesh, size_t bytes)
 {
+    if (bytes >= 8 && le32(mesh) == 0x43 && !le32(mesh + 4))
+        return load_grouped_faces(terrain, mesh, bytes);
     if (bytes < 8 + TABLE_BYTES || mesh[0] != 0x42 || mesh[4])
         return 0;
     const uint8_t *table = mesh + 8;
@@ -138,7 +189,7 @@ static int load_faces(BfmForestTerrain *terrain, const uint8_t *mesh, size_t byt
         }
         for (unsigned j = 0; j < group->count; ++j) {
             if (!decode_face(&terrain->faces[used++], faces + 12*j, vertices,
-                             le32(cell + 4), materials, material_bytes))
+                             le32(cell + 4), materials, material_bytes, 0))
                 return 0;
         }
     }

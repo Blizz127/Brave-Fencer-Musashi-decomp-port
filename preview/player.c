@@ -310,7 +310,12 @@ static int forest_frame(Player *p)
     int control = bfm_forest_walk_control(p->forest);
     uint16_t room = bfm_forest_walk_room(p->forest);
     if (control != p->control_message || room != p->display_room) {
-        if (room == 0x3009) {
+        if (room == 0x300a) {
+            const char *title = control == 0 ? "Brave Fencer Musashi - Entering Spiral Tower interior" :
+                                control == 2 ? "Brave Fencer Musashi - Spiral Tower interior preview boundary" :
+                                               "Brave Fencer Musashi - Spiral Tower interior";
+            SDL_SetWindowTitle(p->window, title);
+        } else if (room == 0x3009) {
             const char *title = control == 0 ? "Brave Fencer Musashi - Entering Spiral Tower" :
                                 control == 2 ? "Brave Fencer Musashi - Spiral Tower preview boundary" :
                                                "Brave Fencer Musashi - Spiral Tower";

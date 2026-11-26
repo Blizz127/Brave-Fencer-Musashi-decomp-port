@@ -73,19 +73,25 @@ static int decode_faces(const SourcePart *part, MusashiForestPlayerFace *out, in
         if (available < 4) return 0;
         unsigned mode = p[3], n = (mode & 8) ? 4 : 3;
         unsigned textured = mode & 4, gouraud = mode & 16;
-        /* Unlit three-corner Gouraud records carry RGB at each corner and
-         * three packed vertex indices. They have no normal indices. */
-        if (part->object_scale == 3) {
-            if (available < 24 || p[0] != 6 || p[1] != 5 || p[2] != 1 || mode != 0x31) return 0;
-            MusashiForestPlayerFace face = {.mode = (uint8_t)mode, .corners = 3};
-            for (unsigned k = 0; k < 3; ++k) {
-                memcpy(face.corner_rgb[k], p + 4 + k*4, 3);
-                face.vertex[k] = u16le(p + 16 + k*2);
+        /* Unlit Gouraud triangles and quads store one RGB per corner,
+         * followed by packed vertex indices and no normals. */
+        int unlit_gouraud = scene_materials && p[2] == 1 &&
+                            (mode == 0x31 || mode == 0x39);
+        if (part->object_scale == 3 && !(unlit_gouraud && n == 3)) return 0;
+        if (unlit_gouraud) {
+            unsigned words = n + 2;
+            size_t length = 4 * (1 + words);
+            if (available < length || p[0] != 2*n || p[1] != words) return 0;
+            MusashiForestPlayerFace face = {.mode = (uint8_t)mode, .corners = (uint8_t)n};
+            const uint8_t *indices = p + 4 + 4*n;
+            for (unsigned k = 0; k < n; ++k) {
+                memcpy(face.corner_rgb[k], p + 4 + 4*k, 3);
+                face.vertex[k] = u16le(indices + 2*k);
                 if (face.vertex[k] >= part->vertex_count) return 0;
             }
             memcpy(face.rgb, face.corner_rgb[0], 3);
             out[i] = face;
-            p += 24;
+            p += length;
             continue;
         }
         int vertex_inks = !!(p[2] & 4);

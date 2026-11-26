@@ -44,6 +44,8 @@ enum {
     FOREST_MEMBER = 77,
     TOWER_ROOM = 0x3009,
     TOWER_MEMBER = 80,
+    TOWER_INTERIOR_ROOM = 0x300a,
+    TOWER_INTERIOR_MEMBER = 84,
     FOREST_ENTRANCES = 2,
     SCENE_LIMIT = 1 << 20,
     GRID_HEADER = 32
@@ -53,6 +55,7 @@ enum {
 static const uint32_t scene_base = UINT32_C(0x80128158);
 static const uint32_t forest_descriptor_slot = UINT32_C(0x80186ad0);
 static const uint32_t tower_descriptor_slot = UINT32_C(0x8018350c);
+static const uint32_t tower_interior_descriptor_slot = UINT32_C(0x80186800);
 
 typedef struct {
     uint16_t position[3];
@@ -511,10 +514,14 @@ static int load_blade_targets(BfmForestField *field, const uint8_t *descriptor)
 
 BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t room)
 {
-    if (!disc || (room != FOREST_ROOM && room != TOWER_ROOM))
+    if (!disc || (room != FOREST_ROOM && room != TOWER_ROOM && room != TOWER_INTERIOR_ROOM))
         return NULL;
     unsigned member = room == TOWER_ROOM ? TOWER_MEMBER : FOREST_MEMBER;
     uint32_t descriptor_slot = room == TOWER_ROOM ? tower_descriptor_slot : forest_descriptor_slot;
+    if (room == TOWER_INTERIOR_ROOM) {
+        member = TOWER_INTERIOR_MEMBER;
+        descriptor_slot = tower_interior_descriptor_slot;
+    }
     size_t bytes;
     uint8_t *scene = bfm_scene_unpack_pac0(disc, "SC01.CD", member,
                                            SCENE_LIMIT, SCENE_LIMIT, &bytes);
@@ -540,6 +547,12 @@ BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t roo
             field->player = musashi_forest_player_mesh_load(disc);
     }
     if (!field->player) {
+        bfm_forest_field_free(field);
+        return NULL;
+    }
+    if (room == TOWER_INTERIOR_ROOM) {
+        if (bfm_castle_blade_load(&field->blade, scene, bytes, 0x61630))
+            return field;
         bfm_forest_field_free(field);
         return NULL;
     }
@@ -1516,10 +1529,14 @@ static int slide_wall(const FloorGrid *grid, FloorPlane plane, int16_t end[3])
     }
 }
 
+typedef enum {
+    WALL_SCAN_CELL, WALL_SCAN_BOUNDED, WALL_SCAN_TOWER_INTERIOR
+} WallScan;
+
 /* A correction can carry the endpoint into a second wall. Revisit the
  * mounted faces in their stored order after each correction. */
 static int resolve_cell(const FloorGrid *grid, ContactCell cell, const int16_t from[3],
-                        int16_t end[3], int bounded_only, const FloorFace *passage)
+                        int16_t end[3], WallScan scan, const FloorFace *passage)
 {
     if (!cell.count)
         return -1;
@@ -1532,8 +1549,11 @@ static int resolve_cell(const FloorGrid *grid, ContactCell cell, const int16_t f
         if ((s16)n->y < 0 && !(face->flags & 0x300))
             continue;
         unsigned sides = (token & 0x8000) ? 4 : 3;
-        if ((face->flags != 0x100 && face->flags != 0x2000) || n->y || (!n->x && !n->z)) {
-            if (bounded_only && crossing_margin(grid, face, sides, from, end) < -EDGE_TOLERANCE)
+        /* The tower interior's ordinary upright walls have no material flag. */
+        int sliding = face->flags == 0x100 || face->flags == 0x2000 ||
+                      (scan == WALL_SCAN_TOWER_INTERIOR && !face->flags);
+        if (!sliding || n->y || (!n->x && !n->z)) {
+            if (scan != WALL_SCAN_CELL && crossing_margin(grid, face, sides, from, end) < -EDGE_TOLERANCE)
                 continue;
             return -1;
         }
@@ -1544,13 +1564,13 @@ static int resolve_cell(const FloorGrid *grid, ContactCell cell, const int16_t f
 }
 
 static int resolve_walls(const FloorGrid *grid, ContactCell start,
-                         const int16_t from[3], int16_t end[3], int bounded_only,
+                         const int16_t from[3], int16_t end[3], WallScan scan,
                          const FloorFace *passage)
 {
     for (unsigned pass = 0; pass < 6; ++pass) {
-        int hit = resolve_cell(grid, start, from, end, bounded_only, passage);
+        int hit = resolve_cell(grid, start, from, end, scan, passage);
         if (hit == 0 && (!same_grid_index(from[0], end[0]) || !same_grid_index(from[2], end[2])))
-            hit = resolve_cell(grid, contact_cell(grid, end), from, end, bounded_only, passage);
+            hit = resolve_cell(grid, contact_cell(grid, end), from, end, scan, passage);
         if (hit <= 0)
             return hit == 0;
     }
@@ -2162,7 +2182,8 @@ int bfm_forest_corridor_step(const BfmForestField *field, const BfmForestContact
         return 0;
     const FloorGrid *grid = &field->grid;
     int16_t foot[3] = {to[0], to[1], to[2]};
-    if (!resolve_walls(grid, contact_cell(grid, from), from, foot, 1,
+    WallScan scan = field->room == TOWER_INTERIOR_ROOM ? WALL_SCAN_TOWER_INTERIOR : WALL_SCAN_BOUNDED;
+    if (!resolve_walls(grid, contact_cell(grid, from), from, foot, scan,
                        gateway_crossing(field, from, foot)))
         return 0;
     int reach = floor_sweep_span(from, foot) + 1;
