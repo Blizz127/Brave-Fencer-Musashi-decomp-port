@@ -1095,6 +1095,16 @@ int bfm_bedroom_draw_counter(BfmBedroom *room, int dialogue, uint32_t pixels[240
     return 1;
 }
 
+uint16_t bfm_bedroom_display_room(const BfmBedroom *room)
+{
+    if (room->inn) return 0x2017;
+    if (room->village) return bfm_village_arrival_room(room->village);
+    if (room->cable) return 0x3004;
+    if (room->command_room) return 0x3000;
+    if (room->library) return 0x3002;
+    return room->field && half(room->entry.state.destination) == 0x3001 ? 0x3001 : 0;
+}
+
 int bfm_bedroom_draw(BfmBedroom *room, uint32_t pixels[240][320])
 {
     if (room->inn) return bfm_bedroom_draw_counter(room, 1, pixels);

@@ -130,6 +130,21 @@ static void find_controller(Player *p) {
     }
 }
 
+static const char *bedroom_caption(uint16_t room)
+{
+    switch (room) {
+    case 0x3001: return "Brave Fencer Musashi - Castle bedroom";
+    case 0x3002: return "Brave Fencer Musashi - Castle library";
+    case 0x3000: return "Brave Fencer Musashi - Castle courtyard";
+    case 0x3004: return "Brave Fencer Musashi - Castle cable station";
+    case 0x1011: return "Brave Fencer Musashi - Upper Grillin' Village";
+    case 0x1010: return "Brave Fencer Musashi - Lower Grillin' Village";
+    case 0x2017: return "Brave Fencer Musashi - Hotelo's inn";
+    case 0x3025: return "Brave Fencer Musashi - Southern woods";
+    default: return "Brave Fencer Musashi - Gameplay";
+    }
+}
+
 static void phase_changed(Player *p) {
     const char *caption;
     switch (p->flow.phase) {
@@ -144,7 +159,10 @@ static void phase_changed(Player *p) {
         break;
     case BFM_TITLE_OPENING: caption = "Brave Fencer Musashi - Opening"; break;
     case BFM_TITLE_CHAPTER_COMPLETION: caption = "Brave Fencer Musashi - Chapter complete"; break;
-    case BFM_TITLE_BEDROOM: caption = "Brave Fencer Musashi - Castle bedroom"; break;
+    case BFM_TITLE_BEDROOM:
+        p->display_room = bfm_bedroom_display_room(p->bedroom);
+        caption = bedroom_caption(p->display_room);
+        break;
     case BFM_TITLE_FILES:
         if (p->save_copy) bfm_inn_profile_menu(p->save_copy, &p->saves);
         else bfm_save_menu_open(&p->saves, p->card_path);
@@ -268,6 +286,11 @@ static int bedroom_frame(Player *p) {
         if (!bfm_bedroom_draw_counter(p->bedroom, at_counter, pixels)) return -1;
         bfm_inn_menu_draw(&p->inn_menu, p->save_art, p->inn_age * 2u, pixels);
     } else if (!bfm_bedroom_draw(p->bedroom, pixels)) return -1;
+    uint16_t room = bfm_bedroom_display_room(p->bedroom);
+    if (room != p->display_room) {
+        SDL_SetWindowTitle(p->window, bedroom_caption(room));
+        p->display_room = room;
+    }
     if (bfm_bedroom_endpoint(p->bedroom))
         status_line(p, bfm_bedroom_end_message(p->bedroom));
     return 1;
