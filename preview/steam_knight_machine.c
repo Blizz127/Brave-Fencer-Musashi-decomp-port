@@ -7,7 +7,7 @@
 
 enum { CHASSIS, TORSO, ASSEMBLIES, MAX_KEYS = 24 };
 enum { NEUTRAL, FIRST_ACTION, LOWER, RISE, STEP_RIGHT, STEP_LEFT, STEP_FORWARD,
-       KNEEL_RIGHT, KNEEL_LEFT, SMASH, SMASH_RISE, COLLAPSE, DEPARTURE, ARRIVAL, REARM, CLIPS };
+       KNEEL_RIGHT, KNEEL_LEFT, SMASH, SMASH_RISE, COLLAPSE, DEPARTURE, ARRIVAL, REARM, JUMP_START, AIRBORNE, LANDED, CLIPS };
 
 enum { FIRST_HIT_JOINT = 18, FIRST_WHITE_UPDATE = 2, OBSERVED_WHITE_UPDATES = 6 };
 static const uint32_t origin = UINT32_C(0x80128158);
@@ -21,6 +21,8 @@ static const struct { uint32_t table; unsigned index, keys; } chassis_program[] 
     [KNEEL_RIGHT] = {0x80194ea8, 20, 16}, [KNEEL_LEFT] = {0x80194f78, 22, 16},
     [COLLAPSE] = {0x80194ae0, 11, 5}, [DEPARTURE] = {0x80194a20, 9, 17},
     [ARRIVAL] = {0x80194b10, 12, 17}, [REARM] = {0x80194de0, 19, 24},
+    [JUMP_START] = {0x80194c40, 15, 2}, [AIRBORNE] = {0x80194c58, 16, 14},
+    [LANDED] = {0x80194cd0, 17, 15},
     [SMASH] = {0x80194ba0, 13, 12}, [SMASH_RISE] = {0x80194c08, 14, 6},
     [LOWER]   = {0x801949a8, 7, 5},  [RISE] = {0x801949d8, 8, 8}
 };
@@ -46,7 +48,8 @@ struct BfmSteamKnightMachine {
     int knee_seen, new_break_in_strike, walk_after_strike, open_cover;
     BfmSteamKnightStance action;
     int step_x, step_z, patrol_after_recovery;
-    unsigned neutral_since, round, round_stage, phase_age;
+    unsigned neutral_since, round, round_stage, phase_age, yaw, y_fraction;
+    const BfmForestPose *jump_now, *jump_shown, *previous_jump_pose;
     int32_t x4, z4, action_x4, action_z4;
     int spawn_y, active, revealed, controlled;
 };
@@ -234,7 +237,8 @@ static void select_clip(BfmSteamKnightMachine *machine, unsigned id, unsigned ag
 {
     unsigned elapsed = machine->control_age - machine->clip_epoch;
     machine->outgoing[0] = machine->display[CHASSIS];
-    if (machine->selected && elapsed) machine->outgoing[1] = action_pose(machine, elapsed - 1);
+    if (machine->action == BFM_STEAM_MACHINE_JUMPING) machine->outgoing[1] = machine->chassis_pose;
+    else if (machine->selected && elapsed) machine->outgoing[1] = action_pose(machine, elapsed - 1);
     else if (!machine->selected) {
         unsigned tick = machine->control_age;
         machine->outgoing[1] = sample(&machine->chassis[NEUTRAL], tick ? tick - 1 : 0);
@@ -274,6 +278,12 @@ static void mount_torso(BfmSteamKnightMachine *machine, unsigned shown)
 
 static void selected_chassis(BfmSteamKnightMachine *machine, unsigned shown)
 {
+    if (machine->action == BFM_STEAM_MACHINE_JUMPING) {
+        machine->chassis_pose = machine->jump_now;
+        machine->display[CHASSIS] = machine->jump_shown;
+        mount_torso(machine, shown);
+        return;
+    }
     if (!machine->selected || machine->control_age < machine->clip_epoch) return;
     unsigned age = machine->control_age - machine->clip_epoch;
     if (machine->action == BFM_STEAM_MACHINE_WALKING) {
@@ -403,6 +413,7 @@ int bfm_steam_knight_machine_set_world_root(BfmSteamKnightMachine *machine, cons
     if (!machine || !machine->controlled || !position) return 0;
     machine->action_x4 += 4 * position[0] - machine->x4;
     machine->action_z4 += 4 * position[2] - machine->z4;
+    machine->y_fraction = 0;
     machine->x4 = 4 * position[0];
     machine->z4 = 4 * position[2];
     for (unsigned i = 0; i < 3; ++i)
@@ -540,10 +551,23 @@ int bfm_steam_knight_machine_joint(const BfmSteamKnightMachine *machine, unsigne
 {
     if (!machine || !machine->active || chassis_part >= model[CHASSIS].parts || !world || !mesh_part)
         return 0;
-    /* All lower joints use the same unit-scale, zero-yaw world transform. */
-    *world = machine->chassis_pose->local[chassis_part];
-    for (unsigned axis = 0; axis < 3; ++axis)
-        world->translation[axis] += machine->root.translation[axis];
+    const BfmForestTransform *local = &machine->chassis_pose->local[chassis_part];
+    *world = *local;
+    for (unsigned i = 0; i < 3; ++i) {
+        if (machine->yaw) {
+            int move = 0;
+            for (unsigned k = 0; k < 3; ++k)
+                move += machine->root.rotation[i][k] * local->translation[k];
+            world->translation[i] = move >> 12;
+            for (unsigned j = 0; j < 3; ++j) {
+                int turn = 0;
+                for (unsigned k = 0; k < 3; ++k)
+                    turn += machine->root.rotation[i][k] * local->rotation[k][j];
+                world->rotation[i][j] = (int16_t)(turn >> 12);
+            }
+        }
+        world->translation[i] += machine->root.translation[i];
+    }
     *mesh_part = musashi_forest_player_mesh_part(machine->mesh[CHASSIS], chassis_part);
     return *mesh_part != NULL;
 }
@@ -552,7 +576,7 @@ int bfm_steam_knight_machine_root_q12(const BfmSteamKnightMachine *machine, int3
 {
     if (!machine || !machine->active || !position) return 0;
     position[0] = machine->x4 * 1024;
-    position[1] = machine->root.translation[1] * 4096;
+    position[1] = machine->root.translation[1] * 4096 + (int)machine->y_fraction * 512;
     position[2] = machine->z4 * 1024;
     return 1;
 }
@@ -586,7 +610,13 @@ int bfm_steam_knight_machine_reset_round(BfmSteamKnightMachine *machine, unsigne
     machine->neutral_since = machine->control_age;
     /* The first transfer rearms both legs. The street retains the damage. */
     if (round != 2) machine->broken_shells = 0;
-    if (!round) machine->open_cover = 0;
+    if (!round) {
+        int16_t at[3];
+        bfm_steam_knight_machine_world_root(machine, at);
+        machine->open_cover = machine->yaw = machine->y_fraction = 0;
+        bfm_forest_actor_root(0, at, &machine->root);
+        machine->display_root = machine->root;
+    }
     machine->shell_white_from = machine->shell_white_until = 0;
     bfm_steam_knight_machine_present(machine, machine->control_age);
     return 1;
@@ -638,6 +668,92 @@ size_t bfm_steam_knight_machine_weak_halo(const BfmForestTransform *child,
                          edge[(i + 1) % BFM_STEAM_WEAK_HALO_CARDS]}};
     }
     return BFM_STEAM_WEAK_HALO_CARDS;
+}
+
+typedef struct {
+    unsigned clip, key, extension;
+    int y8, at_destination, turn, landed;
+} StreetSample;
+
+/* A grounded windup, a fixed-velocity rise and a delayed accelerating fall.
+ * The encounter supplies the actual landing release and whether its cap opens. */
+static int street_sample(const BfmSteamKnightJump *jump, unsigned age, StreetSample *out)
+{
+    unsigned apex = jump->rebound ? 33 : 28;
+    unsigned lands = apex + 62;
+    *out = (StreetSample){.clip = JUMP_START, .at_destination = age >= apex,
+        .turn = age >= apex + 17, .landed = age == lands};
+    if (age < 3) {
+        out->key = age ? age - 1 : 0;
+        return 1;
+    }
+    if (age < lands) {
+        out->clip = AIRBORNE;
+        out->key = age - 3 < 13 ? age - 3 : 13;
+        if (age > 14) {
+            unsigned rise = (age < apex ? age : apex) - 14;
+            out->y8 = -448 * (int)rise;
+            if (jump->rebound) out->y8 += (int)(6 * rise * (rise + 1));
+            if (age > apex + 16) {
+                unsigned fall = age - apex - 16;
+                out->y8 += (int)(3 * fall * (fall + 1) + jump->fraction_eighths);
+            }
+        }
+        return 1;
+    }
+    unsigned grounded = age - lands;
+    out->clip = LANDED;
+    out->key = grounded < 6 ? grounded : 6;
+    if (jump->exposed && grounded > 6)
+        out->extension = grounded < 12 ? 4 * (grounded - 6) : 24;
+    if (jump->release_after_landing >= 7 && grounded >= (unsigned)jump->release_after_landing) {
+        unsigned recover = grounded - (unsigned)jump->release_after_landing;
+        if (recover >= 8) return 0;
+        out->key = 7 + recover;
+        if (jump->exposed) out->extension = recover < 5 ? 20 - 4 * recover : 0;
+    }
+    return 1;
+}
+
+int bfm_steam_knight_machine_street_jump(BfmSteamKnightMachine *machine,
+    const BfmSteamKnightJump *jump, unsigned active_age, BfmSteamKnightLanding *landing)
+{
+    if (!machine || !jump || !landing || !machine->controlled || machine->round != 2 ||
+        jump->yaw_before >= 4096 || jump->yaw_after >= 4096 || jump->fraction_eighths > 7)
+        return 0;
+    StreetSample now;
+    if (!street_sample(jump, active_age, &now)) return 0;
+    int y = jump->start[1] + (now.y8 >> 3);
+    if (y < INT16_MIN || y > INT16_MAX) return 0;
+
+    if (machine->action != BFM_STEAM_MACHINE_JUMPING || active_age < machine->phase_age) {
+        machine->previous_jump_pose = machine->chassis_pose;
+        machine->outgoing[0] = machine->display[CHASSIS];
+        machine->outgoing[1] = machine->chassis_pose;
+        machine->action = BFM_STEAM_MACHINE_JUMPING;
+        machine->walk_after_strike = machine->patrol_after_recovery = 0;
+    }
+    machine->phase_age = active_age;
+    machine->jump_now = active_age ? &machine->chassis[now.clip].pose[now.key] :
+                                     machine->previous_jump_pose;
+    if (active_age < 2) machine->jump_shown = machine->outgoing[active_age];
+    else if (active_age == 2) machine->jump_shown = machine->previous_jump_pose;
+    else {
+        StreetSample shown;
+        street_sample(jump, active_age - 2, &shown);
+        machine->jump_shown = &machine->chassis[shown.clip].pose[shown.key];
+    }
+    int16_t at[3] = {now.at_destination ? jump->destination[0] : jump->start[0],
+                     (int16_t)y, now.at_destination ? jump->destination[1] : jump->start[2]};
+    bfm_steam_knight_machine_set_world_root(machine, at);
+    machine->y_fraction = (unsigned)now.y8 & 7;
+    machine->yaw = now.turn ? jump->yaw_after : jump->yaw_before;
+    bfm_forest_actor_root(machine->yaw, at, &machine->root);
+    machine->display_root = machine->root;
+    bfm_steam_knight_machine_present(machine, machine->control_age);
+    landing->core_extension = now.extension;
+    landing->touched_ground = now.landed;
+    return 1;
 }
 
 int bfm_steam_knight_machine_knee_pose(const BfmSteamKnightMachine *machine,

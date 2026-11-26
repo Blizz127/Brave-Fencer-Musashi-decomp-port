@@ -22,7 +22,8 @@ int bfm_steam_knight_machine_set_chassis_clip(BfmSteamKnightMachine *machine,
 typedef enum {
     BFM_STEAM_MACHINE_DORMANT, BFM_STEAM_MACHINE_NEUTRAL, BFM_STEAM_MACHINE_WALKING,
     BFM_STEAM_MACHINE_KNEELING, BFM_STEAM_MACHINE_GETTING_UP,
-    BFM_STEAM_MACHINE_STRIKING, BFM_STEAM_MACHINE_SMASHING, BFM_STEAM_MACHINE_TRANSFERRING
+    BFM_STEAM_MACHINE_STRIKING, BFM_STEAM_MACHINE_SMASHING, BFM_STEAM_MACHINE_TRANSFERRING,
+    BFM_STEAM_MACHINE_JUMPING
 } BfmSteamKnightStance;
 BfmSteamKnightStance bfm_steam_knight_machine_stance(const BfmSteamKnightMachine *machine);
 int bfm_steam_knight_machine_world_root(const BfmSteamKnightMachine *machine, int16_t position[3]);
@@ -46,6 +47,19 @@ size_t bfm_steam_knight_machine_weak_halo(const BfmForestTransform *child,
     const BfmForestCamera *camera, struct BfmForestDustCard *cards, size_t capacity);
 /* The detached front cover no longer occupies its original chassis joint. */
 void bfm_steam_knight_machine_open_cover(BfmSteamKnightMachine *machine);
+typedef struct {
+    int16_t start[3], destination[2]; /* Ground XYZ, then destination XZ. */
+    unsigned yaw_before, yaw_after, fraction_eighths;
+    int rebound, exposed, release_after_landing; /* Negative holds landing key six. */
+} BfmSteamKnightJump;
+typedef struct {
+    unsigned core_extension;
+    int touched_ground;
+} BfmSteamKnightLanding;
+
+/* Submit the live street jump. A completed landing recovery returns zero. */
+int bfm_steam_knight_machine_street_jump(BfmSteamKnightMachine *machine,
+    const BfmSteamKnightJump *jump, unsigned active_age, BfmSteamKnightLanding *landing);
 /* Sample the physical knee key before the display delay. hold_age starts
  * at zero when the terminal key is first selected. */
 int bfm_steam_knight_machine_knee_pose(const BfmSteamKnightMachine *machine,

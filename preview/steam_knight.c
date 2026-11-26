@@ -15,6 +15,7 @@
 #include "forest_hud.h"
 #include "forest_damage_digits.h"
 #include "forest_message_art.h"
+#include "../pc_port/forest_player_bytes.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -40,6 +41,11 @@ struct BfmSteamKnight {
     BfmSteamKnightBossHud boss_hud;
     BfmSteamKnightCoreBoxes core_boxes;
     BfmSteamKnightCarry carry;
+    struct {
+        BfmSteamKnightJump jump;
+        BfmSteamKnightLanding landing;
+        unsigned neutral_age, jump_age;
+    } street;
     unsigned transfer_age, arrival_wait;
     unsigned core_hp, core_max;
     unsigned round, weak_stage, weak_age, core_struck, recovery_left;
@@ -216,6 +222,37 @@ static int transfer_tick(BfmSteamKnight *s)
                                                s->round, s->transfer_age++);
 }
 
+/* The street's first action is selected after a full neutral clip. Its
+ * program belongs to the mounted room, alongside the first two arena programs. */
+static int street_opening(BfmSteamKnight *s)
+{
+    if (s->body_stage == 1) {
+        if (++s->street.neutral_age < 16) return 1;
+        size_t bytes;
+        const uint8_t *scene = bfm_steam_knight_field_scene(s->field, &bytes);
+        const uint32_t base = UINT32_C(0x80128158);
+        size_t slot = UINT32_C(0x801959e8) - base;
+        if (slot > bytes || bytes - slot < 4) return 0;
+        uint32_t address = u32le(scene + slot);
+        if (address < base || address - base > bytes || bytes - (address - base) < 4) return 0;
+        const uint8_t *entry = scene + (address - base);
+        if (u16le(entry) != 0 || (u16le(entry + 2) & 255) != 6) return 0;
+        if ((s->battle_flags & 0x200) || (s->core_hp <= 128 && !(s->battle_flags & 0x800))) return 1;
+        BfmSteamKnightJump *jump = &s->street.jump;
+        if (!bfm_steam_knight_machine_world_root(s->machine, jump->start)) return 0;
+        jump->destination[0] = jump->start[0];
+        jump->destination[1] = jump->start[2] - 84;
+        jump->fraction_eighths = 4;
+        jump->exposed = 1;
+        jump->release_after_landing = -1;
+        s->street.jump_age = 0;
+        s->body_stage = 6;
+    }
+    if (s->body_stage != 6) return 1;
+    return bfm_steam_knight_machine_street_jump(s->machine, &s->street.jump,
+                                                s->street.jump_age++, &s->street.landing);
+}
+
 static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t held)
 {
     BfmSteamKnightEvent *e = &s->event;
@@ -235,7 +272,9 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
     } else if (s->weak_stage == 2 && s->weak_age < 47) {
         ++s->weak_age;
     }
-    if (s->body_stage == 1)
+    if (s->round == 2 && (s->body_stage == 1 || s->body_stage == 6)) {
+        if (!street_opening(s)) return -1;
+    } else if (s->body_stage == 1)
         bfm_steam_knight_machine_track_hero(s->machine, bfm_steam_hero_sample(s->hero)->feet);
     if (s->recovery_left && !--s->recovery_left) s->body_stage = 1;
     for (size_t i = 0; i < BFM_STEAM_ARMOR_PLATES; ++i) {
