@@ -30,6 +30,8 @@ int bfm_forest_hit_damage(const MusashiDiscMedia *disc, const BfmForestStatus *s
                           uint32_t player_flags, unsigned power, uint16_t *amount);
 int bfm_forest_rifle_damage(const MusashiDiscMedia *disc, const BfmForestStatus *status,
                             uint32_t player_flags, uint16_t *amount);
+/* The summit acquisition restores both resources and equips Lumina. */
+void bfm_forest_status_equip_lumina(BfmForestStatus *status);
 void bfm_forest_status_debit(BfmForestStatus *status, unsigned amount);
 void bfm_forest_status_spend_bp(BfmForestStatus *status, unsigned amount);
 

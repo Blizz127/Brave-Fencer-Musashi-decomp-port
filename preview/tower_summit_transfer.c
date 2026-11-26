@@ -46,19 +46,21 @@ void bfm_tower_summit_transfer_reach_lift(BfmTowerSummitTransfer *t, int actor_f
     }
 }
 
-static void turn_on_lift(BfmTowerSummitTransfer *t)
+int bfm_tower_step_facing(int facing, int target)
 {
-    int delta = LIFT_FACING - t->actor_facing;
-    if (!delta) {
-        enter_phase(t, BFM_SUMMIT_TRANSFER_LIFT);
-        return;
-    }
+    int delta = target - facing;
     if (delta < -2048) delta += 4096;
     if (delta > 2048) delta -= 4096;
     int step = delta / 4;
     if (!step) step = delta / 2;
     if (!step) step = delta;
-    t->actor_facing = (unsigned)(t->actor_facing + step) & 4095;
+    return (unsigned)(facing + step) & 4095;
+}
+
+static void turn_on_lift(BfmTowerSummitTransfer *t)
+{
+    if (t->actor_facing == LIFT_FACING) enter_phase(t, BFM_SUMMIT_TRANSFER_LIFT);
+    else t->actor_facing = bfm_tower_step_facing(t->actor_facing, LIFT_FACING);
 }
 
 static unsigned reveal_shade(unsigned tick)

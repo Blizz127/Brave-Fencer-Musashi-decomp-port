@@ -35,6 +35,9 @@ typedef struct {
     unsigned shade;      /* 0..255 intensity subtracted from each channel. */
 } BfmTowerSummitFrame;
 
+/* Advance one shortest-arc turn in the field's 4096-unit angle space. */
+int bfm_tower_step_facing(int facing, int target);
+
 /* Begin on the update when the interior door accepts the player. */
 int bfm_tower_summit_transfer_begin(BfmTowerSummitTransfer *transfer,
                                     const RoomTransferDescriptor *destination);

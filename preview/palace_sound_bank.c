@@ -147,10 +147,11 @@ BfmPalaceBank *bfm_archive_sound_bank_load(const MusashiDiscMedia *disc, const c
         if (bytes < SECTOR || bytes > left)
             return NULL;
         if (header_bytes) {
-            /* The resident effects and equipped Gunshot both use the extended
-             * body tag in MAIN.CD. Their PAC2 headers retain the bank key. */
-            int extended = type == 0x103 && !strcmp(archive, "MAIN.CD") &&
-                           (member == 2 || member == 15);
+            /* Resident effects, Gunshot and the summit follow-up use paired
+             * PAC2 headers and extended sample bodies. */
+            int extended = type == 0x103 &&
+                ((!strcmp(archive, "MAIN.CD") && (member == 2 || member == 15)) ||
+                 (!strcmp(archive, "SC02.CD") && member == 2));
             if ((type != 3 && !extended) || key != header_key)
                 return NULL;
             return read_instruments(disc, archive, header, header_bytes, offset + SECTOR, bytes - SECTOR);

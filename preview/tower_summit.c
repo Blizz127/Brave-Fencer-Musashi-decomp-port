@@ -2,15 +2,24 @@
 #include "tower_summit.h"
 #include "tower_sky.h"
 #include "tower_summit_figures.h"
+#include "tower_summit_pressure.h"
 
 #include <stdlib.h>
 
 struct BfmTowerSummit {
     BfmForestField *field;
     BfmTowerSummitFigures *figures;
+    BfmTowerSummitResidents *residents;
+    BfmTowerSummitPickup *pickup;
+    BfmTowerSummitStun *skill;
+    BfmSummitSkillFrame skill_frame;
+    int32_t eye[3];
     BfmTowerSky *sky;
     const MusashiDiscMedia *disc;
     BfmTowerSummitArrival arrival;
+    BfmTowerSummitPressure pressure;
+    BfmTowerSummitLesson lesson;
+    unsigned field_updates;
     BfmForestMessageArt *art;
     int arrival_active;
 };
@@ -28,12 +37,15 @@ BfmTowerSummit *bfm_tower_summit_open(const MusashiDiscMedia *disc,
     const uint8_t *scene = bfm_forest_field_scene(summit->field, &size);
     if (scene) {
         summit->figures = bfm_tower_summit_figures_open(scene, size);
+        summit->residents = bfm_tower_summit_residents_open(summit->field);
         summit->sky = bfm_tower_summit_sky_open(scene, size, bfm_forest_field_tiles(summit->field));
     }
-    if (!summit->figures || !summit->sky) {
+    int16_t plate[3], sword[3];
+    if (!summit->sky || !summit->residents || !bfm_tower_summit_figures_targets(summit->figures, plate, sword)) {
         bfm_tower_summit_free(summit);
         return NULL;
     }
+    bfm_tower_summit_pressure_init(&summit->pressure, plate, sword);
     return summit;
 }
 
@@ -41,8 +53,12 @@ void bfm_tower_summit_free(BfmTowerSummit *summit)
 {
     if (summit) {
         bfm_tower_summit_arrival_close(&summit->arrival);
+        bfm_tower_summit_lesson_close(&summit->lesson);
         bfm_forest_message_art_free(summit->art);
         bfm_tower_summit_figures_free(summit->figures);
+        bfm_tower_summit_stun_free(summit->skill);
+        bfm_tower_summit_residents_free(summit->residents);
+        bfm_tower_summit_pickup_free(summit->pickup);
         bfm_tower_sky_free(summit->sky);
         bfm_forest_field_free(summit->field);
         free(summit);
@@ -58,6 +74,18 @@ int bfm_tower_summit_place(BfmTowerSummit *summit, ForestPlayerState *player,
                            int16_t *yaw, int16_t position[3])
 {
     return summit && bfm_forest_place_player(summit->field, 0, player, yaw, position);
+}
+
+int bfm_tower_summit_targets(const BfmTowerSummit *summit, int16_t plate[3], int16_t sword[3])
+{
+    return summit && bfm_tower_summit_figures_targets(summit->figures, plate, sword);
+}
+
+void bfm_tower_summit_present_sword(BfmTowerSummit *summit, unsigned tick, unsigned settle,
+                                    int shielded, int sword_present)
+{
+    if (summit)
+        bfm_tower_summit_figures_present_sword(summit->figures, tick, settle, shielded, sword_present);
 }
 
 int bfm_tower_summit_begin(BfmTowerSummit *summit, uint32_t parts, BfmForestPose *pose)
@@ -85,9 +113,66 @@ int bfm_tower_summit_tick_arrival(BfmTowerSummit *summit, ForestVoice *voice, un
     return state;
 }
 
+void bfm_tower_summit_update_sword(BfmTowerSummit *summit, unsigned tick,
+                                   int plate_occupied, int sword_present)
+{
+    if (summit) bfm_tower_summit_figures_update_sword(summit->figures, tick, plate_occupied, sword_present);
+}
+
 const BfmTowerSummitArrival *bfm_tower_summit_arriving(const BfmTowerSummit *summit)
 {
     return summit && summit->arrival_active ? &summit->arrival : NULL;
+}
+
+BfmTowerSummitPickup *bfm_tower_summit_pickup(BfmTowerSummit *summit)
+{
+    return summit ? summit->pickup : NULL;
+}
+
+BfmTowerSummitResidents *bfm_tower_summit_residents(BfmTowerSummit *summit)
+{
+    return summit ? summit->residents : NULL;
+}
+
+int bfm_tower_summit_step_fixtures(BfmTowerSummit *summit, const int16_t player[3],
+                                   const int32_t eye[3], BfmGameplayRun *run, int scripted, uint32_t parts)
+{
+    if (!summit || !eye) return 0;
+    for (unsigned i = 0; i < 3; ++i) summit->eye[i] = eye[i];
+    if (!bfm_tower_summit_residents_tick(summit->residents, player, scripted,
+                                         summit->pressure.sword_requested, run)) return 0;
+    unsigned events = bfm_tower_summit_pressure_step(&summit->pressure, player, summit->residents);
+    if (events & BFM_SUMMIT_SWORD_IN_REACH) {
+        summit->pickup = bfm_tower_summit_pickup_begin(summit->field, summit->disc, parts);
+        if (!summit->pickup) return 0;
+        summit->pressure.sword_requested = 1;
+    }
+    bfm_tower_summit_update_sword(summit, summit->field_updates++, summit->pressure.occupied,
+                                  !summit->pressure.sword_requested);
+    if (events & BFM_SUMMIT_FIRST_PLATE_LESSON) {
+        if (!bfm_tower_summit_lesson_begin(&summit->lesson, summit->field, player, eye)) return 0;
+        summit->pressure.lesson_started = 1;
+    }
+    return 1;
+}
+
+const BfmSummitSkillFrame *bfm_tower_summit_skill_tick(BfmTowerSummit *summit,
+    uint32_t animation_table, const BfmForestTransform *root, int16_t yaw, unsigned tick,
+    const BfmSummitSkillInput *input, BfmGameplayRun *run)
+{
+    if (!summit || !root || !input || !run || !run->has_player) return NULL;
+    if (!summit->skill) {
+        summit->skill = bfm_tower_summit_stun_open(summit->disc, summit->field, animation_table);
+        if (!summit->skill) return NULL;
+    }
+    if (!bfm_tower_summit_stun_tick(summit->skill, summit->residents, run, root, yaw,
+                                    tick, input, &summit->skill_frame)) return NULL;
+    return &summit->skill_frame;
+}
+
+BfmTowerSummitLesson *bfm_tower_summit_active_lesson(BfmTowerSummit *summit)
+{
+    return summit && summit->lesson.phase ? &summit->lesson : NULL;
 }
 
 int bfm_tower_summit_draw(const BfmTowerSummit *summit, const BfmForestCamera *camera,
@@ -108,17 +193,37 @@ int bfm_tower_summit_draw(const BfmTowerSummit *summit, const BfmForestCamera *c
         }
         if (arrival->scale[0] != 4096 || !(visible_parts & (UINT32_C(1) << 22))) blade = NULL;
     }
-    BfmForestActor figures[BFM_TOWER_SUMMIT_FIGURES];
+    const BfmSummitPickupFrame *pickup = bfm_tower_summit_pickup_frame(summit->pickup);
+    const BfmSummitSkillFrame *skill = summit->skill && !arrival && !pickup && !summit->lesson.phase
+                                     ? &summit->skill_frame : NULL;
+    if (skill && skill->blade_away) {
+        visible_parts &= ~((UINT32_C(1) << 21) | (UINT32_C(1) << 22));
+        blade = NULL;
+    }
+    BfmForestActor figures[BFM_TOWER_SUMMIT_FIGURES + BFM_SUMMIT_RESIDENTS + 1];
     size_t count = bfm_tower_summit_figures_actors(summit->figures, figures,
                                                   BFM_TOWER_SUMMIT_FIGURES);
-    if (count != BFM_TOWER_SUMMIT_FIGURES ||
-        !bfm_forest_draw_room(summit->field, camera, pose, &model, visible_parts,
-                              buffer, blade, figures, count, NULL, 0, pixels)) return 0;
+    if (count != BFM_TOWER_SUMMIT_FIGURES) return 0;
+    count += bfm_tower_summit_residents_actors(summit->residents, figures + count, BFM_SUMMIT_RESIDENTS);
+    if (skill && skill->blade) figures[count++] = *skill->blade;
+
+    BfmForestDustCard glow[BFM_SUMMIT_PICKUP_GLOW_CARDS];
+    size_t glow_count = 0;
+    if (pickup && pickup->has_pose && (pickup->visible_parts & (UINT32_C(1) << 25))) {
+        glow_count = bfm_tower_summit_pickup_glow(summit->field, pickup->lumina_anchors,
+            &model, summit->eye, camera, summit->field_updates, glow, BFM_SUMMIT_PICKUP_GLOW_CARDS);
+    }
+    if (!bfm_forest_draw_room(summit->field, camera, pose, &model, visible_parts,
+                              buffer, blade, figures, count, glow, glow_count, pixels)) return 0;
     if (arrival) {
         const int16_t xyz[3] = {(int16_t)root->translation[0], (int16_t)root->translation[1],
                                 (int16_t)root->translation[2]};
         bfm_tower_summit_arrival_draw_light(arrival, camera, xyz, buffer, pixels);
         bfm_tower_summit_arrival_draw(arrival, summit->art, 160, pixels);
     }
+    if (skill && skill->award)
+        bfm_forest_message_art_draw(summit->art, bfm_forest_message_frame(skill->award), pixels);
+    if (summit->lesson.phase)
+        bfm_tower_summit_lesson_draw(&summit->lesson, summit->art, pixels);
     return 1;
 }

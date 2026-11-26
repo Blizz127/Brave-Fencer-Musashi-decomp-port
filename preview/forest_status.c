@@ -41,6 +41,14 @@ int bfm_forest_rifle_damage(const MusashiDiscMedia *disc, const BfmForestStatus 
     return bfm_forest_hit_damage(disc, status, player_flags, 25, amount);
 }
 
+void bfm_forest_status_equip_lumina(BfmForestStatus *status)
+{
+    if (!status) return;
+    memcpy(status->record + 0x3c, status->record + 0x3a, 2);
+    memcpy(status->record + 0x40, status->record + 0x3e, 2);
+    status->record[0x48] |= 1u;
+}
+
 void bfm_forest_status_debit(BfmForestStatus *status, unsigned amount)
 {
     if (!status) return;

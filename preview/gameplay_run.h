@@ -17,4 +17,7 @@ typedef struct BfmGameplayRun {
 uint16_t bfm_gameplay_random(BfmGameplayRun *run);
 int bfm_gameplay_story_flag(const BfmGameplayRun *run, unsigned flag);
 
+/* Commit the summit award once to the current playthrough. */
+int bfm_gameplay_acquire_lumina(BfmGameplayRun *run);
+
 #endif

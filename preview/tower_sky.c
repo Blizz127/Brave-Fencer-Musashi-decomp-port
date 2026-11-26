@@ -91,7 +91,7 @@ int bfm_tower_sky_draw(const BfmTowerSky *sky, const BfmForestCamera *camera,
     int left, top;
     if (sky->summit) {
         left = (80 + (heading & 4095) * width / 4096) % width;
-        top = 160 + abs(pitch) * 360 / 1024;
+        top = 160 + pitch * 360 / 1024;
     } else {
         left = (width / 2 + heading * width / 4096) % width;
         top = 200 + pitch * 300 / 1024;

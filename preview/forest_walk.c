@@ -1267,8 +1267,10 @@ uint16_t bfm_forest_walk_room(const BfmForestWalk *w)
 
 int bfm_forest_walk_control(const BfmForestWalk *w)
 {
-    if (w && w->summit_transfer.phase != BFM_SUMMIT_TRANSFER_IDLE)
-        return w->summit_free ? (w->at_boundary ? 2 : 1) : 0;
+    if (w && w->summit_transfer.phase != BFM_SUMMIT_TRANSFER_IDLE) {
+        if (!w->summit_free || bfm_tower_summit_pickup(w->summit) || bfm_tower_summit_active_lesson(w->summit)) return 0;
+        return w->at_boundary ? 2 : 1;
+    }
     if (w && w->inner_age) {
         BfmTowerBellResponse reaction;
         if (!w->inner_free || (bfm_tower_interior_response(w->inner, &reaction) && reaction.locked)) return 0;
@@ -1599,17 +1601,167 @@ static int place_on_summit(BfmForestWalk *w)
     return bfm_tower_summit_camera(w->cached, &w->camera, w->eye);
 }
 
-static int summit_play(BfmForestWalk *w, int x, int y, int ready, int confirm, int reveal)
+/* An event-supplied mark drives the same grounded actor as ordinary input. */
+static int walk_to_summit_mark(BfmForestWalk *w, const int16_t goal[3])
 {
-    if (w->summit_free) {
-        BfmForestDustEmission dust = BFM_FOREST_DUST_NONE;
+    int64_t dx = w->cached[0] - goal[0];
+    int64_t dy = w->cached[1] - goal[1];
+    int64_t dz = w->cached[2] - goal[2];
+    if (dx * dx + dy * dy + dz * dz < 16 * 16) {
+        restore_whole_position(w, goal);
+        w->actor.state = 0;
+        w->actor.phase = 1;
+        w->actor.field_2c.word = 0;
+        memset(w->actor.velocity, 0, sizeof w->actor.velocity);
+        w->elapsed = w->motion == IDLE ? w->elapsed + 1 : 0;
+        w->motion = IDLE;
+        return 1;
+    }
+    w->yaw = (int16_t)bfm_forest_shore_bearing((int)dx, (int)dz);
+    w->actor.state = w->actor.phase = 1;
+    if (w->motion != RUN) {
+        w->motion = RUN;
+        w->elapsed = 0;
+        return 0;
+    }
+    ++w->elapsed;
+    int32_t speed = w->actor.field_2c.word;
+    if (!speed) speed = w->data.initial_velocity;
+    if (speed < -11 * 65536) speed = -11 * 65536;
+    w->actor.field_2c.word = speed - 4096;
+    return bfm_forest_manual_coast(bfm_tower_summit_room(w->summit), &w->actor,
+                                   w->yaw, w->cached) ? 0 : -1;
+}
+
+static int step_summit_lesson(BfmForestWalk *w, BfmTowerSummitLesson *lesson, int confirm, int reveal)
+{
+    int settled = 0;
+    if (lesson->age >= 2) {
+        BfmForestContact floor;
+        if (!bfm_forest_ground(bfm_tower_summit_room(w->summit), lesson->walk_x,
+                               w->cached[1], lesson->walk_z, &floor)) return -1;
+        int16_t goal[3] = {lesson->walk_x, floor.height, lesson->walk_z};
+        int already_at_mark = w->cached[0] == goal[0] && w->cached[2] == goal[2];
+        settled = walk_to_summit_mark(w, goal);
+        if (settled < 0) return -1;
+        if (settled) {
+            int facing = w->yaw;
+            if (already_at_mark) w->yaw = (int16_t)bfm_tower_step_facing(facing, lesson->turn_yaw);
+            settled = already_at_mark && facing == lesson->turn_yaw;
+        }
+    }
+    if (!update_pose(w)) return -1;
+    bfm_forest_voice_step(w->voice);
+    int result = bfm_tower_summit_lesson_tick(lesson, w->voice, &w->voice_generation,
+                                             w->cached, settled, confirm, reveal);
+    if (result == BFM_SUMMIT_LESSON_ERROR) return -1;
+    if (result == BFM_SUMMIT_LESSON_RELEASED) bfm_tower_summit_lesson_close(lesson);
+    return 1;
+}
+
+static int step_summit_pickup(BfmForestWalk *w, BfmTowerSummitPickup *pickup)
+{
+    int16_t mark[3], yaw;
+    BfmSummitPickupGoal goal = bfm_tower_summit_pickup_goal(pickup, mark, &yaw);
+    int aligned = 0, facing = 0;
+    if (goal == BFM_SUMMIT_PICKUP_ALIGN) {
+        aligned = walk_to_summit_mark(w, mark);
+        if (aligned < 0 || !update_pose(w)) return 0;
+    } else if (goal == BFM_SUMMIT_PICKUP_TURN) {
+        facing = w->yaw == yaw;
+        w->yaw = (int16_t)bfm_tower_step_facing(w->yaw, yaw);
+    }
+    /* The original HUD starts sliding on the first update after contact. */
+    bfm_bedroom_hud_hide(w->hud);
+    if (!bfm_tower_summit_pickup_tick(pickup, w->gameplay, aligned, facing, &w->pose)) return 0;
+    const BfmSummitPickupFrame *frame = bfm_tower_summit_pickup_frame(pickup);
+    if (frame->has_pose) {
+        w->visible = frame->visible_parts;
+        memcpy(w->blade_anchors, frame->fusion_anchors, sizeof w->blade_anchors);
+        w->frame = 0;
+    }
+    update_root(w);
+    return bfm_tower_summit_pickup_camera(pickup, w->cached, &w->camera, w->eye);
+}
+
+static int step_summit_player(BfmForestWalk *w, int x, int y, BfmSummitSkillInput input)
+{
+    input.visible = w->visible;
+    input.moving = x || y;
+    input.grounded = w->actor.state != 5;
+    const BfmSummitSkillFrame *skill = bfm_tower_summit_skill_tick(w->summit,
+        w->data.animation_table, &w->root, w->yaw, w->tick, &input, w->gameplay);
+    if (!skill) return -1;
+    bfm_forest_hud_gauges(w->hud, w->gameplay->player.record[0x47], skill->tether_gauge);
+    int16_t facing = w->yaw;
+    BfmForestDustEmission dust = BFM_FOREST_DUST_NONE;
+    if (!skill->suppress_square && (w->actor.state == 5 || input.square_edge)) {
+        BfmForestHit hits[BFM_FOREST_STRIKE_RAYS] = {0};
+        size_t count = 0;
+        if (!tick_swing(w, x, y, input.square_edge, &dust, hits, &count)) return -1;
+    } else if (!skill->action || skill->action == 17) {
         int moved = tick_ground(w, x, y, 0, &dust);
         if (moved != 1) return moved;
+        if (skill->action == 17) w->yaw = facing;
+    } else if (w->actor.state != skill->action) {
+        w->manual.moving = 0;
+        w->actor.field_24.word = w->actor.field_2c.word = w->actor.local_y.word = 0;
+        memset(w->actor.velocity, 0, sizeof w->actor.velocity);
+    }
+    if (skill->action) {
+        w->actor.state = (uint8_t)skill->action;
+        w->actor.phase = 1;
+        if (skill->skill_body) {
+            w->pose = *skill->skill_body;
+            w->frame = 0;
+            w->visible = skill->visible;
+            memcpy(w->blade_anchors, skill->skill_anchors[0], sizeof w->blade_anchors);
+            update_root(w);
+        } else if (!select_pose(w, skill->pose, skill->visible)) {
+            return -1;
+        }
+    }
+    if (skill->blade_away) w->visible &= ~((UINT32_C(1) << 21) | (UINT32_C(1) << 22));
+    return bfm_tower_summit_camera(w->cached, &w->camera, w->eye) ? 1 : -1;
+}
+
+static int summit_play(BfmForestWalk *w, int x, int y, int ready, BfmSummitSkillInput input)
+{
+    int confirm = input.confirm_edge, reveal = input.reveal_edge;
+    if (w->summit_free) {
+        BfmTowerSummitPickup *pickup = bfm_tower_summit_pickup(w->summit);
+        BfmTowerSummitLesson *lesson = bfm_tower_summit_active_lesson(w->summit);
+        if (pickup) {
+            if (!step_summit_pickup(w, pickup)) return -1;
+        } else if (lesson) {
+            if (step_summit_lesson(w, lesson, confirm, reveal) != 1) return -1;
+        } else {
+            int moved = step_summit_player(w, x, y, input);
+            if (moved != 1) return moved;
+        }
+        bfm_forest_hud_tick(w->hud);
+        bfm_forest_hud_submit_points(w->hud, &w->gameplay->player);
+        if (!bfm_tower_summit_step_fixtures(w->summit, w->cached, w->eye, w->gameplay,
+                                           lesson != NULL || pickup != NULL, w->visible)) return -1;
+        BfmTowerSummitLesson *current = bfm_tower_summit_active_lesson(w->summit);
+        if ((!pickup && bfm_tower_summit_pickup(w->summit)) || (!lesson && current)) {
+            w->actor.state = 0;
+            w->actor.phase = 1;
+            w->manual.moving = 0;
+            w->motion = IDLE;
+            w->elapsed = 0;
+            /* Sword contact holds the previous pose until its next update. */
+            if (current && !update_pose(w)) return -1;
+        }
+        if (current) return bfm_tower_summit_lesson_camera(current, &w->camera, w->eye) ? 1 : -1;
+        if (pickup) return 1;
+        return bfm_tower_summit_camera(w->cached, &w->camera, w->eye) ? 1 : -1;
     } else {
         bfm_forest_voice_step(w->voice);
         int result = bfm_tower_summit_tick_arrival(w->summit, w->voice, &w->voice_generation,
                                                    ready, confirm, reveal, &w->pose);
         if (result == BFM_SUMMIT_ARRIVAL_ERROR) return -1;
+        if (!bfm_tower_summit_step_fixtures(w->summit, w->cached, w->eye, w->gameplay, 1, w->visible)) return -1;
         if (result == BFM_SUMMIT_ARRIVAL_RELEASED) {
             w->summit_free = 1;
             w->motion = IDLE;
@@ -1627,7 +1779,7 @@ static int summit_play(BfmForestWalk *w, int x, int y, int ready, int confirm, i
     return bfm_tower_summit_camera(w->cached, &w->camera, w->eye) ? 1 : -1;
 }
 
-static int step_summit_transfer(BfmForestWalk *w, int x, int y, int confirm, int reveal)
+static int step_summit_transfer(BfmForestWalk *w, int x, int y, BfmSummitSkillInput input)
 {
     bfm_tower_summit_transfer_advance(&w->summit_transfer, w->summit != NULL);
     BfmTowerSummitFrame frame = bfm_tower_summit_transfer_frame(&w->summit_transfer);
@@ -1637,7 +1789,7 @@ static int step_summit_transfer(BfmForestWalk *w, int x, int y, int confirm, int
     }
     if (frame.place_destination && !w->summit_placed && !place_on_summit(w)) return -1;
     if (w->summit_placed) {
-        int result = summit_play(w, x, y, frame.entrance_ready, confirm, reveal);
+        int result = summit_play(w, x, y, frame.entrance_ready, input);
         if (result != 1) return result;
     } else if (!step_summit_departure(w, &frame)) {
         return -1;
@@ -1765,9 +1917,12 @@ static int step_controller(BfmForestWalk *w, int x, int y, uint16_t pressed,
     w->swing_sound = 0;
     w->hit_sound = 0;
     w->control_polled = w->player_control;
-    if (w->summit_transfer.phase != BFM_SUMMIT_TRANSFER_IDLE)
-        return step_summit_transfer(w, read_x, read_y, cross_pressed,
-                                    (pressed & BFM_FOREST_TRIANGLE) != 0);
+    if (w->summit_transfer.phase != BFM_SUMMIT_TRANSFER_IDLE) {
+        BfmSummitSkillInput input = {.shoulder = shoulder, .square_edge = attack_pressed,
+            .circle_edge = circle.edge, .confirm_edge = cross_pressed,
+            .reveal_edge = (pressed & BFM_FOREST_TRIANGLE) != 0};
+        return step_summit_transfer(w, read_x, read_y, input);
+    }
     if (w->gateway.active) return tick_gateway(w, read_x, read_y, attack_pressed, jump_pressed, jump_held, circle,
                                               cross_pressed, (pressed & BFM_FOREST_TRIANGLE) != 0);
     if (w->player_control) {
