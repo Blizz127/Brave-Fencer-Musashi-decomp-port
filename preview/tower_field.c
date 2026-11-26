@@ -5,6 +5,7 @@
 #include "tower_camera.h"
 #include "tower_pylons.h"
 #include "tower_figures.h"
+#include "tower_door_lights.h"
 #include "tower_sky.h"
 #include "tower_lightning.h"
 
@@ -17,6 +18,7 @@ struct BfmTowerField {
     BfmTowerFigures *figures;
     BfmTowerSky *sky;
     BfmTowerCircuit *circuit;
+    BfmTowerDoorLights door_lights;
     unsigned entrance, rise_age, submitted_rise[3], face_yaw[3];
 };
 
@@ -43,7 +45,8 @@ BfmTowerField *bfm_tower_field_open(const MusashiDiscMedia *disc,
     size_t bytes = 0;
     const uint8_t *scene = bfm_forest_field_scene(tower->field, &bytes);
     const uint8_t *door = bfm_forest_field_entrance(tower->field, tower->entrance);
-    if (scene && door && bfm_tower_pylons_load(&tower->pylons, scene, bytes) &&
+    if (scene && door && bfm_tower_door_lights_load(&tower->door_lights, scene, bytes) &&
+        bfm_tower_pylons_load(&tower->pylons, scene, bytes) &&
         bfm_tower_camera_load(&tower->camera, door, 36))
         tower->figures = bfm_tower_figures_open(scene, bytes);
     if (tower->figures) {
@@ -158,7 +161,7 @@ int bfm_tower_field_draw(BfmTowerField *tower, const BfmForestCamera *camera,
         !bfm_tower_sky_draw(tower->sky, camera, pixels))
         return 0;
     BfmForestActor actors[BFM_TOWER_FIGURE_ACTORS];
-    BfmForestDustCard cards[BFM_TOWER_LIGHTNING_CARDS + BFM_TOWER_FIGURE_CARDS];
+    BfmForestDustCard cards[BFM_TOWER_LIGHTNING_CARDS + BFM_TOWER_FIGURE_CARDS + BFM_TOWER_DOOR_CARDS];
     const BfmTowerPylonFrame *posts = tower->pylons.history[field_tick % 3];
     size_t count = bfm_tower_figures_actors(tower->figures, field_tick, posts,
                                             tower->submitted_rise[field_tick % 3], tower->face_yaw[field_tick % 3], actors, BFM_TOWER_FIGURE_ACTORS);
@@ -169,6 +172,9 @@ int bfm_tower_field_draw(BfmTowerField *tower, const BfmForestCamera *camera,
     size_t arcs = bfm_tower_lightning_cards(tower->circuit, 2, camera, cards, BFM_TOWER_LIGHTNING_CARDS);
     size_t glows = bfm_tower_figures_cards(tower->figures, field_tick, posts, field_tick & 1u,
                                           tower->submitted_rise[field_tick % 3], camera, cards + arcs, BFM_TOWER_FIGURE_CARDS);
+    size_t used = arcs + glows;
+    if (tower->submitted_rise[field_tick % 3] >= BFM_TOWER_RELEASE)
+        used += bfm_tower_door_light_cards(&tower->door_lights, camera, cards + used);
     return bfm_forest_draw_room(tower->field, camera, pose, root, visible_parts, field_tick & 1u, blade,
-                                actors, count, cards, arcs + glows, pixels);
+                                actors, count, cards, used, pixels);
 }

@@ -122,6 +122,7 @@ add_executable(musashi_native_boot
     tower_stun_cast.c
     tower_summit_lesson.c
     tower_figures.c
+    tower_door_lights.c
     tower_pylons.c
     tower_press_effect.c
     tower_lightning.c
