@@ -944,6 +944,7 @@ int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
     for (size_t i = 0; i < BFM_STEAM_ARMOR_PLATES; ++i)
         count += bfm_forest_damage_digits_project(&s->numbers[i].digits, &camera, cards + count);
     for (size_t i = 0; i < count; ++i) cards[i].slot = (unsigned)i;
+    if (bfm_steam_hero_mace_hidden(s->hero)) visible = 0;
     if (!bfm_steam_knight_field_draw(s->field, &camera, pose, root, visible,
             has_blade ? &s->weapons.fusion : NULL, has_blade ? &blade : NULL, s->event.age & 1,
             actors, actor_count, cards, count, pixels)) return 0;

@@ -21,6 +21,7 @@ struct BfmSteamKnightHeroMotion {
     BfmForestHurt mace_reaction;
     uint16_t mace_damage;
     int mace_recovered;
+    unsigned mace_blink_history;
     const BfmForestLiftData *lift_data;
     BfmForestLift lift;
     BfmLiftStep lift_step;
@@ -449,8 +450,10 @@ static int mace_step(BfmSteamKnightHeroMotion *h)
 int bfm_steam_hero_mace_debit(BfmSteamKnightHeroMotion *h, BfmForestStatus *player)
 {
     if (!h || !player) return -1;
+    h->mace_blink_history = (h->mace_blink_history << 1) & 7u;
     if (!h->mace_recovered) {
         if (h->actor.field_a8) --h->actor.field_a8;
+        h->mace_blink_history |= h->actor.field_a8 & 1u;
         return 0;
     }
     unsigned damage = h->mace_damage;
@@ -461,6 +464,12 @@ int bfm_steam_hero_mace_debit(BfmSteamKnightHeroMotion *h, BfmForestStatus *play
     h->mace_recovered = 0;
     h->actor.field_a8 = 32;
     return 1;
+}
+
+int bfm_steam_hero_mace_hidden(const BfmSteamKnightHeroMotion *h)
+{
+    /* Body submissions retain the protected model state from two updates ago. */
+    return h && (h->mace_blink_history & 4u);
 }
 
 static int recoil_step(BfmSteamKnightHeroMotion *h)

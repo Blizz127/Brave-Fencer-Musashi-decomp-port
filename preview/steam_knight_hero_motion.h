@@ -84,5 +84,7 @@ int bfm_steam_hero_mace_hit(BfmSteamKnightHeroMotion *hero, const MusashiDiscMed
 /* Call once after each ordinary encounter update, including held charge.
  * Returns 1 on the recovery update that debits HP and starts protection. */
 int bfm_steam_hero_mace_debit(BfmSteamKnightHeroMotion *hero, BfmForestStatus *player);
+/* Mask the hero mesh on a protected blink; independent effects keep drawing. */
+int bfm_steam_hero_mace_hidden(const BfmSteamKnightHeroMotion *hero);
 
 #endif
