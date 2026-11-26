@@ -58,6 +58,8 @@ int bfm_forest_draw_ground(BfmForestField *field, const BfmForestCamera *camera,
 int bfm_forest_draw_player(BfmForestField *field, const BfmForestCamera *camera,
                            const BfmForestPose *pose, const BfmForestTransform *root,
                            uint32_t visible_parts, uint32_t pixels[240][320]);
+/* A moving player already inside a soldier keeps his stride while bracing. */
+int bfm_forest_melee_brace(const BfmForestField *field, const int16_t from[3]);
 /* The ordinary field renderer alternates 240-line VRAM draw buffers. Buffer
  * selection affects signed screen coordinates of nearby terrain faces. */
 int bfm_forest_draw_player_buffer(BfmForestField *field, const BfmForestCamera *camera,

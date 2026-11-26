@@ -6,6 +6,7 @@
 #include "forest_upper_trunks.h"
 #include "forest_rifle_wall.h"
 #include "forest_shore.h"
+#include "forest_boulders.h"
 #include "forest_drift.h"
 #include "forest_glow_halo.h"
 #include "forest_glow_figures.h"
@@ -92,7 +93,8 @@ enum {
     FOREST_BANK_ROUNDS = 6 * BFM_FOREST_BANK_RIFLES,
     FOREST_BLADE_TARGETS = FOREST_MELEE_GUARDS + BFM_FOREST_BANK_RIFLES + BFM_FOREST_SHORE_FIGURES,
     FOREST_BANK_BODIES = 4 + FOREST_MELEE_GUARDS + 2 * BFM_FOREST_SHORE_FIGURES,
-    FOREST_ATMOSPHERE_BODIES = BFM_FOREST_GLOWS + BFM_FOREST_BANK_RIFLES + FOREST_BANK_ROUNDS,
+    FOREST_ATMOSPHERE_BODIES = BFM_FOREST_GLOWS + BFM_FOREST_BANK_RIFLES + FOREST_BANK_ROUNDS +
+                               BFM_FOREST_BOULDERS,
     FOREST_FIELD_BODIES = FOREST_BANK_BODIES + FOREST_ATMOSPHERE_BODIES +
                           BFM_FOREST_BRIDGE_TARGET_COUNT + BFM_FOREST_UPPER_TRUNKS
 };
@@ -146,6 +148,7 @@ struct BfmForestField {
     BfmForestShotEffects shot_effects;
     const BfmForestActor *fusion_actor;
     BfmForestGuardBox guard_box;
+    BfmForestBoulders boulders;
     ForestBladeTarget targets[FOREST_BLADE_TARGETS];
     int first_shore_hit;
     BfmForestTrail *trail;
@@ -380,9 +383,61 @@ void bfm_room_walk_grid_free(BfmRoomWalkGrid *walk)
     free(walk);
 }
 
+BfmForestBoulders *bfm_forest_room_boulders(BfmForestField *field)
+{
+    return &field->boulders;
+}
+
+int bfm_forest_melee_brace(const BfmForestField *field, const int16_t from[3])
+{
+    const BfmForestActor *guards[FOREST_MELEE_GUARDS] = {
+        bfm_forest_shore_actor(field->shore), bfm_forest_shore_actor(field->bank_patrol)
+    };
+    int16_t center[3];
+    for (unsigned i = 0; i < FOREST_MELEE_GUARDS; ++i)
+        if (guards[i] && bfm_forest_guard_contact(&field->guard_box, guards[i]->root, from, from, center))
+            return 1;
+    return 0;
+}
+
+static int blocks_boulder(const BfmForestGuardBox *box, const BfmForestActor *actor,
+                         const int16_t from[3], const int16_t to[3])
+{
+    if (!actor) return 0;
+    const int16_t at[3] = {(int16_t)actor->root->translation[0],
+                           (int16_t)actor->root->translation[1],
+                           (int16_t)actor->root->translation[2]};
+    return bfm_forest_boulder_obstruction(box, at, from, to);
+}
+
+int bfm_forest_boulder_path_blocked(BfmForestField *field, unsigned skip,
+                                    const int16_t from[3], const int16_t tip[3])
+{
+    for (unsigned i = 0; i < BFM_FOREST_BOULDERS; ++i) {
+        BfmForestBoulder *other = &field->boulders.placed[i];
+        if (i != skip && other->active &&
+            bfm_forest_boulder_obstruction(&field->boulders.box, other->at, from, tip))
+            return 1;
+    }
+    if (bfm_forest_shore_figures_block_rock(field->shore_figures, from, tip)) return 1;
+    const BfmForestActor *guards[FOREST_MELEE_GUARDS] = {
+        bfm_forest_shore_actor(field->shore), bfm_forest_shore_actor(field->bank_patrol)
+    };
+    for (unsigned i = 0; i < FOREST_MELEE_GUARDS; ++i)
+        if (blocks_boulder(&field->guard_box, guards[i], from, tip))
+            return 1;
+    for (unsigned i = 0; i < BFM_FOREST_BANK_RIFLES; ++i) {
+        const BfmForestActor *rifle = bfm_forest_rifle_actor(field->rifles, i);
+        if (blocks_boulder(&field->guard_box, rifle, from, tip))
+            return 1;
+    }
+    return 0;
+}
+
 void bfm_forest_field_free(BfmForestField *field)
 {
     if (field) {
+        bfm_forest_barrier_art_free(field->boulders.art);
         bfm_forest_rifle_round_art_free(field->round_art);
         bfm_forest_rifles_free(field->rifles);
         bfm_forest_glow_figures_free(field->light_figures);
@@ -484,7 +539,8 @@ BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t roo
         bfm_forest_fall_load(&field->fall, field, read32(descriptor + 0xb4)))
         field->shore = bfm_forest_shore_open(field, scene, bytes, scene_base, descriptor);
     if (field->shore && bfm_forest_guard_box_load(field, &field->guard_box) &&
-        load_blade_targets(field, descriptor)) {
+        load_blade_targets(field, descriptor) &&
+        bfm_forest_boulders_load(&field->boulders, field, read32(descriptor + 0xb8))) {
         load_gateway(field, descriptor);
         field->shore_figures = bfm_forest_shore_figures_open(field);
         field->light_figures = bfm_forest_glow_figures_open(field);
@@ -581,6 +637,7 @@ void bfm_forest_submit_atmosphere(BfmForestField *field, const BfmForestCamera *
         if (bfm_forest_rifle_round_actor(&field->rounds[i], field->round_art, body))
             ++frame->body_count;
     }
+    frame->body_count += bfm_forest_boulders_draw(&field->boulders, frame->bodies + frame->body_count);
     for (unsigned i = 0; i < frame->body_count; ++i) {
         frame->roots[i] = *frame->bodies[i].root;
         frame->bodies[i].root = &frame->roots[i];
@@ -958,6 +1015,7 @@ int bfm_forest_tick_shore_actor_with_run(BfmForestField *field, const int16_t pl
     bfm_forest_fall_set_other_slots(&field->fall, drift_count, drift_count);
     bfm_forest_fall_tick_emitter(&field->fall, run, player);
     bfm_forest_glows_move(&field->lights, player[2], run);
+    bfm_forest_boulders_tick(&field->boulders, player[2]);
     if (bfm_forest_shore_step(field->bank_patrol, field, player, run) == BFM_SHORE_INVALID ||
         bfm_forest_shore_step(field->shore, field, player, run) == BFM_SHORE_INVALID)
         return 0;

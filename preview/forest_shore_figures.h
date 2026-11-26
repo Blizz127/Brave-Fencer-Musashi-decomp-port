@@ -46,6 +46,8 @@ int bfm_forest_shore_figure_contact(BfmForestShoreFigures *figures, unsigned pla
 int bfm_forest_shore_figure_probe(const BfmForestShoreFigures *figures, unsigned placement,
                                  uint16_t flag_mask, const int16_t start[3], const int16_t end[3],
                                  int16_t contact[3]);
+int bfm_forest_shore_figures_block_rock(const BfmForestShoreFigures *figures,
+                                     const int16_t from[3], const int16_t to[3]);
 int bfm_forest_shore_figure_grip_offset(const BfmForestShoreFigures *figures, int16_t out[3]);
 int bfm_forest_shore_figure_grab(BfmForestShoreFigures *figures, unsigned placement,
                                 uint16_t power, int16_t player_yaw);

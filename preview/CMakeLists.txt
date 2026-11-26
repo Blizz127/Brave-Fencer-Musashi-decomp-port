@@ -109,6 +109,8 @@ add_executable(musashi_native_boot
     forest_guard_clip.c
     forest_guard_contact.c
     forest_trail.c
+    forest_boulders.c
+    forest_barrier_art.c
     forest_shore_motion.c
     forest_shore_behavior.c
     forest_shore_response.c

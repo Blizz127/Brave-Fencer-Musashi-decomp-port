@@ -7,6 +7,7 @@
 #include "forest_manual.h"
 #include "forest_swing.h"
 #include "forest_lift.h"
+#include "forest_boulders.h"
 #include "forest_hurt.h"
 #include "forest_shore_figures.h"
 #include "forest_fusion_power.h"
@@ -78,6 +79,7 @@ struct BfmForestWalk {
     BfmForestHud *hud;
     int player_control, input_x, input_y;
     int jump_pressed, jump_held, control_polled;
+    int square_held;
     int attack_pressed, triangle_pressed, swing_sound, hit_sound, swing_connected;
     unsigned swing_age;
     BfmForestSwing swing;
@@ -93,6 +95,7 @@ struct BfmForestWalk {
     BfmForestLiftData lift_data;
     BfmForestLift lift;
     unsigned brace_age;
+    unsigned push_body, push_clock;
     int braced;
     BfmForestFusionPower fusion_power;
     BfmForestLesson lesson;
@@ -435,8 +438,11 @@ static int brace_against_body(BfmForestWalk *w, const int16_t previous[3])
 {
     int16_t from[3] = {previous[0], previous[1] - 16, previous[2]};
     int16_t to[3] = {w->cached[0], w->cached[1] - 16, w->cached[2]}, hit[3];
-    int target = lift_target(w, 0x1800, from, to, hit);
-    if (!target) {
+    int stone = bfm_forest_boulder_contact(bfm_forest_room_boulders(w->field), from, to, hit);
+    int target = stone ? 0 : lift_target(w, 0x1800, from, to, hit);
+    int passing_soldier = !target && !stone && (from[0] != to[0] || from[2] != to[2]) &&
+                          bfm_forest_melee_brace(w->field, from);
+    if (!target && !stone && !passing_soldier) {
         w->braced = 0;
         return 0;
     }
@@ -444,13 +450,80 @@ static int brace_against_body(BfmForestWalk *w, const int16_t previous[3])
         !bfm_forest_lift_load(w->field, w->disc, w->data.animation_table, &w->lift_data)) return -1;
     const BfmLiftMotion *motion = &w->lift_data.motion[BFM_LIFT_BRACE];
     w->brace_age = w->braced ? (w->brace_age + 1) % motion->count : 0;
-    w->braced = 1;
+    w->braced = !stone;
+    if (stone) {
+        w->push_body = (unsigned)stone;
+        w->push_clock = 10;
+        w->actor.state = 9;
+        w->actor.phase = 1;
+    }
+    if (passing_soldier) return select_pose(w, motion->frames[w->brace_age], w->walk.visible) ? 1 : -1;
     w->cached[0] = hit[0];
     w->cached[2] = hit[2];
     for (unsigned axis = 0; axis < 3; axis += 2)
         w->actor.position[axis] = ((uint32_t)(uint16_t)hit[axis] << 16) |
                                   (w->actor.position[axis] & 0xffffu);
     return select_pose(w, motion->frames[w->brace_age], w->walk.visible) ? 1 : -1;
+}
+
+static void restore_whole_position(BfmForestWalk *w, const int16_t at[3])
+{
+    for (unsigned axis = 0; axis < 3; ++axis) {
+        w->cached[axis] = at[axis];
+        w->actor.position[axis] = ((uint32_t)(uint16_t)at[axis] << 16) |
+                                  (w->actor.position[axis] & 0xffffu);
+    }
+}
+
+static int finish_boulder_push(BfmForestWalk *w)
+{
+    w->push_body = 0;
+    w->actor.state = 0;
+    w->actor.phase = 1;
+    w->manual = (BfmForestManual){0};
+    w->actor.field_2c.word = 0;
+    memset(w->actor.velocity, 0, sizeof w->actor.velocity);
+    w->motion = IDLE;
+    w->elapsed = 0;
+    return update_pose(w);
+}
+
+static int tick_boulder_push(BfmForestWalk *w, int x, int y, int square)
+{
+    const BfmLiftMotion *clip = &w->lift_data.motion[BFM_LIFT_BRACE];
+    int16_t heading = w->yaw;
+    int directed = (x || y) && bfm_forest_manual_heading(&w->camera, x, y, &heading);
+    if (w->actor.phase == 1) {
+        if (!directed && !square) return finish_boulder_push(w);
+        memset(w->actor.velocity, 0, sizeof w->actor.velocity);
+        if (!--w->push_clock) {
+            if (directed) w->yaw = (int16_t)(((unsigned)heading + 250) & 0xff8u);
+            w->push_clock = 20;
+            w->actor.phase = 2;
+        }
+    } else {
+        if (w->actor.phase == 3 && !directed && !square) return finish_boulder_push(w);
+        if (w->actor.phase == 3 && directed)
+            w->yaw = (int16_t)(((unsigned)heading + 250) & 0xff8u);
+        int16_t before[3];
+        memcpy(before, w->cached, sizeof before);
+        int32_t speed = bfm_forest_room_boulders(w->field)->forward_speed;
+        if (!bfm_forest_carry_step(w->field, &w->actor, w->yaw, speed, w->cached))
+            return finish_boulder_push(w);
+        int16_t from[3] = {before[0], (int16_t)(before[1] - 16), before[2]};
+        int16_t to[3] = {w->cached[0], (int16_t)(w->cached[1] - 16), w->cached[2]};
+        int result = bfm_forest_boulder_move(w->field, w->push_body - 1, from, to);
+        if (result < 0) return finish_boulder_push(w);
+        if (!result) restore_whole_position(w, before);
+        if (w->actor.phase == 3) {
+            w->push_clock = 20;
+            w->actor.phase = 2;
+        } else if (!--w->push_clock) {
+            w->actor.phase = 3;
+        }
+    }
+    w->brace_age = (w->brace_age + 1) % clip->count;
+    return select_pose(w, clip->frames[w->brace_age], w->walk.visible);
 }
 
 static int start_lift(BfmForestWalk *w)
@@ -794,6 +867,7 @@ static int tick_hurt(BfmForestWalk *w, BfmForestDustEmission *dust)
         if (!release_lift(w, w->actor.state == 13)) return -1;
         w->lift = (BfmForestLift){0};
         w->braced = 0;
+        w->push_body = 0;
         if (!bfm_forest_queue_hurt_number(w->field, w->cached, w->pending_damage)) return -1;
         w->at_boundary = 0;
     }
@@ -820,8 +894,8 @@ static int tick_hurt(BfmForestWalk *w, BfmForestDustEmission *dust)
 }
 
 static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jump_held,
-                       int attack_pressed, int triangle_pressed, int shoulder, GunshotInput circle,
-                       int confirm_edge, int reveal_edge)
+                       int attack_pressed, int square_held, int triangle_pressed, int shoulder,
+                       GunshotInput circle, int confirm_edge, int reveal_edge)
 {
     BfmForestDustEmission dust = BFM_FOREST_DUST_NONE;
     BfmForestHit hits[BFM_FOREST_STRIKE_RAYS] = {0};
@@ -840,7 +914,7 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
         y = script_pad.y;
         jump_pressed = script_pad.cross_pressed;
         jump_held = script_pad.cross_held;
-        attack_pressed = square_edge = triangle_pressed = shoulder = confirm_edge = reveal_edge = 0;
+        attack_pressed = square_held = square_edge = triangle_pressed = shoulder = confirm_edge = reveal_edge = 0;
         circle = (GunshotInput){0};
         if (script_pad.cross_pressed) {
             /* The room ends its scripted stride before the directed jump. */
@@ -857,7 +931,7 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
     if (result <= 0) return result;
     if (result == 1) {
         if (owned) {
-            x = y = jump_pressed = jump_held = attack_pressed = 0;
+            x = y = jump_pressed = jump_held = attack_pressed = square_held = 0;
             if (!w->jump.active && w->actor.state != 5) {
                 if (w->lesson.stage == BFM_LESSON_APPROACH) {
                     int guide = tick_lesson_guide(w);
@@ -907,6 +981,7 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
         int continuing_stride = (x || y) && x == w->stride_x && y == w->stride_y;
         w->stride_x = w->stride_y = 0;
         bfm_forest_fall_begin(&w->jump, &w->manual, &w->actor);
+        int pushing = w->actor.state == 9 && w->push_body;
         int lifting = w->actor.state == 13 || w->actor.state == 14;
         int new_lift = 0;
         int grab_edge = attack_pressed || (triangle_pressed && bfm_gameplay_story_flag(w->gameplay, 0x80));
@@ -919,9 +994,9 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
         }
         int swinging = !lifting && (w->actor.state == 5 ||
                        (!w->jump.active && !jump_pressed && attack_pressed && w->actor.state <= 1));
-        int launched = !lifting && !swinging && !w->jump.active && jump_pressed &&
+        int launched = !pushing && !lifting && !swinging && !w->jump.active && jump_pressed &&
                        bfm_forest_jump_begin(&w->jump, w->field, &w->actor, w->cached);
-        if (!owned && !lifting && !w->jump.active && !swinging) {
+        if (!owned && !pushing && !lifting && !w->jump.active && !swinging) {
             int grounded = tick_ground(w, x, y, 0, &dust);
             if (grounded < 0) return -1;
             if (!grounded && !bfm_forest_fall_begin(&w->jump, &w->manual, &w->actor)) return -1;
@@ -929,7 +1004,9 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
         if (w->jump.active && w->jump.walk_off && !w->stride_poses.visible &&
             !bfm_forest_walkoff_poses_load(w->disc, w->data.animation_table, &w->stride_poses))
             return -1;
-        if (lifting) {
+        if (pushing) {
+            if (!tick_boulder_push(w, x, y, square_held)) return -1;
+        } else if (lifting) {
             if (!new_lift && !tick_lift(w, x, y, attack_pressed, &dust)) return -1;
         } else if (swinging) {
             w->braced = 0;
@@ -1240,6 +1317,8 @@ static int step_controller(BfmForestWalk *w, int x, int y, uint16_t pressed,
     w->shoulder_held = (held & BFM_FOREST_R1) != 0;
     int triangle_pressed = w->triangle_pressed;
     w->triangle_pressed = w->control_polled && (pressed & BFM_FOREST_TRIANGLE);
+    int square_held = w->square_held;
+    w->square_held = w->control_polled && (held & BFM_FOREST_SQUARE);
     int attack_pressed = w->attack_pressed;
     w->attack_pressed = w->control_polled && (pressed & BFM_FOREST_SQUARE);
     w->swing_sound = 0;
@@ -1250,7 +1329,7 @@ static int step_controller(BfmForestWalk *w, int x, int y, uint16_t pressed,
         int16_t before[3];
         memcpy(before, w->cached, sizeof before);
         int advanced = tick_player(w, read_x, read_y, jump_pressed, jump_held, attack_pressed,
-                                   triangle_pressed, shoulder, circle, cross_pressed,
+                                   square_held, triangle_pressed, shoulder, circle, cross_pressed,
                                    (pressed & BFM_FOREST_TRIANGLE) != 0);
         RoomTransferDescriptor destination;
         uint16_t entry;

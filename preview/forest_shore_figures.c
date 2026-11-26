@@ -2,6 +2,7 @@
 #include "forest_shore_figures.h"
 #include "forest_shore_pose.h"
 #include "forest_guard_contact.h"
+#include "forest_boulders.h"
 #include "forest_shore_behavior.h"
 #include "forest_shore_response.h"
 #include "forest_shore_throw.h"
@@ -169,6 +170,19 @@ int bfm_forest_shore_figure_probe(const BfmForestShoreFigures *figures, unsigned
     if (!f->behavior.state || !(f->response.flags & flags)) return 0;
     /* The stance and grab queries use the creature's primary sliding box. */
     return bfm_forest_body_slide(figures->boxes, &f->root, start, end, contact);
+}
+
+int bfm_forest_shore_figures_block_rock(const BfmForestShoreFigures *figures,
+                                     const int16_t from[3], const int16_t to[3])
+{
+    for (unsigned i = 0; i < BFM_FOREST_SHORE_FIGURES; ++i) {
+        const ShoreFigure *figure = &figures->placed[i];
+        if (!figure->behavior.state || !figure->response.flags) continue;
+        for (unsigned box = 0; box < BODY_BOXES; ++box)
+            if (bfm_forest_boulder_obstruction(&figures->boxes[box], figure->at, from, to))
+                return 1;
+    }
+    return 0;
 }
 
 int bfm_forest_shore_figure_grip_offset(const BfmForestShoreFigures *figures, int16_t out[3])
