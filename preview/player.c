@@ -79,6 +79,12 @@ static uint16_t button_mask(unsigned int button) {
     }
 }
 
+/* Digital directions take priority on their axis. Opposing presses cancel. */
+static int field_axis(int negative, int positive, int analog) {
+    if (negative || positive) return 127 * (!!positive - !!negative);
+    return analog * 127 / (analog < 0 ? 32768 : 32767);
+}
+
 static void update_input(Player *p) {
     uint16_t current = p->digital;
     if (p->keys[SDL_SCANCODE_RSHIFT]) current |= BFM_FOREST_R1;
@@ -380,10 +386,13 @@ static int play(Player *p, char *error, size_t size) {
                         unsigned pressed = t == last_logic ? p->pressed : 0;
                         int direction = (pressed & PAD_UP) ? -1 : !!(pressed & PAD_DOWN);
                         int held = (p->held & PAD_UP) ? -1 : !!(p->held & PAD_DOWN);
-                        int horizontal = !!(p->held & PAD_RIGHT) - !!(p->held & PAD_LEFT);
-                        int result = bfm_bedroom_step_directions(p->bedroom,
+                        int x = field_axis(p->keys[SDL_SCANCODE_LEFT] || (p->digital & PAD_LEFT),
+                                           p->keys[SDL_SCANCODE_RIGHT] || (p->digital & PAD_RIGHT), p->axis_x);
+                        int y = field_axis(p->keys[SDL_SCANCODE_UP] || (p->digital & PAD_UP),
+                                           p->keys[SDL_SCANCODE_DOWN] || (p->digital & PAD_DOWN), p->axis_y);
+                        int result = bfm_bedroom_step_axes(p->bedroom,
                                     pressed & (PAD_CIRCLE | PAD_CROSS | PAD_TRIANGLE),
-                                    pressed & PAD_CIRCLE, direction, held, pressed & PAD_CROSS, pressed & PAD_TRIANGLE, horizontal);
+                                    pressed & PAD_CIRCLE, direction, held, pressed & PAD_CROSS, pressed & PAD_TRIANGLE, x, y);
                         if (!result) {
                             snprintf(error, size, "Could not advance the mounted bedroom scene.");
                             return 2;
