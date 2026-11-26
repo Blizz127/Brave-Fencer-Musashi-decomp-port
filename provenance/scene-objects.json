@@ -7973,6 +7973,19 @@
       "origin": "Existing owner-authored MAIN member 12 C independently rebuilt for US SC01 member 77. Selects the player floor probe by comparing current and cached integer coordinates.",
       "source_sha256": "89b4e94b30d27b997d98d31c368653422df41613f74767655553d6b44dabf828",
       "span_sha256": "5b3725203e6953ae8a79b738d2f5db2e3550e9c162251dd8b1d4d20680b64d8d"
+    },
+    {
+      "name": "func_8012C890",
+      "region": "sc01_0077",
+      "vram": 2148714640,
+      "size": 596,
+      "source": "src/overlays/sc01_0077/8012c890.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Owner clean-room reconstruction from US SC01 member 77 and the published SC01 member 5 placement constructor. Initializes the actor, runs its kind-specific setup and applies the model transform or rolls back the placement.",
+      "source_sha256": "544dacbb4af687d363fb22da4702f2923d707c5bd0b804194fd3240d9e4226aa",
+      "span_sha256": "886c86272c3e0221cb1485f9482129c752b388856fb77fcf49a09ef2692208fd"
     }
   ]
 }
