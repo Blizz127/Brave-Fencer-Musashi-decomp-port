@@ -135,6 +135,20 @@ static int plate_contact(BfmSteamKnight *s, uint16_t amount)
     return damage_number(s, s->hit.point, amount);
 }
 
+static int core_attachment(const BfmSteamKnight *s, BfmForestTransform *attachment, int *exposed)
+{
+    int waist = s->weak_stage == 2;
+    unsigned extension = waist ? 24 : 0;
+    unsigned key, held_updates;
+    int recovering = 0;
+    if (waist && bfm_steam_knight_machine_knee_pose(s->machine, &key, &held_updates, &recovering)) {
+        extension = recovering ? bfm_steam_knight_core_rise_extension(key) :
+                    bfm_steam_knight_core_kneel_extension(held_updates, s->weak_age);
+    }
+    if (exposed) *exposed = waist && !extension && !recovering;
+    return bfm_steam_knight_core_transform(s->machine, waist, extension, attachment);
+}
+
 static int core_contact(BfmSteamKnight *s, const BfmSteamKnightHeroStrike *strike,
                         uint16_t amount)
 {
@@ -142,15 +156,7 @@ static int core_contact(BfmSteamKnight *s, const BfmSteamKnightHeroStrike *strik
     BfmSteamKnightCoreState body = {s->round, s->body_stage, s->weak_stage,
                                     s->battle_flags, (int)s->core_hp, (int)s->core_max};
     BfmForestTransform attachment;
-    unsigned key, held_updates;
-    int recovering;
-    if (!bfm_steam_knight_machine_knee_pose(s->machine, &key, &held_updates, &recovering))
-        return 0;
-    if (recovering) return 1;
-    unsigned extension = s->weak_stage == 2 ?
-        bfm_steam_knight_core_kneel_extension(held_updates, s->weak_age) : 0;
-    if (!bfm_steam_knight_core_transform(s->machine, s->weak_stage == 2,
-                                         extension, &attachment)) return 0;
+    if (!core_attachment(s, &attachment, NULL)) return 0;
     BfmSteamKnightCoreHit hit;
     if (!bfm_steam_knight_core_strike(&body, &s->core_struck, &s->core_boxes,
             &attachment, strike->from, strike->ends, strike->count, amount, &hit)) return 1;
@@ -220,6 +226,7 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
         s->weak_stage = 2;
         s->weak_age = 0;
         s->battle_flags |= 2;
+        bfm_steam_knight_machine_open_cover(s->machine);
     } else if (s->weak_stage == 2 && s->weak_age < 47) {
         ++s->weak_age;
     }
@@ -231,7 +238,9 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
         else if (s->numbers[i].digits.amount) bfm_forest_damage_digits_advance(&s->numbers[i].digits);
     }
     int16_t previous[3], machine_position[3];
-    memcpy(previous, bfm_steam_hero_sample(s->hero)->feet, sizeof previous);
+    const BfmSteamKnightHeroSample *player = bfm_steam_hero_sample(s->hero);
+    unsigned previous_action = player->action;
+    memcpy(previous, player->feet, sizeof previous);
     if (!bfm_steam_knight_machine_world_root(s->machine, machine_position)) return -1;
     bfm_steam_knight_field_track_arena(s->field, s->round, s->body_stage, previous, machine_position);
     BfmForestCamera camera;
@@ -240,6 +249,8 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
         bfm_steam_carry_try_grab(&s->carry, s->hero, pressed);
     BfmSteamKnightHeroStrike strike;
     if (!bfm_steam_hero_tick(s->hero, &camera, x, y, pressed, held, &strike)) return -1;
+    if (previous_action == 13 && player->action == 14)
+        bfm_forest_status_spend_bp(&e->run->player, 4);
     if (s->body_stage == 8 && !bfm_steam_carry_check_brace(&s->carry, s->hero, previous))
         return -1;
     if (strike.issued) {
@@ -267,6 +278,7 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
     }
     if ((s->body_stage == 8 || s->body_stage == 9 || s->body_stage == 10) &&
         !transfer_tick(s)) return -1;
+    bfm_steam_knight_boss_hud_tick(&s->boss_hud, s->core_hp);
     return 1;
 }
 
@@ -456,10 +468,19 @@ int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
     if (!actor_count)
         actor_count = bfm_steam_knight_machine_actors(s->machine, actors, sizeof actors / sizeof actors[0]);
     BfmForestDustCard cards[BFM_STEAM_ENTRY_LIGHT_CARDS + BFM_STEAM_FLAMES + BFM_STEAM_WEAPON_CARDS
+                            + BFM_STEAM_WEAK_HALO_CARDS
                             + BFM_STEAM_ARMOR_PLATES * BFM_FOREST_DAMAGE_DIGIT_CARDS];
     size_t count = s->event.shot == BFM_STEAM_ENTRY_CAMERA
                  ? bfm_steam_entry_light(&camera, s->event.age, cards) : 0;
     count += bfm_steam_knight_flames_project(&s->flames, &camera, cards + count);
+    if (s->weak_stage == 2 && s->body_stage == 11) {
+        BfmForestTransform core;
+        int exposed;
+        if (!core_attachment(s, &core, &exposed)) return 0;
+        if (exposed)
+            count += bfm_steam_knight_machine_weak_halo(&core, &camera, cards + count,
+                                                       BFM_STEAM_WEAK_HALO_CARDS);
+    }
     BfmForestBladeFrame blade;
     int has_blade;
     count += bfm_steam_weapons_project(&s->weapons, &camera, root, visible, fusion, lumina,
@@ -475,7 +496,7 @@ int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
     const uint16_t (*tiles)[1024] = bfm_forest_terrain_tiles(bfm_steam_knight_field_terrain(s->field));
     if (bfm_steam_event_title(&s->event)) bfm_steam_knight_boss_title(tiles, pixels);
     if (s->event.stage == BFM_STEAM_DUEL)
-        bfm_steam_knight_boss_status(&s->boss_hud, tiles, s->core_hp, s->event.stage_age, pixels);
+        bfm_steam_knight_boss_status(&s->boss_hud, tiles, s->event.stage_age, pixels);
     if (s->event.message) {
         const BfmForestMessageFrame *frame = bfm_forest_message_frame(s->event.message);
         bfm_bedroom_message_art_draw_side(s->art, frame, 160, 0, pixels);

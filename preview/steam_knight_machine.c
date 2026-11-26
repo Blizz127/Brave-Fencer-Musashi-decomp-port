@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "steam_knight_machine.h"
+#include "forest_dust.h"
+#include <math.h>
 #include "../pc_port/forest_player_bytes.h"
 #include <stdlib.h>
 
@@ -39,7 +41,7 @@ struct BfmSteamKnightMachine {
     uint32_t broken_shells;
     uint64_t shell_change_at[4];
     unsigned opening_attacks;
-    int knee_seen, new_break_in_strike, walk_after_strike;
+    int knee_seen, new_break_in_strike, walk_after_strike, open_cover;
     BfmSteamKnightStance action;
     int step_x, step_z, patrol_after_recovery;
     unsigned neutral_since, round, round_stage, phase_age;
@@ -475,6 +477,7 @@ size_t bfm_steam_knight_machine_actors(const BfmSteamKnightMachine *machine,
             .root = &machine->display_root, .visible_parts = (UINT32_C(1) << model[i].parts) - 1};
     if (machine->control_age >= machine->shell_white_from && machine->control_age < machine->shell_white_until)
         out[CHASSIS].mesh = machine->white_chassis;
+    if (machine->open_cover) out[CHASSIS].visible_parts &= ~UINT32_C(1);
     if (machine->broken_shells && capacity > ASSEMBLIES) {
         static const unsigned joints[] = {13, 14, 18, 19};
         uint32_t slots = 0;
@@ -551,9 +554,58 @@ int bfm_steam_knight_machine_reset_round(BfmSteamKnightMachine *machine, unsigne
     machine->neutral_since = machine->control_age;
     /* The first transfer rearms both legs. The street retains the damage. */
     if (round != 2) machine->broken_shells = 0;
+    if (!round) machine->open_cover = 0;
     machine->shell_white_from = machine->shell_white_until = 0;
     bfm_steam_knight_machine_present(machine, machine->control_age);
     return 1;
+}
+
+void bfm_steam_knight_machine_open_cover(BfmSteamKnightMachine *machine)
+{
+    if (machine && machine->controlled) machine->open_cover = 1;
+}
+
+int bfm_steam_knight_machine_weak_tip(const BfmForestTransform *child, int16_t world[3])
+{
+    if (!child || !world) return 0;
+    for (unsigned i = 0; i < 3; ++i) {
+        int local = 22 * child->rotation[i][1] - 108 * child->rotation[i][2];
+        int64_t point = (int64_t)child->translation[i] + (local >> 12);
+        if (point < INT16_MIN || point > INT16_MAX) return 0;
+        world[i] = (int16_t)point;
+    }
+    return 1;
+}
+
+size_t bfm_steam_knight_machine_weak_halo(const BfmForestTransform *child,
+    const BfmForestCamera *camera, BfmForestDustCard *cards, size_t capacity)
+{
+    if (!camera || !cards || capacity < BFM_STEAM_WEAK_HALO_CARDS) return 0;
+    int16_t points[4][3];
+    if (!bfm_steam_knight_machine_weak_tip(child, points[0])) return 0;
+    for (unsigned k = 1; k < 4; ++k)
+        for (unsigned i = 0; i < 3; ++i) points[k][i] = points[0][i];
+    BfmForestDustCard projected = {0};
+    if (!bfm_forest_project_effect_quad(camera, points, &projected) || !projected.bucket ||
+        projected.bucket >= 4096) return 0;
+    /* Two visible original openings give radii of 42.35 and 42.52 world
+     * units. Approximate their additive, linearly fading green light. */
+    double radius = 42.5 * camera->projection / (4 * projected.bucket);
+    int x = projected.vertices[0].x, y = projected.vertices[0].y;
+    BfmForestRasterVertex edge[BFM_STEAM_WEAK_HALO_CARDS];
+    for (unsigned i = 0; i < BFM_STEAM_WEAK_HALO_CARDS; ++i) {
+        double angle = 6.283185307179586 * i / BFM_STEAM_WEAK_HALO_CARDS;
+        edge[i] = (BfmForestRasterVertex){
+            .x = x + (int)lround(radius * cos(angle)), .y = y + (int)lround(radius * sin(angle))
+        };
+    }
+    for (unsigned i = 0; i < BFM_STEAM_WEAK_HALO_CARDS; ++i) {
+        cards[i] = (BfmForestDustCard){.slot = i, .bucket = projected.bucket,
+            .material = {.page = 1u << 5, .count = 3, .translucent = 1},
+            .vertices = {{.x = x, .y = y, .rgb = UINT32_C(0x00e038)}, edge[i],
+                         edge[(i + 1) % BFM_STEAM_WEAK_HALO_CARDS]}};
+    }
+    return BFM_STEAM_WEAK_HALO_CARDS;
 }
 
 int bfm_steam_knight_machine_knee_pose(const BfmSteamKnightMachine *machine,

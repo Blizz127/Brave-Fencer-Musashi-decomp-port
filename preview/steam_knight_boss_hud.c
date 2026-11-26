@@ -3,6 +3,8 @@
 #include "forest_raster.h"
 #include "../pc_port/forest_player_bytes.h"
 
+enum { GAUGE_WIDTH = 96, GAUGE_STEP = 3 };
+
 void bfm_steam_knight_boss_title(const uint16_t tiles[512][1024],
                                  uint32_t pixels[240][320])
 {
@@ -35,7 +37,9 @@ int bfm_steam_knight_boss_hud_load(BfmSteamKnightBossHud *hud, const MusashiDisc
     size_t file_size;
     if (!musashi_disc_media_read_root_range(disc, "SLUS_007.26", alphabet_offset,
                                              alphabet, sizeof alphabet, &file_size)) return 0;
-    BfmSteamKnightBossHud parsed = {0};
+    BfmSteamKnightBossHud parsed = {
+        .drawn_width = GAUGE_WIDTH, .queued_width = GAUGE_WIDTH, .current_width = GAUGE_WIDTH
+    };
     size_t off = address - origin;
     while (off < size && scene[off]) {
         if (size - off < 2 || parsed.count == sizeof parsed.name / sizeof parsed.name[0]) return 0;
@@ -104,13 +108,30 @@ static void bar_region(BfmForestRaster *surface, unsigned start, unsigned end)
     bfm_field_raster_face(surface, &m, corners);
 }
 
+void bfm_steam_knight_boss_hud_tick(BfmSteamKnightBossHud *hud, unsigned body_hp)
+{
+    if (!hud) return;
+    unsigned target = body_hp / 2;
+    if (target > GAUGE_WIDTH) target = GAUGE_WIDTH;
+    if (body_hp == 1) target = 1;
+
+    /* The field presents each gauge value two battle updates later. */
+    hud->drawn_width = hud->queued_width;
+    hud->queued_width = hud->current_width;
+    if (target > hud->current_width + GAUGE_STEP)
+        hud->current_width += GAUGE_STEP;
+    else if (hud->current_width > target + GAUGE_STEP)
+        hud->current_width -= GAUGE_STEP;
+    else
+        hud->current_width = target;
+}
+
 void bfm_steam_knight_boss_status(const BfmSteamKnightBossHud *hud, const uint16_t tiles[512][1024],
-                                  unsigned body_hp, unsigned age, uint32_t pixels[240][320])
+                                  unsigned age, uint32_t pixels[240][320])
 {
     if (!hud || !tiles || !pixels || age < 3) return;
-    const unsigned capacity = 192;
-    unsigned shown = age - 2 < capacity / 3 ? 3 * (age - 2) : capacity;
-    unsigned width = (body_hp < shown ? body_hp : shown) / 2;
+    unsigned opening_width = age < 66 ? 3 * (age - 2) / 2 : GAUGE_WIDTH;
+    unsigned width = hud->drawn_width < opening_width ? hud->drawn_width : opening_width;
     /* The shadow follows the same seven scanlines, five pixels right and
      * four down from the filled slanted bar. Its dither depends on the field pixel. */
     for (int row = 0; row < 7; ++row) {

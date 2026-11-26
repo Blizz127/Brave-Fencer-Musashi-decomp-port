@@ -40,6 +40,12 @@ int bfm_steam_knight_machine_root_q12(const BfmSteamKnightMachine *machine, int3
 int bfm_steam_knight_machine_round_pose(BfmSteamKnightMachine *machine, unsigned stage,
                                        unsigned round, unsigned active_age);
 int bfm_steam_knight_machine_reset_round(BfmSteamKnightMachine *machine, unsigned round);
+enum { BFM_STEAM_WEAK_HALO_CARDS = 12 };
+int bfm_steam_knight_machine_weak_tip(const BfmForestTransform *child, int16_t world[3]);
+size_t bfm_steam_knight_machine_weak_halo(const BfmForestTransform *child,
+    const BfmForestCamera *camera, struct BfmForestDustCard *cards, size_t capacity);
+/* The detached front cover no longer occupies its original chassis joint. */
+void bfm_steam_knight_machine_open_cover(BfmSteamKnightMachine *machine);
 /* Sample the physical knee key before the display delay. hold_age starts
  * at zero when the terminal key is first selected. */
 int bfm_steam_knight_machine_knee_pose(const BfmSteamKnightMachine *machine,
