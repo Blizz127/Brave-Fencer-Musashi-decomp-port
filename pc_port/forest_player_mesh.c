@@ -25,6 +25,7 @@ struct MusashiForestPlayerMesh {
 typedef struct {
     const uint8_t *vertices, *normals, *primitives;
     size_t vertex_count, normal_count, face_count;
+    int flat_vertex_inks;
 } SourcePart;
 
 static int component_offsets(const uint8_t table[TABLE_BYTES], size_t offsets[MUSASHI_FOREST_PLAYER_PARTS+1]) {
@@ -40,11 +41,15 @@ static int component_offsets(const uint8_t table[TABLE_BYTES], size_t offsets[MU
     return 1;
 }
 
-static int source_part(const uint8_t *p, size_t bytes, SourcePart *out) {
+static int source_part(const uint8_t *p, size_t bytes, int scene_materials, SourcePart *out) {
     /* On disc each component is one unmapped object. Its three table offsets
      * are relative to the object directory, twelve bytes after the header. */
     if (bytes < HEADER_BYTES || u32le(p) != 0x41 || u32le(p+4) ||
-        u32le(p+8) != 1 || u32le(p+36)) return 0;
+        u32le(p+8) != 1) return 0;
+    /* The near-bank model and its companion mark each object with scale -1.
+     * Their mounted vertices are already expressed in the room's model units. */
+    uint32_t scale = u32le(p+36);
+    if (scale && !(scene_materials && scale == UINT32_MAX)) return 0;
     size_t vertices = u32le(p+12), normals = u32le(p+20), primitives = u32le(p+28);
     size_t nv = u32le(p+16), nn = u32le(p+24), nf = u32le(p+32);
     size_t extent = bytes - 12;
@@ -52,7 +57,7 @@ static int source_part(const uint8_t *p, size_t bytes, SourcePart *out) {
         normals >= extent || !nv || !nn || !nf || nf > (vertices-primitives)/4 ||
         (normals-vertices)%8 || nv != (normals-vertices)/8 ||
         (extent-normals)%8 || nn != (extent-normals)/8) return 0;
-    *out = (SourcePart){p+12+vertices, p+12+normals, p+12+primitives, nv, nn, nf};
+    *out = (SourcePart){p+12+vertices, p+12+normals, p+12+primitives, nv, nn, nf, scale == UINT32_MAX};
     return 1;
 }
 
@@ -71,14 +76,17 @@ static int decode_faces(const SourcePart *part, MusashiForestPlayerFace *out, in
         int vertex_inks = !!(p[2] & 4);
         unsigned prefix = (textured || vertex_inks) ? n : 1;
         unsigned input = prefix + (gouraud ? n : (n+2)/2);
-        unsigned output = 1 + n + (textured ? n : 0) + (gouraud ? n-1 : 0);
+        unsigned output = 1 + n + (textured ? n : 0) + (gouraud || vertex_inks ? n-1 : 0);
         size_t length = (size_t)(input+1)*4;
         unsigned allowed_bits = scene_materials ? 0x1e : 0x1c;
         if ((mode & ~allowed_bits) != 0x20 || mode == 0x24 ||
-            (p[2] && (!scene_materials || p[2] != 4 || textured || !gouraud)) ||
+            (p[2] && (!scene_materials || p[2] != 4 || textured ||
+                      (!gouraud && !part->flat_vertex_inks))) ||
             p[0] != output || p[1] != input || length > available) return 0;
         MusashiForestPlayerFace face = {0};
-        face.mode = (uint8_t)mode;
+        /* Distinct vertex inks require Gouraud output even when all the
+         * corners share one normal in the input record. */
+        face.mode = (uint8_t)(vertex_inks ? mode | 16u : mode);
         face.corners = (uint8_t)n;
         const uint8_t *body = p+4, *indices = body+4*prefix;
         if (textured) {
@@ -111,7 +119,7 @@ static MusashiForestPlayerMesh *decode_mesh(const uint8_t *block, const size_t *
     size_t vectors = 0, faces = 0;
     for (unsigned i = 0; i < count; ++i) {
         const uint8_t *p = block + (offsets[i]-offsets[0]);
-        if (!source_part(p, offsets[i+1]-offsets[i], source+i)) return NULL;
+        if (!source_part(p, offsets[i+1]-offsets[i], scene_materials, source+i)) return NULL;
         vectors += source[i].vertex_count + source[i].normal_count;
         faces += source[i].face_count;
     }

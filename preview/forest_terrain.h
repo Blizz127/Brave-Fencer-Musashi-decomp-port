@@ -46,4 +46,38 @@ int bfm_forest_terrain_draw_entrance(BfmForestTerrain *terrain, const BfmForestC
                                   const BfmForestTransform *root, uint32_t visible_parts,
                                   const BfmForestBlade *blade, unsigned buffer, const BfmForestBladeFrame *frame,
                                   uint32_t pixels[240][320]);
+/* A second room-mounted model shares the player's field camera, lighting and
+ * depth ordering. Mesh, root and local transforms are borrowed for this draw. */
+typedef struct {
+    const MusashiForestPlayerMesh *mesh;
+    const BfmForestPose *pose;
+    const BfmForestTransform *root;
+    uint32_t visible_parts;
+} BfmForestActor;
+
+int bfm_forest_terrain_draw_entrance_with_actor(BfmForestTerrain *terrain,
+                                  const BfmForestCamera *camera,
+                                  const MusashiForestPlayerMesh *player, const BfmForestPose *pose,
+                                  const BfmForestTransform *root, uint32_t visible_parts,
+                                  const BfmForestBlade *blade, unsigned buffer,
+                                  const BfmForestBladeFrame *frame, const BfmForestActor *actor,
+                                  uint32_t pixels[240][320]);
+/* The forest actor pool has 96 slots. All supplied models share one depth sort. */
+enum { BFM_FOREST_ACTOR_LIMIT = 96 };
+int bfm_forest_terrain_draw_entrance_with_actors(BfmForestTerrain *terrain,
+                                  const BfmForestCamera *camera,
+                                  const MusashiForestPlayerMesh *player, const BfmForestPose *pose,
+                                  const BfmForestTransform *root, uint32_t visible_parts,
+                                  const BfmForestBlade *blade, unsigned buffer,
+                                  const BfmForestBladeFrame *frame, const BfmForestActor *actors,
+                                  size_t actor_count, uint32_t pixels[240][320]);
+struct BfmForestDustCard;
+int bfm_forest_terrain_draw_entrance_with_effects(BfmForestTerrain *terrain,
+                                  const BfmForestCamera *camera,
+                                  const MusashiForestPlayerMesh *player, const BfmForestPose *pose,
+                                  const BfmForestTransform *root, uint32_t visible_parts,
+                                  const BfmForestBlade *blade, unsigned buffer,
+                                  const BfmForestBladeFrame *frame, const BfmForestActor *actors,
+                                  size_t actor_count, const struct BfmForestDustCard *cards,
+                                  size_t card_count, uint32_t pixels[240][320]);
 #endif

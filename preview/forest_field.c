@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "forest_field.h"
+#include "forest_shore.h"
+#include "forest_shore_figures.h"
 #include "forest_opening_data.h"
 #include "forest_message_art.h"
 #include "forest_floor.h"
@@ -30,8 +32,12 @@ typedef struct {
 struct BfmForestField {
     FloorGrid grid;
     const FloorPlane *first_descent;
-    int bank_start_z, bank_end_z;
+    int bank_start_z, bank_end_z, bank_height;
+    unsigned far_bank_cells;
     BfmForestBlade blade;
+    BfmForestDust dust;
+    BfmForestShore *shore;
+    BfmForestShoreFigures *shore_figures;
     BfmForestOpeningData opening;
     uint8_t *scene;
     size_t scene_size;
@@ -224,6 +230,8 @@ static int load_grid(FloorGrid *grid, const uint8_t *scene, size_t size,
 void bfm_forest_field_free(BfmForestField *field)
 {
     if (field) {
+        bfm_forest_shore_figures_free(field->shore_figures);
+        bfm_forest_shore_free(field->shore);
         bfm_forest_terrain_free(field->terrain);
         free(field->scene);
         free(field->grid.cells);
@@ -266,10 +274,14 @@ BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t roo
     if (field) {
         field->scene = scene;
         field->scene_size = bytes;
+        if (field->player)
+            field->shore = bfm_forest_shore_open(field, scene, bytes, scene_base, descriptor);
+        if (field->shore)
+            field->shore_figures = bfm_forest_shore_figures_open(field);
     } else {
         free(scene);
     }
-    if (field && !field->player) {
+    if (field && (!field->shore_figures || !bfm_forest_dust_load(&field->dust, disc))) {
         bfm_forest_field_free(field);
         field = NULL;
     }
@@ -297,13 +309,37 @@ int bfm_forest_draw_player_buffer(BfmForestField *field, const BfmForestCamera *
                          field->player, pose, root, visible_parts, buffer, pixels);
 }
 
+void bfm_forest_tick_dust(BfmForestField *field, BfmForestDustEmission event,
+                          const int16_t player[3], const int32_t camera_eye[3], int yaw)
+{
+    bfm_forest_dust_tick(&field->dust, event, player, camera_eye, yaw);
+}
+
+int bfm_forest_tick_shore_actor(BfmForestField *field, const int16_t player[3])
+{
+    if (!field || !player || bfm_forest_shore_step(field->shore, field, player) == BFM_SHORE_INVALID)
+        return 0;
+    bfm_forest_shore_figures_tick(field->shore_figures, player);
+    return 1;
+}
+
 int bfm_forest_draw_entrance_player(BfmForestField *field, const BfmForestCamera *camera,
                            const BfmForestPose *pose, const BfmForestTransform *root,
                            uint32_t visible_parts, unsigned buffer, const BfmForestBladeFrame *frame,
                            uint32_t pixels[240][320])
 {
-    return field && pose && root && bfm_forest_terrain_draw_entrance(field->terrain, camera,
-               field->player, pose, root, visible_parts, &field->blade, buffer, frame, pixels);
+    if (!field || !pose || !root) return 0;
+    BfmForestActor actors[5];
+    size_t count = bfm_forest_shore_figures_actors(field->shore_figures, actors, 4);
+    const BfmForestActor *guard = bfm_forest_shore_actor(field->shore);
+    if (guard) actors[count++] = *guard;
+    BfmForestDustCard cards[BFM_FOREST_EFFECT_CARDS];
+    unsigned card_count = bfm_forest_dust_project(&field->dust, camera, cards);
+    if (bfm_forest_marker_project(bfm_forest_shore_marker(field->shore), camera,
+                                  &cards[card_count])) ++card_count;
+    return bfm_forest_terrain_draw_entrance_with_effects(field->terrain, camera,
+               field->player, pose, root, visible_parts, &field->blade, buffer, frame,
+               actors, count, cards, card_count, pixels);
 }
 
 const MusashiForestPlayerPart *bfm_forest_player_part(const BfmForestField *field,
@@ -581,6 +617,7 @@ static void load_entrance_descent(BfmForestField *field)
     if (door->yaw != 2048)
         return;
     int16_t foot[3] = {(s16)door->position[0], (s16)door->position[1], 0};
+    int crossed_creek = 0;
     for (unsigned row = 0; row < field->grid.h; ++row) {
         int z = ((int)field->grid.z0 + (int)row) * 128 - 32768 + 64;
         if (z <= (s16)door->position[2] || z > INT16_MAX)
@@ -599,8 +636,25 @@ static void load_entrance_descent(BfmForestField *field)
                 field->first_descent = support_plane(&field->grid, contact_cell(&field->grid, foot),
                                                      &ground, foot);
         } else if (field->first_descent) {
+            /* The descent leads to a dry bank, one water cell and a second
+             * flat at the same height. Stop at its next incline. */
+            if (!crossed_creek && z - 64 == field->bank_end_z &&
+                field->bank_start_z < field->bank_end_z &&
+                ground.flags == 2 && ground.slope == 0x2000 &&
+                !ground.normal[0] && !ground.normal[2] &&
+                ground.height > field->bank_height) {
+                crossed_creek = 1;
+                continue;
+            }
             if (!corridor_ground(&ground) || ground.normal[2])
                 break;
+            if (crossed_creek) {
+                if (ground.height != field->bank_height)
+                    break;
+                ++field->far_bank_cells;
+                continue;
+            }
+            field->bank_height = ground.height;
             if (field->bank_start_z == field->bank_end_z)
                 field->bank_start_z = z - 64;
             field->bank_end_z = z + 64;
@@ -614,10 +668,16 @@ static int creek_approach(const BfmForestField *field, const int16_t from[3],
                           const int16_t to[3])
 {
     int x = (s16)field->entrances[0].position[0];
-    return field->bank_start_z < field->bank_end_z && same_grid_index(from[0], x) &&
-           same_grid_index(to[0], x) && from[2] >= field->bank_start_z &&
-           from[2] <= field->bank_end_z && to[2] >= field->bank_start_z &&
-           to[2] <= field->bank_end_z;
+    if (field->bank_start_z >= field->bank_end_z || !same_grid_index(from[0], x) ||
+        !same_grid_index(to[0], x))
+        return 0;
+    if (from[2] >= field->bank_start_z && from[2] <= field->bank_end_z &&
+        to[2] >= field->bank_start_z && to[2] <= field->bank_end_z)
+        return 1;
+    int far_start = field->bank_end_z + 128;
+    int far_end = far_start + 128 * (int)field->far_bank_cells;
+    return field->far_bank_cells && from[2] >= far_start && to[2] >= far_start &&
+           from[2] <= far_end && to[2] <= far_end;
 }
 
 static int descent_ground(const BfmForestField *field, const BfmForestContact *ground,
@@ -689,10 +749,47 @@ static int raised_normal(unsigned flags, int nx, int ny, int nz)
            abs(nz) == 1434 && (nx < 0) == (nz < 0);
 }
 
+/* Q16 feet move continuously across a slanted polygon edge. The contact
+ * query still returns integer world coordinates after selecting its face. */
+static double foot_distance(const FloorGrid *grid, FloorPlane plane, const int16_t p[3],
+                            const uint32_t position[3])
+{
+    double distance = (double)signed_distance(grid, plane, p);
+    if (position) {
+        const FloorPoint *n = &grid->verts[plane.v];
+        distance += ((s16)n->x * (double)(u16)position[0] +
+                     (s16)n->y * (double)(u16)position[1] +
+                     (s16)n->z * (double)(u16)position[2]) / 65536.0;
+    }
+    return distance;
+}
+
+static double foot_crossing_margin(const FloorGrid *grid, const FloorFace *face,
+                                     unsigned sides, const int16_t near[3],
+                                     const int16_t far[3], const uint32_t start_pos[3],
+                                     const uint32_t end_pos[3])
+{
+    double start = foot_distance(grid, face->e[0], near, start_pos);
+    double end = foot_distance(grid, face->e[0], far, end_pos);
+    if (start < 0 || end >= 0)
+        return -HUGE_VAL;
+    double time = start / (start - end);
+    double margin = HUGE_VAL;
+    for (unsigned j = 1; j <= sides; ++j) {
+        double first = foot_distance(grid, face->e[j], near, start_pos);
+        double last = foot_distance(grid, face->e[j], far, end_pos);
+        double distance = first + (last - first) * time;
+        if (distance < margin)
+            margin = distance;
+    }
+    return margin;
+}
+
 /* Prefer a polygon containing the crossing over its neighbor whose edge
  * tolerance overlaps the same point at the crest. */
-static const FloorPlane *raised_support(const FloorGrid *grid, ContactCell cell,
-                                        const int16_t near[3], const int16_t far[3])
+static const FloorPlane *raised_motion_support(const FloorGrid *grid, ContactCell cell,
+    const int16_t near[3], const int16_t far[3], const uint32_t start_pos[3],
+    const uint32_t end_pos[3])
 {
     const FloorPlane *edge = NULL;
     for (unsigned i = 0; i < cell.count; ++i) {
@@ -702,7 +799,7 @@ static const FloorPlane *raised_support(const FloorGrid *grid, ContactCell cell,
         if (!raised_normal(face->flags, (s16)v->x, (s16)v->y, (s16)v->z))
             continue;
         unsigned sides = (token & 0x8000) ? 4 : 3;
-        int64_t margin = crossing_margin(grid, face, sides, near, far);
+        double margin = foot_crossing_margin(grid, face, sides, near, far, start_pos, end_pos);
         if (margin >= 0)
             return &face->e[0];
         if (!edge && margin >= -EDGE_TOLERANCE)
@@ -711,8 +808,15 @@ static const FloorPlane *raised_support(const FloorGrid *grid, ContactCell cell,
     return edge;
 }
 
-BfmForestTopStep bfm_forest_raised_step(const BfmForestField *field,
-    const BfmForestContact *previous, const int16_t from[3], int16_t to[3])
+static inline const FloorPlane *raised_support(const FloorGrid *grid, ContactCell cell,
+                                        const int16_t near[3], const int16_t far[3])
+{
+    return raised_motion_support(grid, cell, near, far, NULL, NULL);
+}
+
+BfmForestTopStep bfm_forest_raised_motion(const BfmForestField *field,
+    const BfmForestContact *previous, const int16_t from[3], int16_t to[3],
+    const uint32_t start_pos[3], const uint32_t end_pos[3])
 {
     if (!field || !previous || !from || !to || from[1] != to[1] ||
         abs(from[1] - previous->height) > 4 || previous->slope != 0x2000 ||
@@ -734,11 +838,17 @@ BfmForestTopStep bfm_forest_raised_step(const BfmForestField *field,
         return BFM_FOREST_TOP_BLOCKED;
     int16_t near[3] = {from[0], (int16_t)(from[1] - 4), from[2]};
     far[1] += span + 1;
-    const FloorPlane *plane = raised_support(grid, start, near, far);
+    const FloorPlane *plane = raised_motion_support(grid, start, near, far, start_pos, end_pos);
     if (!plane)
-        plane = raised_support(grid, contact_cell(grid, to), near, far);
-    if (!plane)
+        plane = raised_motion_support(grid, contact_cell(grid, to), near, far, start_pos, end_pos);
+    if (!plane) {
+        BfmForestContact below;
+        if (start_pos && end_pos && far[0] == to[0] && far[2] == to[2] &&
+            bfm_forest_ground(field, far[0], from[1], far[2], &below) &&
+            corridor_ground(&below) && !below.normal[2] && below.height > from[1] + 4)
+            return BFM_FOREST_TOP_FREE;
         return BFM_FOREST_TOP_BLOCKED;
+    }
 
     /* The foot sweeps to the far point below the proposed step. Project onto
      * the contacted surface. Resolve lateral penetration and clearance as
@@ -770,6 +880,12 @@ BfmForestTopStep bfm_forest_raised_step(const BfmForestField *field,
     return result;
 }
 
+BfmForestTopStep bfm_forest_raised_step(const BfmForestField *field,
+    const BfmForestContact *previous, const int16_t from[3], int16_t to[3])
+{
+    return bfm_forest_raised_motion(field, previous, from, to, NULL, NULL);
+}
+
 /* The far foot can already cross the downward incline when the vertical
  * probe at the previous foot still sees the upper flat. At its toe the
  * last sloping update finishes above the lower flat. */
@@ -790,7 +906,7 @@ static int cross_descent(const BfmForestField *field, ContactCell cell,
         u16 token = cell.tokens[i];
         const FloorFace *face = contact_face(grid, token);
         if (face->flags || face->e[0].v != plane->v || face->e[0].d != plane->d ||
-            crossing_margin(grid, face, (token & 0x8000) ? 4 : 3, near, far) < -EDGE_TOLERANCE)
+            foot_crossing_margin(grid, face, (token & 0x8000) ? 4 : 3, near, far, NULL, NULL) < -EDGE_TOLERANCE)
             continue;
         const FloorPoint *n = &grid->verts[plane->v];
         int ny = (s16)n->y, nz = (s16)n->z;
@@ -828,7 +944,7 @@ int bfm_forest_corridor_step(const BfmForestField *field, const BfmForestContact
     if (!cross_descent(field, start, from, clipped)) {
         /* The previous downward probe can retain the slope across its toe.
          * The next sweep has already left it and reaches the lower flat. */
-        if (on_descent && bank) {
+        if (on_descent && creek_approach(field, clipped, clipped)) {
             if (!bfm_forest_ground(field, clipped[0], clipped[1], clipped[2], &ground) ||
                 !corridor_ground(&ground) || ground.normal[2])
                 return 0;
@@ -864,6 +980,46 @@ int bfm_forest_doorway_step(const BfmForestField *field, const int16_t origin[3]
     return 1;
 }
 
+static int creek_cell(const BfmForestField *field, const int16_t p[3])
+{
+    int x = (s16)field->entrances[0].position[0];
+    return field->far_bank_cells && same_grid_index(p[0], x) &&
+           p[2] >= field->bank_end_z && p[2] < field->bank_end_z + 128;
+}
+
+/* The steep sides and water may be below a jump, but cannot land the player.
+ * At lower altitudes, sweep the feet against the bounded floor faces too. */
+static int clears_creek(const BfmForestField *field, const int16_t from[3],
+                        const int16_t end[3], const BfmForestContact *ground)
+{
+    if (!same_grid_index(from[0], end[0]) || ground->height < field->bank_height ||
+        ground->normal[0] || ground->normal[1] >= 0 ||
+        !((ground->flags == 2 && ground->slope == 0x2000 && !ground->normal[2]) ||
+          (!ground->flags && ground->slope == 0x4000 &&
+           abs(ground->normal[2]) == -ground->normal[1])))
+        return 0;
+    if (from[1] < field->bank_height && end[1] < field->bank_height)
+        return 1;
+    BfmForestContact previous;
+    if (end[1] >= ground->height ||
+        !bfm_forest_ground(field, from[0], field->bank_height, from[2], &previous) ||
+        from[1] >= previous.height)
+        return 0;
+    const FloorGrid *grid = &field->grid;
+    ContactCell cell = contact_cell(grid, end);
+    /* The ground reader keeps the feet two units above the plane. */
+    int16_t near[3] = {from[0], (s16)(from[1] + 2), from[2]};
+    int16_t far[3] = {end[0], (s16)(end[1] + 2), end[2]};
+    for (unsigned i = 0; i < cell.count; ++i) {
+        u16 token = cell.tokens[i];
+        const FloorFace *face = contact_face(grid, token);
+        if ((s16)grid->verts[face->e[0].v].y < 0 &&
+            crossing_margin(grid, face, (token & 0x8000) ? 4 : 3, near, far) >= -EDGE_TOLERANCE)
+            return 0;
+    }
+    return 1;
+}
+
 /* Sweep the actor base while it is above the entrance floor. The ordinary
  * downward probe starts above the proposed contact so a thin raised surface
  * is not lost after the feet pass through it. */
@@ -880,10 +1036,31 @@ int bfm_forest_air_step(const BfmForestField *field, const int16_t from[3],
         return 0;
     BfmForestContact ground;
     int16_t upper = end[1] < from[1] ? end[1] : from[1];
+    int creek = creek_cell(field, end);
+    /* A probe starting underwater could see the unmarked bed instead. */
+    if (creek && upper > field->bank_height)
+        upper = (s16)field->bank_height;
     if (!bfm_forest_ground(field, end[0], upper, end[2], &ground) ||
-        ground.slope != 0x2000 || (ground.flags && ground.flags != 0x2000))
+        ((ground.slope != 0x2000 || (ground.flags && ground.flags != 0x2000)) &&
+         (!creek || !clears_creek(field, from, end, &ground))))
         return 0;
     int hit = end[1] >= from[1] && end[1] > ground.height + 2;
+    /* A wall slide may move the downward probe just inside a raised face's
+     * edge tolerance. The feet can land there only if their own sweep
+     * crossed a bounded face before the wall displaced the endpoint. */
+    if (hit && (to[0] != end[0] || to[2] != end[2]) &&
+        raised_normal(ground.flags, ground.normal[0], ground.normal[1], ground.normal[2]) &&
+        !raised_support(grid, contact_cell(grid, from), from, to) &&
+        !raised_support(grid, contact_cell(grid, to), from, to)) {
+        /* The reported floor has two units of clearance and the probe starts
+         * four units above its input. Begin one unit below the rejected face. */
+        int below = ground.height + 2 + 4 + 1;
+        if (below > INT16_MAX ||
+            !bfm_forest_ground(field, end[0], (s16)below, end[2], &ground) ||
+            !corridor_ground(&ground))
+            return 0;
+        hit = end[1] > ground.height + 2;
+    }
     if (hit) {
         int64_t nx = ground.normal[0], ny = ground.normal[1], nz = ground.normal[2];
         if (nx || nz) {

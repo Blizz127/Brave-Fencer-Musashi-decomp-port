@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "forest_terrain.h"
+#include "forest_dust.h"
 #include "scene_tiles.h"
 #include "forest_raster.h"
 
@@ -401,8 +402,9 @@ static uint32_t light_vertex(const BfmForestTerrain *terrain, const int32_t ligh
     return color;
 }
 
-/* Reuse the smooth quadrilateral draw path and distinguish the effect on
- * equal depth keys. Musashi and terrain draw before the glow at a tie. */
+/* At a shared depth the field submits dust and the notice before body and terrain faces.
+ * The blade glow follows those faces. The pointers identify these two roles. */
+static const MusashiForestPlayerFace effect_face = {.corners = 4};
 static const MusashiForestPlayerFace blade_face = {.mode = 0x3a, .corners = 4, .tpage = 0x12a};
 
 static int reserve_faces(BfmForestTerrain *terrain, size_t required)
@@ -443,9 +445,12 @@ static int collect_blade(BfmForestTerrain *terrain, const BfmForestCamera *camer
     return 1;
 }
 
+typedef enum { FOREST_PLAYER_MODEL, FOREST_ROOM_MODEL } ForestModelRole;
+
 static int collect_model(BfmForestTerrain *terrain, const BfmForestCamera *camera,
                          const MusashiForestPlayerMesh *model, const BfmForestPose *pose,
-                         const BfmForestTransform *root, uint32_t mask, size_t *count)
+                         const BfmForestTransform *root, uint32_t mask,
+                         ForestModelRole role, size_t *count)
 {
     BfmForestTransform view, model_view;
     memcpy(view.rotation, camera->rotation, sizeof(view.rotation));
@@ -455,6 +460,7 @@ static int collect_model(BfmForestTerrain *terrain, const BfmForestCamera *camer
     for (unsigned i = 0; i < MUSASHI_FOREST_PLAYER_PARTS; ++i) {
         if (!(mask & (UINT32_C(1) << i))) continue;
         const MusashiForestPlayerPart *part = musashi_forest_player_mesh_part(model,i);
+        if (!part) return 0;
         size_t required = *count + part->face_count;
         if (required < *count || !reserve_faces(terrain, required)) return 0;
         BfmForestTransform world, eye;
@@ -492,8 +498,11 @@ static int collect_model(BfmForestTerrain *terrain, const BfmForestCamera *camer
                 continue;
             for (unsigned k = 0; k < ((face->mode & 16) ? face->corners : 1); ++k)
                 out->lighting[k] = light_vertex(terrain,light,&part->normals[face->normal[k]],
-                                                face->rgb);
-            out->depth = i < 2 ? nearest/4-1 : (sum * (face->corners == 3 ? 341 : 256))/4096;
+                                                face->corner_rgb[k]);
+            if (role == FOREST_PLAYER_MODEL && i < 2)
+                out->depth = nearest/4 - 1;
+            else
+                out->depth = (sum * (face->corners == 3 ? 341 : 256))/4096;
             out->ordinal = (unsigned)(terrain->count + *count);
             out->model_face = face;
             ++*count;
@@ -524,6 +533,8 @@ static int by_depth(const void *left, const void *right)
     const ProjectedFace *a = left, *b = right;
     if (a->depth != b->depth)
         return a->depth > b->depth ? -1 : 1;
+    if ((a->model_face == &effect_face) != (b->model_face == &effect_face))
+        return a->model_face == &effect_face ? -1 : 1;
     if ((a->model_face == &blade_face) != (b->model_face == &blade_face))
         return a->model_face == &blade_face ? 1 : -1;
     return a->ordinal > b->ordinal ? -1 : a->ordinal < b->ordinal;
@@ -605,14 +616,54 @@ int bfm_forest_terrain_draw_entrance(BfmForestTerrain *terrain, const BfmForestC
                                   const BfmForestBladeFrame *frame,
                                   uint32_t pixels[240][320])
 {
+    return bfm_forest_terrain_draw_entrance_with_actor(terrain, camera, model, pose, root,
+                                                      mask, blade, buffer, frame, NULL, pixels);
+}
+
+int bfm_forest_terrain_draw_entrance_with_actor(BfmForestTerrain *terrain,
+                                  const BfmForestCamera *camera,
+                                  const MusashiForestPlayerMesh *model, const BfmForestPose *pose,
+                                  const BfmForestTransform *root, uint32_t mask,
+                                  const BfmForestBlade *blade, unsigned buffer,
+                                  const BfmForestBladeFrame *frame, const BfmForestActor *actor,
+                                  uint32_t pixels[240][320])
+{
+    return bfm_forest_terrain_draw_entrance_with_actors(terrain, camera, model, pose, root,
+                                                       mask, blade, buffer, frame, actor,
+                                                       actor ? 1u : 0u, pixels);
+}
+
+int bfm_forest_terrain_draw_entrance_with_actors(BfmForestTerrain *terrain,
+                                  const BfmForestCamera *camera,
+                                  const MusashiForestPlayerMesh *model, const BfmForestPose *pose,
+                                  const BfmForestTransform *root, uint32_t mask,
+                                  const BfmForestBlade *blade, unsigned buffer,
+                                  const BfmForestBladeFrame *frame, const BfmForestActor *actors,
+                                  size_t actor_count, uint32_t pixels[240][320])
+{
+    return bfm_forest_terrain_draw_entrance_with_effects(terrain, camera, model, pose, root,
+                    mask, blade, buffer, frame, actors, actor_count, NULL, 0, pixels);
+}
+
+int bfm_forest_terrain_draw_entrance_with_effects(BfmForestTerrain *terrain,
+                                  const BfmForestCamera *camera,
+                                  const MusashiForestPlayerMesh *model, const BfmForestPose *pose,
+                                  const BfmForestTransform *root, uint32_t mask,
+                                  const BfmForestBlade *blade, unsigned buffer,
+                                  const BfmForestBladeFrame *frame, const BfmForestActor *actors,
+                                  size_t actor_count, const BfmForestDustCard *cards,
+                                  size_t card_count, uint32_t pixels[240][320])
+{
     if (!terrain || !camera || !camera->projection || !pixels || buffer > 1 ||
-        (model && !terrain->has_lighting))
+        actor_count > BFM_FOREST_ACTOR_LIMIT || (actor_count && !actors) ||
+        card_count > BFM_FOREST_EFFECT_CARDS || (card_count && !cards) ||
+        ((model || actor_count) && !terrain->has_lighting))
         return 0;
     /* The actor uses the 220-line gameplay viewport. Terrain diagnostics
      * render all rows of the frame. */
     const BfmForestRaster surface = {
         .tiles = (const uint16_t (*)[1024])terrain->tiles, .pixels = pixels,
-        .top = model ? 10 : 0, .bottom = model ? 229 : 239
+        .top = model || actor_count ? 10 : 0, .bottom = model || actor_count ? 229 : 239
     };
     size_t count = 0;
     for (size_t i = 0; i < terrain->cell_count; ++i) {
@@ -620,13 +671,31 @@ int bfm_forest_terrain_draw_entrance(BfmForestTerrain *terrain, const BfmForestC
         if (cell_in_view(cell, camera))
             count = collect_cell(terrain, cell, camera, buffer, count);
     }
-    if (model && (!pose || !root || !collect_model(terrain,camera,model,pose,root,mask,&count)))
+    if (model && (!pose || !root ||
+                  !collect_model(terrain, camera, model, pose, root, mask, FOREST_PLAYER_MODEL, &count)))
         return 0;
+    for (size_t i = 0; i < actor_count; ++i) {
+        const BfmForestActor *actor = &actors[i];
+        if (!actor->mesh || !actor->pose || !actor->root ||
+            (actor->visible_parts >> MUSASHI_FOREST_PLAYER_PARTS) ||
+            !collect_model(terrain, camera, actor->mesh, actor->pose, actor->root,
+                           actor->visible_parts, FOREST_ROOM_MODEL, &count)) return 0;
+    }
     if (frame && (!blade || !collect_blade(terrain, camera, blade, frame, &count))) return 0;
+    if (card_count > SIZE_MAX - count || !reserve_faces(terrain, count + card_count)) return 0;
+    for (size_t i = 0; i < card_count; ++i) {
+        ProjectedFace *out = &terrain->draw[count++];
+        out->depth = cards[i].bucket;
+        out->ordinal = (unsigned)i;
+        out->model_face = &effect_face;
+    }
     qsort(terrain->draw, count, sizeof(*terrain->draw), by_depth);
     for (size_t i = 0; i < count; ++i) {
         ProjectedFace *out = &terrain->draw[i];
-        if (out->model_face)
+        if (out->model_face == &effect_face) {
+            const BfmForestDustCard *card = &cards[out->ordinal];
+            bfm_forest_raster_face(&surface, &card->material, card->vertices);
+        } else if (out->model_face)
             draw_model_face(&surface, out);
         else
             draw_face(&surface, &terrain->faces[out->ordinal], out->points);

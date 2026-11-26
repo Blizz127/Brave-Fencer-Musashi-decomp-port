@@ -32,9 +32,9 @@ int bfm_forest_jump_poses_load(const MusashiDiscMedia *disc, uint32_t animation_
 uint32_t bfm_forest_jump_pose_frame(const BfmForestJumpPoses *poses,
                                     enum BfmForestJumpPhase phase, unsigned phase_tick);
 
-/* When a walking actor loses floor support, its mounted motion starts with
- * one key per update. Tick zero is the loss of support. The last entry key
- * is held until another action or ground contact selects the next clip. */
+/* The mounted stride clips serve a jump from moving ground and a walk-off.
+ * A walk-off consumes one entry key per update from the loss of support,
+ * then holds the last key until contact. */
 int bfm_forest_walkoff_poses_load(const MusashiDiscMedia *disc, uint32_t animation_table,
                                   BfmForestJumpPoses *out);
 uint32_t bfm_forest_walkoff_pose_frame(const BfmForestJumpPoses *poses, unsigned airborne_tick);
@@ -46,4 +46,9 @@ int bfm_forest_pose_load(const MusashiDiscMedia *disc, uint32_t frame_address,
                          BfmForestPose *pose);
 /* Room-owned and resident player poses share the same packed format. */
 int bfm_forest_pose_decode(const uint8_t *bytes, size_t size, BfmForestPose *pose);
+/* Apply the field model's level heading and integral world position. */
+void bfm_forest_actor_root(unsigned yaw, const int16_t position[3], BfmForestTransform *root);
+/* Room actors have one packed local transform per mesh part, in mesh order. */
+int bfm_forest_actor_pose_decode(const uint8_t *bytes, size_t size, unsigned part_count,
+                                 BfmForestPose *pose);
 #endif

@@ -8,6 +8,9 @@ typedef struct BfmForestWalk BfmForestWalk;
 /* The door owns this short automatic walk. Caller hands over the transfer
  * resolved from its active opening scene when the chapter card has finished. */
 BfmForestWalk *bfm_forest_walk_open(const MusashiDiscMedia *disc, const RoomTransferDescriptor *entry);
+/* Completed world updates at the first forest pose. A caller without the
+ * departing scene's clock can still use action-triggered effects. */
+void bfm_forest_walk_inherit_clock(BfmForestWalk *walk, uint16_t first_tick);
 void bfm_forest_walk_free(BfmForestWalk *walk);
 /* 1 advances one field update, 0 stops at the next unsupported scene event,
  * -1 indicates bad mounted data. The first frame can be drawn immediately. */

@@ -31,26 +31,30 @@ static int ground_heading(const BfmForestCamera *camera, int x, int y, int16_t *
 
 /* Resolve the free Q16 position on the registered room floor. Only commit
  * the integrated actor and its integer position after a complete step. */
-static int step_on_floor(const BfmForestField *field, const BfmForestContact *ground,
-                         ForestPlayerState *next, int16_t cached[3], int *left_support)
+static BfmForestTopStep step_on_floor(const BfmForestField *field,
+    const BfmForestContact *ground, ForestPlayerState *next, int16_t cached[3], int can_fall)
 {
+    BfmForestTopStep support = BFM_FOREST_TOP_GROUNDED;
+    uint32_t start_pos[3];
+    memcpy(start_pos, next->position, sizeof start_pos);
     func_801473EC(next);
     int16_t end[3] = {(int16_t)(next->position[0] >> 16), cached[1],
                       (int16_t)(next->position[2] >> 16)};
     if (ground->flags == 0x2000) {
-        BfmForestTopStep top = bfm_forest_raised_step(field, ground, cached, end);
-        if (top == BFM_FOREST_TOP_BLOCKED || (top == BFM_FOREST_TOP_LEFT && !left_support))
-            return 0;
-        if (left_support)
-            *left_support = top == BFM_FOREST_TOP_LEFT;
+        support = bfm_forest_raised_motion(field, ground, cached, end, start_pos, next->position);
+        if (support == BFM_FOREST_TOP_BLOCKED ||
+            (!can_fall && support != BFM_FOREST_TOP_GROUNDED))
+            return BFM_FOREST_TOP_BLOCKED;
+        if (support == BFM_FOREST_TOP_FREE)
+            return support;
     } else if (!bfm_forest_corridor_step(field, ground, cached, end)) {
-        return 0;
+        return BFM_FOREST_TOP_BLOCKED;
     }
     for (unsigned axis = 0; axis < 3; ++axis)
         next->position[axis] = ((uint32_t)(uint16_t)end[axis] << 16) |
                                (next->position[axis] & 0xffff);
     memcpy(cached, end, sizeof end);
-    return 1;
+    return support;
 }
 
 int bfm_forest_manual_coast(const BfmForestField *field, ForestPlayerState *actor,
@@ -62,7 +66,7 @@ int bfm_forest_manual_coast(const BfmForestField *field, ForestPlayerState *acto
         return 0;
     ForestPlayerState next = *actor;
     if (!bfm_forest_level_velocity(&next, 0, yaw, 0) ||
-        !step_on_floor(field, &ground, &next, cached, NULL))
+        step_on_floor(field, &ground, &next, cached, 0) != BFM_FOREST_TOP_GROUNDED)
         return 0;
     *actor = next;
     return 1;
@@ -130,15 +134,19 @@ BfmForestManualResult bfm_forest_manual_tick(BfmForestManual *state,
     if (speed < -11 * Q16)
         speed = -11 * Q16;
     next.field_2c.word = speed;
-    int left_support = 0;
-    if (!step_on_floor(field, &ground, &next, cached, state->last_descent > 0 ? &left_support : NULL))
+    BfmForestTopStep support = step_on_floor(field, &ground, &next, cached, state->last_descent > 0);
+    if (support == BFM_FOREST_TOP_BLOCKED)
         return BFM_FOREST_MANUAL_BOUNDARY;
 
+    if (support == BFM_FOREST_TOP_FREE) {
+        state->left_support = 1;
+        return BFM_FOREST_MANUAL_FALL;
+    }
     unsigned motion = speed < -(9 * Q16 + Q16 / 4) ? RUN : WALK;
     state->elapsed = motion == state->motion ? state->elapsed + 1 : 0;
     state->motion = motion;
     state->after_jump = 0;
-    state->left_support = left_support;
+    state->left_support = support == BFM_FOREST_TOP_LEFT;
     memcpy(state->ground_normal, ground.normal, sizeof state->ground_normal);
     *actor = next;
     *yaw = next_yaw;
@@ -238,6 +246,10 @@ BfmForestJumpResult bfm_forest_jump_tick(BfmForestJump *jump, const BfmForestFie
         next.local_y.word += !cross_held && next.local_y.word < 0 ? 21 * Q16 / 8 : 13 * Q16 / 8;
     if (!bfm_forest_level_velocity(&next, 0, next_yaw, 0))
         return BFM_FOREST_JUMP_BOUNDARY;
+    /* The stride leaving the rim still uses grounded acceleration. Carry
+     * its capped running speed into the first downward step. */
+    if (leaving_rim && speed < -11 * Q16)
+        speed = -11 * Q16;
     next.field_2c.word = speed;
     func_801473EC(&next);
     int16_t end[3];

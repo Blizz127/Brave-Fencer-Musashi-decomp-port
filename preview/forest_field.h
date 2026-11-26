@@ -5,6 +5,7 @@
 #include "musashi_forest_player_mesh.h"
 #include "forest_player_state.h"
 #include "forest_terrain.h"
+#include "forest_dust.h"
 
 typedef struct BfmForestField BfmForestField;
 
@@ -31,6 +32,11 @@ int bfm_forest_draw_player(BfmForestField *field, const BfmForestCamera *camera,
 int bfm_forest_draw_player_buffer(BfmForestField *field, const BfmForestCamera *camera,
                            const BfmForestPose *pose, const BfmForestTransform *root,
                            uint32_t visible_parts, unsigned buffer, uint32_t pixels[240][320]);
+/* Update the room-owned bank actor after a completed player movement tick. */
+/* Advance already emitted cards and, for a real player action, its new card. */
+void bfm_forest_tick_dust(BfmForestField *field, BfmForestDustEmission event,
+                          const int16_t player[3], const int32_t camera_eye[3], int yaw);
+int bfm_forest_tick_shore_actor(BfmForestField *field, const int16_t player[3]);
 int bfm_forest_draw_entrance_player(BfmForestField *field, const BfmForestCamera *camera,
                            const BfmForestPose *pose, const BfmForestTransform *root,
                            uint32_t visible_parts, unsigned buffer, const BfmForestBladeFrame *frame,
@@ -57,7 +63,7 @@ int bfm_forest_doorway_step(const BfmForestField *field, const int16_t origin[3]
                             const int16_t from[3], int16_t to[3]);
 
 typedef enum {
-    BFM_FOREST_TOP_BLOCKED, BFM_FOREST_TOP_GROUNDED, BFM_FOREST_TOP_LEFT
+    BFM_FOREST_TOP_BLOCKED, BFM_FOREST_TOP_GROUNDED, BFM_FOREST_TOP_LEFT, BFM_FOREST_TOP_FREE
 } BfmForestTopStep;
 
 /* Take a supported step on the raised obstacle. On leaving its far edge,
@@ -65,6 +71,12 @@ typedef enum {
  * An unresolved contact leaves the proposed endpoint untouched. */
 BfmForestTopStep bfm_forest_raised_step(const BfmForestField *field,
     const BfmForestContact *previous, const int16_t from[3], int16_t to[3]);
+
+/* When a stride misses the last raised face entirely, the falling action
+ * owns this update from the original position. */
+BfmForestTopStep bfm_forest_raised_motion(const BfmForestField *field,
+    const BfmForestContact *previous, const int16_t from[3], int16_t to[3],
+    const uint32_t start_pos[3], const uint32_t end_pos[3]);
 
 /* Take a grounded step through the entrance and the adjoining slope.
  * The contact is the registered floor probe at the starting position. */

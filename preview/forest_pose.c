@@ -27,6 +27,14 @@ static void axis_angle(unsigned units, int *s, int *c)
     if (quadrant == 1 || quadrant == 2) *c = -*c;
 }
 
+void bfm_forest_actor_root(unsigned yaw, const int16_t position[3], BfmForestTransform *root)
+{
+    int s, c;
+    axis_angle(yaw, &s, &c);
+    *root = (BfmForestTransform){.rotation = {{c,0,s},{0,FULL_TURN,0},{-s,0,c}},
+        .translation = {position[0], position[1], position[2]}};
+}
+
 static void local_rotation(const uint8_t *angles, int16_t r[3][3])
 {
     int sx, cx, sy, cy, sz, cz;
@@ -45,6 +53,22 @@ static void local_rotation(const uint8_t *angles, int16_t r[3][3])
     r[0][2] = (int16_t)(multiply(zz, sy) + multiply(sx, sz));
     r[1][2] = (int16_t)(multiply(xz, sy) - multiply(sx, cz));
     r[2][2] = (int16_t)multiply(cy, cx);
+}
+
+int bfm_forest_actor_pose_decode(const uint8_t *bytes, size_t size, unsigned part_count,
+                                 BfmForestPose *pose)
+{
+    if (!bytes || !pose || !part_count || part_count > MUSASHI_FOREST_PLAYER_PARTS ||
+        part_count > size / 8) return 0;
+    BfmForestPose decoded = {0};
+    for (unsigned i = 0; i < part_count; ++i) {
+        const uint8_t *record = bytes + 8 * i;
+        local_rotation(record, decoded.local[i].rotation);
+        for (unsigned axis = 0; axis < 3; ++axis)
+            decoded.local[i].translation[axis] = (int8_t)record[3 + axis];
+    }
+    *pose = decoded;
+    return 1;
 }
 
 static int turn_root(int16_t r[3][3])
@@ -97,7 +121,7 @@ int bfm_forest_pose_decode(const uint8_t *bytes, size_t size, BfmForestPose *pos
 
 enum {
     RUN_SLOT = 8, JUMP_SLOT = 13, LAND_SLOT = 14,
-    WALKOFF_SLOT = 15, WALKOFF_LAND_SLOT = 16, CLIP_WORDS = 32
+    STRIDE_AIR_SLOT = 15, STRIDE_LAND_SLOT = 16, CLIP_WORDS = 32
 };
 
 static int read_clip(const ForestPlayerArchive *archive, uint32_t table, unsigned slot,
@@ -198,7 +222,7 @@ int bfm_forest_jump_poses_load(const MusashiDiscMedia *disc, uint32_t table,
 int bfm_forest_walkoff_poses_load(const MusashiDiscMedia *disc, uint32_t table,
                                   BfmForestJumpPoses *out)
 {
-    return load_air_poses(disc, table, WALKOFF_SLOT, WALKOFF_LAND_SLOT, out);
+    return load_air_poses(disc, table, STRIDE_AIR_SLOT, STRIDE_LAND_SLOT, out);
 }
 
 uint32_t bfm_forest_walkoff_pose_frame(const BfmForestJumpPoses *poses, unsigned airborne_tick)

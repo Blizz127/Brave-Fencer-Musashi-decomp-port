@@ -9,7 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-enum { WIDTH = 320, HEIGHT = 240, INTERIOR_START_FIELD = 1188 };
+enum { WIDTH = 320, HEIGHT = 240, INTERIOR_START_FIELD = 1188, INTERIOR_DRAW_FIELD = 1418 };
 enum { TITLE_WIDTH = 256, TITLE_HEIGHT = 64 };
 enum { CREDIT_X = 80, CREDIT_Y = 104, CREDIT_WIDTH = 160, CREDIT_HEIGHT = 32 };
 
@@ -262,9 +262,9 @@ static int draw_opening(const OpeningView *view, unsigned fields, uint32_t *pixe
     if (fields >= INTERIOR_START_FIELD) {
         for (unsigned i = 0; i < WIDTH * HEIGHT; ++i)
             pixels[i] = UINT32_C(0xff000000);
-        if (fields >= 1418) {
+        if (fields >= INTERIOR_DRAW_FIELD) {
             bfm_palace_draw(view->stairs, view->stair_tiles, fields, pixels);
-            unsigned tick = (fields - 1418) / 2;
+            unsigned tick = (fields - INTERIOR_DRAW_FIELD) / 2;
             shade_scene(pixels, tick < 16 ? 31 - 2 * tick : 0);
             flash_ritual(pixels, fields);
         }
@@ -336,6 +336,27 @@ static int read_forest_entry(const MusashiDiscMedia *disc, unsigned member,
     return selected;
 }
 
+static BfmForestWalk *open_departing_forest(const OpeningView *view, const MusashiDiscMedia *disc,
+                                          const RoomTransferDescriptor *entry)
+{
+    BfmForestWalk *walk = bfm_forest_walk_open(disc, entry);
+    unsigned field = view->departure_field;
+    if (!walk || field != view->departure_pose) return walk;
+
+    /* At the first displayed palace field, two world updates have completed.
+     * The exterior and court continue for 29 and 31 updates respectively
+     * after a departure request. The chapter card advances neither. */
+    unsigned world_tick = 2 + field / 2;
+    if (view->departure_member == 0 && field >= 30 && field < INTERIOR_START_FIELD) {
+        bfm_forest_walk_inherit_clock(walk, (uint16_t)(world_tick + 29 + 1));
+    } else if (view->departure_member == 1 && field >= INTERIOR_DRAW_FIELD) {
+        /* Loading the court suspends 113 updates. Count the first forest
+         * update as well: its resulting pose is local forest tick zero. */
+        bfm_forest_walk_inherit_clock(walk, (uint16_t)(world_tick - 113 + 31 + 1));
+    }
+    return walk;
+}
+
 int bfm_opening_advance_court(void *scene, const MusashiDiscMedia *disc, unsigned field,
                              char *error, size_t error_size)
 {
@@ -369,7 +390,7 @@ int bfm_opening_advance_court(void *scene, const MusashiDiscMedia *disc, unsigne
     /* The destination is selected while the fading palace is still visible.
      * Its entrance waits at its initial pose until the chapter card ends. */
     if (view->forest_stage == FOREST_QUEUED && elapsed >= 64) {
-        view->incoming_forest = bfm_forest_walk_open(disc, &view->forest_entry);
+        view->incoming_forest = open_departing_forest(view, disc, &view->forest_entry);
         if (!view->incoming_forest) {
             if (error && error_size)
                 snprintf(error, error_size, "Could not prepare the palace's forest entrance.");
@@ -419,7 +440,7 @@ BfmForestWalk *bfm_opening_take_forest(void *scene, const MusashiDiscMedia *disc
     } else {
         RoomTransferDescriptor entry;
         if (!read_forest_entry(disc, view->departure_member, &entry)) return NULL;
-        forest = bfm_forest_walk_open(disc, &entry);
+        forest = open_departing_forest(view, disc, &entry);
         if (!forest) return NULL;
         *forest_field = 0;
     }

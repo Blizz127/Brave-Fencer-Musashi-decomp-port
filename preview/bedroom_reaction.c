@@ -9,7 +9,12 @@ int bfm_bedroom_reaction_start(BfmBedroomReaction *e, const uint8_t *scene, size
 {
     enum { descriptor = 0x801837c8u - 0x80128158u };
     if (!e || !scene || bytes < descriptor + 12) return 0;
-    const uint8_t *s = scene + descriptor;
+    return bfm_reaction_start_sprite(e, scene + descriptor, bytes - descriptor);
+}
+
+int bfm_reaction_start_sprite(BfmBedroomReaction *e, const uint8_t *s, size_t bytes)
+{
+    if (!e || !s || bytes < 12) return 0;
     unsigned x = half(s+4), y = half(s+6), w = s[2], h = s[3];
     if (!w || !h || s[0] != 255 || x >= 1024 || y >= 512 ||
         4*(x%64)+w > 256 || y%256+h > 256) return 0;

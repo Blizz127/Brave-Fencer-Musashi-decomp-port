@@ -18,7 +18,8 @@ typedef enum {
     BFM_FOREST_MANUAL_STARTED,
     BFM_FOREST_MANUAL_MOVING,
     BFM_FOREST_MANUAL_STOPPED,
-    BFM_FOREST_MANUAL_RUN_STOPPED
+    BFM_FOREST_MANUAL_RUN_STOPPED,
+    BFM_FOREST_MANUAL_FALL
 } BfmForestManualResult;
 
 /* A launch consumes the rising Cross edge. The held level on subsequent

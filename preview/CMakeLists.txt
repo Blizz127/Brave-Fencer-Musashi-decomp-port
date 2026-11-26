@@ -40,11 +40,17 @@ add_executable(musashi_native_boot
     scene_tiles.c
     forest_blade.c
     forest_entry.c
+    forest_dust.c
     forest_field.c
     forest_hud.c
     forest_status.c
     forest_manual.c
     forest_motion.c
+    forest_marker.c
+    forest_shore.c
+    forest_shore_motion.c
+    forest_shore_figures.c
+    forest_shore_pose.c
     forest_pose.c
     forest_raster.c
     forest_terrain.c
