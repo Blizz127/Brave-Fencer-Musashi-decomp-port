@@ -27,7 +27,7 @@ typedef struct {
     uint16_t room;
     unsigned mode, live;
     unsigned select_destination, place_player; /* One update each. */
-    unsigned complete; /* Normal input can resume; finish the reveal. */
+    unsigned complete; /* The entrance's last automatic stride is complete. */
     unsigned running, pose_index;
     int32_t forward_speed_q16;
     unsigned shade; /* Subtractive darkness, in 5-bit color levels. */

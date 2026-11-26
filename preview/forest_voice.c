@@ -124,3 +124,17 @@ void bfm_forest_voice_free(ForestVoice *v)
     bfm_disc_voice_free(v->source);
     free(v);
 }
+
+const BfmForestMessageFrame *bfm_forest_voice_page(ForestVoice *voice, BfmForestMessage *page,
+                                                   unsigned *generation, int confirm, int reveal)
+{
+    const BfmForestMessageFrame *frame = bfm_field_message_tick(
+        page, bfm_forest_voice_status(voice), confirm, reveal);
+    if (!frame) return NULL;
+    if (frame->events & BFM_FOREST_VOICE_STOP) bfm_forest_voice_stop(voice);
+    if (frame->events & BFM_FOREST_VOICE_REQUEST) {
+        if (!bfm_forest_voice_request(voice, frame->voice_bank, frame->voice_cue)) return NULL;
+        ++*generation;
+    }
+    return frame;
+}

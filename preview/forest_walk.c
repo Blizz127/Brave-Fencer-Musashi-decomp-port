@@ -2,6 +2,8 @@
 #include "forest_walk.h"
 #include "forest_gateway_transition.h"
 #include "tower_field.h"
+#include "tower_note.h"
+#include "tower_note_pose.h"
 #include "forest_opening_data.h"
 #include "forest_motion.h"
 #include "forest_manual.h"
@@ -55,6 +57,9 @@ struct BfmForestWalk {
     BfmTowerField *tower;
     BfmForestGatewayTransition gateway;
     int tower_placed;
+    BfmForestMessage *tower_note;
+    BfmTowerNoteKind tower_note_kind;
+    BfmTowerNotePose tower_note_pose;
     unsigned tower_tick, submit_slot, tower_stroke;
     TowerSubmission submitted_tower[3];
     uint32_t (*held_forest)[320];
@@ -358,6 +363,7 @@ void bfm_forest_walk_inherit_clock(BfmForestWalk *w, uint16_t first_tick)
 void bfm_forest_walk_free(BfmForestWalk *w)
 {
     if (w) {
+        bfm_forest_message_free(w->tower_note);
         bfm_forest_message_free(w->lesson.page);
         bfm_forest_hud_free(w->hud);
         bfm_forest_message_free(w->message);
@@ -1199,8 +1205,11 @@ uint16_t bfm_forest_walk_room(const BfmForestWalk *w)
 
 int bfm_forest_walk_control(const BfmForestWalk *w)
 {
-    if (w && w->gateway.active && !bfm_forest_gateway_transition_frame(&w->gateway).live)
-        return 0;
+    if (w && w->gateway.active) {
+        BfmForestGatewayFrame frame = bfm_forest_gateway_transition_frame(&w->gateway);
+        if (!frame.live || (frame.room == 0x3009 && (!frame.complete || w->tower_note ||
+                                    bfm_tower_field_plate_pressing(w->tower)))) return 0;
+    }
     if (!w || !w->player_control || w->retreat_control || bfm_forest_lesson_owns_player(&w->lesson) ||
         (w->fusion.award.phase > BFM_AWARD_IDLE && w->fusion.award.phase < BFM_AWARD_COMPLETE))
         return 0;
@@ -1280,9 +1289,48 @@ static int tick_tower_player(BfmForestWalk *w, int x, int y, int square_edge)
     return tick_ground(w, x, y, 0, &dust);
 }
 
+static int open_tower_note(BfmForestWalk *w, BfmTowerNoteKind kind)
+{
+    BfmForestField *room = bfm_tower_field_room(w->tower);
+    w->tower_note = bfm_tower_note_open(room, w->gateway.destination.parameter, kind);
+    if (!w->tower_note) return 0;
+    w->tower_note_kind = kind;
+    if (kind == BFM_TOWER_ARRIVAL_NOTE)
+        return bfm_tower_note_pose_begin(&w->tower_note_pose, room, w->disc, w->visible, &w->pose);
+    return 1;
+}
+
+static int step_tower_note(BfmForestWalk *w, int confirm, int reveal)
+{
+    if (w->tower_note_kind == BFM_TOWER_ARRIVAL_NOTE) {
+        const BfmForestMessageFrame *prior = bfm_forest_message_frame(w->tower_note);
+        if (!bfm_tower_note_pose_tick(&w->tower_note_pose, prior->actor_flags, &w->pose)) return 0;
+        w->frame = w->tower_note_pose.actor.frame;
+        w->visible = w->tower_note_pose.actor.visible;
+        memcpy(w->blade_anchors, w->tower_note_pose.actor.blade_anchors, sizeof w->blade_anchors);
+    }
+    bfm_forest_voice_step(w->voice);
+    const BfmForestMessageFrame *message = bfm_forest_voice_page(
+        w->voice, w->tower_note, &w->voice_generation, confirm, reveal);
+    if (!message) return 0;
+    if (message->events & BFM_FOREST_MESSAGE_CLOSED) {
+        bfm_forest_message_free(w->tower_note);
+        w->tower_note = NULL;
+        if (w->tower_note_kind == BFM_TOWER_PLATE_NOTE)
+            bfm_tower_field_close_plate_note(w->tower);
+        w->actor.state = 0;
+        w->actor.phase = 1;
+        w->manual = (BfmForestManual){0};
+        w->motion = IDLE;
+        w->elapsed = 0;
+        return update_pose(w);
+    }
+    return 1;
+}
+
 /* Advance the selected room without interpreting a guest callback. The
  * outgoing transfer and the destination's own entrance are distinct records. */
-static int tick_gateway(BfmForestWalk *w, int x, int y, int square_edge)
+static int tick_gateway(BfmForestWalk *w, int x, int y, int square_edge, int confirm, int reveal)
 {
     BfmForestGatewayFrame prior = bfm_forest_gateway_transition_frame(&w->gateway);
     bfm_forest_gateway_transition_advance(&w->gateway, w->tower != NULL);
@@ -1309,22 +1357,26 @@ static int tick_gateway(BfmForestWalk *w, int x, int y, int square_edge)
         w->elapsed = 0;
         if (!update_pose(w)) return -1;
     }
-    if (prior.complete) {
+    if (w->tower_note) {
+        if (!step_tower_note(w, confirm, reveal)) return -1;
+    } else if (prior.complete && bfm_tower_field_plate_note(w->tower)) {
+        if (!open_tower_note(w, BFM_TOWER_PLATE_NOTE)) return -1;
+    } else if (prior.complete && !bfm_tower_field_plate_pressing(w->tower)) {
         int advanced = tick_tower_player(w, x, y, square_edge);
         if (advanced != 1) return advanced;
     } else if (frame.live && frame.room == 0x3008) {
         BfmForestDustEmission dust = BFM_FOREST_DUST_NONE;
         int moved = tick_ground(w, x, y, 0, &dust);
         if (moved != 1) return moved;
-    } else if (!gateway_walk(w, &frame)) {
+    } else if (!prior.complete && !gateway_walk(w, &frame)) {
         return -1;
     }
     if (frame.complete && !prior.complete) {
-        /* Normal movement resumes from the speed and pose of the final
-         * scripted stride. A held direction can continue on the next poll. */
-        w->manual.moving = 1;
-        w->manual.motion = w->motion;
-        w->manual.elapsed = w->elapsed;
+        /* The room becomes visible before its automatic entrance walk ends.
+         * Recognition takes focus when the thirtieth update stops the player. */
+        if (!open_tower_note(w, BFM_TOWER_ARRIVAL_NOTE)) return -1;
+        memset(w->actor.velocity, 0, sizeof w->actor.velocity);
+        w->actor.field_24.word = w->actor.field_2c.word = w->actor.local_y.word = 0;
     }
     if (w->tower_placed) {
         if (frame.mode >= 8) {
@@ -1334,8 +1386,8 @@ static int tick_gateway(BfmForestWalk *w, int x, int y, int square_edge)
             *submit = (TowerSubmission){.pose = w->pose, .camera = w->camera,
                 .root = w->root, .visible = w->visible, .tick = w->tower_tick++};
             submit->blade.tick = w->tick;
-            submit->has_blade = bfm_forest_blade_transform(w->blade_anchors, &w->root,
-                                                          w->eye, &submit->blade.world);
+            submit->has_blade = (w->visible & (UINT32_C(1) << 22)) &&
+                bfm_forest_blade_transform(w->blade_anchors, &w->root, w->eye, &submit->blade.world);
             w->submit_slot = (w->submit_slot + 1) % 3;
         }
     } else if (frame.view == BFM_GATEWAY_FOREST && !follow(w)) {
@@ -1375,7 +1427,8 @@ static int step_controller(BfmForestWalk *w, int x, int y, uint16_t pressed,
     w->swing_sound = 0;
     w->hit_sound = 0;
     w->control_polled = w->player_control;
-    if (w->gateway.active) return tick_gateway(w, read_x, read_y, attack_pressed);
+    if (w->gateway.active) return tick_gateway(w, read_x, read_y, attack_pressed,
+                                              cross_pressed, (pressed & BFM_FOREST_TRIANGLE) != 0);
     if (w->player_control) {
         int16_t before[3];
         memcpy(before, w->cached, sizeof before);
@@ -1461,6 +1514,8 @@ int bfm_forest_walk_draw(BfmForestWalk *w,uint32_t pixels[240][320])
                 &submitted->root, submitted->visible, submitted->tick,
                 submitted->has_blade ? &submitted->blade : NULL, pixels)) return 0;
         field_palette(pixels, gateway.shade);
+        if (w->tower_note)
+            bfm_forest_message_art_draw(w->message_art, bfm_forest_message_frame(w->tower_note), pixels);
         return 1;
     }
     if (gateway.view == BFM_GATEWAY_HELD_FOREST && w->held_forest) {

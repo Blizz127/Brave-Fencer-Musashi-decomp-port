@@ -51,14 +51,9 @@ int bfm_forest_lesson_step(BfmForestLesson *lesson, BfmForestField *field,
 {
     if (!bfm_forest_lesson_guard_tick(bfm_forest_field_lesson_guard(field))) return 0;
     if (lesson->page) {
-        const BfmForestMessageFrame *frame = bfm_field_message_tick(
-            lesson->page, bfm_forest_voice_status(voice), cross, reveal);
+        const BfmForestMessageFrame *frame = bfm_forest_voice_page(
+            voice, lesson->page, voice_generation, cross, reveal);
         if (!frame) return 0;
-        if (frame->events & BFM_FOREST_VOICE_STOP) bfm_forest_voice_stop(voice);
-        if (frame->events & BFM_FOREST_VOICE_REQUEST) {
-            if (!bfm_forest_voice_request(voice, frame->voice_bank, frame->voice_cue)) return 0;
-            ++*voice_generation;
-        }
         if (lesson->stage == BFM_LESSON_DISCOVERY_TALK) turn_toward(yaw, 1024);
         if (!(frame->events & BFM_FOREST_MESSAGE_CLOSED)) return 1;
         if (lesson->stage == BFM_LESSON_AWARDING) lesson->award_closed = 1;

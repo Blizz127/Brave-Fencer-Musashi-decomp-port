@@ -5,7 +5,7 @@ enum {
     FOREST = 0x3008, TOWER = 0x3009,
     SELECT_ROOM = 30, OUTGOING_WIPE = 41, OUTGOING_BLACK = 125,
     LOAD_ROOM = 143, INSTALL_ENTRY = 145, BEGIN_ENTRY = 189,
-    ENTER_WALK = 191, CONTROL = 206, FULL_LIGHT = 208
+    ENTER_WALK = 191, ROOM_LIVE = 206, FULL_LIGHT = 208, FINISH_WALK = ENTER_WALK + 30
 };
 
 int bfm_forest_gateway_transition_begin(BfmForestGatewayTransition *t,
@@ -38,10 +38,10 @@ BfmForestGatewayFrame bfm_forest_gateway_transition_frame(const BfmForestGateway
 
     unsigned n = t->update;
     frame.room = n < SELECT_ROOM ? FOREST : t->destination.room;
-    frame.live = n < 2 || n >= CONTROL;
+    frame.live = n < 2 || n >= ROOM_LIVE;
     frame.select_destination = n == SELECT_ROOM;
     frame.place_player = n == INSTALL_ENTRY;
-    frame.complete = n >= CONTROL;
+    frame.complete = n >= FINISH_WALK;
 
     if (n < SELECT_ROOM) {
         if (n) frame.mode = 10;
@@ -50,7 +50,7 @@ BfmForestGatewayFrame bfm_forest_gateway_transition_frame(const BfmForestGateway
         return frame;
     }
 
-    frame.mode = n < LOAD_ROOM ? 5 : n < BEGIN_ENTRY ? 7 : n < CONTROL ? 8 : 9;
+    frame.mode = n < LOAD_ROOM ? 5 : n < BEGIN_ENTRY ? 7 : n < ROOM_LIVE ? 8 : 9;
     if (n < OUTGOING_BLACK) {
         frame.view = BFM_GATEWAY_HELD_FOREST;
         if (n > OUTGOING_WIPE)
@@ -65,7 +65,7 @@ BfmForestGatewayFrame bfm_forest_gateway_transition_frame(const BfmForestGateway
 
     if (n == BEGIN_ENTRY + 1)
         frame.motion = BFM_GATEWAY_STOP;
-    if (n >= ENTER_WALK && n <= CONTROL)
+    if (n >= ENTER_WALK && n < FINISH_WALK)
         walk(&frame, n - ENTER_WALK);
     return frame;
 }
@@ -73,7 +73,7 @@ BfmForestGatewayFrame bfm_forest_gateway_transition_frame(const BfmForestGateway
 void bfm_forest_gateway_transition_advance(BfmForestGatewayTransition *t,
                                            int destination_ready)
 {
-    if (t && t->active && t->update < FULL_LIGHT &&
+    if (t && t->active && t->update < FINISH_WALK &&
         (t->update != INSTALL_ENTRY - 1 || destination_ready))
         ++t->update;
 }
