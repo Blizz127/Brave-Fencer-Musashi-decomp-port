@@ -25,4 +25,8 @@ void bfm_steam_knight_boss_hud_tick(BfmSteamKnightBossHud *hud, unsigned body_hp
 /* The age in battle updates controls the opening reveal. Rendering can be repeated. */
 void bfm_steam_knight_boss_status(const BfmSteamKnightBossHud *hud, const uint16_t tiles[512][1024],
                                   unsigned age, uint32_t pixels[240][320]);
+/* Elapsed 30 Hz updates since the retry entered room mode 5. Includes pre-live drawing. */
+void bfm_steam_knight_boss_retry_status(const BfmSteamKnightBossHud *hud,
+                                        const uint16_t tiles[512][1024], unsigned retry_age,
+                                        uint32_t pixels[240][320]);
 #endif

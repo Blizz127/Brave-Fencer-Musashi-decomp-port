@@ -126,11 +126,10 @@ void bfm_steam_knight_boss_hud_tick(BfmSteamKnightBossHud *hud, unsigned body_hp
         hud->current_width = target;
 }
 
-void bfm_steam_knight_boss_status(const BfmSteamKnightBossHud *hud, const uint16_t tiles[512][1024],
-                                  unsigned age, uint32_t pixels[240][320])
+static void draw_status(const BfmSteamKnightBossHud *hud, const uint16_t tiles[512][1024],
+                        unsigned opening_width, uint32_t pixels[240][320])
 {
-    if (!hud || !tiles || !pixels || age < 3) return;
-    unsigned opening_width = age < 66 ? 3 * (age - 2) / 2 : GAUGE_WIDTH;
+    if (!hud || !tiles || !pixels) return;
     unsigned width = hud->drawn_width < opening_width ? hud->drawn_width : opening_width;
     /* The shadow follows the same seven scanlines, five pixels right and
      * four down from the filled slanted bar. Its dither depends on the field pixel. */
@@ -143,4 +142,22 @@ void bfm_steam_knight_boss_status(const BfmSteamKnightBossHud *hud, const uint16
     if (width) bar_region(&surface, 0, width < 48 ? width : 48);
     if (width > 48) bar_region(&surface, 48, width);
     draw_name(hud, tiles, pixels);
+}
+
+void bfm_steam_knight_boss_status(const BfmSteamKnightBossHud *hud, const uint16_t tiles[512][1024],
+                                  unsigned age, uint32_t pixels[240][320])
+{
+    if (age < 3) return;
+    unsigned width = age < 66 ? 3 * (age - 2) / 2 : GAUGE_WIDTH;
+    draw_status(hud, tiles, width, pixels);
+}
+
+void bfm_steam_knight_boss_retry_status(const BfmSteamKnightBossHud *hud,
+                                        const uint16_t tiles[512][1024], unsigned retry_age,
+                                        uint32_t pixels[240][320])
+{
+    enum { NAME_VISIBLE = 194, FULL_GAUGE = 257 };
+    if (retry_age < NAME_VISIBLE) return;
+    unsigned width = retry_age < FULL_GAUGE ? GAUGE_STEP * ((retry_age - 193) / 2) : GAUGE_WIDTH;
+    draw_status(hud, tiles, width, pixels);
 }
