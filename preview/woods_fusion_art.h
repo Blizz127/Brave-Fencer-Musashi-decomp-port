@@ -5,6 +5,7 @@
 #include "bedroom_figure.h"
 #include "bedroom_motion.h"
 #include "forest_tether_trails.h"
+#include "forest_damage_digits.h"
 
 /* Apply to a copy of the ordinary body pose. The cast/award clip supplies the
  * mounted joint address and grip. A zero address preserves the movement pose.
@@ -13,8 +14,10 @@ int bfm_woods_fusion_art_pose(const uint8_t *main, size_t main_bytes, uint32_t p
                               uint32_t visible, int blade_away, BfmBedroomPose *body);
 
 /* After preparing the player and caster, append the flight owner's current
- * sword and ribbons, including ribbons still returning after a catch. */
+ * sword and ribbons, including ribbons still returning after a catch. The
+ * optional BP digits belong to an incomplete absorption's actual refund. */
 int bfm_woods_fusion_art_append(BfmBedroomFigure *figure, const BfmBedroomView *view,
-                                const BfmForestActor *blade, const BfmForestTetherTrails *trails);
+                                const BfmForestActor *blade, const BfmForestTetherTrails *trails,
+                                const BfmForestDamageDigits *bp_digits);
 
 #endif

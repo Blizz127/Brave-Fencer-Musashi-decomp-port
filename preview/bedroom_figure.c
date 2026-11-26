@@ -522,7 +522,7 @@ int bfm_bedroom_figure_add_fusion(BfmBedroomFigure *figure, const BfmBedroomView
                      const BfmForestActor *blade, const BfmForestDustCard *cards, size_t count)
 {
     if (!figure || !view || figure->next || !figure->surface.pixels ||
-        count > BFM_TETHER_CARDS || (count && !cards) || view->focal <= 0 ||
+        count > BFM_TETHER_CARDS + BFM_FOREST_DAMAGE_DIGIT_CARDS || (count && !cards) || view->focal <= 0 ||
         view->focal > UINT16_MAX) return 0;
     if (!count && !blade) return 1;
     for (size_t i = 0; i < count; ++i)

@@ -18,10 +18,11 @@ int bfm_woods_fusion_art_pose(const uint8_t *main, size_t main_bytes, uint32_t p
 }
 
 int bfm_woods_fusion_art_append(BfmBedroomFigure *figure, const BfmBedroomView *view,
-                                const BfmForestActor *blade, const BfmForestTetherTrails *trails)
+                                const BfmForestActor *blade, const BfmForestTetherTrails *trails,
+                                const BfmForestDamageDigits *bp_digits)
 {
     if (!figure || !view) return 0;
-    if (!trails || !trails->enabled)
+    if ((!trails || !trails->enabled) && (!bp_digits || !bp_digits->amount))
         return !blade || bfm_bedroom_figure_add_fusion(figure, view, blade, NULL, 0);
     if (view->focal <= 0 || view->focal > UINT16_MAX) return 0;
     BfmForestCamera camera = {.projection = (uint16_t)view->focal};
@@ -33,7 +34,8 @@ int bfm_woods_fusion_art_append(BfmBedroomFigure *figure, const BfmBedroomView *
         }
         camera.translation[i] = view->translation[i];
     }
-    BfmForestDustCard cards[BFM_TETHER_CARDS];
+    BfmForestDustCard cards[BFM_TETHER_CARDS + BFM_FOREST_DAMAGE_DIGIT_CARDS];
     size_t count = bfm_forest_tether_trails_project(trails, &camera, cards, BFM_TETHER_CARDS);
+    count += bfm_forest_damage_digits_project(bp_digits, &camera, cards + count);
     return bfm_bedroom_figure_add_fusion(figure, view, blade, cards, count);
 }

@@ -34,7 +34,7 @@ BfmBedroomFigure *bfm_bedroom_figure_load(const MusashiDiscMedia *disc,
 void bfm_bedroom_figure_free(BfmBedroomFigure *figure);
 int bfm_bedroom_figure_prepare(BfmBedroomFigure *figure, const BfmBedroomView *view,
                      const BfmBedroomBody *body, uint16_t tiles[512][1024], uint32_t *pixels);
-/* Append the detached one-part sword and projected tether quads to the prepared
+/* Append the detached one-part sword and projected field quads to the prepared
  * figure queue, before its first draw. Both use the room's normal depth order. */
 int bfm_bedroom_figure_add_fusion(BfmBedroomFigure *figure, const BfmBedroomView *view,
                      const BfmForestActor *blade, const BfmForestDustCard *cards, size_t count);
