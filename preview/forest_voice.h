@@ -15,6 +15,9 @@ int bfm_forest_voice_request(ForestVoice *voice, unsigned bank, unsigned cue);
 /* Advance once per two NTSC fields, before the forest script checks status. */
 void bfm_forest_voice_step(ForestVoice *voice);
 unsigned bfm_forest_voice_status(const ForestVoice *voice);
+/* For ST02, the group's first sector can be present before continuous
+ * playback. A different selected channel has no samples in that sector. */
+int bfm_bedroom_voice_primed_frames(const ForestVoice *voice, size_t *frames);
 /* Frames of native-rate signed 16-bit interleaved stereo. Read only while
  * PLAYING. The title's sound-tick deadline bounds the recording supplied. */
 size_t bfm_forest_voice_read(ForestVoice *voice, int16_t *stereo, size_t frames);

@@ -21,6 +21,7 @@ typedef struct {
 } BfmHeroSmokeMaterial;
 
 /* scene is expanded PAC data from the user's mounted SC01.CD member 1. */
+int bfm_hero_run_smoke_load(BfmHeroSmokeMaterial *out, const uint8_t *main, size_t bytes);
 int bfm_hero_smoke_load(BfmHeroSmokeMaterial *out, const uint8_t *scene, size_t bytes);
 
 /* field_age starts at the authored animation's first cell. In the reveal,

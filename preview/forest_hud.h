@@ -11,6 +11,9 @@ typedef struct BfmForestHud BfmForestHud;
  * terrain graphics must outlive the HUD. New forest entry starts hidden. */
 BfmForestHud *bfm_forest_hud_load(const MusashiDiscMedia *disc, const uint8_t *scene,
                                  size_t bytes, const BfmForestTerrain *terrain);
+BfmForestHud *bfm_bedroom_hud_load(const MusashiDiscMedia *disc, const uint8_t *scene,
+                                  size_t bytes, const uint16_t tiles[512][1024]);
+void bfm_bedroom_hud_hide(BfmForestHud *hud);
 void bfm_forest_hud_free(BfmForestHud *hud);
 /* The doorway actor requests display when it releases ordinary control.
  * Advance once on that 30 Hz update and once per subsequent update. */

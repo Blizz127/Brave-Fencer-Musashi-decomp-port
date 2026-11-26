@@ -21,22 +21,22 @@ typedef struct {
     uint16_t division;
 } TrackRange;
 
-static int read_sc01(const MusashiDiscMedia *disc, size_t offset, uint8_t *p, size_t bytes)
+static int read_score(const MusashiDiscMedia *disc, const char *archive, size_t offset, uint8_t *p, size_t bytes)
 {
     size_t root_size;
-    return musashi_disc_media_read_root_range(disc, "SC01.CD", offset, p, bytes, &root_size);
+    return musashi_disc_media_read_root_range(disc, archive, offset, p, bytes, &root_size);
 }
 
-static BfmSqvResult locate(const MusashiDiscMedia *disc, unsigned member, unsigned track,
+static BfmSqvResult locate(const MusashiDiscMedia *disc, const char *archive, unsigned member, unsigned track,
                            unsigned tracks, TrackRange *range)
 {
     uint8_t directory[8], entry[8], wrapper[16], midi[MIDI_HEADER_BYTES];
     size_t root_size;
-    if (!musashi_disc_media_read_root_range(disc, "SC01.CD", 0, directory, sizeof(directory),
+    if (!musashi_disc_media_read_root_range(disc, archive, 0, directory, sizeof(directory),
                                            &root_size)) return BFM_SQV_DISC_ERROR;
     uint32_t count = little32(directory);
     if (count <= member || count > (root_size - 8) / 8) return BFM_SQV_INVALID;
-    if (!read_sc01(disc, 8 + (size_t)member * 8, entry, sizeof(entry))) return BFM_SQV_DISC_ERROR;
+    if (!read_score(disc, archive, 8 + (size_t)member * 8, entry, sizeof(entry))) return BFM_SQV_DISC_ERROR;
     uint32_t sector = little32(entry);
     size_t member_bytes = little32(entry + 4);
     if (sector > root_size / SECTOR)
@@ -44,7 +44,7 @@ static BfmSqvResult locate(const MusashiDiscMedia *disc, unsigned member, unsign
     size_t base = (size_t)sector * SECTOR;
     if (base < 8 + 8 * (size_t)count || member_bytes < sizeof(wrapper) ||
         member_bytes > root_size - base) return BFM_SQV_INVALID;
-    if (!read_sc01(disc, base, wrapper, sizeof(wrapper))) return BFM_SQV_DISC_ERROR;
+    if (!read_score(disc, archive, base, wrapper, sizeof(wrapper))) return BFM_SQV_DISC_ERROR;
     if (memcmp(wrapper, ".sqv", 4)) return BFM_SQV_INVALID;
     /* Offsets follow the signature. The palace has two offsets, the
      * forest none; all unused words in either wrapper must be zero. */
@@ -62,7 +62,7 @@ static BfmSqvResult locate(const MusashiDiscMedia *disc, unsigned member, unsign
             return BFM_SQV_INVALID;
 
     size_t start = starts[track];
-    if (!read_sc01(disc, base + start, midi, sizeof(midi))) return BFM_SQV_DISC_ERROR;
+    if (!read_score(disc, archive, base + start, midi, sizeof(midi))) return BFM_SQV_DISC_ERROR;
     if (memcmp(midi, "MThd", 4) || memcmp(midi + 14, "MTrk", 4)) return BFM_SQV_INVALID;
     if (big32(midi + 4) != 6 || midi[8] || midi[9] || midi[10] || midi[11] != 1 ||
         (midi[12] & 128)) return BFM_SQV_UNSUPPORTED;
@@ -82,7 +82,7 @@ static BfmSqvResult locate(const MusashiDiscMedia *disc, unsigned member, unsign
         size_t distance = (SECTOR - body % SECTOR) % SECTOR;
         while (distance < range->bytes && range->bytes - distance >= 4) {
             uint8_t signature[4];
-            if (!read_sc01(disc, range->offset + distance, signature, sizeof(signature)))
+            if (!read_score(disc, archive, range->offset + distance, signature, sizeof(signature)))
                 return BFM_SQV_DISC_ERROR;
             if (!memcmp(signature, "pBAV", 4)) {
                 range->bytes = distance;
@@ -197,23 +197,26 @@ static BfmSqvResult parse(const uint8_t *data, size_t bytes, unsigned member, Bf
     return BFM_SQV_INVALID;
 }
 
-BfmSqvResult bfm_sqv_member_track_load(const MusashiDiscMedia *disc, unsigned member,
+BfmSqvResult bfm_sqv_archive_track_load(const MusashiDiscMedia *disc, const char *archive, unsigned member,
                                       unsigned track, BfmSqvTrack *out)
 {
     if (!out) return BFM_SQV_INVALID;
     *out = (BfmSqvTrack){0};
     if (!disc) return BFM_SQV_INVALID;
-    if (member != PALACE_MEMBER && member != FOREST_MEMBER) return BFM_SQV_UNSUPPORTED;
-    unsigned tracks = member == PALACE_MEMBER ? MAX_TRACKS : 1;
+    if (!archive) return BFM_SQV_INVALID;
+    int castle = !strcmp(archive, "SC03.CD") && member == 68;
+    if (!castle && (strcmp(archive, "SC01.CD") || (member != PALACE_MEMBER && member != FOREST_MEMBER)))
+        return BFM_SQV_UNSUPPORTED;
+    unsigned tracks = castle || member == PALACE_MEMBER ? MAX_TRACKS : 1;
     if (track >= tracks) return BFM_SQV_INVALID;
     TrackRange range;
-    BfmSqvResult result = locate(disc, member, track, tracks, &range);
+    BfmSqvResult result = locate(disc, archive, member, track, tracks, &range);
     if (result != BFM_SQV_OK) return result;
     if (!range.bytes) return BFM_SQV_INVALID;
     uint8_t *data = malloc(range.bytes);
     if (!data) return BFM_SQV_NO_MEMORY;
     BfmSqvTrack score = {.ticks_per_quarter = range.division};
-    if (!read_sc01(disc, range.offset, data, range.bytes)) {
+    if (!read_score(disc, archive, range.offset, data, range.bytes)) {
         result = BFM_SQV_DISC_ERROR;
     } else {
         /* Count and validate the immutable stream before allocating its
@@ -230,6 +233,12 @@ BfmSqvResult bfm_sqv_member_track_load(const MusashiDiscMedia *disc, unsigned me
     if (result == BFM_SQV_OK) *out = score;
     else free(score.events);
     return result;
+}
+
+BfmSqvResult bfm_sqv_member_track_load(const MusashiDiscMedia *disc, unsigned member,
+                                      unsigned track, BfmSqvTrack *out)
+{
+    return bfm_sqv_archive_track_load(disc, "SC01.CD", member, track, out);
 }
 
 BfmSqvResult bfm_sqv_track_load(const MusashiDiscMedia *disc, unsigned track, BfmSqvTrack *out)

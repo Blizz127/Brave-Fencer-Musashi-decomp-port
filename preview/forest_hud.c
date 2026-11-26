@@ -4,9 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { SCENE_BASE = 0x128158, PANEL_RECORDS = 0x18a1dc - SCENE_BASE,
-       ABILITY_NAMES = 0x18a23c - SCENE_BASE, VITALITY_ROWS = 0x18a2b8 - SCENE_BASE,
-       DIAL_ROWS = 0x18a2cc - SCENE_BASE, WEEKDAY_COLORS = 0x18a300 - SCENE_BASE,
+enum { SCENE_BASE = 0x128158, FOREST_PANELS = 0x18a1dc - SCENE_BASE,
+       BEDROOM_PANELS = 0x185a70 - SCENE_BASE, ABILITY_NAMES = 0x60,
+       VITALITY_ROWS = 0xdc, DIAL_ROWS = 0xf0, WEEKDAY_COLORS = 0x124,
        ABILITY_COUNT = 31, MAX_NAME = 24 };
 enum { EXE_HEADER = 2048, ALPHABET = EXE_HEADER + 0x636d8 - 0x10000,
        PUNCTUATION = EXE_HEADER + 0x63818 - 0x10000 };
@@ -24,7 +24,7 @@ struct BfmForestHud {
     Label ability[ABILITY_COUNT];
     uint8_t vitality[20], dial[20], weekday[7];
     uint16_t orb[7], digit[10];
-    unsigned inset, remaining;
+    unsigned inset, remaining, hiding;
 };
 typedef struct {
     const BfmForestHud *hud;
@@ -48,7 +48,7 @@ static int signed16(const uint8_t *p)
 /* The room names use the game's two-byte font encoding. Read the resident
  * glyph-coordinate maps from the executable on the same mounted disc. */
 static int read_labels(BfmForestHud *hud, const MusashiDiscMedia *disc,
-                       const uint8_t *scene, size_t bytes)
+                       const uint8_t *scene, size_t bytes, const uint8_t *names)
 {
     uint8_t alphabet[2 * 80], punctuation[2 * 28];
     size_t size;
@@ -60,7 +60,7 @@ static int read_labels(BfmForestHud *hud, const MusashiDiscMedia *disc,
     for (unsigned i = 0; i < 10; ++i)
         hud->digit[i] = (uint16_t)le16(alphabet + 2*i);
     for (unsigned i = 0; i < ABILITY_COUNT; ++i) {
-        uint32_t ptr = le32(scene + ABILITY_NAMES + 4*i);
+        uint32_t ptr = le32(names + 4*i);
         if (ptr < UINT32_C(0x80000000) + SCENE_BASE) return 0;
         size_t offset = ptr - (UINT32_C(0x80000000) + SCENE_BASE);
         Label *label = &hud->ability[i];
@@ -82,44 +82,68 @@ static int read_labels(BfmForestHud *hud, const MusashiDiscMedia *disc,
     return 1;
 }
 
-BfmForestHud *bfm_forest_hud_load(const MusashiDiscMedia *disc, const uint8_t *scene,
-                                 size_t bytes, const BfmForestTerrain *terrain)
+static BfmForestHud *load_hud(const MusashiDiscMedia *disc, const uint8_t *scene,
+                              size_t bytes, size_t offset, const uint16_t tiles[512][1024])
 {
-    const uint16_t (*tiles)[1024] = bfm_forest_terrain_tiles(terrain);
-    if (!disc || !scene || !tiles || bytes < WEEKDAY_COLORS+7) return NULL;
+    if (!disc || !scene || !tiles || offset > bytes || bytes - offset < WEEKDAY_COLORS + 7)
+        return NULL;
+    const uint8_t *records = scene + offset;
     BfmForestHud *hud = calloc(1, sizeof(*hud));
     if (!hud) return NULL;
     hud->tiles = tiles;
     hud->inset = 55;
     for (unsigned i = 0; i < 5; ++i) {
-        const uint8_t *p = scene + PANEL_RECORDS + i*16;
+        const uint8_t *p = records + i*16;
         if (p[3] != 0x64 || !le16(p+12) || le16(p+12)>320 || !le16(p+14) || le16(p+14)>240)
             goto fail;
         hud->panel[i] = (Sprite){160+signed16(p+4), 120+signed16(p+6),
                                  (int)le16(p+12), (int)le16(p+14), le16(p+8), le16(p+10)};
     }
     for (unsigned i = 0; i < 7; ++i)
-        hud->orb[i] = (uint16_t)le16(scene + PANEL_RECORDS + 80 + i*2);
-    memcpy(hud->vitality, scene+VITALITY_ROWS, sizeof(hud->vitality));
-    memcpy(hud->dial, scene+DIAL_ROWS, sizeof(hud->dial));
-    memcpy(hud->weekday, scene+WEEKDAY_COLORS, sizeof(hud->weekday));
-    if (read_labels(hud, disc, scene, bytes)) return hud;
+        hud->orb[i] = (uint16_t)le16(records + 80 + i*2);
+    memcpy(hud->vitality, records+VITALITY_ROWS, sizeof(hud->vitality));
+    memcpy(hud->dial, records+DIAL_ROWS, sizeof(hud->dial));
+    memcpy(hud->weekday, records+WEEKDAY_COLORS, sizeof(hud->weekday));
+    if (read_labels(hud, disc, scene, bytes, records+ABILITY_NAMES)) return hud;
 fail:
     free(hud);
     return NULL;
 }
+BfmForestHud *bfm_forest_hud_load(const MusashiDiscMedia *disc, const uint8_t *scene,
+                                 size_t bytes, const BfmForestTerrain *terrain)
+{
+    return load_hud(disc, scene, bytes, FOREST_PANELS, bfm_forest_terrain_tiles(terrain));
+}
+
+BfmForestHud *bfm_bedroom_hud_load(const MusashiDiscMedia *disc, const uint8_t *scene,
+                                  size_t bytes, const uint16_t tiles[512][1024])
+{
+    return load_hud(disc, scene, bytes, BEDROOM_PANELS, tiles);
+}
+
 void bfm_forest_hud_free(BfmForestHud *hud)
 {
     free(hud);
 }
 void bfm_forest_hud_show(BfmForestHud *hud)
 {
-    if (hud && hud->inset == 55 && !hud->remaining) hud->remaining = 10;
+    if (hud && hud->inset == 55 && !hud->remaining) {
+        hud->hiding = 0;
+        hud->remaining = 10;
+    }
+}
+void bfm_bedroom_hud_hide(BfmForestHud *hud)
+{
+    if (hud && !hud->inset && !hud->remaining) {
+        hud->hiding = 1;
+        hud->remaining = 10;
+    }
 }
 void bfm_forest_hud_tick(BfmForestHud *hud)
 {
     if (hud && hud->remaining) {
-        hud->inset -= hud->remaining;
+        if (hud->hiding) hud->inset += hud->remaining;
+        else hud->inset -= hud->remaining;
         --hud->remaining;
     }
 }
@@ -216,7 +240,7 @@ static void points(Canvas *c, int x, int y, unsigned current, unsigned max,
     number(c,x+56,y,max,3,palette);
 }
 
-static void calendar(Canvas *c, const BfmForestStatusValues *v, int x, int y)
+static void calendar(Canvas *c, const BfmForestStatusValues *v, int x, int y, unsigned clock_palette)
 {
     if (v->weekday >= 7) return;
     unsigned palette = 0x4016 | (unsigned)c->hud->weekday[v->weekday] << 6;
@@ -226,9 +250,9 @@ static void calendar(Canvas *c, const BfmForestStatusValues *v, int x, int y)
     glyph(c,x+42,y,0x1000 + v->weekday*16,palette);
     glyph(c,x+50,y,0x1008 + v->weekday*16,palette);
     unsigned quarter = v->minutes_of_day / 15;
-    number(c,x+61,y,quarter/4,2,0x4016);
-    glyph(c,x+76,y,0x3850,0x4016);
-    number(c,x+83,y,quarter%4*15,2,0x4016);
+    number(c,x+61,y,quarter/4,2,clock_palette);
+    glyph(c,x+76,y,0x3850,clock_palette);
+    number(c,x+83,y,quarter%4*15,2,clock_palette);
 }
 
 void bfm_forest_hud_draw(const BfmForestHud *hud, const BfmForestStatus *status,
@@ -244,7 +268,8 @@ void bfm_forest_hud_draw(const BfmForestHud *hud, const BfmForestStatus *status,
     glyph(&c,x,y,0x4000,0x6b56);
     number(&c,x+8,y,v.wallet,5,0x6b56);
     glyph(&c,x+48,y,hud->digit[0],0x6b56);
-    calendar(&c,&v,x,y+20);
+    unsigned story = le16(status->record + 8);
+    calendar(&c,&v,x,y+20,story - 10u < 1200u ? 0x6d16 : 0x4016);
     if (v.ability_label < ABILITY_COUNT) {
         const Label *label = &hud->ability[v.ability_label];
         for (unsigned i = 0; i < label->count; ++i) {

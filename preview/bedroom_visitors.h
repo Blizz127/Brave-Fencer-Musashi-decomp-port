@@ -23,6 +23,7 @@ typedef struct {
 BfmBedroomVisitors *bfm_bedroom_visitors_open(const uint8_t *scene, size_t bytes);
 int bfm_bedroom_visitors_spawn(BfmBedroomVisitors *visitors);
 void bfm_bedroom_visitors_request(BfmBedroomVisitors *visitors, BfmBedroomVisitorCue cue);
+int bfm_bedroom_visitors_handover(BfmBedroomVisitors *visitors);
 void bfm_bedroom_visitors_speak(BfmBedroomVisitors *visitors);
 int bfm_bedroom_visitors_step(BfmBedroomVisitors *visitors);
 const BfmBedroomVisitorPose *bfm_bedroom_visitors_pose(const BfmBedroomVisitors *visitors,

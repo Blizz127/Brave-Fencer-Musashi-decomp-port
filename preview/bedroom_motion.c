@@ -17,7 +17,7 @@ typedef struct {
     int ended;
 } Channel;
 
-enum Activity { QUIET, TILTING, UNROLLING, RISING, YAWNING, STANDING, RETURNING, STARTING_RUN, SHOWING_FUSION };
+enum Activity { QUIET, TILTING, UNROLLING, RISING, YAWNING, STANDING, RETURNING, STARTING_RUN, SHOWING_FUSION, COLLECTING };
 
 struct BfmBedroomMotion {
     Region main, scene;
@@ -220,6 +220,18 @@ static int update(BfmBedroomMotion *m, BfmBedroomAction action)
         if (!select_body(m, 34)) return 0;
         m->activity = STANDING;
         break;
+    case BFM_BEDROOM_COLLECT:
+        if (!select_body(m, 33)) return 0;
+        m->activity = COLLECTING;
+        m->frame.draw_current = 1;
+        break;
+    case BFM_BEDROOM_RECEIVE:
+    case BFM_BEDROOM_LOWER:
+        start(&m->body, action == BFM_BEDROOM_RECEIVE ? 0x800d5da8u : 0x800d5dc0u);
+        if (!advance(m, &m->body, 1)) return 0;
+        m->frame.draw_current = 1;
+        m->activity = action == BFM_BEDROOM_RECEIVE ? QUIET : COLLECTING;
+        break;
     case BFM_BEDROOM_SHOW_FUSION:
         start(&m->body, 0x801ca6ecu);
         if (!advance(m, &m->body, 1)) return 0;
@@ -262,6 +274,10 @@ static int update(BfmBedroomMotion *m, BfmBedroomAction action)
             if (!select_body(m, 0)) return 0;
             m->frame.draw_current = 0;
         }
+        if (m->activity == COLLECTING) {
+            if (!pair(m, 0, 17)) return 0;
+            m->frame.draw_current = 0;
+        }
         m->frame.finished = m->activity != STANDING;
         m->activity = m->activity == RISING ? RETURNING : QUIET;
     }
@@ -291,35 +307,44 @@ typedef struct {
     const uint8_t *pixels;
 } FaceUpload;
 
-int bfm_bedroom_motion_face(const BfmBedroomMotion *m, uint16_t tiles[512][1024])
+static int upload(const BfmBedroomMotion *m, uint32_t address, unsigned count, uint16_t tiles[512][1024])
 {
-    if (!m || !tiles) return 0;
-    if (!m->face_upload) return 1;
-    /* The mounted normal facial material has a CLUT and an indexed image.
-     * Validate the complete transfer before changing the caller's VRAM. */
-    const uint8_t *header = region(&m->main, m->face_upload, 36);
-    if (!header || header[32] != 0xff) return 0;
+    const uint8_t *header = region(&m->main, address, count * 16 + 4);
+    if (!header || header[count * 16] != 0xff) return 0;
     FaceUpload items[2];
-    for (unsigned i = 0; i < 2; ++i) {
+    for (unsigned i = 0; i < count; ++i) {
         const uint8_t *h = header + i * 16;
         FaceUpload *u = &items[i];
         u->x = halfword(h+4); u->y = halfword(h+6);
         u->width = halfword(h+8); u->height = halfword(h+10);
         uint32_t pixels;
-        if (!word(m, m->face_upload + i * 16 + 12, &pixels) ||
+        if (!word(m, address + i * 16 + 12, &pixels) ||
             u->width == 0 || u->height == 0 ||
             u->width > 1024 || u->x > 1024 - u->width ||
             u->height > 512 || u->y > 512 - u->height) return 0;
         u->pixels = region(&m->main, pixels, 2 * u->width * u->height);
         if (!u->pixels) return 0;
     }
-    for (unsigned i = 0; i < 2; ++i) {
+    for (unsigned i = 0; i < count; ++i) {
         const FaceUpload *u = &items[i];
         for (unsigned y = 0; y < u->height; ++y)
             for (unsigned x = 0; x < u->width; ++x)
                 tiles[u->y + y][u->x + x] = halfword(u->pixels + 2 * (y*u->width + x));
     }
     return 1;
+}
+
+int bfm_bedroom_motion_face(const BfmBedroomMotion *m, uint16_t tiles[512][1024])
+{
+    return m && tiles && (!m->face_upload || upload(m, m->face_upload, 2, tiles));
+}
+
+int bfm_bedroom_orb_palette(const BfmBedroomMotion *m, unsigned orb, uint16_t tiles[512][1024])
+{
+    uint32_t address;
+    if (orb & 0x80) orb = 7;
+    return m && tiles && orb <= 7 && word(m, 0x80185b78u + 4*orb, &address) &&
+           upload(m, address, 1, tiles);
 }
 
 void bfm_bedroom_motion_free(BfmBedroomMotion *m)

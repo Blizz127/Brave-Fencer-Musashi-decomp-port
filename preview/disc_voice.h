@@ -8,7 +8,7 @@
 typedef struct PalaceVoice DiscVoice;
 typedef enum { BFM_VOICE_OPEN, BFM_VOICE_ST01, BFM_VOICE_ST02 } BfmDiscVoiceArchive;
 typedef struct {
-    unsigned channel_offset, sound_ticks;
+    unsigned channel_offset, sound_ticks, group_head_frames;
 } BfmDiscVoiceCue;
 
 /* Shares the immutable mount. Successful requests rewind the selected

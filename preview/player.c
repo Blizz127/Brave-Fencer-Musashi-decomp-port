@@ -348,13 +348,19 @@ static int play(Player *p, char *error, size_t size) {
                 } else {
                     for (uint64_t t = last_logic; t < tick; ++t) {
                         unsigned pressed = t == last_logic ? p->pressed : 0;
-                        int result = bfm_bedroom_step_input(p->bedroom,
-                                    pressed & (PAD_CIRCLE | PAD_CROSS | PAD_TRIANGLE), pressed & PAD_CIRCLE);
+                        int direction = (pressed & PAD_UP) ? -1 : !!(pressed & PAD_DOWN);
+                        int result = bfm_bedroom_step_controls(p->bedroom,
+                                    pressed & (PAD_CIRCLE | PAD_CROSS | PAD_TRIANGLE),
+                                    pressed & PAD_CIRCLE, direction, pressed & PAD_CROSS);
                         if (!result) {
                             snprintf(error, size, "Could not advance the mounted bedroom scene.");
                             return 2;
                         }
-                        if (result == BFM_BEDROOM_VOICE_STOPPED) bfm_desktop_voice_stop(p->voice);
+                        if (result == BFM_BEDROOM_VOICE_STOPPED) bfm_desktop_voice_room_skip(p->voice);
+                        bfm_desktop_voice_room_score(p->voice, bfm_bedroom_score(p->bedroom));
+                        unsigned command;
+                        struct BfmBedroomEffects *effects = bfm_bedroom_effect(p->bedroom, &command);
+                        bfm_desktop_voice_room_effect(p->voice, effects, command);
                         unsigned generation;
                         struct ForestVoice *voice = bfm_bedroom_voice(p->bedroom, &generation);
                         bfm_desktop_voice_forest(p->voice, voice, generation,
@@ -474,7 +480,7 @@ static int play(Player *p, char *error, size_t size) {
         } else if (bedroom) {
             frame = bfm_bedroom_draw(p->bedroom, (uint32_t (*)[320])p->pixels);
             if (frame && bfm_bedroom_endpoint(p->bedroom))
-                status_line(p, "End of Musashi's question about going home. Start to return.");
+                status_line(p, "Library visit agreed. Start to return.");
             if (!frame) frame = -1;
         } else if (files) {
             bfm_save_menu_draw(p->save_art, &p->saves, fields, (uint32_t (*)[320])p->pixels);

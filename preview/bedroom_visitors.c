@@ -18,12 +18,15 @@ static const VisitorClass classes[] = {
     {0x801bc578, 0x801bc5e0, 0x801bc718, 0x801bc798, 10, -384}
 };
 
-typedef enum { ABSENT, WAITING, FOLLOWING, ARRIVED } VisitorState;
+typedef enum {
+    ABSENT, WAITING, FOLLOWING, ARRIVED, BEGIN_HANDOVER, HANDOVER_WALK,
+    HANDOVER_HOLD, HANDOVER_FINISH, BEGIN_RETURN, RETURN_WALK
+} VisitorState;
 typedef struct {
     BfmBedroomVisitorPose frame;
     VisitorState state;
     uint32_t route_cursor, animation, cursor;
-    unsigned hold, ticks, speech_delay, requested_clip;
+    unsigned hold, ticks, speech_delay, requested_clip, handed_over;
     int64_t x, z, vx, vz;
 } Visitor;
 
@@ -91,6 +94,11 @@ static int travel(const BfmBedroomVisitors *v, Visitor *p, const VisitorClass *c
         if (!command) return 0;
         int duration = (int16_t)half(command);
         if (!duration) {
+            if (p->state == HANDOVER_WALK) {
+                p->state = HANDOVER_HOLD;
+                p->ticks = 40;
+                return animate(v, p, cl, 0x801bc5f8u);
+            }
             p->state = ARRIVED;
             return animate(v, p, cl, cl->idle);
         }
@@ -134,8 +142,32 @@ static int step(const BfmBedroomVisitors *v, Visitor *p, const VisitorClass *cl)
             p->route_cursor = cl->route;
         }
         return 1;
+    case BEGIN_HANDOVER:
+    case BEGIN_RETURN: {
+        int returning = p->state == BEGIN_RETURN;
+        p->state = returning ? RETURN_WALK : HANDOVER_WALK;
+        p->route_cursor = returning ? 0x801bc778u : 0x801bc764u;
+        p->ticks = 0;
+        return animate(v, p, cl, cl->walk);
+    }
     case FOLLOWING:
+    case HANDOVER_WALK:
+    case RETURN_WALK:
         return travel(v, p, cl);
+    case HANDOVER_HOLD:
+        if (p->ticks) --p->ticks;
+        else {
+            p->state = HANDOVER_FINISH;
+            return animate(v, p, cl, 0x801bc680u);
+        }
+        return 1;
+    case HANDOVER_FINISH:
+        if (!p->hold) {
+            p->handed_over = 1;
+            p->state = ARRIVED;
+            return animate(v, p, cl, cl->idle);
+        }
+        return 1;
     case ARRIVED:
         if (p->requested_clip) {
             if (!p->speech_delay) p->speech_delay = 8;
@@ -187,6 +219,14 @@ void bfm_bedroom_visitors_request(BfmBedroomVisitors *v, BfmBedroomVisitorCue cu
     Visitor *actor = &v->people[cue >= BFM_VISITOR_BUTLER_SPEAK ? 1 : 0];
     if (actor->state != ABSENT)
         actor->requested_clip = (cue == BFM_VISITOR_RIBSON_REST || cue == BFM_VISITOR_BUTLER_REST) ? 2 : 1;
+}
+
+int bfm_bedroom_visitors_handover(BfmBedroomVisitors *v)
+{
+    if (!v || v->people[1].state != ARRIVED) return 0;
+    Visitor *butler = &v->people[1];
+    butler->state = butler->handed_over ? BEGIN_RETURN : BEGIN_HANDOVER;
+    return 1;
 }
 
 void bfm_bedroom_visitors_speak(BfmBedroomVisitors *v)

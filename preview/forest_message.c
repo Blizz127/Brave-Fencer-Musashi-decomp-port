@@ -7,7 +7,7 @@
 enum { DOORWAY_BYTES = 160 };
 
 enum MessagePhase {
-    PRINT, OPENING, SCROLL, WAIT_VOICE, WAIT_TIMER, WAIT_CONFIRM, WAIT_DISMISS, CLOSING, CLOSED, INVALID
+    PRINT, OPENING, SCROLL, WAIT_VOICE, WAIT_TIMER, WAIT_CONFIRM, WAIT_DISMISS, BUILD_CHOICE, WAIT_CHOICE, NOTICE_HOLD, CLOSING, CLOSED, INVALID
 };
 
 struct BfmForestMessage {
@@ -17,6 +17,7 @@ struct BfmForestMessage {
     unsigned row, column, ink;
     unsigned timer, delay, glyph_interval;
     int speaker_name, voiced_page, rapid, voice_interrupted, sync_on_open;
+    int notice, last_shortcut;
     const uint8_t *program;
 };
 
@@ -35,6 +36,11 @@ static BfmForestMessage *open_message(const uint8_t *program, size_t length, int
         message->program = program;
         message->size = length;
         message->frame.focused = 1;
+        if (length >= 4 && program[0] == 0x16 && program[1] == 2 && program[2] == 1 && !program[3]) {
+            message->frame.style = 1;
+            message->frame.border_step = 1;
+            message->frame.border_scale = 512;
+        }
         message->ink = 1;
     }
     return message;
@@ -68,7 +74,7 @@ const BfmForestMessageFrame *bfm_forest_message_frame(const BfmForestMessage *me
 
 static int set_style(BfmForestMessage *message, unsigned style)
 {
-    if (style != 2 && style != 6)
+    if (style != 1 && style != 2 && style != 6)
         return 0;
     message->frame.style = style;
     return 1;
@@ -91,14 +97,20 @@ static int print_update(BfmForestMessage *m)
             ++m->cursor;
             break;
         case 0x02: /* Open dialogue border */
-            if (left < 2 || !set_style(m, arg[0]) || (arg[1] < 1 || arg[1] > 3)) return 0;
+            if (left < 2 || !set_style(m, arg[0]) || arg[1] > 3 ||
+                ((arg[0] == 1) != (arg[1] == 0))) return 0;
             f->portrait = arg[1];
             m->cursor += 2;
             f->border_step = 2;
             m->phase = OPENING;
             return 1;
         case 0x03: /* The closing pass keeps the cursor on this command. */
-            if (left < 1 || arg[0] != 0) return 0;
+            if (left < 1 || (arg[0] && !m->notice)) return 0;
+            if (m->notice && arg[0]) {
+                m->timer = arg[0];
+                m->phase = NOTICE_HOLD;
+                return 1;
+            }
             --m->cursor;
             f->wait_for_confirm = m->voice_interrupted;
             m->phase = m->voice_interrupted ? WAIT_DISMISS : CLOSING;
@@ -180,6 +192,15 @@ static int print_update(BfmForestMessage *m)
             if (!m->timer) break;
             m->phase = WAIT_TIMER;
             return 1;
+        case 0x16: /* System notices run through their own display timer. */
+            m->notice = 1;
+            break;
+        case 0x17:
+            m->last_shortcut = 1;
+            break;
+        case 0x0c:
+            m->phase = BUILD_CHOICE;
+            return 1;
         case 0x18:
             m->speaker_name = 1;
             break;
@@ -210,13 +231,49 @@ static int print_update(BfmForestMessage *m)
  * leaves its page under button control through the final dismissal. */
 static void reveal(BfmForestMessage *m, int pressed)
 {
-    if (!pressed || m->rapid) return;
+    if (!pressed || m->rapid || m->notice || m->phase == WAIT_CHOICE) return;
     m->rapid = 1;
     if (m->voiced_page) {
         m->voiced_page = 0;
         m->voice_interrupted = 1;
         m->frame.events |= BFM_FOREST_VOICE_STOP;
     }
+}
+
+/* Choice captions use a 36-glyph budget per update. The menu takes
+ * input only after the mounted option terminator. */
+static int build_choice(BfmForestMessage *m)
+{
+    for (unsigned glyphs = 0; glyphs < 36 && m->cursor < m->size;) {
+        unsigned ch = m->program[m->cursor++];
+        if (ch >= 0x20 && ch <= 0x7e) {
+            if (m->column == 36) return 0;
+            m->frame.cells[m->row][m->column++] = (BfmForestMessageCell){(uint8_t)ch, (uint8_t)m->ink};
+            ++glyphs;
+        } else if (ch == 0x0a && m->row == 0) {
+            ++m->row;
+            m->column = 0;
+        } else if (ch == 0 || ch == 7) {
+            if (m->row != 1 || !m->column) return 0;
+            m->frame.choices = 2;
+            m->frame.answer = 1;
+            m->phase = WAIT_CHOICE;
+            return 1;
+        } else if (ch != 0x15 && ch != 3) return 0;
+    }
+    return m->cursor < m->size;
+}
+
+int bfm_field_message_choose(BfmForestMessage *m, int direction, int last, int accept)
+{
+    if (!m || m->phase != WAIT_CHOICE) return 0;
+    BfmForestMessageFrame *f = &m->frame;
+    if (accept) m->phase = CLOSING;
+    else if (direction < 0) f->answer = f->answer > 1 ? f->answer-1 : f->choices;
+    else if (direction > 0) f->answer = f->answer < f->choices ? f->answer+1 : 1;
+    else if (last && m->last_shortcut) f->answer = f->choices;
+    else return 0;
+    return 1;
 }
 
 const BfmForestMessageFrame *bfm_field_message_tick(BfmForestMessage *m,
@@ -289,6 +346,17 @@ const BfmForestMessageFrame *bfm_field_message_tick(BfmForestMessage *m,
             m->phase = PRINT;
         }
         break;
+    case BUILD_CHOICE:
+        if (!build_choice(m)) {
+            m->phase = INVALID;
+            return NULL;
+        }
+        break;
+    case WAIT_CHOICE:
+        break;
+    case NOTICE_HOLD:
+        if (!m->timer) m->phase = CLOSING;
+        break;
     case WAIT_DISMISS:
         if (!confirm_edge) break;
         f->wait_for_confirm = 0;
@@ -303,7 +371,7 @@ const BfmForestMessageFrame *bfm_field_message_tick(BfmForestMessage *m,
             m->phase = CLOSED;
         } else {
             f->border_step = f->border_step > 4 ? f->border_step - 2 : 0;
-            f->style = 2;
+            if (!m->notice) f->style = 2;
         }
         break;
     case CLOSED:

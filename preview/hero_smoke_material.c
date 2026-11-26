@@ -43,6 +43,21 @@ static int read_frame(BfmHeroSmokeFrame *frame, const uint8_t *record,
     return 1;
 }
 
+int bfm_hero_run_smoke_load(BfmHeroSmokeMaterial *out, const uint8_t *main, size_t bytes)
+{
+    size_t offset = 0x800d387cu - 0x800cedf8u;
+    if (!out || !main || bytes < offset+12+8*BFM_HERO_SMOKE_CELLS) return 0;
+    const uint8_t *card = main+offset;
+    BfmHeroSmokeMaterial result = {.width=card[2], .height=card[3],
+                                   .left=signed_word(card+8), .top=signed_word(card+10)};
+    if (!result.width || !result.height) return 0;
+    for (unsigned i=0; i<BFM_HERO_SMOKE_CELLS; ++i)
+        if (!read_frame(&result.tracks[0][i],card+12+8*i,result.width,result.height,i+1==BFM_HERO_SMOKE_CELLS))
+            return 0;
+    *out = result;
+    return 1;
+}
+
 int bfm_hero_smoke_load(BfmHeroSmokeMaterial *out, const uint8_t *scene, size_t bytes)
 {
     const size_t first_track = 0x5ce0c, pointers = 0x5cf00, card = 0x5cf0c;

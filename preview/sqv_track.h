@@ -37,6 +37,8 @@ BfmSqvResult bfm_sqv_track_load(const MusashiDiscMedia *disc, unsigned track, Bf
  * palace tracks in member 2 and the single forest track in member 78. */
 BfmSqvResult bfm_sqv_member_track_load(const MusashiDiscMedia *disc, unsigned member,
                                       unsigned track, BfmSqvTrack *out);
+BfmSqvResult bfm_sqv_archive_track_load(const MusashiDiscMedia *disc, const char *archive, unsigned member,
+                                       unsigned track, BfmSqvTrack *out);
 void bfm_sqv_track_free(BfmSqvTrack *track);
 
 #endif

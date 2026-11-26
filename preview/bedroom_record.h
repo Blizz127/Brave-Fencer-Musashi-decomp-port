@@ -25,5 +25,6 @@ typedef struct {
 int bfm_bedroom_entry(const MusashiDiscMedia *disc, const BfmSaveRecord *record,
                       BfmBedroomEntry *out);
 /* Loads the player body/motions from the resident MAIN member. Caller frees. */
+uint8_t *bfm_bedroom_effect_data(const MusashiDiscMedia *disc, unsigned member, size_t *size);
 uint8_t *bfm_bedroom_player_data(const MusashiDiscMedia *disc, size_t *size);
 #endif

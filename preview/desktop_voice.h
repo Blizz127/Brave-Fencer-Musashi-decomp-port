@@ -23,6 +23,12 @@ int bfm_desktop_voice_pump(DesktopVoice *voice, unsigned field, unsigned *bank, 
 /* Arm the mounted incoming score at its opening-clock SDL time. Repeated
  * frames and later dialogue generations retain the same music cursor. */
 void bfm_desktop_voice_forest_score(DesktopVoice *voice, const MusashiDiscMedia *disc, Uint64 start);
+struct BfmBedroomEffects;
+void bfm_desktop_voice_room_effect(DesktopVoice *voice, struct BfmBedroomEffects *effects, unsigned command);
+struct BfmForestScore;
+/* The active room retains its score until the desktop stops. */
+void bfm_desktop_voice_room_skip(DesktopVoice *voice);
+void bfm_desktop_voice_room_score(DesktopVoice *voice, struct BfmForestScore *score);
 struct ForestVoice;
 /* Supply the clocked field transport to SDL. Giant Forest provides its NTSC
  * field so complete lines can drain on a slow device. Zero selects immediate

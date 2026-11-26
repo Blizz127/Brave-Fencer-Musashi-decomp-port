@@ -32,7 +32,8 @@ struct BfmForestScore {
     uint64_t field_duration, first_field_phase, field_phase, bend_deadline;
     const BfmSqvEvent *pending_bend;
     size_t count, event, frames, remaining, phrase;
-    unsigned rate;
+    unsigned rate, gain, fade_level, fade_phase;
+    int fading;
     int previous[2], until_output, failed;
 };
 
@@ -306,18 +307,23 @@ void bfm_forest_score_rewind(BfmForestScore *score)
     score->remaining = score->frames;
     score->previous[0] = score->previous[1] = 0;
     score->until_output = 0;
+    score->fading = 0;
+    score->fade_phase = 0;
+    score->fade_level = 0x4000;
     score->failed = 0;
 }
 
-BfmForestScore *bfm_forest_score_load(const MusashiDiscMedia *disc, unsigned rate)
+static BfmForestScore *load_score(const MusashiDiscMedia *disc, unsigned rate, const char *archive,
+                                  unsigned member, unsigned track, unsigned gain)
 {
     if (!disc || (rate != DEVICE_RATE && rate != 37800)) return NULL;
     BfmForestScore *score = calloc(1, sizeof(*score));
     if (!score) return NULL;
     score->rate = rate;
-    if (bfm_sqv_member_track_load(disc, 78, 0, &score->track) != BFM_SQV_OK ||
+    score->gain = gain;
+    if (bfm_sqv_archive_track_load(disc, archive, member, track, &score->track) != BFM_SQV_OK ||
         !prepare_schedule(score)) goto fail;
-    score->orchestra.bank = bfm_palace_sound_bank_load(disc, 78);
+    score->orchestra.bank = bfm_archive_sound_bank_load(disc, archive, member);
     if (!score->orchestra.bank) goto fail;
     /* Resolve instruments and validate the mounted note/voice ownership on
      * the game thread. The callback only accesses prepared samples. */
@@ -334,13 +340,31 @@ fail:
     return NULL;
 }
 
+BfmForestScore *bfm_forest_score_load(const MusashiDiscMedia *disc, unsigned rate)
+{
+    /* The registered forest dry levels include the command row gain of 90. */
+    return load_score(disc, rate, "SC01.CD", 78, 0, 90);
+}
+
+BfmForestScore *bfm_castle_score_load(const MusashiDiscMedia *disc, unsigned rate,
+                                    unsigned member, unsigned track, unsigned volume)
+{
+    if (volume > 127) return NULL;
+    return load_score(disc, rate, "SC03.CD", member, track, volume);
+}
+
+void bfm_castle_score_fade(BfmForestScore *score)
+{
+    if (score) score->fading = 1;
+}
+
 size_t bfm_forest_score_mix(BfmForestScore *score, int16_t *stereo, size_t frames)
 {
     if (!score || !stereo || score->failed) return 0;
     if (!score->repeat_period && frames > score->remaining) frames = score->remaining;
     if (frames > SIZE_MAX / (2 * sizeof(*stereo))) return 0;
     size_t written = 0;
-    while (written < frames) {
+    while (written < frames && score->fade_level) {
         int current[2];
         if (!next_device_sample(score, current)) {
             score->failed = 1;
@@ -351,9 +375,18 @@ size_t bfm_forest_score_mix(BfmForestScore *score, int16_t *stereo, size_t frame
             for (unsigned c = 0; c < 2; ++c) {
                 int value = current[c] +
                     (int)((int64_t)(score->previous[c] - current[c]) * fraction / score->rate);
+                value = value * (int)score->gain / 90;
+                if (score->fading) value = (int)((int64_t)value * score->fade_level / 0x4000);
                 stereo[2 * written + c] = limit_sample(stereo[2 * written + c] + value);
             }
             ++written;
+            if (score->fading) {
+                score->fade_phase += 60;
+                if (score->fade_phase >= score->rate) {
+                    score->fade_phase -= score->rate;
+                    score->fade_level = score->fade_level > 0x111 ? score->fade_level-0x111 : 0;
+                }
+            }
             score->until_output += DEVICE_RATE;
         }
         score->until_output -= (int)score->rate;

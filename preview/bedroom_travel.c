@@ -314,6 +314,13 @@ void bfm_bedroom_travel_look(BfmBedroomTravel *t, int yaw)
     turn_toward(t, yaw);
 }
 
+int bfm_bedroom_travel_turn_to_point(BfmBedroomTravel *t, int x, int z)
+{
+    int dx = t->root.xyz[0] - x, dz = t->root.xyz[2] - z;
+    int heading = (int)lround(atan2(dx, dz) / angle_unit) & 4095;
+    return turn_toward(t, heading) == 0;
+}
+
 void bfm_bedroom_travel_face_point(BfmBedroomTravel *t, int x, int z)
 {
     t->root.yaw = (unsigned)direction(t->root.xyz[0] - x, t->root.xyz[2] - z);

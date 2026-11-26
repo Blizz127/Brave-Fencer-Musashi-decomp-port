@@ -19,7 +19,8 @@ typedef enum {
     BFM_BEDROOM_STAND,
     BFM_BEDROOM_REST,
     BFM_BEDROOM_SEARCH,
-    BFM_BEDROOM_SHOW_FUSION
+    BFM_BEDROOM_SHOW_FUSION,
+    BFM_BEDROOM_COLLECT, BFM_BEDROOM_RECEIVE, BFM_BEDROOM_LOWER
 } BfmBedroomAction;
 
 typedef struct {
@@ -40,6 +41,7 @@ int bfm_bedroom_motion_step(BfmBedroomMotion *motion, BfmBedroomAction action,
 /* Apply a mounted facial texture and palette when the facial channel requests
  * an upload. Tagged in-VRAM facial moves are returned in frame.face_word. */
 int bfm_bedroom_motion_face(const BfmBedroomMotion *motion, uint16_t tiles[512][1024]);
+int bfm_bedroom_orb_palette(const BfmBedroomMotion *motion, unsigned orb, uint16_t tiles[512][1024]);
 void bfm_bedroom_motion_free(BfmBedroomMotion *motion);
 
 #endif

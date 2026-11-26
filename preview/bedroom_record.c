@@ -30,18 +30,19 @@ static int descriptor(const MusashiDiscMedia *disc, const char *name, unsigned m
 /* In MAIN members 10 and 12 the sparse tile upload precedes the resident
  * data block. PAC block lengths include their header and are sector-aligned
  * on disc; the payload length in the header is unrounded. */
-static int main_data(const MusashiDiscMedia *disc, unsigned member, size_t *position, size_t *bytes)
+static int payload(const MusashiDiscMedia *disc, const char *archive, unsigned member, unsigned type,
+                   size_t *position, size_t *bytes)
 {
     size_t start, left, total;
-    if (!descriptor(disc, "MAIN.CD", member, &start, &left)) return 0;
+    if (!descriptor(disc, archive, member, &start, &left)) return 0;
     while (left >= SECTOR) {
         uint8_t header[16];
-        if (!musashi_disc_media_read_root_range(disc, "MAIN.CD", start, header,
+        if (!musashi_disc_media_read_root_range(disc, archive, start, header,
                                                  sizeof header, &total) ||
             memcmp(header, "PAC", 4)) return 0;
         uint32_t length = word(header + 12);
         if (length <= SECTOR || length > left) return 0;
-        if (word(header + 4) == 0x101) {
+        if (word(header + 4) == type) {
             *position = start + SECTOR;
             *bytes = length - SECTOR;
             return *bytes <= MAIN_BYTES_LIMIT;
@@ -54,18 +55,28 @@ static int main_data(const MusashiDiscMedia *disc, unsigned member, size_t *posi
     return 0;
 }
 
-uint8_t *bfm_bedroom_player_data(const MusashiDiscMedia *disc, size_t *size)
+static uint8_t *read_payload(const MusashiDiscMedia *disc, const char *archive, unsigned member, unsigned type, size_t *size)
 {
     size_t start, length, total;
     *size = 0;
-    if (!main_data(disc, 10, &start, &length)) return NULL;
+    if (!payload(disc, archive, member, type, &start, &length)) return NULL;
     uint8_t *data = malloc(length);
-    if (!data || !musashi_disc_media_read_root_range(disc, "MAIN.CD", start, data, length, &total)) {
+    if (!data || !musashi_disc_media_read_root_range(disc, archive, start, data, length, &total)) {
         free(data);
         return NULL;
     }
     *size = length;
     return data;
+}
+
+uint8_t *bfm_bedroom_player_data(const MusashiDiscMedia *disc, size_t *size)
+{
+    return read_payload(disc, "MAIN.CD", 10, 0x101, size);
+}
+
+uint8_t *bfm_bedroom_effect_data(const MusashiDiscMedia *disc, unsigned member, size_t *size)
+{
+    return read_payload(disc, "SC01.CD", member, 0x107, size);
 }
 
 int bfm_bedroom_entry(const MusashiDiscMedia *disc, const BfmSaveRecord *record,
@@ -79,7 +90,7 @@ int bfm_bedroom_entry(const MusashiDiscMedia *disc, const BfmSaveRecord *record,
     /* Flags 29 through 33 select five additional room setup tables. */
     if ((record->flags[3] & 0xe0u) || (record->flags[4] & 3u)) return 0;
     if (word(record->progress + 8) != 2 ||
-        !main_data(disc, 12, &start, &length) ||
+        !payload(disc, "MAIN.CD", 12, 0x101, &start, &length) ||
         length < EARLY_DESTINATION + sizeof room ||
         !musashi_disc_media_read_root_range(disc, "MAIN.CD", start + EARLY_DESTINATION,
                                              room, sizeof room, &total) ||

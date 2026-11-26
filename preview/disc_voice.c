@@ -107,6 +107,9 @@ int bfm_disc_voice_request(DiscVoice *v, unsigned bank, unsigned cue, BfmDiscVoi
     v->channel = channel;
     if (selected) {
         selected->channel_offset = channel;
+        selected->group_head_frames = 0;
+        if (channel == 0)
+            selected->group_head_frames = v->interleave == 8 ? STEREO_FRAMES : MONO_FRAMES;
         selected->sound_ticks = (unsigned)record[2] | (unsigned)record[3] << 8;
     }
     return 1;

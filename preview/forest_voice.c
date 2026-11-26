@@ -14,6 +14,8 @@ enum {
 
 struct ForestVoice {
     DiscVoice *source;
+    BfmDiscVoiceArchive archive;
+    unsigned group_head_frames;
     unsigned status, until_read, remaining_ticks;
     size_t frames_left, lead_in;
 };
@@ -22,6 +24,7 @@ static ForestVoice *load_voice(const MusashiDiscMedia *disc, BfmDiscVoiceArchive
 {
     ForestVoice *v = calloc(1, sizeof(*v));
     if (!v) return NULL;
+    v->archive = archive;
     v->source = bfm_disc_voice_load(disc, archive);
     if (!v->source) {
         free(v);
@@ -47,6 +50,7 @@ int bfm_forest_voice_request(ForestVoice *v, unsigned bank, unsigned cue)
     v->status = BFM_FOREST_VOICE_PENDING;
     v->until_read = FIRST_READ_UPDATE;
     v->lead_in = selected.channel_offset * BFM_FOREST_VOICE_RATE / SECTORS_PER_SECOND;
+    v->group_head_frames = selected.group_head_frames;
     v->remaining_ticks = selected.sound_ticks;
     v->frames_left = (size_t)((uint64_t)selected.sound_ticks * BFM_FOREST_VOICE_RATE * 1001 / 60000);
     return 1;
@@ -77,6 +81,14 @@ void bfm_forest_voice_step(ForestVoice *v)
 unsigned bfm_forest_voice_status(const ForestVoice *v)
 {
     return v ? v->status : BFM_FOREST_VOICE_IDLE;
+}
+
+int bfm_bedroom_voice_primed_frames(const ForestVoice *v, size_t *frames)
+{
+    if (!v || !frames || v->archive != BFM_VOICE_ST02 || v->status != BFM_FOREST_VOICE_PLAYING)
+        return 0;
+    *frames = v->group_head_frames;
+    return 1;
 }
 
 size_t bfm_forest_voice_read(ForestVoice *v, int16_t *stereo, size_t frames)

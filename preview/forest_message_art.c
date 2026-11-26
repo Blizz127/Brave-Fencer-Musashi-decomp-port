@@ -145,12 +145,9 @@ static int coordinate(int round, int pointed, int mix, int scale)
     return floor_div((round + floor_div((pointed - round) * mix, 4)) * scale, 4096);
 }
 
-static void draw_message(const BfmForestMessageArt *art, int tail_x, int right, int draw_prompt,
-                         const BfmForestMessageFrame *frame, uint32_t pixels[240][320])
+static void draw_bubble(const BfmForestMessageArt *art, int tail_x, int right,
+                        const BfmForestMessageFrame *frame, uint32_t pixels[240][320])
 {
-    if (!art || !frame || !pixels || !frame->border_step || frame->border_step > 8 ||
-        frame->jagged_mix > 4 || frame->scroll > 9)
-        return;
     int step = (int)frame->border_step, mix = (int)frame->jagged_mix;
     BfmDialoguePoint border[CORNERS], inset[CORNERS];
     for (unsigned i = 0; i < CORNERS; ++i) {
@@ -176,9 +173,12 @@ static void draw_message(const BfmForestMessageArt *art, int tail_x, int right, 
                 if (color) pixels[76+y][tail_x+x] = color;
             }
     }
-    if (!frame->text_visible)
-        return;
-    unsigned face = frame->portrait == 2 || frame->portrait == 3 ? frame->portrait - 1 : 0;
+}
+
+static void draw_portrait(const BfmForestMessageArt *art, int right,
+                          unsigned portrait, uint32_t pixels[240][320])
+{
+    unsigned face = portrait == 2 || portrait == 3 ? portrait - 1 : 0;
     for (unsigned y = 0; y < 40; ++y)
         for (unsigned x = 0; x < 32; ++x) {
             BfmDialoguePoint uv = right ? bfm_dialogue_reflected_texel(x, y, 32, 40, 39) :
@@ -186,7 +186,54 @@ static void draw_message(const BfmForestMessageArt *art, int tail_x, int right, 
             uint32_t color = art->portrait[face][uv.y][uv.x];
             if (color) pixels[24+y][(right ? 256 : 32)+x] = color;
         }
-    int text_x = right ? 32 : 72;
+}
+
+static void draw_notice(unsigned scale, uint32_t pixels[240][320])
+{
+    int width = (int)(232 * scale / 4096), height = (int)(56 * scale / 4096);
+    int left = 160 - width/2, top = 44 - height/2;
+    uint32_t outer = rgb(22 | (19 << 5) | (9 << 10));
+    uint32_t inner = rgb(28 | (25 << 5) | (14 << 10));
+    uint32_t paper = rgb(31 | (28 << 5) | (19 << 10));
+    for (int y = 0; y <= height; ++y)
+        for (int x = 0; x <= width; ++x) {
+            int edge_x = x < width-x ? x : width-x, edge_y = y < height-y ? y : height-y;
+            int edge = edge_x < edge_y ? edge_x : edge_y;
+            pixels[top+y][left+x] = !edge ? outer : edge == 1 ? inner : paper;
+        }
+}
+
+static void draw_choice(int left, unsigned answer, uint32_t pixels[240][320])
+{
+    int top = 24 + 14*((int)answer - 1);
+    for (int y = 0; y < FONT_HEIGHT; ++y) {
+        int weight = y <= 5 ? y : FONT_HEIGHT-y;
+        int span = y <= 5 ? 5 : FONT_HEIGHT-5;
+        /* Two half-blended Gouraud strips meet at the white ridge. */
+        unsigned red = (unsigned)(57 + (255-57)*weight/span) / 8;
+        unsigned blue = (unsigned)(113 + (255-113)*weight/span) / 8;
+        for (int x = left; x < left + 36*6; ++x) {
+            uint32_t dst = pixels[top+y][x];
+            unsigned r = (((dst >> 19) & 31) + red) / 2;
+            unsigned g = (((dst >> 11) & 31) + 31) / 2;
+            unsigned b = (((dst >> 3) & 31) + blue) / 2;
+            pixels[top+y][x] = rgb((uint16_t)(r | g << 5 | b << 10));
+        }
+    }
+}
+
+static void draw_message(const BfmForestMessageArt *art, int tail_x, int right, int draw_prompt,
+                         const BfmForestMessageFrame *frame, uint32_t pixels[240][320])
+{
+    if (!art || !frame || !pixels || !frame->border_step || frame->border_step > 8 ||
+        frame->jagged_mix > 4 || frame->scroll > 9)
+        return;
+    if (frame->style == 1) draw_notice(frame->border_scale, pixels);
+    else draw_bubble(art, tail_x, right, frame, pixels);
+    if (!frame->text_visible) return;
+    if (frame->portrait) draw_portrait(art, right, frame->portrait, pixels);
+    int text_x = frame->style == 1 ? 52 : right ? 32 : 72;
+    if (frame->choices && frame->answer && frame->answer <= 3) draw_choice(text_x, frame->answer, pixels);
     for (int row = 0; row < 3; ++row)
         for (unsigned col = 0; col < 36; ++col) {
             BfmForestMessageCell cell = frame->cells[row][col];

@@ -17,6 +17,10 @@ add_executable(musashi_native_boot
     save_menu.c
     save_view.c
     bedroom.c
+    bedroom_score.c
+    bedroom_award.c
+    bedroom_effects.c
+    bedroom_dust.c
     bedroom_fade.c
     bedroom_figure.c
     bedroom_motion.c
