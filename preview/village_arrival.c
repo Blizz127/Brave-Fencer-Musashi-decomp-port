@@ -15,14 +15,18 @@
 #include "village_talk_camera.h"
 #include <limits.h>
 #include <stdlib.h>
+#include <string.h>
 
 struct BfmVillageArrival {
     uint8_t scene[BFM_FIELD_SCENE_CAPACITY];
     size_t bytes, descriptor;
     const MusashiDiscMedia *disc;
+    const uint8_t *main;
+    size_t main_bytes;
     BfmBedroomEntry *entry;
     BfmVillageLower *lower;
     unsigned transfer_tick, scene_tick;
+    int ascending;
     uint16_t (*tiles)[1024];
     BfmVillageMotion *motion;
     BfmVillageCamera camera, presented_camera;
@@ -41,10 +45,8 @@ struct BfmVillageArrival {
     unsigned age;
 };
 
-void bfm_village_arrival_free(BfmVillageArrival *a)
+static void clear_upper(BfmVillageArrival *a)
 {
-    if (!a) return;
-    bfm_village_lower_free(a->lower);
     bfm_forest_message_art_free(a->message_art);
     bfm_village_residents_free(a->residents);
     bfm_village_impact_free(a->impact);
@@ -52,49 +54,70 @@ void bfm_village_arrival_free(BfmVillageArrival *a)
     bfm_village_cable_free(a->cable);
     bfm_village_motion_free(a->motion);
     bfm_village_field_clear(&a->view);
+}
+
+void bfm_village_arrival_free(BfmVillageArrival *a)
+{
+    if (!a) return;
+    bfm_village_lower_free(a->lower);
+    clear_upper(a);
     free(a);
 }
 
-BfmVillageArrival *bfm_village_arrival_open(const MusashiDiscMedia *disc, BfmBedroomEntry *entry,
-                      const uint8_t *main, size_t main_bytes, uint16_t tiles[512][1024])
+static int mount_upper(BfmVillageArrival *a, const MusashiDiscMedia *disc, BfmBedroomEntry *entry,
+                       const uint8_t *main, size_t main_bytes, uint16_t tiles[512][1024],
+                       const BfmVillageMotion *departed)
 {
     BfmBedroomEntry next = *entry;
-    if (!bfm_castle_room_entry(disc, entry->state.destination, &next) || next.scene_member != 2)
-        return NULL;
-    BfmVillageArrival *a = calloc(1, sizeof *a);
-    if (!a) return NULL;
+    const uint8_t *door = departed ? bfm_village_motion_transfer(departed) : entry->state.destination;
+    if (!bfm_castle_room_entry(disc, door, &next) || next.scene_member != 2) return 0;
     a->bytes = bfm_read_archive_field_scene(disc, "SC03.CD", next.scene_member, a->scene);
     const uint32_t room = 0x8018c794u;
     a->descriptor = room - 0x80128158u;
-    if (a->descriptor > a->bytes || a->bytes - a->descriptor < 0xcc) goto fail;
-    a->motion = bfm_village_motion_open(a->scene, a->bytes, main, main_bytes, room, 5);
+    if (a->descriptor > a->bytes || a->bytes - a->descriptor < 0xcc) return 0;
+    a->motion = departed ? bfm_village_motion_arrive(departed, a->scene, a->bytes, room) :
+                           bfm_village_motion_open(a->scene, a->bytes, main, main_bytes, room, 5);
     if (!a->motion || !bfm_village_field_load(&a->view, disc, a->scene, a->bytes, room) ||
         !bfm_scene_read_tiles(disc, "MAIN.CD", 10, tiles) ||
-        !bfm_scene_read_tiles(disc, "SC03.CD", next.scene_member, tiles)) goto fail;
+        !bfm_scene_read_tiles(disc, "SC03.CD", next.scene_member, tiles)) return 0;
     bfm_village_macho_portrait_load(tiles);
     a->message_art = bfm_castle_message_art_load(disc, a->scene, a->bytes, tiles, 0x5da74);
     a->gate = bfm_village_gate_load(a->scene, a->bytes, room, next.state.progress[8], next.state.flags);
     a->impact = bfm_village_impact_open(a->scene, a->bytes, main, main_bytes);
     a->cable = bfm_village_cable_load(a->scene, a->bytes, room);
-    if (!a->message_art || !a->gate || !a->impact || !a->cable) goto fail;
+    if (!a->message_art || !a->gate || !a->impact || !a->cable) return 0;
     if (!(next.state.flags[240 / 8] & 1u) && next.state.progress[8] == 10) {
         a->residents = bfm_village_residents_load(a->scene, a->bytes, room, 0x80188094u);
-        if (!a->residents) goto fail;
+        if (!a->residents) return 0;
     }
     a->tiles = tiles;
     const int16_t *spawn = bfm_village_motion_player(a->motion)->root.xyz;
-    bfm_village_camera_begin(&a->camera, spawn);
-    /* The first live camera update precedes Musashi's first moving update. */
-    bfm_village_camera_step(&a->camera, spawn, 0);
+    if (departed) {
+        bfm_village_camera_lower(&a->camera, spawn, 1);
+    } else {
+        bfm_village_camera_begin(&a->camera, spawn);
+        /* The first live camera update precedes Musashi's first moving update. */
+        bfm_village_camera_step(&a->camera, spawn, 0);
+    }
     a->presented_camera = a->camera;
     *entry = next;
     a->disc = disc;
+    a->main = main;
+    a->main_bytes = main_bytes;
     a->entry = entry;
     a->record = &entry->state;
+    return 1;
+}
+
+BfmVillageArrival *bfm_village_arrival_open(const MusashiDiscMedia *disc, BfmBedroomEntry *entry,
+                      const uint8_t *main, size_t main_bytes, uint16_t tiles[512][1024])
+{
+    BfmVillageArrival *a = calloc(1, sizeof *a);
+    if (a && !mount_upper(a, disc, entry, main, main_bytes, tiles, NULL)) {
+        bfm_village_arrival_free(a);
+        return NULL;
+    }
     return a;
-fail:
-    bfm_village_arrival_free(a);
-    return NULL;
 }
 
 BfmVillageArrival *bfm_village_resume_inn(const MusashiDiscMedia *disc, BfmBedroomEntry *entry,
@@ -109,6 +132,8 @@ BfmVillageArrival *bfm_village_resume_inn(const MusashiDiscMedia *disc, BfmBedro
         return NULL;
     }
     a->disc = disc;
+    a->main = main;
+    a->main_bytes = bytes;
     a->entry = entry;
     a->record = &entry->state;
     a->tiles = tiles;
@@ -148,6 +173,11 @@ const uint8_t *bfm_village_arrival_inn_transfer(const BfmVillageArrival *arrival
     return arrival->lower ? bfm_village_lower_inn_transfer(arrival->lower) : NULL;
 }
 
+unsigned bfm_village_arrival_reveal_tick(const BfmVillageArrival *a)
+{
+    return a->ascending ? 138 : 145;
+}
+
 unsigned bfm_village_arrival_transfer_tick(const BfmVillageArrival *a)
 {
     return a->transfer_tick;
@@ -161,24 +191,60 @@ BfmForestMessage *bfm_village_arrival_speech(const BfmVillageArrival *a)
                 phase == BFM_VILLAGE_FIRST_MESSAGE ? BFM_VILLAGE_ARRIVAL : BFM_VILLAGE_HUNGER);
 }
 
+/* A visit can begin on the upper gondola or at a saved inn. Reopen the
+ * incoming upper field from the same mounted resources in both cases. */
+static int climb_to_upper(BfmVillageArrival *a)
+{
+    BfmVillageLower *lower = a->lower;
+    const BfmVillageMotion *departed = bfm_village_lower_departure(lower);
+    const MusashiDiscMedia *disc = a->disc;
+    BfmBedroomEntry *entry = a->entry;
+    const uint8_t *main = a->main;
+    size_t main_bytes = a->main_bytes;
+    uint16_t (*tiles)[1024] = a->tiles;
+    unsigned transfer_tick = a->transfer_tick, scene_tick = a->scene_tick;
+    clear_upper(a);
+    memset(a, 0, sizeof *a);
+    a->lower = lower;
+    if (!departed || !mount_upper(a, disc, entry, main, main_bytes, tiles, departed)) return 0;
+    a->lower = NULL;
+    bfm_village_lower_free(lower);
+    a->ascending = 1;
+    a->transfer_tick = transfer_tick;
+    a->scene_tick = scene_tick;
+    return 1;
+}
+
 int bfm_village_arrival_step_input(BfmVillageArrival *a, BfmGameplayRun *run,
                                    int x, int y, int talk_edge, BfmForestMessage **opened)
 {
     if (opened) *opened = NULL;
     /* The upper field and the lower street share the running world clock. The
      * player is already on the incoming actor list for its 17 fade-in updates. */
-    if (!a->transfer_tick || a->transfer_tick >= 143) ++a->scene_tick;
+    unsigned reveal = bfm_village_arrival_reveal_tick(a);
+    if (!a->transfer_tick || a->transfer_tick >= reveal - 2) ++a->scene_tick;
     if (a->transfer_tick) {
         /* The outgoing field freezes at its exit contact. The incoming mesh is
          * ready before the crossfade makes its first scanout visible. */
-        if (++a->transfer_tick == 145) {
-            a->lower = bfm_village_lower_open(a->disc, a->entry, a->motion, a->tiles);
-            if (!a->lower) return 0;
+        if (++a->transfer_tick == reveal) {
+            if (a->ascending) {
+                if (!climb_to_upper(a)) return 0;
+            } else {
+                a->lower = bfm_village_lower_open(a->disc, a->entry, a->motion, a->tiles);
+                if (!a->lower) return 0;
+            }
         }
-        if (a->transfer_tick < 161) return 1;
-        if (a->transfer_tick >= 166) a->transfer_tick = 0;
+        if (a->transfer_tick < reveal + 16) return 1;
+        if (a->transfer_tick >= reveal + 21) a->transfer_tick = 0;
     }
-    if (a->lower) return bfm_village_lower_step(a->lower, x, y, talk_edge, opened);
+    if (a->lower) {
+        if (!bfm_village_lower_step(a->lower, x, y, talk_edge, opened)) return 0;
+        if (!a->transfer_tick && bfm_village_lower_departure(a->lower)) {
+            a->ascending = 1;
+            a->transfer_tick = 1;
+        }
+        return 1;
+    }
     const BfmVillagePlayer *before = bfm_village_motion_player(a->motion);
     if (opened && before->controlled && talk_edge &&
         bfm_village_residents_begin_talk(a->residents, before->root.xyz, a->record, talk_edge)) {
@@ -198,7 +264,10 @@ int bfm_village_arrival_step_input(BfmVillageArrival *a, BfmGameplayRun *run,
         movement_yaw = bfm_village_motion_view_yaw(a->presented_camera.eye, a->presented_camera.target);
     if (!bfm_village_motion_step(a->motion, x, y, movement_yaw)) return 0;
     const BfmVillagePlayer *p = bfm_village_motion_player(a->motion);
-    if (p->events & BFM_VILLAGE_TRANSFER) a->transfer_tick = 1;
+    if (p->events & BFM_VILLAGE_TRANSFER) {
+        a->ascending = 0;
+        a->transfer_tick = 1;
+    }
     if (p->controlled && !a->transfer_tick && !bfm_village_residents_talking(a->residents))
         bfm_village_clock_step(a->record, 0);
     bfm_village_cable_step(a->cable, p->movement, p->movement <= 81, p->root.xyz, run);

@@ -1109,11 +1109,12 @@ int bfm_bedroom_draw(BfmBedroom *room, uint32_t pixels[240][320])
                                        : 37 - 2*((int)tick-STATION_START);
         unsigned wipe=tick>=STATION_WIPE ? STATION_WIPE : COURT_WIPE;
         if (crossing || entering || (tick>=wipe && (tick<STATION_START || tick>=STATION_WIPE))) {
+            unsigned reveal = crossing ? bfm_village_arrival_reveal_tick(room->village) : 0;
             for (unsigned y=0;y<240;++y) {
                 unsigned band=(y<120 ? y : 239-y)/8;
                 int loss=entering ? entry_loss : (int)((tick-wipe)/2)-(int)band;
                 if (crossing) {
-                    loss = crossing >= 145 ? 325 - 2*(int)crossing :
+                    loss = crossing >= reveal ? 35 - 2*(int)(crossing - reveal) :
                            ((int)crossing-36)/2 - (int)band;
                 }
                 if (loss<=0) continue;

@@ -507,7 +507,10 @@ static int advance(BfmVillageMotion *m, int stick_x, int stick_y, int camera)
         }
         break;
     case BFM_VILLAGE_CONTROL:
-        if (!m->transfer && m->outgoing && (m->material & 31) == 5) {
+        /* The lower ridge support is marked 0x105; the returning side
+         * of the same seam uses the upper field's ordinary floor tag 5. */
+        if (!m->transfer && m->outgoing && (m->material & 31) == 5 &&
+            (m->room != 0x80192b18u || m->material == 0x105)) {
             m->transfer = m->outgoing;
             m->crossing = p->root;
             p->destination = (uint16_t)read16(m->transfer);
@@ -589,32 +592,39 @@ int bfm_village_motion_place(BfmVillageMotion *m, const BfmBedroomRoot *root)
     return 1;
 }
 
-static BfmVillageMotion *lower_motion(const BfmVillageMotion *upper,
-                                            const uint8_t *main, size_t main_bytes,
-                                            const uint8_t *scene, size_t bytes,
-                                            uint32_t room_address, unsigned entrance)
+static BfmVillageMotion *walking_field(const BfmVillageMotion *departed,
+                                       const uint8_t *main, size_t main_bytes,
+                                       const uint8_t *scene, size_t bytes,
+                                       uint32_t room_address, unsigned entrance)
 {
-    if (!scene || !((entrance == 1 && upper && upper->transfer) ||
-                    (entrance == 10 && !upper && main))) return NULL;
+    int upper = room_address == 0x8018c794u;
+    if (!scene || (!upper && room_address != 0x80192b18u)) return NULL;
+    if (departed) {
+        const uint8_t *door = departed->transfer;
+        if (!door || read16(door) != (upper ? 0x1011 : 0x1010) ||
+            entrance != 1 || door[2] != entrance) return NULL;
+    } else if (!main || upper || entrance != 10) return NULL;
     BfmVillageMotion *m = calloc(1,sizeof *m);
     if (!m) return NULL;
     m->scene = (Region){scene,bytes,scene_base};
-    m->resident = upper ? upper->resident : (Region){main, main_bytes, main_base};
+    m->resident = departed ? departed->resident : (Region){main, main_bytes, main_base};
     m->room = room_address;
-    const uint8_t *header = at(&m->scene,0x8018d260u,4);
+    const uint8_t *header = at(&m->scene,upper ? 0x801854b0u : 0x8018d260u,4);
     const uint8_t *room = at(&m->scene,room_address,0xcc);
     if (!header || read32(header) != room_address || !room || !load_field(m,room)) goto fail;
     const uint8_t *entries = at(&m->scene,read32(room+0xc8),(entrance+1)*4);
     const uint8_t *entry = entries ? at(&m->scene,read32(entries+4*entrance),36) : NULL;
-    if (!entry || (upper ? read16(entry) != 0x1011 || entry[2] != 1 :
-                           read16(entry) != 0x2017 || entry[2] != 0)) goto fail;
+    m->outgoing = entries ? at(&m->scene,read32(entries+4),36) : NULL;
+    if (!m->outgoing || read16(m->outgoing) != (upper ? 0x1010 : 0x1011) ||
+        m->outgoing[2] != 1 || !entry ||
+        (!departed && (read16(entry) != 0x2017 || entry[2]))) goto fail;
     m->player.phase = BFM_VILLAGE_CONTROL;
     m->player.controlled = 1;
-    const uint8_t *velocity = at(&m->scene,0x8018fb1cu,12);
+    const uint8_t *velocity = at(&m->scene,upper ? 0x80187b0cu : 0x8018fb1cu,12);
     if (!velocity || read32(velocity+8) < 0u-11u*Q || !read32(velocity+8)) goto fail;
     m->starting_speed = (int32_t)(0u-read32(velocity+8));
     BfmBedroomRoot root = {0};
-    if (upper) root = upper->crossing;
+    if (departed) root = departed->crossing;
     else {
         for (int i = 0; i < 3; ++i) root.xyz[i] = (int16_t)read16(entry+16+2*i);
         root.yaw = (unsigned)read16(entry+22) & 4095;
@@ -626,17 +636,17 @@ fail:
     return NULL;
 }
 
-BfmVillageMotion *bfm_village_motion_arrive(const BfmVillageMotion *upper, const uint8_t *scene,
+BfmVillageMotion *bfm_village_motion_arrive(const BfmVillageMotion *departed, const uint8_t *scene,
                                             size_t bytes, uint32_t room_address)
 {
-    return lower_motion(upper, NULL, 0, scene, bytes, room_address, 1);
+    return walking_field(departed, NULL, 0, scene, bytes, room_address, 1);
 }
 
 BfmVillageMotion *bfm_village_motion_resume(const uint8_t *scene, size_t bytes,
                                             uint32_t room_address,
                                             const uint8_t *main, size_t main_bytes)
 {
-    return lower_motion(NULL, main, main_bytes, scene, bytes, room_address, 10);
+    return walking_field(NULL, main, main_bytes, scene, bytes, room_address, 10);
 }
 
 int bfm_village_motion_continue(BfmVillageMotion *m)

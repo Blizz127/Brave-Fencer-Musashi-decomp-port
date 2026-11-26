@@ -139,6 +139,12 @@ const uint8_t *bfm_village_lower_inn_transfer(const BfmVillageLower *lower)
     return door;
 }
 
+const BfmVillageMotion *bfm_village_lower_departure(const BfmVillageLower *lower)
+{
+    if (!lower || bfm_village_mayor_stage_active(lower->stage)) return NULL;
+    return bfm_village_motion_transfer(lower->motion) ? lower->motion : NULL;
+}
+
 const BfmVillagePlayer *bfm_village_lower_player(const BfmVillageLower *lower)
 {
     return bfm_village_motion_player(lower->motion);
@@ -181,7 +187,7 @@ int bfm_village_lower_step(BfmVillageLower *lower, int x, int y, int square,
             if (lower->talk.finished) bfm_village_mayor_stage_finish(lower->stage);
         }
     }
-    if (!active) bfm_village_clock_step(lower->save, 0);
+    if (!active && !(p->events & BFM_VILLAGE_TRANSFER)) bfm_village_clock_step(lower->save, 0);
     ++lower->age;
     return bfm_village_motion_face(lower->motion, lower->tiles);
 }

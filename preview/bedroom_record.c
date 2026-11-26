@@ -142,7 +142,7 @@ int bfm_castle_room_entry(const MusashiDiscMedia *disc, const uint8_t *transfer,
     case 0x43000: member = 4; resource = 53; group = 1; break;
     case 0x3004: member = 74; resource = 123; group = 1; break;
     case 0x000a1010: case 0x02011010: member = 1; resource = 179; group = 3; break;
-    case 0x51011: member = 2; resource = 180; group = 3; break;
+    case 0x51011: case 0x02011011: member = 2; resource = 180; group = 3; break;
     default: return 0;
     }
     /* LIST contains the member rows for each archive in sequence, with a

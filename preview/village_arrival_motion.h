@@ -34,9 +34,9 @@ typedef struct {
 BfmVillageMotion *bfm_village_motion_open(const uint8_t *scene, size_t scene_bytes,
     const uint8_t *main, size_t main_bytes, uint32_t room, unsigned entrance);
 /* The marked floor queues a descriptor. The destination restores integer XYZ
- * and heading captured before the final upper-room movement pass. */
+ * and heading captured before the final movement pass in the departing field. */
 const uint8_t *bfm_village_motion_transfer(const BfmVillageMotion *motion);
-BfmVillageMotion *bfm_village_motion_arrive(const BfmVillageMotion *upper, const uint8_t *scene,
+BfmVillageMotion *bfm_village_motion_arrive(const BfmVillageMotion *departed, const uint8_t *scene,
                                             size_t bytes, uint32_t room_address);
 BfmVillageMotion *bfm_village_motion_resume(const uint8_t *scene, size_t bytes,
                                             uint32_t room_address,
