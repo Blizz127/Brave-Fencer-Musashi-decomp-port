@@ -5,8 +5,8 @@
 
 enum { CHASSIS, TORSO, ASSEMBLIES, MAX_KEYS = 24 };
 enum { NEUTRAL, FIRST_ACTION, LOWER, RISE, STEP_RIGHT, STEP_LEFT, STEP_FORWARD,
-       KNEEL_RIGHT, KNEEL_LEFT, CLIPS };
-enum { FREE, WALKING, KNEELING, GETTING_UP };
+       KNEEL_RIGHT, KNEEL_LEFT, SMASH, SMASH_RISE, CLIPS };
+
 enum { FIRST_HIT_JOINT = 18, FIRST_WHITE_UPDATE = 2, OBSERVED_WHITE_UPDATES = 6 };
 static const uint32_t origin = UINT32_C(0x80128158);
 static const struct { uint32_t table; unsigned parts; } model[] = {
@@ -17,6 +17,7 @@ static const struct { uint32_t table; unsigned index, keys; } chassis_program[] 
     [STEP_RIGHT] = {0x80194638, 1, 24}, [STEP_LEFT] = {0x80194700, 2, 24},
     [STEP_FORWARD] = {0x801947c8, 3, 24},
     [KNEEL_RIGHT] = {0x80194ea8, 20, 16}, [KNEEL_LEFT] = {0x80194f78, 22, 16},
+    [SMASH] = {0x80194ba0, 13, 12}, [SMASH_RISE] = {0x80194c08, 14, 6},
     [LOWER]   = {0x801949a8, 7, 5},  [RISE] = {0x801949d8, 8, 8}
 };
 typedef struct {
@@ -24,7 +25,7 @@ typedef struct {
     unsigned count, terminal;
 } MachineClip;
 struct BfmSteamKnightMachine {
-    MusashiForestPlayerMesh *mesh[ASSEMBLIES], *white_chassis;
+    MusashiForestPlayerMesh *mesh[ASSEMBLIES], *white_chassis, *under_armor;
     uint64_t shell_white_from, shell_white_until;
     MachineClip chassis[CLIPS], torso;
     BfmForestTransform root, display_root;
@@ -32,8 +33,13 @@ struct BfmSteamKnightMachine {
     unsigned entrance_age, outgoing_display, control_age, clip_epoch, clip_age;
     const MachineClip *selected;
     const BfmForestPose *outgoing[2];
-    BfmForestPose mounted_torso;
-    int action, step_x, step_z, patrol_after_recovery;
+    BfmForestPose mounted_torso, armor_pose;
+    uint32_t broken_shells;
+    uint64_t shell_change_at[4];
+    unsigned opening_attacks;
+    int knee_seen, new_break_in_strike, walk_after_strike;
+    BfmSteamKnightStance action;
+    int step_x, step_z, patrol_after_recovery;
     unsigned neutral_since;
     int32_t x4, z4, action_x4, action_z4;
     int spawn_y, active, revealed, controlled;
@@ -116,6 +122,10 @@ BfmSteamKnightMachine *bfm_steam_knight_machine_load(const uint8_t *scene, size_
             scene, bytes, origin, model[piece].table, &count);
         if (!machine->mesh[piece] || count != model[piece].parts) goto failed;
     }
+    unsigned parts = 0;
+    machine->under_armor = musashi_forest_player_mesh_from_table(
+        scene, bytes, origin, UINT32_C(0x801bd9d4), &parts);
+    if (!machine->under_armor || parts != 12) goto failed;
     machine->white_chassis = musashi_forest_player_mesh_white_part_view(machine->mesh[CHASSIS], FIRST_HIT_JOINT);
     if (!machine->white_chassis) goto failed;
     for (unsigned i = 0; i < CLIPS; ++i)
@@ -133,6 +143,7 @@ void bfm_steam_knight_machine_free(BfmSteamKnightMachine *machine)
     if (!machine) return;
     for (unsigned i = 0; i < CLIPS; ++i) free(machine->chassis[i].pose);
     free(machine->torso.pose);
+    musashi_forest_player_mesh_free(machine->under_armor);
     musashi_forest_player_mesh_free(machine->white_chassis);
     for (unsigned i = 0; i < ASSEMBLIES; ++i)
         musashi_forest_player_mesh_free(machine->mesh[i]);
@@ -169,7 +180,16 @@ static unsigned entrance_clock(unsigned age)
 static const BfmForestPose *action_pose(const BfmSteamKnightMachine *machine, unsigned age)
 {
     const MachineClip *clip = machine->selected;
-    if (machine->action == GETTING_UP)
+    if (machine->action == BFM_STEAM_MACHINE_STRIKING) {
+        if (age < 47) return sample(&machine->chassis[FIRST_ACTION], age);
+        if (age < 126) return sample(&machine->chassis[LOWER], age - 47);
+        return sample(&machine->chassis[RISE], age - 126);
+    }
+    if (machine->action == BFM_STEAM_MACHINE_SMASHING) {
+        if (age < 168) return sample(&machine->chassis[SMASH], age);
+        return sample(&machine->chassis[SMASH_RISE], age - 168);
+    }
+    if (machine->action == BFM_STEAM_MACHINE_GETTING_UP)
         return &clip->pose[age < clip->count ? clip->count - 1 - age : 0];
     return sample(clip, (uint64_t)machine->clip_age + age);
 }
@@ -220,20 +240,23 @@ static void selected_chassis(BfmSteamKnightMachine *machine, unsigned shown)
 {
     if (!machine->selected || machine->control_age < machine->clip_epoch) return;
     unsigned age = machine->control_age - machine->clip_epoch;
-    if (machine->action == WALKING) {
+    if (machine->action == BFM_STEAM_MACHINE_WALKING) {
         unsigned steps = age < 48 ? age : 48;
         machine->x4 = machine->action_x4 + (int)steps * 7 * machine->step_x;
         machine->z4 = machine->action_z4 + (int)steps * 7 * machine->step_z;
         machine->root.translation[0] = machine->display_root.translation[0] = machine->x4 >> 2;
         machine->root.translation[2] = machine->display_root.translation[2] = machine->z4 >> 2;
     }
-    unsigned duration = machine->action == WALKING ? 48 : machine->selected->count;
-    if ((machine->action == WALKING || machine->action == GETTING_UP) && age >= duration) {
-        int recovered = machine->action == GETTING_UP;
+    unsigned duration = machine->action == BFM_STEAM_MACHINE_WALKING ? 48 : machine->selected->count;
+    if (machine->action == BFM_STEAM_MACHINE_STRIKING) duration = 142;
+    if (machine->action == BFM_STEAM_MACHINE_SMASHING) duration = 180;
+    if (machine->action != BFM_STEAM_MACHINE_KNEELING && machine->action != BFM_STEAM_MACHINE_NEUTRAL && age >= duration) {
+        machine->walk_after_strike = machine->action == BFM_STEAM_MACHINE_STRIKING && machine->new_break_in_strike;
+        int recovered = machine->action == BFM_STEAM_MACHINE_GETTING_UP;
         unsigned remaining = age - duration;
         machine->outgoing[0] = action_pose(machine, duration - 2);
         machine->outgoing[1] = action_pose(machine, duration - 1);
-        machine->action = FREE;
+        machine->action = BFM_STEAM_MACHINE_NEUTRAL;
         machine->selected = &machine->chassis[NEUTRAL];
         machine->clip_epoch = machine->control_age - remaining;
         machine->clip_age = 0;
@@ -254,7 +277,6 @@ void bfm_steam_knight_machine_present(BfmSteamKnightMachine *machine, unsigned e
         machine->control_age = elapsed;
         clock = elapsed % 32;
         shown = elapsed < 2 ? machine->outgoing_display : (elapsed - 2) % 32;
-        machine->root.translation[1] = machine->display_root.translation[1] = -2050;
     } else {
         machine->entrance_age = elapsed;
         clock = entrance_clock(elapsed);
@@ -271,7 +293,12 @@ void bfm_steam_knight_machine_present(BfmSteamKnightMachine *machine, unsigned e
     machine->display[CHASSIS] = sample(&machine->chassis[NEUTRAL], shown);
     machine->display[TORSO] = sample(&machine->torso, shown);
     selected_chassis(machine, shown);
-    if (machine->patrol_after_recovery && machine->control_age - machine->neutral_since >= 32)
+    machine->armor_pose.local[8] = machine->display[CHASSIS]->local[13];
+    machine->armor_pose.local[9] = machine->display[CHASSIS]->local[14];
+    machine->armor_pose.local[10] = machine->display[CHASSIS]->local[18];
+    machine->armor_pose.local[11] = machine->display[CHASSIS]->local[19];
+    if (machine->walk_after_strike ||
+        (machine->patrol_after_recovery && machine->control_age - machine->neutral_since >= 32))
         bfm_steam_knight_machine_walk(machine, BFM_STEAM_WALK_FORWARD);
 }
 
@@ -285,6 +312,8 @@ void bfm_steam_knight_machine_handover(BfmSteamKnightMachine *machine)
     if (!machine || !machine->active || machine->controlled) return;
     /* The first issued control update retains the outgoing camera submission. */
     machine->outgoing_display = (entrance_clock(machine->entrance_age) + 31) % 32;
+    machine->root.translation[1] = machine->display_root.translation[1] = -2050;
+    machine->action = BFM_STEAM_MACHINE_NEUTRAL;
     machine->controlled = 1;
     bfm_steam_knight_machine_present(machine, 0);
 }
@@ -292,7 +321,7 @@ void bfm_steam_knight_machine_handover(BfmSteamKnightMachine *machine)
 int bfm_steam_knight_machine_set_chassis_clip(BfmSteamKnightMachine *machine,
                                              unsigned clip, unsigned elapsed)
 {
-    if (!machine || !machine->controlled || machine->action != FREE) return 0;
+    if (!machine || !machine->controlled || machine->action != BFM_STEAM_MACHINE_NEUTRAL) return 0;
     for (unsigned i = 0; i < CLIPS; ++i) {
         if (chassis_program[i].index != clip) continue;
         select_clip(machine, i, elapsed);
@@ -304,25 +333,105 @@ int bfm_steam_knight_machine_set_chassis_clip(BfmSteamKnightMachine *machine,
 
 int bfm_steam_knight_machine_walk(BfmSteamKnightMachine *machine, BfmSteamKnightWalk direction)
 {
-    if (!machine || !machine->controlled || machine->action != FREE ||
+    if (!machine || !machine->controlled || machine->action != BFM_STEAM_MACHINE_NEUTRAL ||
         (unsigned)direction > BFM_STEAM_WALK_FORWARD) return 0;
     unsigned id = direction == BFM_STEAM_WALK_FORWARD ? STEP_FORWARD :
                   direction == BFM_STEAM_WALK_RIGHT ? STEP_RIGHT : STEP_LEFT;
     select_clip(machine, id, 0);
     machine->step_x = (direction == BFM_STEAM_WALK_RIGHT) - (direction == BFM_STEAM_WALK_LEFT);
     machine->step_z = direction == BFM_STEAM_WALK_FORWARD;
-    machine->action = WALKING;
+    machine->action = BFM_STEAM_MACHINE_WALKING;
+    machine->walk_after_strike = 0;
     machine->patrol_after_recovery = 0;
     bfm_steam_knight_machine_present(machine, machine->control_age);
+    return 1;
+}
+
+BfmSteamKnightStance bfm_steam_knight_machine_stance(const BfmSteamKnightMachine *machine)
+{
+    return machine && machine->controlled ? machine->action : BFM_STEAM_MACHINE_DORMANT;
+}
+
+int bfm_steam_knight_machine_world_root(const BfmSteamKnightMachine *machine, int16_t position[3])
+{
+    if (!machine || !machine->active || !position) return 0;
+    for (unsigned i = 0; i < 3; ++i) position[i] = (int16_t)machine->root.translation[i];
+    return 1;
+}
+
+int bfm_steam_knight_machine_set_world_root(BfmSteamKnightMachine *machine, const int16_t position[3])
+{
+    if (!machine || !machine->controlled || !position) return 0;
+    machine->action_x4 += 4 * position[0] - machine->x4;
+    machine->action_z4 += 4 * position[2] - machine->z4;
+    machine->x4 = 4 * position[0];
+    machine->z4 = 4 * position[2];
+    for (unsigned i = 0; i < 3; ++i)
+        machine->root.translation[i] = machine->display_root.translation[i] = position[i];
+    return 1;
+}
+
+/* The observed first hall makes its choices at the end of a neutral cycle.
+ * Only the opening approach, flank and high airborne responses are bracketed
+ * by repeated player runs. Later hall choices have additional unknown inputs. */
+void bfm_steam_knight_machine_track_hero(BfmSteamKnightMachine *machine, const int16_t feet[3])
+{
+    if (!machine || !feet || !machine->controlled || machine->action != BFM_STEAM_MACHINE_NEUTRAL ||
+        machine->control_age < machine->neutral_since) return;
+    unsigned elapsed = machine->control_age - machine->neutral_since;
+    if (!elapsed || elapsed % 32) return;
+    int dx = feet[0] - machine->root.translation[0];
+    int dy = feet[1] - machine->root.translation[1];
+    int dz = feet[2] - machine->root.translation[2];
+    int flank = abs(dx);
+    if (flank >= 144 && flank <= 192 && dz >= -256 && dz <= -128 &&
+        (machine->knee_seen || elapsed >= 96)) {
+        bfm_steam_knight_machine_walk(machine, dx < 0 ? BFM_STEAM_WALK_LEFT : BFM_STEAM_WALK_RIGHT);
+        return;
+    }
+    if (machine->knee_seen || dx > 0 || dx < -128 || dz < -384 || dz > -128) return;
+    if (machine->opening_attacks < 2) {
+        unsigned first_cycle = machine->opening_attacks ? 96 : 128;
+        if (elapsed < first_cycle) return;
+        select_clip(machine, FIRST_ACTION, 0);
+        machine->action = BFM_STEAM_MACHINE_STRIKING;
+    } else {
+        if (machine->opening_attacks != 2 || dy > -256 || dx < -64 || dz > -256) return;
+        select_clip(machine, SMASH, 0);
+        machine->action = BFM_STEAM_MACHINE_SMASHING;
+    }
+    machine->new_break_in_strike = 0;
+    ++machine->opening_attacks;
+    bfm_steam_knight_machine_present(machine, machine->control_age);
+}
+
+/* The outer cap remains visible for two submitted updates after contact.
+ * The inner collar is also visible in the first two outputs after its hit. */
+static int break_shell(BfmSteamKnightMachine *machine, unsigned joint, unsigned slot)
+{
+    uint32_t bit = UINT32_C(1) << joint;
+    if (machine->broken_shells & bit) return 0;
+    machine->broken_shells |= bit;
+    machine->shell_change_at[slot - 8] = (uint64_t)machine->control_age + 2;
+    return 1;
+}
+
+int bfm_steam_knight_machine_outer_broken(BfmSteamKnightMachine *machine, unsigned joint)
+{
+    if (!machine || !machine->controlled || (joint != 13 && joint != 18)) return 0;
+    if (!break_shell(machine, joint, joint == 13 ? 8 : 10)) return 0;
+    if (machine->action == BFM_STEAM_MACHINE_STRIKING && !machine->knee_seen) machine->new_break_in_strike = 1;
     return 1;
 }
 
 int bfm_steam_knight_machine_inner_broken(BfmSteamKnightMachine *machine, unsigned joint)
 {
     if (!machine || !machine->controlled || (joint != 14 && joint != 19) ||
-        machine->action == KNEELING || machine->action == GETTING_UP) return 0;
+        machine->action == BFM_STEAM_MACHINE_KNEELING || machine->action == BFM_STEAM_MACHINE_GETTING_UP) return 0;
+    if (!break_shell(machine, joint, joint == 14 ? 9 : 11)) return 0;
     select_clip(machine, joint == 14 ? KNEEL_RIGHT : KNEEL_LEFT, 0);
-    machine->action = KNEELING;
+    machine->action = BFM_STEAM_MACHINE_KNEELING;
+    machine->knee_seen = 1;
     machine->patrol_after_recovery = 0;
     bfm_steam_knight_machine_present(machine, machine->control_age);
     return 1;
@@ -330,11 +439,11 @@ int bfm_steam_knight_machine_inner_broken(BfmSteamKnightMachine *machine, unsign
 
 int bfm_steam_knight_machine_recover(BfmSteamKnightMachine *machine)
 {
-    if (!machine || machine->action != KNEELING ||
+    if (!machine || machine->action != BFM_STEAM_MACHINE_KNEELING ||
         machine->control_age - machine->clip_epoch < 2 * (machine->selected->count - 1)) return 0;
     unsigned id = machine->selected == &machine->chassis[KNEEL_RIGHT] ? KNEEL_RIGHT : KNEEL_LEFT;
     select_clip(machine, id, 0);
-    machine->action = GETTING_UP;
+    machine->action = BFM_STEAM_MACHINE_GETTING_UP;
     bfm_steam_knight_machine_present(machine, machine->control_age);
     return 1;
 }
@@ -348,6 +457,21 @@ size_t bfm_steam_knight_machine_actors(const BfmSteamKnightMachine *machine,
             .root = &machine->display_root, .visible_parts = (UINT32_C(1) << model[i].parts) - 1};
     if (machine->control_age >= machine->shell_white_from && machine->control_age < machine->shell_white_until)
         out[CHASSIS].mesh = machine->white_chassis;
+    if (machine->broken_shells && capacity > ASSEMBLIES) {
+        static const unsigned joints[] = {13, 14, 18, 19};
+        uint32_t slots = 0;
+        for (unsigned i = 0; i < 4; ++i) {
+            uint32_t part = UINT32_C(1) << joints[i];
+            if ((machine->broken_shells & part) && machine->control_age >= machine->shell_change_at[i]) {
+                slots |= UINT32_C(1) << (8 + i);
+                out[CHASSIS].visible_parts &= ~part;
+            }
+        }
+        if (!slots) return ASSEMBLIES;
+        out[ASSEMBLIES] = (BfmForestActor){.mesh = machine->under_armor,
+            .pose = &machine->armor_pose, .root = &machine->display_root, .visible_parts = slots};
+        return ASSEMBLIES + 1;
+    }
     return ASSEMBLIES;
 }
 
@@ -369,6 +493,20 @@ int bfm_steam_knight_machine_joint(const BfmSteamKnightMachine *machine, unsigne
         world->translation[axis] += machine->root.translation[axis];
     *mesh_part = musashi_forest_player_mesh_part(machine->mesh[CHASSIS], chassis_part);
     return *mesh_part != NULL;
+}
+
+int bfm_steam_knight_machine_knee_pose(const BfmSteamKnightMachine *machine,
+                                      unsigned *key, unsigned *hold_age, int *recovering)
+{
+    if (!machine || !key || !hold_age || !recovering ||
+        (machine->action != BFM_STEAM_MACHINE_KNEELING &&
+         machine->action != BFM_STEAM_MACHINE_GETTING_UP)) return 0;
+    unsigned age = machine->control_age - machine->clip_epoch;
+    unsigned last = machine->selected->count - 1;
+    *recovering = machine->action == BFM_STEAM_MACHINE_GETTING_UP;
+    *key = *recovering ? (age < last ? last - age : 0) : (age / 2 < last ? age / 2 : last);
+    *hold_age = !*recovering && age >= last * 2 ? age - last * 2 : 0;
+    return 1;
 }
 
 int bfm_steam_knight_machine_core_socket(const BfmSteamKnightMachine *machine,

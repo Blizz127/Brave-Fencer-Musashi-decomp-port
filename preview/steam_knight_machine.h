@@ -19,12 +19,26 @@ int bfm_steam_knight_machine_set_chassis_clip(BfmSteamKnightMachine *machine,
                                              unsigned clip, unsigned elapsed);
 /* The encounter supplies gameplay results for a real inner leg break and
  * completion of its resulting weak-core opportunity. */
+typedef enum {
+    BFM_STEAM_MACHINE_DORMANT, BFM_STEAM_MACHINE_NEUTRAL, BFM_STEAM_MACHINE_WALKING,
+    BFM_STEAM_MACHINE_KNEELING, BFM_STEAM_MACHINE_GETTING_UP,
+    BFM_STEAM_MACHINE_STRIKING, BFM_STEAM_MACHINE_SMASHING
+} BfmSteamKnightStance;
+BfmSteamKnightStance bfm_steam_knight_machine_stance(const BfmSteamKnightMachine *machine);
+int bfm_steam_knight_machine_world_root(const BfmSteamKnightMachine *machine, int16_t position[3]);
+int bfm_steam_knight_machine_set_world_root(BfmSteamKnightMachine *machine, const int16_t position[3]);
+void bfm_steam_knight_machine_track_hero(BfmSteamKnightMachine *machine, const int16_t feet[3]);
+int bfm_steam_knight_machine_outer_broken(BfmSteamKnightMachine *machine, unsigned joint);
 int bfm_steam_knight_machine_inner_broken(BfmSteamKnightMachine *machine, unsigned joint);
 int bfm_steam_knight_machine_recover(BfmSteamKnightMachine *machine);
 typedef enum {
     BFM_STEAM_WALK_RIGHT, BFM_STEAM_WALK_LEFT, BFM_STEAM_WALK_FORWARD
 } BfmSteamKnightWalk;
 int bfm_steam_knight_machine_walk(BfmSteamKnightMachine *machine, BfmSteamKnightWalk direction);
+/* Sample the physical knee key before the display delay. hold_age starts
+ * at zero when the terminal key is first selected. */
+int bfm_steam_knight_machine_knee_pose(const BfmSteamKnightMachine *machine,
+                                      unsigned *key, unsigned *hold_age, int *recovering);
 int bfm_steam_knight_machine_core_socket(const BfmSteamKnightMachine *machine,
                                          int waist, BfmForestTransform *world);
 /* Start the mounted outer shell's observed white response on actual damage. */

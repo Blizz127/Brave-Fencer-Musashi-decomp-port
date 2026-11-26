@@ -39,7 +39,7 @@ struct BfmSteamKnight {
     BfmSteamKnightBossHud boss_hud;
     BfmSteamKnightCoreBoxes core_boxes;
     unsigned core_hp, core_max;
-    unsigned round, weak_stage, weak_age, knee_age, core_struck, recovery_left;
+    unsigned round, weak_stage, weak_age, core_struck, recovery_left;
     unsigned body_stage, pending_kneel_joint;
     uint32_t battle_flags, pending_kneel_flags;
     BfmLuminaRotation rotation;
@@ -120,6 +120,8 @@ static int damage_number(BfmSteamKnight *s, const int16_t point[3], uint16_t amo
 static int plate_contact(BfmSteamKnight *s, uint16_t amount)
 {
     s->hit_sound = 1;
+    if (s->hit.change == BFM_STEAM_OUTER_REMOVED &&
+        !bfm_steam_knight_machine_outer_broken(s->machine, s->hit.joint)) return 0;
     if (s->hit.change == BFM_STEAM_INNER_REMOVED) {
         s->pending_kneel_flags = s->hit.body_flags_set;
         s->pending_kneel_joint = s->hit.joint;
@@ -136,7 +138,11 @@ static int core_contact(BfmSteamKnight *s, const BfmSteamKnightHeroStrike *strik
     BfmSteamKnightCoreState body = {s->round, s->body_stage, s->weak_stage,
                                     s->battle_flags, (int)s->core_hp, (int)s->core_max};
     BfmForestTransform attachment;
-    unsigned held_updates = s->knee_age > 30 ? s->knee_age - 30 : 0;
+    unsigned key, held_updates;
+    int recovering;
+    if (!bfm_steam_knight_machine_knee_pose(s->machine, &key, &held_updates, &recovering))
+        return 0;
+    if (recovering) return 1;
     unsigned extension = s->weak_stage == 2 ?
         bfm_steam_knight_core_kneel_extension(held_updates, s->weak_age) : 0;
     if (!bfm_steam_knight_core_transform(s->machine, s->weak_stage == 2,
@@ -172,7 +178,8 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
     } else if (s->weak_stage == 2 && s->weak_age < 47) {
         ++s->weak_age;
     }
-    if (s->body_stage == 11 && s->knee_age < 48) ++s->knee_age;
+    if (s->body_stage == 1)
+        bfm_steam_knight_machine_track_hero(s->machine, bfm_steam_hero_sample(s->hero)->feet);
     if (s->recovery_left && !--s->recovery_left) s->body_stage = 1;
     for (size_t i = 0; i < BFM_STEAM_ARMOR_PLATES; ++i) {
         if (s->numbers[i].delay) --s->numbers[i].delay;
@@ -202,7 +209,6 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
     if (s->pending_kneel_joint && s->body_stage == 1 &&
         bfm_steam_knight_machine_inner_broken(s->machine, s->pending_kneel_joint)) {
         s->body_stage = 11;
-        s->knee_age = 0;
         s->battle_flags |= s->pending_kneel_flags;
         s->pending_kneel_flags = s->pending_kneel_joint = 0;
     }
@@ -353,7 +359,7 @@ int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
     if (!s || !pixels) return 0;
     BfmForestCamera camera;
     hall_camera(s, &camera);
-    BfmForestActor actors[2];
+    BfmForestActor actors[3];
     BfmForestPose actor_poses[2];
     BfmForestTransform actor_roots[2];
     /* As Musashi approaches, the pair retreat one carpet tile. Their feet
@@ -391,7 +397,7 @@ int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
             !bfm_steam_knight_fillet_close_eyes(s->hostages, &actors[i])) return 0;
     }
     if (!actor_count)
-        actor_count = bfm_steam_knight_machine_actors(s->machine, actors, 2);
+        actor_count = bfm_steam_knight_machine_actors(s->machine, actors, sizeof actors / sizeof actors[0]);
     BfmForestDustCard cards[BFM_STEAM_ENTRY_LIGHT_CARDS + BFM_STEAM_FLAMES + BFM_STEAM_WEAPON_CARDS
                             + BFM_STEAM_ARMOR_PLATES * BFM_FOREST_DAMAGE_DIGIT_CARDS];
     size_t count = s->event.shot == BFM_STEAM_ENTRY_CAMERA
