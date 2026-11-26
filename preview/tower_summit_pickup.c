@@ -269,8 +269,15 @@ size_t bfm_tower_summit_pickup_glow(const BfmForestField *room,
                                    const BfmForestCamera *camera, unsigned scene_tick,
                                    BfmForestDustCard *out, size_t capacity)
 {
-    if (!room || !lumina_anchors || !root || !eye || !camera || !out || capacity < 10) return 0;
-    const int8_t *rim = (const int8_t *)bfm_forest_room_bytes(room, UINT32_C(0x8018dce4), 48);
+    const int8_t *rim = room ? (const int8_t *)bfm_forest_room_bytes(room, UINT32_C(0x8018dce4), 48) : NULL;
+    return bfm_lumina_outline_glow(rim, lumina_anchors, root, eye, camera, scene_tick, out, capacity);
+}
+
+size_t bfm_lumina_outline_glow(const int8_t rim[48], const int8_t lumina_anchors[2][3],
+    const BfmForestTransform *root, const int32_t eye[3], const BfmForestCamera *camera,
+    unsigned scene_tick, BfmForestDustCard *out, size_t capacity)
+{
+    if (!lumina_anchors || !root || !eye || !camera || !out || capacity < 10) return 0;
     BfmForestTransform halo;
     BfmForestCamera local;
     if (!rim || !bfm_forest_blade_transform(lumina_anchors, root, eye, &halo) ||

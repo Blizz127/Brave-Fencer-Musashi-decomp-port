@@ -20,6 +20,8 @@ typedef struct {
 int bfm_forest_sweep_begin(BfmForestSweep *sweep, const BfmForestField *field);
 int bfm_forest_sweep_step(BfmForestSweep *sweep, const MusashiDiscMedia *disc,
                           uint32_t logical_pose, const BfmForestTransform *model);
+/* Append a transformed tip and hilt. An absent edge retires the trail. */
+int bfm_forest_sweep_append(BfmForestSweep *sweep, const BfmForestSweepEdge *edge);
 unsigned bfm_forest_sweep_project(const BfmForestSweep *sweep, const BfmForestCamera *camera,
                                   BfmForestDustCard out[BFM_FOREST_SWEEP_CARDS]);
 #endif

@@ -96,6 +96,22 @@ static void fade(BfmForestSweep *sweep)
     if (sweep->count > 1 && sweep->energy / 16 < sweep->count - 1) --sweep->count;
 }
 
+int bfm_forest_sweep_append(BfmForestSweep *sweep, const BfmForestSweepEdge *edge)
+{
+    if (!sweep || !sweep->divisor) return 0;
+    if (!edge) {
+        if (sweep->energy) fade(sweep);
+        return 1;
+    }
+    if (sweep->count) {
+        BfmForestSweepEdge middle;
+        if (!curved_midpoint(&sweep->edges[0], edge, sweep->divisor, &middle)) return 0;
+        prepend(sweep, middle);
+    }
+    prepend(sweep, *edge);
+    return 1;
+}
+
 int bfm_forest_sweep_step(BfmForestSweep *sweep, const MusashiDiscMedia *disc,
                           uint32_t logical_pose, const BfmForestTransform *model)
 {
@@ -115,16 +131,9 @@ int bfm_forest_sweep_step(BfmForestSweep *sweep, const MusashiDiscMedia *disc,
     }
     BfmForestSweepEdge current;
     if (!sample_edge(disc, logical_pose, model, &current)) return 0;
-    if (sweep->delay) {
-        sweep->delay = 0;
-    } else {
-        BfmForestSweepEdge middle;
-        if (!curved_midpoint(&sweep->edges[0], &current, sweep->divisor, &middle)) return 0;
-        prepend(sweep, middle);
-        --sweep->duration;
-    }
-    prepend(sweep, current);
-    return 1;
+    if (sweep->delay) sweep->delay = 0;
+    else --sweep->duration;
+    return bfm_forest_sweep_append(sweep, &current);
 }
 
 static int project_point(const BfmForestCamera *camera, const int16_t point[3],

@@ -175,14 +175,26 @@ void bfm_steam_knight_princess_close_camera(BfmForestCamera *camera)
     camera_at(camera, (const int16_t[3]){-446, -2028, -3986});
 }
 
+void bfm_steam_knight_postfire_camera(BfmForestCamera *camera)
+{
+    if (!camera) return;
+    /* Musashi answers across the carpet beside the steps. */
+    *camera = (BfmForestCamera) {
+        .rotation = {{-2898, 14, -2895}, {-8, 4096, 28}, {2895, 25, -2898}},
+        .projection = 455
+    };
+    camera_at(camera, (const int16_t[3]){-424, -2151, -3531});
+}
+
 int bfm_steam_knight_field_draw(BfmSteamKnightField *field, const BfmForestCamera *camera,
     const BfmForestPose *pose, const BfmForestTransform *root, uint32_t visible_parts,
-    unsigned buffer, const BfmForestActor *actors, size_t actor_count,
+    const BfmForestBlade *blade, const BfmForestBladeFrame *blade_frame, unsigned buffer,
+    const BfmForestActor *actors, size_t actor_count,
     const BfmForestDustCard *cards, size_t card_count, uint32_t pixels[240][320])
 {
     if (!field || !camera || !pixels || (!!pose != !!root)) return 0;
     memset(pixels, 0, 320 * 240 * sizeof(uint32_t));
     return bfm_forest_terrain_draw_entrance_with_effects(field->terrain, camera,
-        pose ? field->hero : NULL, pose, root, visible_parts, NULL, buffer, NULL,
+        pose ? field->hero : NULL, pose, root, visible_parts, blade, buffer, blade_frame,
         actors, actor_count, cards, card_count, pixels);
 }

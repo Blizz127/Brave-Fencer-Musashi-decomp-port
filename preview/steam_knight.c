@@ -3,6 +3,8 @@
 #include "steam_knight_event.h"
 #include "steam_knight_cast.h"
 #include "steam_knight_rotation.h"
+#include "steam_knight_effects.h"
+#include "steam_knight_entry_light.h"
 #include "forest_hud.h"
 #include "forest_message_art.h"
 #include <stdlib.h>
@@ -16,6 +18,7 @@ struct BfmSteamKnight {
     BfmForestHud *hud;
     BfmSteamKnightHostages *hostages;
     BfmLuminaRotation rotation;
+    BfmSteamWeaponEffects weapons;
     BfmSteamKnightFlames flames;
     int ring_started, hud_shown;
     BfmSteamKnightEvent event;
@@ -41,6 +44,7 @@ BfmSteamKnight *bfm_steam_knight_open(const MusashiDiscMedia *disc,
     s->hud = bfm_steam_knight_hud_load(disc, scene, size, bfm_steam_knight_field_terrain(s->field));
     s->voice = bfm_forest_voice_load(disc);
     if (!s->art || !s->hostages || !s->hud || !bfm_lumina_rotation_load(disc, &s->rotation) ||
+        !bfm_steam_weapons_load(&s->weapons, scene, size) ||
         !bfm_steam_knight_flames_load(&s->flames, scene, size) ||
         !bfm_steam_event_begin(&s->event, scene, size, entry, run, s->voice)) goto fail;
     return s;
@@ -71,6 +75,7 @@ int bfm_steam_knight_tick(BfmSteamKnight *s, uint16_t pressed, uint16_t held)
         if (e->stage == BFM_STEAM_ROTATING)
             count = bfm_lumina_rotation_rays(&s->rotation, e->stage_age + 1, e->position, e->heading, rays);
         bfm_steam_knight_flames_tick(&s->flames, rays, count);
+        if (!bfm_steam_weapons_tick(&s->weapons, count ? &rays[count - 1] : NULL)) return -1;
     }
     int advanced = bfm_steam_event_tick(e, pressed, held, bfm_steam_knight_flames_remaining(&s->flames));
     if (advanced <= 0) return advanced;
@@ -89,6 +94,11 @@ int bfm_steam_knight_tick(BfmSteamKnight *s, uint16_t pressed, uint16_t held)
         bfm_forest_hud_tick(s->hud);
     }
     return 1;
+}
+
+int bfm_steam_knight_control(const BfmSteamKnight *s)
+{
+    return s && (s->event.stage == BFM_STEAM_READY || s->event.stage == BFM_STEAM_ROTATING);
 }
 
 uint16_t bfm_steam_knight_room(const BfmSteamKnight *s)
@@ -126,7 +136,8 @@ uint32_t bfm_steam_knight_body(const BfmSteamKnight *s)
 }
 
 int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
-    const BfmForestTransform *root, uint32_t visible, uint32_t pixels[240][320])
+    const BfmForestTransform *root, uint32_t visible, const int8_t fusion[2][3],
+    const int8_t lumina[2][3], uint32_t pixels[240][320])
 {
     if (!s || !pixels) return 0;
     static void (*const views[])(BfmForestCamera *) = {
@@ -136,7 +147,8 @@ int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
         [BFM_STEAM_CAPTOR_LOW_CAMERA] = bfm_steam_knight_captor_close_camera,
         [BFM_STEAM_FIRE_CAMERA] = bfm_steam_knight_fire_reverse_camera,
         [BFM_STEAM_PRINCESS_CAMERA] = bfm_steam_knight_princess_close_camera,
-        [BFM_STEAM_TUTORIAL_CAMERA] = bfm_steam_knight_charge_camera
+        [BFM_STEAM_TUTORIAL_CAMERA] = bfm_steam_knight_charge_camera,
+        [BFM_STEAM_REPLY_CAMERA] = bfm_steam_knight_postfire_camera
     };
     BfmForestCamera camera;
     views[s->event.shot](&camera);
@@ -160,11 +172,20 @@ int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
                                              &actor_roots[i], &actor_poses[i], &actors[i]))
             return 0;
     }
-    BfmForestDustCard fire[BFM_STEAM_FLAMES];
-    size_t count = bfm_steam_knight_flames_project(&s->flames, &camera, fire);
+    BfmForestDustCard cards[BFM_STEAM_ENTRY_LIGHT_CARDS + BFM_STEAM_FLAMES + BFM_STEAM_WEAPON_CARDS];
+    size_t count = s->event.shot == BFM_STEAM_ENTRY_CAMERA
+                 ? bfm_steam_entry_light(&camera, s->event.age, cards) : 0;
+    count += bfm_steam_knight_flames_project(&s->flames, &camera, cards + count);
+    BfmForestBladeFrame blade;
+    int has_blade;
+    count += bfm_steam_weapons_project(&s->weapons, &camera, root, visible, fusion, lumina,
+                                       s->event.age, &blade, &has_blade, cards + count);
+    for (size_t i = 0; i < count; ++i) cards[i].slot = (unsigned)i;
     if (!bfm_steam_knight_field_draw(s->field, &camera, pose, root, visible,
-                                     s->event.age & 1, actors, 2, fire, count, pixels)) return 0;
-    if (s->hud_shown) bfm_forest_hud_draw(s->hud, &s->event.run->player, pixels);
+            has_blade ? &s->weapons.fusion : NULL, has_blade ? &blade : NULL, s->event.age & 1,
+            actors, 2, cards, count, pixels)) return 0;
+    if (s->hud_shown && bfm_steam_event_hud(&s->event))
+        bfm_forest_hud_draw(s->hud, &s->event.run->player, pixels);
     if (s->event.message) {
         const BfmForestMessageFrame *frame = bfm_forest_message_frame(s->event.message);
         bfm_bedroom_message_art_draw_side(s->art, frame, 160, 0, pixels);

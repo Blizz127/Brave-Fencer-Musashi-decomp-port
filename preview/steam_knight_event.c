@@ -115,6 +115,7 @@ int bfm_steam_event_tick(BfmSteamKnightEvent *e, uint16_t pressed, uint16_t held
         const BfmForestMessageFrame *view = bfm_forest_voice_page(e->voice, e->message, &e->voice_generation,
                                    !!(pressed & BFM_FOREST_CROSS), !!(pressed & BFM_FOREST_TRIANGLE));
         if (!view) return -1;
+        if (e->stage == BFM_STEAM_REPLY && view->text_visible) e->shot = BFM_STEAM_REPLY_CAMERA;
         if (view->events & BFM_FOREST_MESSAGE_CLOSED) {
             bfm_steam_event_clear(e);
             if (!finish_page(e)) return -1;
@@ -179,6 +180,7 @@ int bfm_steam_event_ring_started(const BfmSteamKnightEvent *e)
 }
 int bfm_steam_event_hud(const BfmSteamKnightEvent *e)
 {
+    if (e->shot == BFM_STEAM_REPLY_CAMERA || e->stage == BFM_STEAM_AFTER_REPLY) return 0;
     return e->stage >= BFM_STEAM_READY ||
            (e->stage == BFM_STEAM_INSTRUCTION && e->step == ROTATION_TUTORIAL);
 }

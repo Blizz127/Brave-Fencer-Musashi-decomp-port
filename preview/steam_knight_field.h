@@ -17,9 +17,11 @@ void bfm_steam_knight_charge_camera(BfmForestCamera *camera);
 void bfm_steam_knight_captor_close_camera(BfmForestCamera *camera);
 void bfm_steam_knight_fire_reverse_camera(BfmForestCamera *camera);
 void bfm_steam_knight_princess_close_camera(BfmForestCamera *camera);
+void bfm_steam_knight_postfire_camera(BfmForestCamera *camera);
 /* Omit both hero arguments for a shot that hides Musashi. */
 int bfm_steam_knight_field_draw(BfmSteamKnightField *field, const BfmForestCamera *camera,
     const BfmForestPose *pose, const BfmForestTransform *root, uint32_t visible_parts,
-    unsigned buffer, const BfmForestActor *actors, size_t actor_count,
+    const BfmForestBlade *blade, const BfmForestBladeFrame *blade_frame, unsigned buffer,
+    const BfmForestActor *actors, size_t actor_count,
     const BfmForestDustCard *cards, size_t card_count, uint32_t pixels[240][320]);
 #endif

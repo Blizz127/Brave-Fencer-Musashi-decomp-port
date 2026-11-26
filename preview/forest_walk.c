@@ -98,7 +98,7 @@ struct BfmForestWalk {
     BfmForestCamera camera;
     BfmForestTransform root;
     BfmForestPose pose;
-    int8_t blade_anchors[2][3];
+    int8_t blade_anchors[2][3], lumina_anchors[2][3];
     Motion idle, walk, run;
     BfmForestJumpPoses jump_poses;
     BfmForestJumpPoses stride_poses;
@@ -297,7 +297,7 @@ static void update_root(BfmForestWalk *w)
 }
 
 static int read_body(const BfmForestWalk *w, uint32_t frame, BfmForestPose *pose,
-                     int8_t anchors[2][3])
+                     int8_t anchors[2][3], int8_t lumina[2][3])
 {
     enum { ANCHOR_BYTES = 16, POSE_BYTES = 240 };
     if (frame < ANCHOR_BYTES || (frame & 3)) return 0;
@@ -312,12 +312,13 @@ static int read_body(const BfmForestWalk *w, uint32_t frame, BfmForestPose *pose
     }
     if (!bfm_forest_pose_decode(key + ANCHOR_BYTES, POSE_BYTES, pose)) return 0;
     memcpy(anchors, key, sizeof w->blade_anchors);
+    if (lumina) memcpy(lumina, key + 8, sizeof w->lumina_anchors);
     return 1;
 }
 
 static int select_pose(BfmForestWalk *w, uint32_t frame, uint32_t visible)
 {
-    if (frame != w->frame && !read_body(w, frame, &w->pose, w->blade_anchors)) return 0;
+    if (frame != w->frame && !read_body(w, frame, &w->pose, w->blade_anchors, w->lumina_anchors)) return 0;
     w->frame=frame; w->visible=visible;
     update_root(w);
     return 1;
@@ -1230,7 +1231,7 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
     w->hide_recovering_body = !delayed.visible;
     if (w->hurt.active || w->hurt_tail) {
         if (delayed.pose != w->displayed_body.pose &&
-            !read_body(w, delayed.pose, &w->displayed_pose, w->displayed_anchors)) return -1;
+            !read_body(w, delayed.pose, &w->displayed_pose, w->displayed_anchors, NULL)) return -1;
         w->displayed_body = delayed;
         if (w->hurt_tail) --w->hurt_tail;
     } else {
@@ -1285,6 +1286,7 @@ int bfm_forest_walk_take_castle_request(BfmForestWalk *w, RoomTransferDescriptor
 
 int bfm_forest_walk_control(const BfmForestWalk *w)
 {
+    if (w && w->steam_knight) return bfm_steam_knight_control(w->steam_knight);
     if (w && w->drawbridge) return 0;
     if (w && w->summit_transfer.phase != BFM_SUMMIT_TRANSFER_IDLE) {
         if (w->escape.phase) return w->escape.phase == BFM_ESCAPE_UPPER || w->escape.phase == BFM_ESCAPE_LOWER;
@@ -2164,7 +2166,8 @@ int bfm_forest_walk_draw(BfmForestWalk *w,uint32_t pixels[240][320])
         if (bfm_steam_knight_room(w->steam_knight) == 0x300d) {
             if (!bfm_castle_drawbridge_draw(w->drawbridge, &w->pose, &w->root, w->visible, pixels))
                 return 0;
-        } else if (!bfm_steam_knight_draw(w->steam_knight, &w->pose, &w->root, w->visible, pixels)) {
+        } else if (!bfm_steam_knight_draw(w->steam_knight, &w->pose, &w->root, w->visible,
+                                           w->blade_anchors, w->lumina_anchors, pixels)) {
             return 0;
         }
         if (shade) field_palette(pixels, shade);

@@ -36,6 +36,10 @@ int bfm_tower_summit_pickup_tick(BfmTowerSummitPickup *pickup, BfmGameplayRun *r
 const BfmSummitPickupFrame *bfm_tower_summit_pickup_frame(const BfmTowerSummitPickup *pickup);
 int bfm_tower_summit_pickup_camera(const BfmTowerSummitPickup *pickup,
     const int16_t player[3], BfmForestCamera *camera, int32_t eye[3]);
+/* Mounted room guard outline, four-byte alignment and paired blade outline. */
+size_t bfm_lumina_outline_glow(const int8_t rim[48], const int8_t anchors[2][3],
+    const BfmForestTransform *root, const int32_t eye[3], const BfmForestCamera *camera,
+    unsigned scene_tick, BfmForestDustCard *out, size_t capacity);
 /* Submit additive quads to the room's ordering table while part 25 is visible. */
 size_t bfm_tower_summit_pickup_glow(const BfmForestField *room,
     const int8_t lumina_anchors[2][3], const BfmForestTransform *root,
