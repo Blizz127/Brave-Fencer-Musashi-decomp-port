@@ -16,4 +16,6 @@ BfmForestShoreUpdate bfm_forest_shore_step(BfmForestShore *shore, const BfmFores
 /* Active notice on this placed guard, in the same update as its model. */
 const BfmForestMarker *bfm_forest_shore_marker(const BfmForestShore *shore);
 const BfmForestActor *bfm_forest_shore_actor(const BfmForestShore *shore);
+/* The two distinct soldier roles use the same mounted model. */
+const MusashiForestPlayerMesh *bfm_forest_shore_guard_mesh(const BfmForestShore *shore);
 #endif

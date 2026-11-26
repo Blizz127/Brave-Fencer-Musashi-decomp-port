@@ -35,6 +35,19 @@ void bfm_forest_actor_root(unsigned yaw, const int16_t position[3], BfmForestTra
         .translation = {position[0], position[1], position[2]}};
 }
 
+void bfm_forest_actor_pitch_yaw(unsigned pitch, unsigned yaw, const int16_t position[3],
+                                BfmForestTransform *root)
+{
+    int sx, cx, sy, cy;
+    axis_angle(pitch, &sx, &cx);
+    axis_angle(yaw, &sy, &cy);
+    *root = (BfmForestTransform){.rotation = {
+        {cy, multiply(sy, sx), multiply(sy, cx)},
+        {0, cx, -sx},
+        {-sy, multiply(cy, sx), multiply(cy, cx)}},
+        .translation = {position[0], position[1], position[2]}};
+}
+
 static void local_rotation(const uint8_t *angles, int16_t r[3][3])
 {
     int sx, cx, sy, cy, sz, cz;

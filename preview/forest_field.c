@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "forest_field.h"
 #include "forest_shore.h"
+#include "forest_trail.h"
 #include "forest_shore_figures.h"
 #include "forest_opening_data.h"
 #include "forest_message_art.h"
@@ -37,6 +38,7 @@ struct BfmForestField {
     BfmForestBlade blade;
     BfmForestDust dust;
     BfmForestShore *shore;
+    BfmForestTrail *trail;
     BfmForestShoreFigures *shore_figures;
     BfmForestOpeningData opening;
     uint8_t *scene;
@@ -231,6 +233,7 @@ void bfm_forest_field_free(BfmForestField *field)
 {
     if (field) {
         bfm_forest_shore_figures_free(field->shore_figures);
+        bfm_forest_trail_free(field->trail);
         bfm_forest_shore_free(field->shore);
         bfm_forest_terrain_free(field->terrain);
         free(field->scene);
@@ -276,12 +279,14 @@ BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t roo
         field->scene_size = bytes;
         if (field->player)
             field->shore = bfm_forest_shore_open(field, scene, bytes, scene_base, descriptor);
-        if (field->shore)
+        if (field->shore) {
             field->shore_figures = bfm_forest_shore_figures_open(field);
+            field->trail = bfm_forest_trail_open(field, field->shore);
+        }
     } else {
         free(scene);
     }
-    if (field && (!field->shore_figures || !bfm_forest_dust_load(&field->dust, disc))) {
+    if (field && (!field->shore_figures || !field->trail || !bfm_forest_dust_load(&field->dust, disc))) {
         bfm_forest_field_free(field);
         field = NULL;
     }
@@ -320,7 +325,7 @@ int bfm_forest_tick_shore_actor(BfmForestField *field, const int16_t player[3])
     if (!field || !player || bfm_forest_shore_step(field->shore, field, player) == BFM_SHORE_INVALID)
         return 0;
     bfm_forest_shore_figures_tick(field->shore_figures, player);
-    return 1;
+    return bfm_forest_trail_step(field->trail, player) != BFM_TRAIL_INVALID;
 }
 
 int bfm_forest_draw_entrance_player(BfmForestField *field, const BfmForestCamera *camera,
@@ -329,8 +334,13 @@ int bfm_forest_draw_entrance_player(BfmForestField *field, const BfmForestCamera
                            uint32_t pixels[240][320])
 {
     if (!field || !pose || !root) return 0;
-    BfmForestActor actors[5];
-    size_t count = bfm_forest_shore_figures_actors(field->shore_figures, actors, 4);
+    BfmForestActor actors[7];
+    size_t count = 0;
+    const BfmForestActor *trunk = bfm_forest_trail_trunk(field->trail);
+    if (trunk) actors[count++] = *trunk;
+    count += bfm_forest_shore_figures_actors(field->shore_figures, actors + count, 4);
+    const BfmForestActor *crossing = bfm_forest_trail_guard(field->trail);
+    if (crossing) actors[count++] = *crossing;
     const BfmForestActor *guard = bfm_forest_shore_actor(field->shore);
     if (guard) actors[count++] = *guard;
     BfmForestDustCard cards[BFM_FOREST_EFFECT_CARDS];

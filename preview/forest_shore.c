@@ -1,22 +1,16 @@
 /* SPDX-License-Identifier: MIT */
 #include "forest_shore.h"
 #include "forest_shore_motion.h"
+#include "forest_guard_clip.h"
 #include "forest_opening_data.h"
 #include "../pc_port/forest_player_bytes.h"
 #include <stdlib.h>
-
-enum { PARTS = 11, FRAME_BYTES = PARTS * 8, MAX_KEYS = 32 };
-
-typedef struct {
-    const uint8_t *pose[MAX_KEYS];
-    unsigned count;
-} ShoreClip;
 
 struct BfmForestShore {
     int16_t spawn[3];
     int active, beyond_bank;
     MusashiForestPlayerMesh *mesh;
-    ShoreClip walk, notice;
+    BfmForestGuardClip walk, notice;
     BfmForestShoreMotion motion;
     BfmForestMarker marker;
     int marker_key_seen, previously_close;
@@ -24,23 +18,6 @@ struct BfmForestShore {
     BfmForestPose pose;
     BfmForestActor draw;
 };
-
-/* Each key contains a tagged packed pose and a duration. Both mounted clips
- * advance one key per tick; the zero pointer carries the end marker. */
-static int read_clip(const BfmForestField *field, uint32_t list, ShoreClip *clip)
-{
-    for (unsigned i = 0; i <= MAX_KEYS; ++i) {
-        const uint8_t *key = bfm_forest_room_bytes(field, list + 8 * i, 8);
-        if (!key) return 0;
-        uint32_t tagged = u32le(key), duration = u32le(key + 4);
-        if (!tagged) return i != 0 && duration == 0xffff;
-        if (i == MAX_KEYS || (tagged >> 24) != 0x81 || duration != 1) return 0;
-        clip->pose[i] = bfm_forest_room_bytes(field, tagged & ~UINT32_C(0x01000000), FRAME_BYTES);
-        if (!clip->pose[i]) return 0;
-        ++clip->count;
-    }
-    return 0;
-}
 
 BfmForestShore *bfm_forest_shore_open(const BfmForestField *field,
     const uint8_t *scene, size_t bytes, uint32_t origin, const uint8_t *descriptor)
@@ -59,13 +36,13 @@ BfmForestShore *bfm_forest_shore_open(const BfmForestField *field,
     unsigned parts;
     shore->mesh = musashi_forest_player_mesh_from_table(scene, bytes, origin,
         UINT32_C(0x801a0058), &parts);
-    if (!shore->mesh || parts != PARTS ||
-        !read_clip(field, UINT32_C(0x801aff18), &shore->walk) ||
-        !read_clip(field, UINT32_C(0x801b0048), &shore->notice)) {
+    if (!shore->mesh || parts != BFM_GUARD_PARTS ||
+        !bfm_forest_guard_clip_read(field, UINT32_C(0x801aff18), 0xffff, &shore->walk) ||
+        !bfm_forest_guard_clip_read(field, UINT32_C(0x801b0048), 0xffff, &shore->notice)) {
         bfm_forest_shore_free(shore);
         return NULL;
     }
-    shore->draw = (BfmForestActor){shore->mesh, &shore->pose, &shore->root, (1u << PARTS) - 1};
+    shore->draw = (BfmForestActor){shore->mesh, &shore->pose, &shore->root, (1u << BFM_GUARD_PARTS) - 1};
     return shore;
 }
 
@@ -118,9 +95,9 @@ BfmForestShoreUpdate bfm_forest_shore_step(BfmForestShore *shore, const BfmFores
         }
     }
     const BfmForestShoreMotion *motion = &shore->motion;
-    const ShoreClip *clip = motion->phase == BFM_SHORE_WALK ? &shore->walk : &shore->notice;
+    const BfmForestGuardClip *clip = motion->phase == BFM_SHORE_WALK ? &shore->walk : &shore->notice;
     if (motion->frame >= clip->count ||
-        !bfm_forest_actor_pose_decode(clip->pose[motion->frame], FRAME_BYTES, PARTS, &shore->pose))
+        !bfm_forest_actor_pose_decode(clip->pose[motion->frame], BFM_GUARD_POSE_BYTES, BFM_GUARD_PARTS, &shore->pose))
         return BFM_SHORE_INVALID;
     bfm_forest_actor_root(motion->yaw, motion->position, &shore->root);
     shore->active = 1;
@@ -135,4 +112,9 @@ const BfmForestActor *bfm_forest_shore_actor(const BfmForestShore *shore)
 const BfmForestMarker *bfm_forest_shore_marker(const BfmForestShore *shore)
 {
     return bfm_forest_shore_actor(shore) && shore->marker.reaction.scale > 0 ? &shore->marker : NULL;
+}
+
+const MusashiForestPlayerMesh *bfm_forest_shore_guard_mesh(const BfmForestShore *shore)
+{
+    return shore ? shore->mesh : NULL;
 }
