@@ -8,6 +8,7 @@ typedef struct BfmSteamKnight BfmSteamKnight;
 /* The drawbridge submits its destination once. Preserve the player's run. */
 BfmSteamKnight *bfm_steam_knight_open(const MusashiDiscMedia *disc,
     const RoomTransferDescriptor *request, BfmGameplayRun *run);
+int bfm_steam_knight_take_chapter(BfmSteamKnight *s);
 void bfm_steam_knight_free(BfmSteamKnight *encounter);
 int bfm_steam_knight_tick(BfmSteamKnight *encounter, int x, int y, uint16_t pressed, uint16_t held,
                           int32_t initial_walk_velocity);

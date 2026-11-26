@@ -2113,6 +2113,11 @@ static int tick_drawbridge(BfmForestWalk *w)
     return 1;
 }
 
+int bfm_forest_walk_take_chapter_request(BfmForestWalk *w)
+{
+    return w && bfm_steam_knight_take_chapter(w->steam_knight);
+}
+
 int bfm_forest_walk_take_boss_request(BfmForestWalk *w, RoomTransferDescriptor *destination)
 {
     return w && bfm_castle_drawbridge_take_boss_request(w->drawbridge, destination);

@@ -24,10 +24,16 @@ typedef struct {
     unsigned age, stage_age, message_age, step, wait, grip, voice_generation;
     unsigned landing_age;
     const uint8_t *programs;
+    size_t program_bytes;
     BfmGameplayRun *run;
     ForestVoice *voice;
     BfmForestMessage *message;
 } BfmSteamKnightEvent;
+typedef enum {
+    BFM_STEAM_FINAL_THROW_TAUNT, BFM_STEAM_FINAL_RECOLLECTION
+} BfmSteamFinalSpeech;
+/* The mounted room must outlive the returned window. The caller owns it. */
+BfmForestMessage *bfm_steam_event_final_speech(const BfmSteamKnightEvent *, BfmSteamFinalSpeech);
 /* The room, voice service and live player are borrowed from the owner. */
 int bfm_steam_event_begin(BfmSteamKnightEvent *, const uint8_t *scene, size_t bytes,
                           const RoomTransferDescriptor *, BfmGameplayRun *, ForestVoice *);

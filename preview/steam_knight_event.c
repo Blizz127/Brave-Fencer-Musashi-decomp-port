@@ -45,11 +45,24 @@ int bfm_steam_event_begin(BfmSteamKnightEvent *e, const uint8_t *scene, size_t b
     if (offset > bytes || bytes - offset < dialogue_offsets[MUSASHI_CHALLENGE + 1]) return 0;
     for (unsigned i = ARRIVAL_SPEECH; i <= MUSASHI_CHALLENGE; ++i)
         if (scene[offset + dialogue_offsets[i]] != 5) return 0;
-    *e = (BfmSteamKnightEvent){ .programs = scene + offset, .run = run, .voice = voice,
+    *e = (BfmSteamKnightEvent){ .programs = scene + offset, .program_bytes = bytes - offset,
+        .run = run, .voice = voice,
         .position = { (int16_t)entry->x, (int16_t)entry->y, (int16_t)entry->z },
         .heading = (int16_t)entry->facing };
     return 1;
 }
+BfmForestMessage *bfm_steam_event_final_speech(const BfmSteamKnightEvent *e, BfmSteamFinalSpeech speech)
+{
+    /* These two autonomous streams follow the challenge and its padding. */
+    static const uint16_t bounds[] = {0x614, 0x640, 0x6e0};
+    if (!e || !e->programs || (unsigned)speech > BFM_STEAM_FINAL_RECOLLECTION)
+        return NULL;
+    size_t begin = bounds[speech], end = bounds[speech + 1];
+    if (end > e->program_bytes || e->programs[begin] != 0x16)
+        return NULL;
+    return bfm_field_message_borrow(e->programs + begin, end - begin);
+}
+
 void bfm_steam_event_clear(BfmSteamKnightEvent *e)
 {
     if (!e) return;
