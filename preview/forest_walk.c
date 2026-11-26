@@ -1699,18 +1699,26 @@ static int step_summit_pickup(BfmForestWalk *w, BfmTowerSummitPickup *pickup)
     return bfm_tower_summit_pickup_camera(pickup, w->cached, &w->camera, w->eye);
 }
 
-static int step_summit_player(BfmForestWalk *w, int x, int y, BfmSummitSkillInput input)
+static int step_summit_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jump_held,
+                              BfmSummitSkillInput input)
 {
     input.visible = w->visible;
     input.moving = x || y;
-    input.grounded = w->actor.state != 5;
+    input.grounded = !w->jump.active && !jump_pressed && w->actor.state != 5;
     const BfmSummitSkillFrame *skill = bfm_tower_summit_skill_tick(w->summit,
         w->data.animation_table, &w->root, w->yaw, w->tick, &input, w->gameplay);
     if (!skill) return -1;
     bfm_forest_hud_gauges(w->hud, w->gameplay->player.record[0x47], skill->tether_gauge);
     int16_t facing = w->yaw;
     BfmForestDustEmission dust = BFM_FOREST_DUST_NONE;
-    if (!skill->suppress_square && (w->actor.state == 5 || input.square_edge)) {
+    BfmForestField *room = bfm_tower_summit_room(w->summit);
+    int stride = (x || y) && x == w->stride_x && y == w->stride_y;
+    int launched = !skill->action && !skill->blade_away && jump_pressed &&
+                   bfm_forest_jump_begin(&w->jump, room, &w->actor, w->cached);
+    if (w->jump.active) {
+        w->stride_x = w->stride_y = 0;
+        if (!step_jump(w, room, launched, stride, x, y, jump_held, &dust)) return -1;
+    } else if (!skill->suppress_square && (w->actor.state == 5 || input.square_edge)) {
         BfmForestHit hits[BFM_FOREST_STRIKE_RAYS] = {0};
         size_t count = 0;
         if (!tick_swing(w, x, y, input.square_edge, &dust, hits, &count)) return -1;
@@ -1792,7 +1800,7 @@ static int summit_play(BfmForestWalk *w, int x, int y, int ready, BfmSummitSkill
         } else if (lesson) {
             if (step_summit_lesson(w, lesson, confirm, reveal) != 1) return -1;
         } else {
-            int moved = step_summit_player(w, x, y, input);
+            int moved = step_summit_player(w, x, y, jump_pressed, jump_held, input);
             if (moved != 1) return moved;
         }
         bfm_forest_hud_tick(w->hud);
