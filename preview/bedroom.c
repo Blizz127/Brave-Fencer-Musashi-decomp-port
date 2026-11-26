@@ -38,7 +38,7 @@ struct BfmBedroom {
     BfmForestMessage *message;
     BfmForestMessageArt *message_art;
     ForestVoice *voice;
-    unsigned generation, message_closed, look_count;
+    unsigned generation, voice_ready_field, message_closed, look_count;
     int waking, notice_pending, visitor_window;
     BedroomWindowLayout player_layout, visitor_layout;
     BfmBedroomAction requested, pending;
@@ -281,7 +281,11 @@ int bfm_bedroom_step_input(BfmBedroom *room, int confirm_edge, int reveal_edge)
         if (!bfm_bedroom_reaction_start(&room->reaction, room->scene, room->scene_bytes)) return 0;
         room->notice_pending = 0;
     }
+    unsigned old_status = bfm_forest_voice_status(room->voice);
     bfm_forest_voice_step(room->voice);
+    if (old_status == BFM_FOREST_VOICE_PENDING &&
+        bfm_forest_voice_status(room->voice) == BFM_FOREST_VOICE_PLAYING)
+        room->voice_ready_field = 2 * room->update;
     BfmBedroomAction speech_action = BFM_BEDROOM_NONE;
     if (room->message) {
         const BfmForestMessageFrame *f = bfm_field_message_tick(room->message,
@@ -384,4 +388,9 @@ struct ForestVoice *bfm_bedroom_voice(BfmBedroom *room, unsigned *generation)
 {
     *generation = room->generation;
     return room->voice;
+}
+
+unsigned bfm_bedroom_voice_ready_field(const BfmBedroom *room)
+{
+    return room->voice_ready_field;
 }

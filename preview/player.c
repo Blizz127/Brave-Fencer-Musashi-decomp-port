@@ -355,6 +355,10 @@ static int play(Player *p, char *error, size_t size) {
                             return 2;
                         }
                         if (result == BFM_BEDROOM_VOICE_STOPPED) bfm_desktop_voice_stop(p->voice);
+                        unsigned generation;
+                        struct ForestVoice *voice = bfm_bedroom_voice(p->bedroom, &generation);
+                        bfm_desktop_voice_forest(p->voice, voice, generation,
+                                                 bfm_bedroom_voice_ready_field(p->bedroom));
                     }
                 }
             } else {
@@ -468,9 +472,6 @@ static int play(Player *p, char *error, size_t size) {
                 continue;
             }
         } else if (bedroom) {
-            unsigned generation;
-            struct ForestVoice *voice = bfm_bedroom_voice(p->bedroom, &generation);
-            bfm_desktop_voice_forest(p->voice, voice, generation, 0);
             frame = bfm_bedroom_draw(p->bedroom, (uint32_t (*)[320])p->pixels);
             if (frame && bfm_bedroom_endpoint(p->bedroom))
                 status_line(p, "End of Musashi's question about going home. Start to return.");
