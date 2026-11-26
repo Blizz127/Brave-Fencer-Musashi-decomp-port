@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 #include "musashi_disc_media.h"
+#include "bedroom_record.h"
 
 typedef enum { BFM_SAVE_EMPTY, BFM_SAVE_VALID, BFM_SAVE_DAMAGED } BfmSaveState;
 typedef struct {
@@ -12,16 +13,17 @@ typedef struct {
     uint64_t money;
 } BfmSaveRow;
 
-typedef enum { BFM_SAVE_PICK, BFM_SAVE_CONFIRM, BFM_SAVE_BOUNDARY } BfmSavePage;
+typedef enum { BFM_SAVE_PICK, BFM_SAVE_CONFIRM, BFM_SAVE_BOUNDARY, BFM_SAVE_LOADED } BfmSavePage;
 typedef struct {
     BfmSaveRow rows[4];
+    BfmSaveRecord records[4];
     unsigned selected;
     BfmSavePage page;
     const char *issue;
 } BfmSaveMenu;
 
-/* Read the explicitly selected raw US card once per visit. No writable handle
-   or reference to the raw bytes survives this call. */
+/* Read the explicitly selected raw US card once per visit. The menu retains
+   a snapshot only for each validated slot and closes the card before returning. */
 void bfm_save_menu_open(BfmSaveMenu *menu, const char *path);
 /* PlayStation wire-order button edges. Returns one when leaving for title. */
 int bfm_save_menu_input(BfmSaveMenu *menu, uint16_t pressed);

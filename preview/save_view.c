@@ -173,12 +173,17 @@ void bfm_save_menu_draw(const BfmSaveArt *art, const BfmSaveMenu *menu, unsigned
     if (menu->page == BFM_SAVE_BOUNDARY) {
         text(&c, 22, 18, "This preview cannot resume this save.", 128);
         text(&c, 22, 31, "Press T or Triangle to return to files.", 128);
-    } else if (menu->page == BFM_SAVE_CONFIRM) {
+    } else if (menu->page == BFM_SAVE_CONFIRM || menu->page == BFM_SAVE_LOADED) {
         label(&c, 106, 18, 0, 180, 101, 12, 128);
         label(&c, 118, 31, 114, 72, 83, 12, 128);
     } else {
         label(&c, 58, 18, 0, 156, 203, 12, 128);
         label(&c, 46, 31, 0, 168, 221, 12, 128);
+    }
+    if (menu->page == BFM_SAVE_LOADED) {
+        panel(&c, 32, 118, 256, 38, 1);
+        label(&c, 122, 131, 76, 216, 74, 12, 128);
+        return;
     }
     static const int motion[] = {0, 0, 2, 4, 4, 3, 2, 1};
     int x = 8 + 151 * (int)(menu->selected % 2);

@@ -2,6 +2,7 @@
 #include "desktop_voice.h"
 #include "palace_voice.h"
 #include "forest_voice.h"
+#include "palace_effects.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -19,6 +20,9 @@ typedef struct {
 
 struct DesktopVoice {
     PalaceVoice *decoder;
+    BfmPalaceEffects *effects;
+    Uint64 opening_start;
+    int court_active;
     VoiceClip *pending;
     SDL_AudioDeviceID device;
     unsigned bank, cue, request_field, ready_delay, active_field, forest_generation;
@@ -74,6 +78,9 @@ static void SDLCALL render_voice(void *userdata, Uint8 *stream, int bytes)
     size_t n = copy_frames(&v->outgoing, stream, frames);
     n += copy_frames(&v->active, stream + n * FRAME_BYTES, frames - n);
     memset(stream + n * FRAME_BYTES, 0, (size_t)bytes - n * FRAME_BYTES);
+    if (v->court_active)
+        bfm_palace_effects_mix(v->effects, SDL_GetTicks64() - v->opening_start,
+                              (int16_t *)(void *)stream, frames);
 }
 
 static void open_device(DesktopVoice *v)
@@ -101,8 +108,19 @@ DesktopVoice *bfm_desktop_voice_open(const MusashiDiscMedia *disc)
         free(v);
         return NULL;
     }
+    v->effects = bfm_palace_effects_load(disc);
     open_device(v);
     return v;
+}
+
+void bfm_desktop_voice_opening(DesktopVoice *v, Uint64 start)
+{
+    if (!v) return;
+    if (v->device) SDL_LockAudioDevice(v->device);
+    bfm_palace_effects_reset(v->effects);
+    v->opening_start = start;
+    v->court_active = 1;
+    if (v->device) SDL_UnlockAudioDevice(v->device);
 }
 
 void bfm_desktop_voice_stop(DesktopVoice *v)
@@ -117,6 +135,7 @@ void bfm_desktop_voice_stop(DesktopVoice *v)
     v->outgoing = (Playback){0};
     v->active = (Playback){0};
     v->pending = NULL;
+    v->court_active = 0;
     v->forest_generation = 0;
     v->selected = v->message_ready = v->playing = v->reported = 0;
     bfm_palace_voice_stop(v->decoder);
@@ -130,8 +149,11 @@ void bfm_desktop_voice_event(DesktopVoice *v, const SDL_AudioDeviceEvent *e)
         v->device = 0;
         v->playing = 0;
     } else if (e->type == SDL_AUDIODEVICEADDED && !v->device) {
-        /* A replacement device stays paused until the next cue. */
         open_device(v);
+        if (v->device && v->court_active && v->effects) {
+            bfm_palace_effects_reset(v->effects);
+            SDL_PauseAudioDevice(v->device, 0);
+        }
     }
 }
 
@@ -248,6 +270,7 @@ void bfm_desktop_voice_free(DesktopVoice *v)
     if (!v) return;
     bfm_desktop_voice_stop(v);
     if (v->device) SDL_CloseAudioDevice(v->device);
+    bfm_palace_effects_free(v->effects);
     bfm_palace_voice_free(v->decoder);
     free(v);
 }

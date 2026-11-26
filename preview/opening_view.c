@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-enum { WIDTH = 320, HEIGHT = 240, INTERIOR_START_FIELD = 1188, LAST_FIELD = 4254 };
+enum { WIDTH = 320, HEIGHT = 240, INTERIOR_START_FIELD = 1188, LAST_FIELD = 5430 };
 enum { TITLE_WIDTH = 256, TITLE_HEIGHT = 64 };
 enum { CREDIT_X = 80, CREDIT_Y = 104, CREDIT_WIDTH = 160, CREDIT_HEIGHT = 32 };
 
@@ -222,6 +222,34 @@ static void shade_scene(uint32_t *pixels, unsigned shade)
     }
 }
 
+/* Both flashes are drawn last on the active display page. After the second
+ * white hold, the additive gray falls by four on each 30 Hz tick. The light
+ * that fills the screen immediately before it is part of the world geometry. */
+static void flash_ritual(uint32_t *pixels, unsigned field)
+{
+    unsigned gray;
+    if (field >= 4563 && field < 4569) {
+        gray = 255;
+    } else if (field >= 4632 && field < 4762) {
+        unsigned tick = (field - 4632) / 2;
+        gray = tick < 2 ? 255 : 255 - 4 * (tick - 1);
+    } else {
+        return;
+    }
+    unsigned light = gray >> 3;
+    if (!light) return;
+    for (unsigned i = WIDTH * 10; i < WIDTH * (HEIGHT - 10); ++i) {
+        uint32_t out = UINT32_C(0xff000000);
+        for (unsigned shift = 0; shift <= 16; shift += 8) {
+            unsigned channel = ((pixels[i] >> shift) & 255u) >> 3;
+            channel += light;
+            if (channel > 31) channel = 31;
+            out |= channel * 255 / 31 << shift;
+        }
+        pixels[i] = out;
+    }
+}
+
 static int draw_opening(const OpeningView *view, unsigned fields, uint32_t *pixels)
 {
     if (fields >= INTERIOR_START_FIELD) {
@@ -231,6 +259,7 @@ static int draw_opening(const OpeningView *view, unsigned fields, uint32_t *pixe
             bfm_palace_draw(view->stairs, view->stair_tiles, fields, pixels);
             unsigned tick = (fields - 1418) / 2;
             shade_scene(pixels, tick < 16 ? 31 - 2 * tick : 0);
+            flash_ritual(pixels, fields);
         }
         return 1;
     }

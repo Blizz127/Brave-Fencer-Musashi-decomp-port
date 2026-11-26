@@ -10,6 +10,8 @@ enum { BFM_VOICE_MESSAGE_READY = 1, BFM_VOICE_OUTPUT_STARTED = 2 };
 
 /* All calls are made by the game thread. The mounted disc must outlive voice. */
 DesktopVoice *bfm_desktop_voice_open(const MusashiDiscMedia *disc);
+/* The opening and its instrument track share this SDL millisecond origin. */
+void bfm_desktop_voice_opening(DesktopVoice *voice, Uint64 start);
 void bfm_desktop_voice_event(DesktopVoice *voice, const SDL_AudioDeviceEvent *event);
 /* Returns one on a new decoder selection, zero for a repeat or unavailable clip. */
 int bfm_desktop_voice_request(DesktopVoice *voice, unsigned bank, unsigned cue, unsigned field);

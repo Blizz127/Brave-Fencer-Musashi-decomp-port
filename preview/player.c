@@ -8,6 +8,7 @@
 #include "save_menu.h"
 #include "forest_walk.h"
 #include "scene_payload.h"
+#include "bedroom.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,6 +40,7 @@ typedef struct Player {
     const char *card_path;
     BfmSaveMenu saves;
     BfmSaveArt *save_art;
+    BfmBedroom *bedroom;
     uint64_t phase_start;
     BfmTitleFlow flow;
     int width, height;
@@ -53,7 +55,7 @@ static const char usage[] =
     "Usage: musashi_native_boot --disc path/to/game.cue [--card path/to/card.mcd] [--windowed]\n"
     "Use your own US PlayStation disc image (SLUS-00726). A complete raw BIN or "
     "a CUE with all its BIN tracks alongside is supported.\n"
-    "Continue displays files on a supplied raw 128 KiB card. Saved gameplay cannot yet resume.\n"
+    "Continue reads a supplied raw 128 KiB card and supports the early castle bedroom wake.\n"
     "Enter/Start: start. Space/Cross: confirm or skip the opening. Arrows: select. "
     "D-pad, arrows or left stick: move in Giant Forest. T/Triangle: back from files. Escape: quit.\n";
 
@@ -109,12 +111,15 @@ static void phase_changed(Player *p) {
     case BFM_TITLE_MENU: caption = "Brave Fencer Musashi - Start / Continue"; break;
     case BFM_TITLE_LOADING: caption = "Brave Fencer Musashi - Loading New Game"; break;
     case BFM_TITLE_OPENING: caption = "Brave Fencer Musashi - Opening"; break;
+    case BFM_TITLE_BEDROOM: caption = "Brave Fencer Musashi - Castle bedroom"; break;
     case BFM_TITLE_FILES:
         bfm_save_menu_open(&p->saves, p->card_path);
         caption = "Brave Fencer Musashi - Saved files"; break;
     default: return;
     }
     p->phase_start = SDL_GetTicks64();
+    if (p->flow.phase == BFM_TITLE_OPENING)
+        bfm_desktop_voice_opening(p->voice, p->phase_start);
     SDL_SetWindowTitle(p->window, caption);
     fprintf(stderr, "%s\n", caption);
 }
@@ -312,7 +317,14 @@ static int play(Player *p, char *error, size_t size) {
                 p->voice_stop_field = 0;
                 bfm_title_begin(&p->flow, p->held | p->pressed);
             } else if (p->flow.phase == BFM_TITLE_FILES) {
-                if (bfm_save_menu_input(&p->saves, p->pressed)) {
+                BfmSavePage previous = p->saves.page;
+                if (previous == BFM_SAVE_LOADED && (p->pressed & PAD_CROSS)) {
+                    p->flow.phase = BFM_TITLE_BEDROOM;
+                    if (!bfm_bedroom_step(p->bedroom)) {
+                        snprintf(error, size, "Could not start the mounted bedroom scene.");
+                        return 2;
+                    }
+                } else if (bfm_save_menu_input(&p->saves, p->pressed)) {
                     if (p->saves.issue) {
                         p->flow.phase = BFM_TITLE_MENU;
                         p->flow.idle_ticks = 0;
@@ -320,9 +332,29 @@ static int play(Player *p, char *error, size_t size) {
                         bfm_title_begin(&p->flow, p->held | p->pressed);
                     }
                 }
+                if (previous == BFM_SAVE_CONFIRM && p->saves.page == BFM_SAVE_BOUNDARY) {
+                    p->bedroom = bfm_bedroom_open(p->disc, &p->saves.records[p->saves.selected]);
+                    if (p->bedroom) p->saves.page = BFM_SAVE_LOADED;
+                } else if (previous == BFM_SAVE_LOADED && p->saves.page == BFM_SAVE_PICK) {
+                    bfm_bedroom_free(p->bedroom);
+                    p->bedroom = NULL;
+                }
                 p->flow.held = p->held | p->pressed;
             } else if (p->forest) {
                 if (p->pressed & PAD_CROSS) p->forest_confirm = 1;
+            } else if (p->flow.phase == BFM_TITLE_BEDROOM) {
+                if (bfm_bedroom_endpoint(p->bedroom) && (p->pressed & (PAD_TRIANGLE | PAD_START | PAD_CROSS))) {
+                    bfm_bedroom_free(p->bedroom);
+                    p->bedroom = NULL;
+                    bfm_title_begin(&p->flow, p->held | p->pressed);
+                } else {
+                    for (uint64_t t = last_logic; t < tick; ++t) {
+                        if (!bfm_bedroom_step(p->bedroom)) {
+                            snprintf(error, size, "Could not advance the mounted bedroom scene.");
+                            return 2;
+                        }
+                    }
+                }
             } else {
                 bfm_title_input(&p->flow, p->held | p->pressed);
             }
@@ -338,6 +370,7 @@ static int play(Player *p, char *error, size_t size) {
         }
         int opening = p->flow.phase == BFM_TITLE_OPENING;
         int files = p->flow.phase == BFM_TITLE_FILES;
+        int bedroom = p->flow.phase == BFM_TITLE_BEDROOM;
         if (files && !p->save_art) {
             p->save_art = bfm_save_art_load(p->disc);
             if (!p->save_art) {
@@ -346,13 +379,13 @@ static int play(Player *p, char *error, size_t size) {
             }
         }
         int save_view = files ? (int)p->saves.selected + 4 * (int)p->saves.page : -1;
-        if (!surface(p, opening || files ? OPENING_W : TITLE_W, opening || files ? OPENING_H : TITLE_H)) {
+        if (!surface(p, opening || files || bedroom ? OPENING_W : TITLE_W, opening || files || bedroom ? OPENING_H : TITLE_H)) {
             snprintf(error, size, "Could not create the scene display: %s", SDL_GetError());
             return 2;
         }
         int unchanged = last_phase == (int)p->flow.phase && last_choice == (int)p->flow.choice &&
                         last_prompt == p->flow.prompt_visible && last_save_view == save_view &&
-                        (!files || fields / 2 == last_field / 2) && (!opening || fields == last_field);
+                        (!(files || bedroom) || fields / 2 == last_field / 2) && (!opening || fields == last_field);
         if (unchanged || p->opening_finished) {
             if (p->redraw && !present(p)) {
                 snprintf(error, size, "Could not refresh the display: %s", SDL_GetError());
@@ -426,6 +459,11 @@ static int play(Player *p, char *error, size_t size) {
                 }
                 continue;
             }
+        } else if (bedroom) {
+            frame = bfm_bedroom_draw(p->bedroom, (uint32_t (*)[320])p->pixels);
+            if (frame && bfm_bedroom_endpoint(p->bedroom))
+                status_line(p, "End of bedroom wake. Press Start to return.");
+            if (!frame) frame = -1;
         } else if (files) {
             bfm_save_menu_draw(p->save_art, &p->saves, fields, (uint32_t (*)[320])p->pixels);
             frame = 1;
@@ -459,6 +497,8 @@ static int play(Player *p, char *error, size_t size) {
 static int run(const char *disc_path, const char *card_path, int windowed) {
     char error[512] = {0};
     int status = 2;
+    int window_width = TITLE_W, window_height = TITLE_H;
+    SDL_Rect display;
     Player *p = calloc(1, sizeof *p);
     int sdl_ready = 0;
     if (!p) { fputs("Not enough memory to start.\n", stderr); return 2; }
@@ -477,8 +517,13 @@ static int run(const char *disc_path, const char *card_path, int windowed) {
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Dialogue will continue without sound: %s", SDL_GetError());
     p->voice = bfm_desktop_voice_open(p->disc);
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
+    /* A bare X11 server has no window manager to resize the desktop window. */
+    if (!windowed && SDL_GetDisplayBounds(0, &display) == 0 && display.w > 0 && display.h > 0) {
+        window_width = display.w;
+        window_height = display.h;
+    }
     p->window = SDL_CreateWindow("Brave Fencer Musashi", SDL_WINDOWPOS_CENTERED,
-                                  SDL_WINDOWPOS_CENTERED, TITLE_W, TITLE_H,
+                                  SDL_WINDOWPOS_CENTERED, window_width, window_height,
                                   SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE |
                                       (windowed ? 0u : SDL_WINDOW_FULLSCREEN_DESKTOP));
     if (!p->window) goto sdl_error;
@@ -502,6 +547,7 @@ done:
     if (sdl_ready) SDL_Quit();
     bfm_forest_walk_free(p->forest);
     if (p->opening) bfm_opening_free(p->opening);
+    bfm_bedroom_free(p->bedroom);
     free(p->save_art);
     if (p->title) bfm_title_free(p->title);
     musashi_disc_media_close(p->disc);

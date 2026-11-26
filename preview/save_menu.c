@@ -75,9 +75,12 @@ static void read_directory(BfmSaveMenu *menu, CardImage image)
         return;
     }
     if (game[512] < MUSASHI_SAVE_FILES) menu->selected = game[512];
-    for (unsigned i = 0; i < MUSASHI_SAVE_FILES; ++i)
-        menu->rows[i] = read_row(game + SUMMARY_START + i * SUMMARY_SIZE,
-                                 game + musashi_save_payload_offset(i + 1));
+    for (unsigned i = 0; i < MUSASHI_SAVE_FILES; ++i) {
+        const uint8_t *payload = game + musashi_save_payload_offset(i + 1);
+        menu->rows[i] = read_row(game + SUMMARY_START + i * SUMMARY_SIZE, payload);
+        if (menu->rows[i].state == BFM_SAVE_VALID)
+            memcpy(&menu->records[i], payload, sizeof menu->records[i]);
+    }
 }
 
 void bfm_save_menu_open(BfmSaveMenu *menu, const char *path)

@@ -5,9 +5,21 @@ set(bfm_root "${CMAKE_CURRENT_SOURCE_DIR}/..")
 add_executable(musashi_native_boot
     player.c
     desktop_voice.c
+    palace_effects.c
+    palace_sound_bank.c
+    palace_rise.c
+    palace_flash.c
+    spu_sample.c
     palace_voice.c
     save_menu.c
     save_view.c
+    bedroom.c
+    bedroom_fade.c
+    bedroom_figure.c
+    bedroom_motion.c
+    bedroom_record.c
+    bedroom_script.c
+    bedroom_travel.c
     "${bfm_root}/pc_port/card/card_image.c"
     title_flow.c
     title_view.c
@@ -15,6 +27,10 @@ add_executable(musashi_native_boot
     chapter_card.c
     palace.c
     stair_actors.c
+    ritual_light.c
+    ritual_rings.c
+    hero_smoke_material.c
+    hero_smoke.c
     palace_dialogue.c
     scene_tiles.c
     forest_blade.c

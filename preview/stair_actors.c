@@ -1,19 +1,24 @@
 /* SPDX-License-Identifier: MIT */
 #include "stair_actors.h"
+#include "ritual_light.h"
+#include "musashi_forest_player_mesh.h"
+#include "hero_smoke.h"
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
 enum { ACTORS = 5, PARTS = 41, MAX_VERTS = 128, MAX_FACES = 128,
-       MAX_DRAW = 2048, ROOT_POSES = 601, W = 320, H = 240 };
+       MAX_DRAW = 2048, MAX_RITUAL_DRAW = 256, ROOT_POSES = 601,
+       BUTLER_REACTION_POSES = 32, W = 320, H = 240 };
 typedef struct { int v[3]; } Vec;
 typedef struct { int a[3][3]; } Mat;
 typedef struct {
     uint16_t vertex[4], normal[4], palette, page;
-    uint8_t uv[4][2], rgb[4][3], count, textured, lit, blend;
+    uint8_t uv[4][2], rgb[4][3], count, textured, lit, blend, summoned;
 } Face;
 typedef struct {
-    const uint8_t *vertices, *normals;
+    Vec vertices[MAX_VERTS], normals[MAX_VERTS];
     unsigned nv, nn, nf;
     Face faces[MAX_FACES];
 } Model;
@@ -31,18 +36,22 @@ typedef struct {
 typedef struct { Vec normal; int32_t offset; } Plane;
 typedef struct { Plane side[5]; unsigned count; } FloorSurface;
 struct BfmStairActors {
-    Mat lights[2], selected_light;
+    BfmRitualNodes lights_on_crystal;
+    BfmHeroSmokeMaterial smoke;
+    Face smoke_faces[BFM_HERO_SMOKE_CELLS];
+    Mat lights[3], selected_light;
     FloorSurface floor[512];
     size_t floor_count;
     Vec spawn[3];
     Face shadow;
     int shadow_left, shadow_top;
-    Model parts[PARTS], crystal;
+    Model parts[PARTS], crystal, hero[MUSASHI_FOREST_PLAYER_PARTS];
     Performer actor[ACTORS];
     const uint8_t *princess_landing;
     Journey arrival[ACTORS], step_forward[2], gathered[ACTORS], retreat[ACTORS];
     const uint8_t *princess_turn, *princess_speech, *princess_cast, *steward_retreat;
-    Draw order[MAX_DRAW];
+    const uint8_t *butler_reaction, *hero_pose;
+    Draw order[MAX_DRAW + MAX_RITUAL_DRAW];
     size_t used, next;
 };
 
@@ -71,6 +80,13 @@ static int floored(int64_t n, int d)
 }
 static int fixed(int64_t n) { return floored(n, 4096); }
 
+static int valid_texture(unsigned page, unsigned palette)
+{
+    unsigned count = page & 128u ? 256u : 16u;
+    return ((page >> 7) & 3u) <= 1 && (palette >> 6) < 512 &&
+           (palette & 63u) * 16 + count <= 1024;
+}
+
 static int load_face(Face *f, const uint8_t *p, unsigned words, unsigned flags,
                      unsigned mode, unsigned nv, unsigned nn)
 {
@@ -88,9 +104,7 @@ static int load_face(Face *f, const uint8_t *p, unsigned words, unsigned flags,
     if (textured) {
         f->palette = (uint16_t)word(p + 2);
         f->page = (uint16_t)word(p + 6);
-        if ((f->page >> 7 & 3) > 1 || (f->palette >> 6) >= 512) return 0;
-        unsigned colors_per_page = (f->page & 128) ? 256u : 16u;
-        if ((f->palette & 63u) * 16 + colors_per_page > 1024) return 0;
+        if (!valid_texture(f->page, f->palette)) return 0;
         for (unsigned j = 0; j < n; ++j) memcpy(f->uv[j], p + 4 * j, 2);
         p += 4 * n;
     }
@@ -119,7 +133,9 @@ static int load_model(Model *m, const uint8_t *s, size_t bytes)
     if (longword(s + 24) || !nv || nv > MAX_VERTS || nn > MAX_VERTS || !nf || nf > MAX_FACES ||
         po < 28 || po > vo || vo > no || !within(bytes, vo, 8 * nv) ||
         !within(bytes, no, 8 * nn) || 8 * nv != no - vo) return 0;
-    m->nv = nv; m->nn = nn; m->nf = nf; m->vertices = s + vo; m->normals = s + no;
+    m->nv = nv; m->nn = nn; m->nf = nf;
+    for (unsigned i = 0; i < nv; ++i) m->vertices[i] = triple(s + vo + 8 * i);
+    for (unsigned i = 0; i < nn; ++i) m->normals[i] = triple(s + no + 8 * i);
     for (unsigned i = 0; i < nf; ++i) {
         if (!within(vo, po, 4)) return 0;
         const uint8_t *p = s + po;
@@ -130,6 +146,51 @@ static int load_model(Model *m, const uint8_t *s, size_t bytes)
         po += 4 * words;
     }
     return 1;
+}
+
+static Vec player_vector(MusashiForestPlayerVector v) { return (Vec){{v.x, v.y, v.z}}; }
+
+/* The court and forest summon the same resident model. Keep its mounted
+ * topology and materials, then use the court's lighting and ordering table. */
+static int load_summoned_hero(BfmStairActors *a, const MusashiDiscMedia *disc, unsigned total_faces)
+{
+    MusashiForestPlayerMesh *mesh = musashi_forest_player_mesh_load(disc);
+    if (!mesh) return 0;
+    for (unsigned i = 0; i < MUSASHI_FOREST_PLAYER_PARTS; ++i) {
+        const MusashiForestPlayerPart *p = musashi_forest_player_mesh_part(mesh, i);
+        if (!p || p->vertex_count > MAX_VERTS || p->normal_count > MAX_VERTS ||
+            p->face_count > MAX_FACES || p->face_count > MAX_DRAW - total_faces) goto fail;
+        Model *m = a->hero + i;
+        m->nv = (unsigned)p->vertex_count;
+        m->nn = (unsigned)p->normal_count;
+        m->nf = (unsigned)p->face_count;
+        total_faces += m->nf;
+        for (unsigned j = 0; j < m->nv; ++j) m->vertices[j] = player_vector(p->vertices[j]);
+        for (unsigned j = 0; j < m->nn; ++j) m->normals[j] = player_vector(p->normals[j]);
+        for (unsigned j = 0; j < m->nf; ++j) {
+            const MusashiForestPlayerFace *src = p->faces + j;
+            Face *f = m->faces + j;
+            f->count = src->corners;
+            f->lit = 1;
+            f->summoned = 1;
+            f->textured = (src->mode & 4u) != 0;
+            f->palette = src->clut;
+            f->page = src->tpage;
+            if (f->textured && !valid_texture(f->page, f->palette)) goto fail;
+            for (unsigned k = 0; k < f->count; ++k) {
+                f->vertex[k] = src->vertex[k];
+                f->normal[k] = src->normal[k];
+                f->uv[k][0] = src->u[k];
+                f->uv[k][1] = src->v[k];
+                memcpy(f->rgb[k], src->rgb, sizeof(src->rgb));
+            }
+        }
+    }
+    musashi_forest_player_mesh_free(mesh);
+    return 1;
+fail:
+    musashi_forest_player_mesh_free(mesh);
+    return 0;
 }
 
 /* Both the stairs and the flat landing use convex collision faces. One
@@ -206,8 +267,8 @@ static int read_effects(BfmStairActors *a, const uint8_t *s, size_t bytes)
 {
     const size_t locations = 0x60ba0, card = 0x5d018;
     if (!within(bytes, locations, 24) || !within(bytes, card, 12) || !read_floor(a,s,bytes)) return 0;
-    const size_t light_tables[] = {0x609bc, 0x609dc};
-    for (unsigned profile = 0; profile < 2; ++profile) {
+    const size_t light_tables[] = {0x609bc, 0x609dc, 0x609fc};
+    for (unsigned profile = 0; profile < sizeof(light_tables) / sizeof(*light_tables); ++profile) {
         if (!within(bytes, light_tables[profile], 30)) return 0;
         for (unsigned lamp = 0; lamp < 3; ++lamp) {
             const uint8_t *color = s + light_tables[profile] + 10*lamp;
@@ -249,7 +310,23 @@ static int read_journey(Journey *out, const uint8_t *scene, size_t bytes, size_t
     return 0;
 }
 
-BfmStairActors *bfm_stair_actors_load(const uint8_t *s, size_t bytes)
+static int load_smoke(BfmStairActors *actors, const uint8_t *scene, size_t bytes)
+{
+    if (!bfm_hero_smoke_load(&actors->smoke, scene, bytes)) return 0;
+    for (unsigned cell = 0; cell < BFM_HERO_SMOKE_CELLS; ++cell) {
+        const BfmHeroSmokeFrame *frame = &actors->smoke.tracks[0][cell];
+        Face *face = &actors->smoke_faces[cell];
+        face->page = frame->page;
+        face->palette = frame->palette;
+        face->count = 4;
+        face->textured = 1;
+        face->blend = 1;
+        memcpy(face->uv, frame->uv, sizeof(face->uv));
+    }
+    return 1;
+}
+
+BfmStairActors *bfm_stair_actors_load(const MusashiDiscMedia *disc, const uint8_t *s, size_t bytes)
 {
     /* The US stairwell has one loose rock and three entering models.
      * Pointer lists refer to the member's original load address. Pose frames
@@ -275,14 +352,18 @@ BfmStairActors *bfm_stair_actors_load(const uint8_t *s, size_t bytes)
     if (!within(bytes, 0x7e434, 3 * 8 * 12) ||
         !within(bytes, 0x7dcb4, 20 * 8 * 12) ||
         !within(bytes, 0x7e914, 8 * 8 * 12) ||
-        !within(bytes, 0x81f14, 10 * 10 * 12)) goto fail;
+        !within(bytes, 0x81f14, 10 * 10 * 12) ||
+        !within(bytes, 0x84a34, BUTLER_REACTION_POSES * layout[1].count * 12)) goto fail;
     out->princess_turn = s + 0x7e434;
     out->princess_speech = s + 0x7dcb4;
     out->princess_cast = s + 0x7e914;
     out->steward_retreat = s + 0x81f14;
+    out->butler_reaction = s + 0x84a34;
     if (!read_journey(&out->step_forward[0], s, bytes, 0xbc910) ||
         !read_journey(&out->step_forward[1], s, bytes, 0xb8738)) goto fail;
     unsigned part = 1;
+    if (!bfm_ritual_light_load(&out->lights_on_crystal, s, bytes) ||
+        !load_smoke(out, s, bytes)) goto fail;
     const size_t crystal_model = 0x711d4;
     if (!within(bytes, crystal_model, 40) ||
         !load_model(&out->crystal, s + crystal_model, bytes - crystal_model)) goto fail;
@@ -309,6 +390,9 @@ BfmStairActors *bfm_stair_actors_load(const uint8_t *s, size_t bytes)
             if (total_faces > MAX_DRAW) goto fail;
         }
     }
+    if (!within(bytes, 0x8a6d4, MUSASHI_FOREST_PLAYER_PARTS * 12) ||
+        !load_summoned_hero(out, disc, total_faces)) goto fail;
+    out->hero_pose = s + 0x8a6d4;
     return out;
 fail:
     free(out);
@@ -373,9 +457,9 @@ static void prepare_model(BfmStairActors *group, const Model *m, Mat model, Vec 
     Mat lighting = multiply(stage_directions, local);
     Vec pts[MAX_VERTS], intensity[MAX_VERTS];
     for (unsigned i = 0; i < m->nv; ++i)
-        pts[i] = project(add(origin, transform(model, triple(m->vertices + 8 * i))));
+        pts[i] = project(add(origin, transform(model, m->vertices[i])));
     for (unsigned i = 0; i < m->nn; ++i) {
-        Vec energy = transform(lighting, triple(m->normals + 8 * i));
+        Vec energy = transform(lighting, m->normals[i]);
         for (unsigned j = 0; j < 3; ++j) energy.v[j] = clamp(energy.v[j], 0, 32767);
         intensity[i] = add((Vec){{2048,2048,2048}}, transform(group->selected_light, energy));
     }
@@ -418,6 +502,12 @@ static uint16_t texture(const Face *face, const uint16_t tiles[512][1024], unsig
     unsigned bits = (face->page & 128) ? 8u : 4u, count = 16 / bits;
     unsigned row = (face->page & 16) * 16 + v;
     unsigned col = ((face->page & 15) * 64 + u / count) & 1023u;
+    /* The second flash copies the closed-eye patch onto the hero's face.
+     * Sample its mounted source so earlier poses can still be redrawn. */
+    if (face->summoned && col >= 512 && col < 528 && row >= 256 && row < 296) {
+        col += 256;
+        row += 40;
+    }
     unsigned idx = (tiles[row][col] >> (bits * (u % count))) & ((1u << bits) - 1u);
     return tiles[face->palette >> 6][(face->palette & 63) * 16 + idx];
 }
@@ -469,7 +559,7 @@ static void draw_triangle(const Draw *d, const uint16_t tiles[512][1024], uint32
             unsigned shift = 16 - 8 * ch;
             if (f->blend && (!f->textured || (ink & 0x8000))) {
                 int old = (int)(((out[y * W + x] >> shift) & 255u) * 31 + 127) / 255;
-                unsigned blend = f->textured ? ((f->page >> 5) & 3u) : 0;
+                unsigned blend = (f->page >> 5) & 3u;
                 if (blend == 0) channel = (old + channel) / 2;
                 else if (blend == 1) channel = clamp(old + channel, 0, 31);
                 else if (blend == 2) channel = clamp(old - channel, 0, 31);
@@ -481,11 +571,84 @@ static void draw_triangle(const Draw *d, const uint16_t tiles[512][1024], uint32
     }
 }
 
+/* Rasterize along the dominant axis. On the positive-X span the first
+ * shade starts at the left endpoint, including a reversed submission. */
+static void draw_ritual_line(const Draw *d, uint32_t *pixels)
+{
+    Vec a = d->point[0], b = d->point[1];
+    if (a.v[0] > b.v[0]) { Vec q = a; a = b; b = q; }
+    int dx = b.v[0] - a.v[0], dy = -abs(b.v[1] - a.v[1]);
+    int sy = a.v[1] < b.v[1] ? 1 : -1;
+    int err = dx + dy, length = dx > -dy ? dx : -dy;
+    if (dx > -dy) err -= (dx - dy - 1) / 2 - (dx - 1) / 2;
+    for (int i = 0;; ++i) {
+        if ((unsigned)a.v[0] < W && a.v[1] >= 10 && a.v[1] < H - 10) {
+            uint32_t *dest = pixels + a.v[1] * W + a.v[0];
+            uint32_t pixel = UINT32_C(0xff000000);
+            for (unsigned k = 0; k < 3; ++k) {
+                int shade = d->shade[0].v[k];
+                if (length)
+                    shade = (shade * (length - i) + d->shade[1].v[k] * i) / length;
+                unsigned shift = 16 - 8 * k;
+                unsigned old = (((*dest >> shift) & 255u) * 31 + 127) / 255;
+                unsigned value = old + (unsigned)shade / 8;
+                pixel |= (value >= 31 ? 255u : value * 255 / 31) << shift;
+            }
+            *dest = pixel;
+        }
+        if (a.v[0] == b.v[0] && a.v[1] == b.v[1]) break;
+        int twice = 2 * err;
+        if (twice > dy) { err += dy; ++a.v[0]; }
+        if (twice < dx) { err += dx; a.v[1] += sy; }
+    }
+}
+
+static void queue_ritual_light(void *context, unsigned count, const int xyz[4][3],
+                               const unsigned rgb[4][3], int bucket)
+{
+    static const Face line = {.page = 32, .count = 2, .blend = 1};
+    static const Face quad = {.page = 32, .count = 4, .blend = 1};
+    BfmStairActors *a = context;
+    if ((count != 2 && count != 4) || a->used >= MAX_DRAW + MAX_RITUAL_DRAW) return;
+    Draw *d = a->order + a->used;
+    d->face = count == 2 ? &line : &quad;
+    d->depth = bucket;
+    /* Light batches retain emission order ahead of an equal-depth mesh. */
+    d->sequence = UINT_MAX - (unsigned)a->used++;
+    for (unsigned i = 0; i < count; ++i) {
+        for (unsigned k = 0; k < 3; ++k) {
+            d->point[i].v[k] = xyz[i][k];
+            d->shade[i].v[k] = (int)rgb[i][k];
+        }
+    }
+}
+
+static void queue_hero_smoke(void *context, unsigned field_age,
+                             const int xyz[4][3], int bucket)
+{
+    BfmStairActors *actors = context;
+    const BfmHeroSmokeFrame *frame = bfm_hero_smoke_frame(&actors->smoke, 0, field_age);
+    if (!frame || actors->used >= MAX_DRAW + MAX_RITUAL_DRAW) return;
+    Draw *draw = &actors->order[actors->used];
+    draw->face = &actors->smoke_faces[frame - actors->smoke.tracks[0]];
+    draw->depth = bucket;
+    draw->sequence = UINT_MAX - (unsigned)actors->used++;
+    for (unsigned i = 0; i < 4; ++i) {
+        memcpy(draw->point[i].v, xyz[i], sizeof(draw->point[i].v));
+        for (unsigned ch = 0; ch < 3; ++ch)
+            draw->shade[i].v[ch] = 128;
+    }
+}
+
 void bfm_stair_actors_draw_to(BfmStairActors *a, int depth,
                              const uint16_t tiles[512][1024], uint32_t *pixels)
 {
     while (a && a->next < a->used && a->order[a->next].depth >= depth) {
         const Draw *d = &a->order[a->next++];
+        if (d->face->count == 2) {
+            draw_ritual_line(d, pixels);
+            continue;
+        }
         draw_triangle(d, tiles, pixels, 0, 1, 2);
         if (d->face->count == 4) draw_triangle(d, tiles, pixels, 2, 1, 3);
     }
@@ -615,6 +778,9 @@ static void retreat_keys(const BfmStairActors *a, unsigned actor, unsigned field
             unsigned cast = (field - 4146) / 2;
             pose = cast < 8 ? cast : 7;
         }
+    } else if (actor == 1 && field >= 4634) {
+        motion = a->butler_reaction;
+        pose = ((field - 4634) / 2) % BUTLER_REACTION_POSES;
     } else if (actor != 3 && age >= path.count) {
         motion = p->landing_bones;
         pose = (age - path.count) % idle_frames[actor];
@@ -676,14 +842,27 @@ void bfm_stair_actors_prepare(BfmStairActors *a, unsigned field,
 {
     if (!a) return;
     a->used = 0; a->next = 0;
-    a->selected_light = a->lights[field >= 2758 ? 1 : 0];
+    unsigned profile = field >= 2758 ? 1 : 0;
+    if (field >= 4634) profile = 2;
+    a->selected_light = a->lights[profile];
     Mat view; memcpy(view.a, axes, sizeof(view.a));
     Vec translation = {{origin[0],origin[1],origin[2]}};
     masonry(a, field, view, translation);
-    if (field >= 2760) {
-        unsigned turns = (1280u + ((field-2760u)/2u)*8u) & 4095u;
+    if (field >= 2760 && field < 4984) {
+        unsigned turns = (1280u + ((field-2760u)/2u)*8u + bfm_ritual_extra_yaw(field)) & 4095u;
         Mat spin = rotation(1, (int)turns);
         prepare_model(a, &a->crystal, multiply(view, spin), translation, spin);
+    }
+    if (field >= 4984) {
+        /* On the pedestal the six equipment parts are hidden. */
+        Vec base = add(translation, transform(view, (Vec){{5,-658,-21}}));
+        for (unsigned j = 0; j < MUSASHI_FOREST_PLAYER_PARTS; ++j) {
+            if (j >= 21 && j < 27) continue;
+            const uint8_t *bone = a->hero_pose + 12 * j;
+            Mat pose = angles(triple(bone + 6));
+            Vec position = add(base, transform(view, triple(bone)));
+            prepare_model(a, a->hero + j, multiply(view, pose), position, pose);
+        }
     }
     if (field >= 1510) {
         unsigned tick = (field - 1510) / 2;
@@ -708,5 +887,7 @@ void bfm_stair_actors_prepare(BfmStairActors *a, unsigned field,
             }
         }
     }
+    bfm_ritual_light_prepare(&a->lights_on_crystal, field, axes, origin, queue_ritual_light, a);
+    bfm_hero_smoke_prepare(&a->smoke, field, axes, origin, queue_hero_smoke, a);
     qsort(a->order, a->used, sizeof(*a->order), farthest);
 }

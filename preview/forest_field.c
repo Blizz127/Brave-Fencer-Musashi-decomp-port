@@ -455,6 +455,35 @@ static int crosses_face(const FloorGrid *grid, const FloorFace *face, unsigned s
     return 1;
 }
 
+/* Slide along the sloping side of the entrance. The crossing is an integer
+ * point: split the original step there before projecting the unconsumed
+ * movement onto the wall normal. Projecting the endpoint directly loses
+ * this rounding and makes the actor drift during consecutive contacts. */
+static int slide_doorway_wall(const FloorGrid *grid, FloorPlane plane,
+                             const int16_t from[3], int16_t to[3])
+{
+    const FloorPoint *normal = &grid->verts[plane.v];
+    int nx = (s16)normal->x, nz = (s16)normal->z;
+    if (nz <= 0 || nx != 2 * nz || nx > 4096)
+        return 0;
+
+    int64_t start = signed_distance(grid, plane, from);
+    int64_t end = signed_distance(grid, plane, to);
+    if (start < 0 || end >= 0)
+        return 0;
+    int x = from[0] + (int)((to[0] - from[0]) * start / (start - end));
+    int z = from[2] + (int)((to[2] - from[2]) * start / (start - end));
+    int64_t clearance = 4 * 4096 + (x - to[0]) * nx + (z - to[2]) * nz;
+    int64_t resolved_x = to[0] + clearance * nx / (4096 * 4096);
+    int64_t resolved_z = to[2] + clearance * nz / (4096 * 4096);
+    if (resolved_x < INT16_MIN || resolved_x > INT16_MAX ||
+        resolved_z < INT16_MIN || resolved_z > INT16_MAX)
+        return 0;
+    to[0] = (int16_t)resolved_x;
+    to[2] = (int16_t)resolved_z;
+    return 1;
+}
+
 static int resolve_cell(const FloorGrid *grid, ContactCell cell, int oblique,
                         const int16_t from[3], const int16_t to[3], int16_t clipped[3])
 {
@@ -471,8 +500,11 @@ static int resolve_cell(const FloorGrid *grid, ContactCell cell, int oblique,
         if ((n->x && n->z) != oblique ||
             !crosses_face(grid, face, (token & 0x8000) ? 4 : 3, from, to))
             continue;
-        if (oblique)
-            return 0;
+        if (oblique) {
+            if (!slide_doorway_wall(grid, face->e[0], from, clipped))
+                return 0;
+            continue;
+        }
         unsigned axis = n->x ? 0 : 2;
         int coefficient = n->x ? (s16)n->x : (s16)n->z;
         int64_t bias = grid->dist[face->e[0].d];

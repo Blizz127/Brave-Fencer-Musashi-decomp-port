@@ -1,12 +1,13 @@
 /* SPDX-License-Identifier: MIT */
 #ifndef BFM_STAIR_ACTORS_H
 #define BFM_STAIR_ACTORS_H
+#include "musashi_disc_media.h"
 #include <stddef.h>
 #include <stdint.h>
 
 typedef struct BfmStairActors BfmStairActors;
 /* The validated scene storage is borrowed until the actors are freed. */
-BfmStairActors *bfm_stair_actors_load(const uint8_t *scene, size_t bytes);
+BfmStairActors *bfm_stair_actors_load(const MusashiDiscMedia *disc, const uint8_t *scene, size_t bytes);
 void bfm_stair_actors_free(BfmStairActors *actors);
 void bfm_stair_actors_prepare(BfmStairActors *actors, unsigned field,
                               const int axes[3][3], const int origin[3]);

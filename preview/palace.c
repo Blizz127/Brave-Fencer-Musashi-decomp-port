@@ -1,39 +1,47 @@
 /* SPDX-License-Identifier: MIT */
 #include "palace.h"
+#include "bedroom_field.h"
 #include "stair_actors.h"
 #include "palace_dialogue.h"
 #include <limits.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
 enum { SCREEN_W = 320, TOP = 10, BOTTOM = 230, SECTOR = 2048 };
-enum { MAX_GROUPS = 256, MAX_VERTICES = 4096, MAX_FACES = 4096, MAX_SCENE = 1 << 20 };
+enum { MAX_GROUPS = 256, MAX_VERTICES = 4096, MAX_FACES = 4096, MAX_SCENE = BFM_FIELD_SCENE_CAPACITY };
 
 typedef struct { int x, y, z; } Point;
 typedef struct { uint16_t u, v; } Texel;
 typedef struct { Point eye, aim; } Pose;
 typedef struct { Point right, down, forward; } Basis;
 enum { INWARD_POSES = 100, STAIR_POSES = 504, LANDING_POSES = 98,
-       CRYSTAL_WIDE_POSES = 50, STILL_POSES = 2, GATHERED_POSES = 70 };
+       CRYSTAL_WIDE_POSES = 50, STILL_POSES = 2, GATHERED_POSES = 70,
+       MUSASHI_ORBIT_POSES = 268 };
 static const struct { unsigned start, count; size_t offset; } court_shots[] = {
     {1512, STAIR_POSES, 0x9b424}, {2520, LANDING_POSES, 0x9d504},
     {2760, CRYSTAL_WIDE_POSES, 0x9da70}, {2854, STILL_POSES, 0x9dd3c},
     {3172, GATHERED_POSES, 0x9dd68},
     /* Frontal cut, Fillet overhead, then opposite sides of the ritual circle. */
     {4012, STILL_POSES, 0xa46e0}, {4016, STILL_POSES, 0x9e14c},
-    {4148, STILL_POSES, 0xa470c}, {4212, STILL_POSES, 0xa4738}
+    {4148, STILL_POSES, 0xa470c}, {4212, STILL_POSES, 0xa4738},
+    {4276, STILL_POSES, 0xa4764},   /* Fillet faces the crystal. */
+    {4636, STILL_POSES, 0xa4790},   /* Butler Livers reacts to the flash. */
+    {4984, STILL_POSES, 0xa47bc},   /* The court sees Musashi on the dais. */
+    {5156, MUSASHI_ORBIT_POSES, 0xa47e8}
 };
 enum { COURT_SHOT_COUNT = sizeof(court_shots) / sizeof(court_shots[0]) };
 typedef struct {
     Texel uv[4];
     uint16_t vertices[4], page_x, page_y, palette_x, palette_y;
-    uint8_t count, depth_bias;
+    uint8_t count, depth_bias, texture_bits, rgb[3];
 } Face;
 typedef struct { int depth; size_t index; } Draw;
 
 struct Palace {
     size_t vertex_count, face_count;
-    Pose track[STAIR_POSES + LANDING_POSES + CRYSTAL_WIDE_POSES + GATHERED_POSES + 5 * STILL_POSES];
+    Pose track[STAIR_POSES + LANDING_POSES + CRYSTAL_WIDE_POSES + GATHERED_POSES +
+               MUSASHI_ORBIT_POSES + 8 * STILL_POSES];
     BfmStairActors *actors;
     PalaceDialogue *dialogue;
     uint8_t *scene;
@@ -96,13 +104,15 @@ static size_t expand(const uint8_t *src, size_t bytes, uint8_t *out)
     return 0;
 }
 
-static size_t read_scene(const MusashiDiscMedia *disc, unsigned member, uint8_t *scene)
+size_t bfm_read_field_scene(const MusashiDiscMedia *disc, unsigned member,
+                            uint8_t scene[BFM_FIELD_SCENE_CAPACITY])
 {
-    uint8_t header[24];
+    uint8_t header[SECTOR];
     size_t size;
-    if (!musashi_disc_media_read_root_range(disc, "SC01.CD", 0, header, sizeof(header), &size))
+    if (!disc || !scene || !musashi_disc_media_read_root_range(disc, "SC01.CD", 0,
+                                                               header, sizeof(header), &size))
         return 0;
-    if (member > 1 || member >= le32(header)) return 0;
+    if (le32(header) > (SECTOR - 8) / 8 || member >= le32(header)) return 0;
     uint32_t start = le32(header + 8 + 8 * member);
     uint32_t member_bytes = le32(header + 12 + 8 * member);
     if (!start || start > size / SECTOR) return 0;
@@ -127,14 +137,15 @@ static int take_face(Face *face, const uint8_t *entry, const uint8_t *material,
                      size_t vertex_count, unsigned corners)
 {
     unsigned palette = le16(material + 6), page = le16(material + 10);
-    if (material[0] != 128 || material[1] != 128 || material[2] != 128 ||
-        material[3] != entry[3] || ((page >> 7) & 3) != 1)
-        return 0;
+    unsigned depth = (page >> 7) & 3;
+    if (material[3] != entry[3] || depth > 1) return 0;
+    face->texture_bits = depth ? 8 : 4;
+    memcpy(face->rgb, material, 3);
     face->page_x = (uint16_t)((page & 15) * 64);
     face->page_y = (uint16_t)((page & 16) * 16);
     face->palette_x = (uint16_t)((palette & 63) * 16);
     face->palette_y = (uint16_t)(palette >> 6);
-    if (face->palette_x > 1024 - 256 ||
+    if (face->palette_x > 1024 - (1u << face->texture_bits) ||
         face->palette_y >= 512) return 0;
     face->count = (uint8_t)corners;
     face->depth_bias = (uint8_t)(le16(entry + 10) & 1u);
@@ -153,9 +164,8 @@ static int take_face(Face *face, const uint8_t *entry, const uint8_t *material,
 
 /* The US opening scene's palace directory contains relative offsets. Each
  * spatial group owns a contiguous list of material/vertex references. */
-static int load_mesh(Palace *palace, const uint8_t *scene, size_t size)
+static int load_mesh(Palace *palace, const uint8_t *scene, size_t size, size_t directory)
 {
-    const size_t directory = palace->member ? 0x61e20 : 0x5a6e8;
     if (size < directory + 12) return 0;
     const uint8_t *root = scene + directory + 12;
     size_t available = size - directory - 12;
@@ -226,14 +236,14 @@ Palace *bfm_palace_load(const MusashiDiscMedia *disc, unsigned member,
 {
     uint8_t *scene = malloc(MAX_SCENE);
     Palace *palace = calloc(1, sizeof(*palace));
-    size_t bytes = scene && palace ? read_scene(disc, member, scene) : 0;
+    size_t bytes = scene && palace && member <= 1 ? bfm_read_field_scene(disc, member, scene) : 0;
     if (palace) palace->member = member;
-    if (!bytes || !load_mesh(palace, scene, bytes) || !read_track(palace, scene, bytes)) {
+    if (!bytes || !load_mesh(palace, scene, bytes, member ? 0x61e20 : 0x5a6e8) || !read_track(palace, scene, bytes)) {
         free(palace);
         palace = NULL;
     }
     if (palace && member) {
-        palace->actors = bfm_stair_actors_load(scene, bytes);
+        palace->actors = bfm_stair_actors_load(disc, scene, bytes);
         palace->dialogue = bfm_palace_dialogue_load(disc, scene, bytes, tiles);
         if (!palace->actors || !palace->dialogue) {
             bfm_stair_actors_free(palace->actors);
@@ -344,6 +354,39 @@ static Basis look_at(Pose pose, int use_scene_length)
                     floor_div((int64_t)cy * cp, 4096)}};
 }
 
+static BfmBedroomView make_view(Point eye, Basis axes, int focal)
+{
+    Point reverse = {-eye.x, -eye.y, -eye.z};
+    int tx = camera_axis(reverse, axes.right.x, axes.right.y, axes.right.z);
+    int ty = camera_axis(reverse, axes.down.x, axes.down.y, axes.down.z);
+    int tz = camera_axis(reverse, axes.forward.x, axes.forward.y, axes.forward.z);
+    BfmBedroomView view = {
+        .axes = {{axes.right.x, axes.right.y, axes.right.z},
+                 {axes.down.x, axes.down.y, axes.down.z},
+                 {axes.forward.x, axes.forward.y, axes.forward.z}},
+        .translation = {tx, ty, tz}, .focal = focal,
+        .eye = {eye.x, eye.y, eye.z}
+    };
+    return view;
+}
+
+static Point project_point(const BfmBedroomView *view, Point v)
+{
+    const int (*axis)[3] = view->axes;
+    int x = camera_axis(v, axis[0][0], axis[0][1], axis[0][2]) + view->translation[0];
+    int y = camera_axis(v, axis[1][0], axis[1][1], axis[1][2]) + view->translation[1];
+    int z = camera_axis(v, axis[2][0], axis[2][1], axis[2][2]) + view->translation[2];
+    int reciprocal = z > 0 ? smaller(131071, (view->focal * 65536 + z / 2) / z) : 131071;
+    return (Point){projection_coord(x, reciprocal, 160),
+                   projection_coord(y, reciprocal, 120), z};
+}
+
+static void project_vertices(Palace *palace, const BfmBedroomView *view)
+{
+    for (size_t i = 0; i < palace->vertex_count; ++i)
+        palace->projected[i] = project_point(view, palace->vertices[i]);
+}
+
 static void project_mesh(Palace *palace, unsigned field)
 {
     Basis axes;
@@ -361,9 +404,10 @@ static void project_mesh(Palace *palace, unsigned field)
         Pose pose = palace->track[tick];
         eye = pose.eye;
         axes = look_at(pose, 1);
-        /* Falling masonry briefly shakes the otherwise authored camera. */
-        if (field >= 1480 && field < 1544) {
-            unsigned wave = (field - 1480) / 4;
+        /* The falling masonry and the ritual flash shake the camera vertically. */
+        unsigned shake_start = field >= 4570 ? 4570 : 1480;
+        if (field >= shake_start && field - shake_start < 64) {
+            unsigned wave = (field - shake_start) / 4;
             int amplitude = 8 - (int)(wave / 2);
             eye.y += wave % 2 ? amplitude : -amplitude;
         }
@@ -381,26 +425,10 @@ static void project_mesh(Palace *palace, unsigned field)
         axes = (Basis){{3106, 0, 2669}, {-531 + 2 * pitch, 4014 + pitch, 617 - 3 * pitch},
                        {-2616 - pitch, -814 + 3 * pitch, 3043 + pitch}};
     }
-    Point reverse = {-eye.x, -eye.y, -eye.z};
-    int tx = camera_axis(reverse, axes.right.x, axes.right.y, axes.right.z);
-    int ty = camera_axis(reverse, axes.down.x, axes.down.y, axes.down.z);
-    int tz = camera_axis(reverse, axes.forward.x, axes.forward.y, axes.forward.z);
-    if (palace->actors) {
-        const int matrix[3][3] = {{axes.right.x, axes.right.y, axes.right.z},
-                                  {axes.down.x, axes.down.y, axes.down.z},
-                                  {axes.forward.x, axes.forward.y, axes.forward.z}};
-        const int position[3] = {tx, ty, tz};
-        bfm_stair_actors_prepare(palace->actors, field, matrix, position);
-    }
-    for (size_t i = 0; i < palace->vertex_count; ++i) {
-        Point v = palace->vertices[i];
-        int x = camera_axis(v, axes.right.x, axes.right.y, axes.right.z) + tx;
-        int y = camera_axis(v, axes.down.x, axes.down.y, axes.down.z) + ty;
-        int z = camera_axis(v, axes.forward.x, axes.forward.y, axes.forward.z) + tz;
-        int reciprocal = z > 0 ? smaller(131071, (focal * 65536 + z / 2) / z) : 131071;
-        palace->projected[i] = (Point){projection_coord(x, reciprocal, 160),
-                                       projection_coord(y, reciprocal, 120), z};
-    }
+    BfmBedroomView view = make_view(eye, axes, focal);
+    if (palace->actors)
+        bfm_stair_actors_prepare(palace->actors, field, view.axes, view.translation);
+    project_vertices(palace, &view);
 }
 
 static int edge(Point a, Point b, int x, int y)
@@ -428,8 +456,37 @@ static uint32_t color(uint16_t ink)
     return UINT32_C(0xff000000) | (r << 16) | (g << 8) | blue;
 }
 
+/* The ritual darkens these mounted floor and masonry palettes. The ceiling
+ * light, actors and hovering crystal keep their own colors. */
+static const unsigned ritual_rows[] = {480, 482, 483, 484, 485, 486, 487, 488};
+enum { RITUAL_PALETTES = sizeof(ritual_rows) / sizeof(ritual_rows[0]) };
+
+static int ritual_channel(int original, int dark, int dim_steps, int restore_steps)
+{
+    if (restore_steps)
+        return smaller(larger(0, original - 1), dark + restore_steps);
+    return larger(original - dim_steps, dark);
+}
+
+static void ritual_colors(const uint16_t tiles[512][1024], int dim_steps, int restore_steps,
+                          uint16_t palettes[RITUAL_PALETTES][256])
+{
+    for (unsigned row = 0; row < RITUAL_PALETTES; ++row) {
+        for (unsigned i = 0; i < 256; ++i) {
+            uint16_t ink = tiles[ritual_rows[row]][i];
+            int r = ink & 31, g = (ink >> 5) & 31, b = (ink >> 10) & 31;
+            r = ritual_channel(r, r / 2, dim_steps, restore_steps);
+            g = ritual_channel(g, g * 7 / 16, dim_steps, restore_steps);
+            b = ritual_channel(b, b * 7 / 16, dim_steps, restore_steps);
+            uint16_t rgb = (uint16_t)(r | (g << 5) | (b << 10));
+            /* A darkened entry still occludes the room behind it at black. */
+            palettes[row][i] = !rgb && ink ? UINT16_C(0x8000) : rgb;
+        }
+    }
+}
+
 static void triangle(const uint16_t tiles[512][1024], const Face *face,
-                     const Point p[3], const Texel uv[3], uint32_t *pixels)
+                     const uint16_t *palette, const Point p[3], const Texel uv[3], uint32_t *pixels)
 {
     Point a = p[0], b = p[1], c = p[2];
     int area = edge(a, b, c.x, c.y);
@@ -439,6 +496,9 @@ static void triangle(const uint16_t tiles[512][1024], const Face *face,
     int top = larger(TOP, smaller(a.y, smaller(b.y, c.y)));
     int bottom = smaller(BOTTOM - 1, larger(a.y, larger(b.y, c.y)));
     int include_a = closed_edge(b, c), include_b = closed_edge(c, a), include_c = closed_edge(a, b);
+    unsigned bits = face->texture_bits, word_shift = bits == 8 ? 1 : 2;
+    unsigned word_mask = (1u << word_shift) - 1, index_mask = (1u << bits) - 1;
+    int modulates = face->rgb[0] != 128 || face->rgb[1] != 128 || face->rgb[2] != 128;
     for (int y = top; y <= bottom; ++y) {
         for (int x = left; x <= right; ++x) {
             int wa = edge(b, c, x, y), wb = edge(c, a, x, y), wc = area - wa - wb;
@@ -447,11 +507,20 @@ static void triangle(const uint16_t tiles[512][1024], const Face *face,
                                      (int64_t)wc * uv[2].u + area / 2) / area);
             unsigned v = (unsigned)(((int64_t)wa * uv[0].v + (int64_t)wb * uv[1].v +
                                      (int64_t)wc * uv[2].v + area / 2) / area);
-            uint16_t pair = tiles[face->page_y + v][(face->page_x + u / 2) & 1023u];
-            unsigned index = (pair >> (8 * (u & 1))) & 255u;
-            uint16_t ink = tiles[face->palette_y][face->palette_x + index];
-            if (ink)
+            uint16_t packed = tiles[face->page_y + v][(face->page_x + (u >> word_shift)) & 1023u];
+            unsigned index = (packed >> (bits * (u & word_mask))) & index_mask;
+            uint16_t ink = palette[index];
+            if (ink) {
+                if (modulates) {
+                    unsigned modulated = 0;
+                    for (unsigned channel = 0; channel < 3; ++channel) {
+                        unsigned sample = ((ink >> (5*channel)) & 31u) * face->rgb[channel] / 128;
+                        modulated |= (sample < 32 ? sample : 31) << (5*channel);
+                    }
+                    ink = (uint16_t)modulated;
+                }
                 pixels[y * SCREEN_W + x] = color(ink);
+            }
         }
     }
 }
@@ -471,11 +540,10 @@ static void place_name(const uint16_t tiles[512][1024], uint32_t *pixels)
     }
 }
 
-void bfm_palace_draw(Palace *palace, const uint16_t tiles[512][1024],
-                     unsigned field, uint32_t *pixels)
+static void draw_mesh(Palace *palace, const uint16_t tiles[512][1024], uint32_t *pixels,
+                      int near_clip, const uint16_t (*ritual_palettes)[256],
+                      void (*draw_to)(void *, int), void *user)
 {
-    if (field < 696) return;
-    project_mesh(palace, field);
     size_t drawn = 0;
     for (size_t i = 0; i < palace->face_count; ++i) {
         const Face *face = &palace->faces[i];
@@ -486,27 +554,173 @@ void bfm_palace_draw(Palace *palace, const uint16_t tiles[512][1024],
             near_z = smaller(near_z, p[j].z);
             far_z = larger(far_z, p[j].z);
         }
-        if (near_z <= (palace->member ? 0 : 200) || edge(p[0], p[1], p[2].x, p[2].y) <= 0) continue;
+        if (near_z <= near_clip || edge(p[0], p[1], p[2].x, p[2].y) <= 0) continue;
         /* Furthest-vertex depth determines the four-unit ordering bucket.
          * Certain surfaces have an additional 512-unit draw priority. */
         palace->visible[drawn++] = (Draw){(far_z + 512 * face->depth_bias) / 4, i};
     }
     qsort(palace->visible, drawn, sizeof(*palace->visible), far_first);
     for (size_t i = 0; i < drawn; ++i) {
-        bfm_stair_actors_draw_to(palace->actors, palace->visible[i].depth, tiles, pixels);
+        if (draw_to) draw_to(user, palace->visible[i].depth);
+        if (palace->actors)
+            bfm_stair_actors_draw_to(palace->actors, palace->visible[i].depth, tiles, pixels);
         const Face *face = &palace->faces[palace->visible[i].index];
+        const uint16_t *palette = tiles[face->palette_y] + face->palette_x;
+        if (ritual_palettes && face->palette_x == 0) {
+            for (unsigned row = 0; row < RITUAL_PALETTES; ++row) {
+                if (face->palette_y == ritual_rows[row]) {
+                    palette = ritual_palettes[row];
+                    break;
+                }
+            }
+        }
         Point p[4];
         for (unsigned j = 0; j < face->count; ++j)
             p[j] = palace->projected[face->vertices[j]];
-        triangle(tiles, face, p, face->uv, pixels);
+        triangle(tiles, face, palette, p, face->uv, pixels);
         if (face->count == 4) {
             Point back[3] = {p[2], p[1], p[3]};
             Texel uv[3] = {face->uv[2], face->uv[1], face->uv[3]};
-            triangle(tiles, face, back, uv, pixels);
+            triangle(tiles, face, palette, back, uv, pixels);
         }
     }
-    bfm_stair_actors_draw_to(palace->actors, INT_MIN, tiles, pixels);
+    if (draw_to) draw_to(user, INT_MIN);
+    if (palace->actors)
+        bfm_stair_actors_draw_to(palace->actors, INT_MIN, tiles, pixels);
+}
+
+void bfm_palace_draw(Palace *palace, const uint16_t tiles[512][1024],
+                     unsigned field, uint32_t *pixels)
+{
+    if (field < 696) return;
+    project_mesh(palace, field);
+    uint16_t palettes[RITUAL_PALETTES][256];
+    unsigned shade = palace->member && field >= 4276 ? 1 + (field - 4276) / 4 : 0;
+    if (shade) {
+        /* The second flash restores each channel one level per room tick. */
+        unsigned restore = field >= 4634 ? 1 + (field - 4634) / 2 : 0;
+        ritual_colors(tiles, (int)shade, (int)restore, palettes);
+    }
+    draw_mesh(palace, tiles, pixels, palace->member ? 0 : 200, shade ? palettes : NULL, NULL, NULL);
     if (palace->dialogue) bfm_palace_dialogue_draw(palace->dialogue, field, (uint32_t (*)[320])pixels);
     if (field >= 832 && field < 952)
         place_name(tiles, pixels);
+}
+
+/* Room event commands share this geometry and place the camera relative to the
+ * event actor. The six camera coordinates move independently during a pan. */
+struct BfmBedroomField {
+    Palace geometry;
+    int current[6], target[6], active;
+    BfmBedroomView view;
+};
+
+static const uint8_t *field_data(const uint8_t *scene, size_t bytes,
+                                 uint32_t address, size_t length)
+{
+    const uint32_t base = UINT32_C(0x80128158);
+    if (!scene || address < base || address - base > bytes ||
+        length > bytes - (address - base)) return NULL;
+    return scene + (address - base);
+}
+
+BfmBedroomField *bfm_bedroom_field_load(const uint8_t *scene, size_t bytes,
+                                        uint32_t room_address)
+{
+    const uint8_t *room = field_data(scene, bytes, room_address, 0x98);
+    if (!room) return NULL;
+    const uint8_t *mesh = field_data(scene, bytes, le32(room + 0x94), 20);
+    if (!mesh) return NULL;
+    BfmBedroomField *field = calloc(1, sizeof(*field));
+    if (field && !load_mesh(&field->geometry, scene, bytes, (size_t)(mesh - scene) + 8)) {
+        free(field);
+        return NULL;
+    }
+    return field;
+}
+
+void bfm_bedroom_field_free(BfmBedroomField *field)
+{
+    free(field);
+}
+
+static int field_sine(int angle)
+{
+    const double turn = 6.28318530717958647693;
+    return (int)lround(sin(angle * (turn / 4096.0)) * 4096.0);
+}
+
+static void refresh_bedroom_view(BfmBedroomField *field)
+{
+    const int *p = field->current;
+    if (p[0] == p[3] && p[2] == p[5]) return;
+    Pose pose = {{p[0], p[1], p[2]}, {p[3], p[4], p[5]}};
+    field->view = make_view(pose.eye, look_at(pose, 1), 400);
+    memcpy(field->view.target, p + 3, sizeof(field->view.target));
+}
+
+int bfm_bedroom_field_camera(BfmBedroomField *field, const uint8_t *scene,
+                             size_t bytes, uint32_t camera_address,
+                             const int actor_origin[3], int immediate)
+{
+    const uint8_t *p = field_data(scene, bytes, camera_address, 16);
+    if (!field || !p || !actor_origin) return 0;
+    int yaw = signed16(p + 8), distance = signed16(p + 10), pitch = signed16(p + 12);
+    if (distance <= 0) return 0;
+    int cx = field_sine(1024 - pitch), sx = field_sine(pitch);
+    int sy = field_sine(yaw), cy = field_sine(1024 + yaw);
+    int arm[3] = {floor_div((int64_t)sy * cx, 4096), sx, floor_div((int64_t)cy * cx, 4096)};
+    int coordinates[6];
+    for (unsigned i = 0; i < 3; ++i) {
+        if (actor_origin[i] < INT16_MIN || actor_origin[i] > INT16_MAX) return 0;
+        int aim = actor_origin[i] + signed16(p + 2*i);
+        int eye = aim + floor_div(-(int64_t)distance * arm[i], 4096);
+        if (aim < INT16_MIN || aim > INT16_MAX || eye < INT16_MIN || eye > INT16_MAX) return 0;
+        coordinates[i] = eye;
+        coordinates[i + 3] = aim;
+    }
+    if (coordinates[0] == coordinates[3] && coordinates[2] == coordinates[5]) return 0;
+    memcpy(field->target, coordinates, sizeof(coordinates));
+    if (!field->active || immediate) {
+        memcpy(field->current, coordinates, sizeof(coordinates));
+        refresh_bedroom_view(field);
+    }
+    field->active = 1;
+    return 1;
+}
+
+void bfm_bedroom_field_step(BfmBedroomField *field)
+{
+    if (!field || !field->active) return;
+    for (unsigned i = 0; i < 6; ++i) {
+        int delta = field->target[i] - field->current[i];
+        if (!delta) continue;
+        int divisor = 12;
+        while (divisor > 1 && delta / divisor == 0) divisor /= 2;
+        field->current[i] += delta / divisor;
+    }
+    refresh_bedroom_view(field);
+}
+
+const BfmBedroomView *bfm_bedroom_field_view(const BfmBedroomField *field)
+{
+    return field && field->active ? &field->view : NULL;
+}
+
+void bfm_bedroom_field_draw(BfmBedroomField *field, const uint16_t tiles[512][1024],
+                            uint32_t *pixels, void (*draw_to)(void *, int), void *user)
+{
+    if (!field || !field->active || !tiles || !pixels) return;
+    project_vertices(&field->geometry, &field->view);
+    draw_mesh(&field->geometry, tiles, pixels, 0, NULL, draw_to, user);
+}
+
+int bfm_bedroom_project(const BfmBedroomView *view, const int16_t model[3], int xy_depth[3])
+{
+    if (!view || !model || !xy_depth) return 0;
+    Point p = project_point(view, (Point){model[0], model[1], model[2]});
+    xy_depth[0] = p.x;
+    xy_depth[1] = p.y;
+    xy_depth[2] = p.z;
+    return p.z > 0;
 }

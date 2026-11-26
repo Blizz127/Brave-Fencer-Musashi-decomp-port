@@ -5,8 +5,8 @@
 #include <string.h>
 
 enum { CORNERS = 30, CHAR_ROWS = 12, FIRST_CHAR = 32, CHAR_COUNT = 95 };
-enum { SPEECH_COUNT = 8, ROUNDED = 2, BURST = 6, RIGHT_ROUNDED = 10 };
-enum { CRYSTAL_CAMERA_FIELD = 2760, SCRIBE_FIELD = 3316 };
+enum { SPEECH_COUNT = 11, ROUNDED = 2, BURST = 6, RIGHT_ROUNDED = 10 };
+enum { CRYSTAL_CAMERA_FIELD = 2760, SCRIBE_FIELD = 3316, BUTLER_REACTION_FIELD = 4762 };
 enum { PORTRAIT_W = 32, PORTRAIT_H = 40, LINE_CAPACITY = 36 };
 typedef struct { int x, y; } Point;
 
@@ -25,7 +25,7 @@ typedef struct {
     uint8_t name[LINE_CAPACITY];
     size_t name_size;
     unsigned portrait_id, style, hold_ticks, bank, cue;
-    int voiced;
+    int voiced, panel_only;
     unsigned ready_field;
     int voice_ready;
     Page lead, continuation;
@@ -127,15 +127,24 @@ static int read_script(PalaceDialogue *d, const uint8_t *scene, size_t size)
         Speech *speech = &d->speech[i];
         /* The neutral court script selects the short ritual declaration. */
         if (i == 7) p = 0x610b0;
-        if (p >= size || size - p < 9 || scene[p] != 0x16 || scene[p + 5] != 2 ||
-            (scene[p + 6] != ROUNDED && scene[p + 6] != BURST &&
-             scene[p + 6] != RIGHT_ROUNDED) || scene[p + 7] > 6) return 0;
-        speech->portrait_id = scene[p + 7];
-        speech->style = scene[p + 6];
-        speech->bank = scene[p + 2] & 127u;
-        speech->cue = little16(scene + p + 3);
-        speech->voiced = speech->cue != 0;
-        p += 8;
+        if (p >= size) return 0;
+        /* A voice request may introduce a message. A following panel can
+         * change the portrait balloon while the same recording continues. */
+        speech->panel_only = scene[p] != 0x16;
+        if (!i && speech->panel_only) return 0;
+        if (!speech->panel_only) {
+            if (size - p < 5) return 0;
+            speech->bank = scene[p + 2] & 127u;
+            speech->cue = little16(scene + p + 3);
+            speech->voiced = speech->cue != 0;
+            p += 5;
+        }
+        if (size - p < 4 || scene[p] != 2 ||
+            (scene[p + 1] != ROUNDED && scene[p + 1] != BURST &&
+             scene[p + 1] != RIGHT_ROUNDED) || scene[p + 2] > 6) return 0;
+        speech->style = scene[p + 1];
+        speech->portrait_id = scene[p + 2];
+        p += 3;
         if (scene[p] == 0x18) {
             ++p;
             if (!line_bytes(speech->name, &speech->name_size, scene, size, &p, '\n')) return 0;
@@ -431,6 +440,7 @@ static int speech_event(const PalaceDialogue *d, uint64_t field, SpeechEvent *ev
          * crystal-room camera opens the next exchange. */
         if (i == 3 && opened < CRYSTAL_CAMERA_FIELD) opened = CRYSTAL_CAMERA_FIELD;
         if (i == 5 && opened < SCRIBE_FIELD) opened = SCRIBE_FIELD;
+        if (i == 8 && opened < BUTLER_REACTION_FIELD) opened = BUTLER_REACTION_FIELD;
         uint64_t body = opened + (speech->voiced ? 32 : 16);
         int ready = !speech->voiced || speech->voice_ready || i == 0;
         if (speech->voice_ready) {
@@ -439,11 +449,16 @@ static int speech_event(const PalaceDialogue *d, uint64_t field, SpeechEvent *ev
             uint64_t display = (uint64_t)speech->ready_field + 6;
             body = display > opened + 20 ? display : opened + 20;
         }
-        uint64_t close = body + 2ull * speech->lead.voice_ticks + 2 * speech->hold_ticks + 4;
+        int continues = i + 1 < SPEECH_COUNT && d->speech[i + 1].panel_only;
+        uint64_t close = body + 2ull * speech->lead.voice_ticks + 2 * speech->hold_ticks;
+        /* The two panels of one voiced announcement share the transport.
+         * The first closes a script tick earlier and the next opens without
+         * the intervening speaker's wait. */
+        close += continues ? 2 : 4;
         if (speech->continuation.length) close += 4 + 2ull * speech->continuation.voice_ticks;
         /* The court waits two extra script ticks before Fillet begins the ritual. */
         unsigned pause = i == 0 ? 31u : i == 6 ? 3u : 1u;
-        uint64_t next = close + 12 + 2 * pause;
+        uint64_t next = close + 12 + (continues ? 0 : 2 * pause);
         if (!ready || field < next) {
             *event = (SpeechEvent){speech, opened, body, close, ready};
             return 1;

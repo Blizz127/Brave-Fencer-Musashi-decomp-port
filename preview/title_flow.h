@@ -8,7 +8,8 @@ typedef enum BfmTitlePhase {
     BFM_TITLE_MENU,
     BFM_TITLE_LOADING,
     BFM_TITLE_OPENING,
-    BFM_TITLE_FILES
+    BFM_TITLE_FILES,
+    BFM_TITLE_BEDROOM
 } BfmTitlePhase;
 
 typedef enum BfmTitleChoice {
