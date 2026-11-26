@@ -5,6 +5,7 @@
 #include "village_field.h"
 #include "village_clock.h"
 #include "village_lower.h"
+#include "village_lighting.h"
 #include "village_cable.h"
 #include "village_impact.h"
 #include "village_portrait.h"
@@ -37,6 +38,7 @@ struct BfmVillageArrival {
     BfmSaveRecord *record;
     int start_talk_camera, latch_window, resident_anchor, resident_right;
     BfmVillageField view;
+    BfmVillageDaylight daylight;
     BfmVillageResidents *residents;
     unsigned resident_field_tick;
     BfmVillageGate *gate;
@@ -85,6 +87,8 @@ static int mount_upper(BfmVillageArrival *a, const MusashiDiscMedia *disc, BfmBe
     if (!a->motion || !bfm_village_field_load(&a->view, disc, a->scene, a->bytes, room) ||
         !bfm_scene_read_tiles(disc, "MAIN.CD", 10, tiles) ||
         !bfm_scene_read_tiles(disc, "SC03.CD", next.scene_member, tiles)) return 0;
+    if (!bfm_village_daylight_begin(&a->daylight, a->scene, a->bytes, room,
+                                    next.state.progress[0x37], tiles)) return 0;
     bfm_village_macho_portrait_load(tiles);
     a->message_art = bfm_castle_message_art_load(disc, a->scene, a->bytes, tiles, 0x5da74);
     a->gate = bfm_village_gate_load(a->scene, a->bytes, room, next.state.progress[8], next.state.flags);
@@ -286,6 +290,7 @@ int bfm_village_arrival_step_input(BfmVillageArrival *a, BfmGameplayRun *run,
     int movement_yaw = (a->camera.yaw + 2048) & 4095;
     if (a->talk_camera.phase)
         movement_yaw = bfm_village_motion_view_yaw(a->presented_camera.eye, a->presented_camera.target);
+    bfm_village_daylight_step(&a->daylight, a->record->progress[0x37], a->tiles);
     int16_t previous[3];
     memcpy(previous, before->root.xyz, sizeof previous);
     if (!bfm_village_motion_step(a->motion, x, y, movement_yaw) ||
@@ -368,7 +373,9 @@ int bfm_village_arrival_draw(BfmVillageArrival *a, const uint8_t flags[64],
     int shake = bfm_village_impact_shake_y(a->impact);
     drawing.eye[1] += shake;
     drawing.target[1] += shake;
-    if (!bfm_village_sky_draw(a->scene + a->descriptor, a->bytes - a->descriptor, pixels) ||
+    if (!bfm_bedroom_figure_lights(a->view.hero, a->daylight.lamps) ||
+        !bfm_village_sky_draw_lit(a->scene + a->descriptor, a->bytes - a->descriptor,
+                                  a->daylight.sky, pixels) ||
         !bfm_village_field_prepare(&a->view, &drawing, &p->root, &p->pose, flags, a->age,
                                    a->tiles, &pixels[0][0])) return 0;
     const BfmBedroomView *camera = bfm_bedroom_field_view(a->view.field);

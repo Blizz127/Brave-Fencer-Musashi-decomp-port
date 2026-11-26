@@ -42,20 +42,29 @@ static void draw_bands(const SkyBand *bands, int count, uint32_t pixels[240][320
     }
 }
 
-int bfm_village_sky_draw(const uint8_t *room, size_t bytes,
-                         uint32_t pixels[240][320])
+int bfm_village_sky_draw_lit(const uint8_t *room, size_t bytes, const uint8_t gain[3],
+                             uint32_t pixels[240][320])
 {
     SkyBand bands[2];
-    if (!room || bytes < 0x4c || !pixels) return 0;
+    uint8_t colors[2][6];
+    if (!room || bytes < 0x4c || !gain || !pixels) return 0;
     for (int i = 0; i < 2; ++i) {
         bands[i].top = 120 + signed_half(room + 0x38 + 2*i);
         bands[i].height = signed_half(room + 0x3c + 2*i);
         if (bands[i].height <= 0) return 0;
-        bands[i].from = room + 0x40 + 6*i;
+        for (unsigned k = 0; k < 6; ++k)
+            colors[i][k] = (uint8_t)(room[0x40 + 6*i + k] * gain[k % 3] / 16);
+        bands[i].from = colors[i];
         bands[i].to = bands[i].from + 3;
     }
     draw_bands(bands, 2, pixels);
     return 1;
+}
+
+int bfm_village_sky_draw(const uint8_t *room, size_t bytes, uint32_t pixels[240][320])
+{
+    const uint8_t daylight[3] = {16,16,16};
+    return bfm_village_sky_draw_lit(room, bytes, daylight, pixels);
 }
 
 int bfm_lower_village_sky_draw(const uint8_t *scene, size_t bytes, unsigned hour,
