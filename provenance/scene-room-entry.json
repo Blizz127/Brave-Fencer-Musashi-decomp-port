@@ -768,6 +768,45 @@
       "origin": "The owner-authored SC01/0005 placement slot search also matches this US scene member. The complete member digest and the 208-byte function were checked independently.",
       "source_sha256": "50634e7aa8fc8a9bb71ae222a50193c4c203cfbf86d35e8ee8aea324242ab443",
       "span_sha256": "aaba1aa9d53e7fa7446ec324df0da75cd4d454f8764899643559619e551f6757"
+    },
+    {
+      "name": "func_8013895C",
+      "region": "sc01_0006",
+      "vram": 2148763996,
+      "size": 344,
+      "source": "src/overlays/sc01_0006/8013895c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independent reconstruction from US SC01 member 6. Handles confirm, row navigation and the optional last-row shortcut for the active choice window.",
+      "source_sha256": "974673a2b09423c4e927382f51d0c1b974a259fd06081932819c4bdf939234f8",
+      "span_sha256": "846c8c8be63514dd260a88be084b9265b482bdfacf64ebb8cefd9d991a2dce5b"
+    },
+    {
+      "name": "func_801399F0",
+      "region": "sc01_0006",
+      "vram": 2148768240,
+      "size": 68,
+      "source": "src/overlays/sc01_0006/801399f0.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independent reconstruction from US SC01 member 6. Returns a pending, closed or completed window result, preserving the signed selected answer.",
+      "source_sha256": "217c361f052b06a6356cb8fe605e4b22b9c0c013873c857da5160d0d80bc4d33",
+      "span_sha256": "20d7f3eee4937e63065a404f6a6729db355f111a4b017605c9825b8029bbde80"
+    },
+    {
+      "name": "func_80180AD0",
+      "region": "sc01_0006",
+      "vram": 2149059280,
+      "size": 24,
+      "source": "src/overlays/sc01_0006/80180ad0.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independent reconstruction from US SC01 member 6. Tests whether the completed answer differs from the first library option.",
+      "source_sha256": "9d0ac02f73a07b302b2b52a1b9186428bd1d852ad2b94df98ac5824e42d4f5f4",
+      "span_sha256": "089e679ca789442b6e5487c00fd0c3e0701bfd45814598aefdfefeb2b90c10e2"
     }
   ]
 }
