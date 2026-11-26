@@ -47,25 +47,39 @@ static int checked_commit(void *context, unsigned slot, const uint8_t *expected,
     return 1;
 }
 
+static const char *initial_image(CardImage image, const char *seed)
+{
+    if (!seed) {
+        if (card_format(image) != CARD_OK) return "Could not format the new memory card.";
+        return NULL;
+    }
+
+    FILE *source = fopen(seed, "rb");
+    if (!source) return "Could not open the source memory card.";
+    int complete = fread(image.bytes, 1, image.length, source) == image.length &&
+                   fgetc(source) == EOF && !ferror(source);
+    fclose(source);
+    if (!complete) return "Could not read a complete 128 KiB source memory card.";
+
+    BfmSaveMenu menu;
+    bfm_save_menu_read_image(&menu, image.bytes, image.length);
+    if (!menu.issue) {
+        if (card_is_unallocated(image)) return NULL;
+        for (unsigned i = 0; i < 4; ++i)
+            if (menu.rows[i].state == BFM_SAVE_VALID) return NULL;
+    }
+    return "Use an empty formatted card or a readable Musashi file with an occupied slot.";
+}
+
 BfmInnProfile *bfm_inn_profile_create(const char *seed, const char *directory, const char **error)
 {
-    BfmSaveMenu menu;
-    *error = "Specify a readable source card with --card and a new directory with --save-copy.";
-    if (!seed || !directory || !*directory) return NULL;
-    FILE *source = fopen(seed, "rb");
-    if (!source) return NULL;
+    *error = "--save-copy requires a new directory under an existing parent.";
+    if (!directory || !*directory) return NULL;
+    *error = "Not enough memory to prepare the save card.";
     BfmInnProfile *profile = calloc(1, sizeof *profile);
-    int valid_size = profile && fread(profile->image, 1, sizeof profile->image, source) == sizeof profile->image &&
-                     fgetc(source) == EOF && !ferror(source);
-    fclose(source);
-    *error = "Could not read a complete 128 KiB source memory card.";
-    if (!valid_size) goto failed;
-    bfm_save_menu_read_image(&menu, profile->image, sizeof profile->image);
-    *error = "Use an empty formatted card or a readable Musashi file with an occupied slot.";
-    unsigned valid = 0;
-    for (unsigned i = 0; i < 4; ++i) valid += menu.rows[i].state == BFM_SAVE_VALID;
-    CardImage image = {profile->image, sizeof profile->image};
-    if (menu.issue || (!valid && !card_is_unallocated(image))) goto failed;
+    if (!profile) return NULL;
+    *error = initial_image((CardImage){profile->image, sizeof profile->image}, seed);
+    if (*error) goto failed;
     *error = "Could not select the save-copy directory.";
     profile->storage = cs_storage_create();
     if (!profile->storage || bfm_plat_memcard_set_dir(directory) != BFM_PLAT_OK) goto failed;

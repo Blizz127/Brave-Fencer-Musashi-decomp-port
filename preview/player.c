@@ -66,11 +66,11 @@ typedef struct Player {
 
 static const char usage[] =
     "Brave Fencer Musashi - native preview\n"
-    "Usage: musashi_native_boot --disc path/to/game.cue [--card path/to/card.mcd [--save-copy new-directory]] [--windowed]\n"
+    "Usage: musashi_native_boot --disc path/to/game.cue [--card path/to/card.mcd] [--save-copy new-directory] [--windowed]\n"
     "Use your own US PlayStation disc image (SLUS-00726). A complete raw BIN or "
     "a CUE with all its BIN tracks alongside is supported.\n"
     "Continue reads a supplied raw 128 KiB card and supports the early castle bedroom wake.\n"
-    "--save-copy starts a writable copy in a new directory. The --card input remains read-only.\n"
+    "--save-copy creates a writable memory card in a new directory. It starts blank unless you supply a read-only --card.\n"
     "Enter/Start: start. Space/Cross: confirm or skip the opening. Arrows: select. "
     "D-pad, arrows or left stick: move in Giant Forest. A/Square: swing Fusion on the ground. "
     "Right Shift/R1: charge Fusion. Z/Circle: fire earned Gunshot. T/Triangle: back from files. Escape: quit.\n";
@@ -859,6 +859,6 @@ int main(int argc, char **argv) {
     }
     if (!disc) disc = getenv("BFM_DISC");
     if (!disc || !*disc) { fputs(usage, stderr); return 2; }
-    if (save_directory && (!card || !*card || !*save_directory)) { fputs(usage, stderr); return 2; }
+    if (save_directory && (!*save_directory || (card && !*card))) { fputs(usage, stderr); return 2; }
     return run(disc, card, save_directory, windowed);
 }
