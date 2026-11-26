@@ -40,7 +40,8 @@ typedef enum {
     BFM_FOREST_JUMP_BOUNDARY,
     BFM_FOREST_JUMP_AIRBORNE,
     BFM_FOREST_JUMP_LANDED,
-    BFM_FOREST_JUMP_FINISHED
+    BFM_FOREST_JUMP_FINISHED,
+    BFM_FOREST_JUMP_WATER
 } BfmForestJumpResult;
 
 int bfm_forest_jump_begin(BfmForestJump *jump, const BfmForestField *field,
@@ -52,6 +53,11 @@ int bfm_forest_fall_begin(BfmForestJump *jump, BfmForestManual *manual,
 BfmForestJumpResult bfm_forest_jump_tick(BfmForestJump *jump, const BfmForestField *field,
     ForestPlayerState *actor, const BfmForestCamera *camera, int x, int y, int cross_held,
     int16_t *yaw, int16_t cached[3]);
+/* Ordinary hero movement can hand a crossed water surface to the room when
+ * the room has recorded a supported recovery foot. */
+BfmForestJumpResult bfm_forest_player_jump_tick(BfmForestJump *jump, const BfmForestField *field,
+    ForestPlayerState *actor, const BfmForestCamera *camera, int x, int y, int cross_held,
+    int16_t *yaw, int16_t cached[3], int has_dry_bank);
 
 /* Install the landing state on the transition update. Directed movement then
  * resumes on the next ground update with the jump's retained momentum. */

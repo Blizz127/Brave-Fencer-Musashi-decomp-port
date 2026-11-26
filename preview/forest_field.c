@@ -2398,6 +2398,51 @@ static int creek_cell(const BfmForestField *field, const int16_t p[3])
            p[2] >= field->bank_end_z && p[2] < field->bank_end_z + 128;
 }
 
+/* Only the marked horizontal faces in the first creek receive the player
+ * when a downward foot sweep crosses the surface. The banks, buried bed
+ * and empty cells do not trigger water entry. */
+static int first_creek_water(const BfmForestField *field, const int16_t end[3],
+                            const BfmForestContact *ground)
+{
+    return field->room == FOREST_ROOM && field->far_bank_cells &&
+           end[2] >= field->bank_end_z && end[2] < field->bank_end_z + 128 &&
+           ground->flags == 2 && ground->slope == 0x2000 && !ground->normal[0] &&
+           ground->normal[1] < 0 && !ground->normal[2] && ground->height > field->bank_height;
+}
+
+int bfm_forest_dry_creek_bank(const BfmForestField *field, const int16_t foot[3])
+{
+    if (!field || !foot || field->room != FOREST_ROOM || !field->far_bank_cells ||
+        foot[1] != field->bank_height || foot[2] < field->bank_start_z ||
+        foot[2] > field->bank_end_z + 128 * (1 + (int)field->far_bank_cells) ||
+        (foot[2] > field->bank_end_z && foot[2] < field->bank_end_z + 128))
+        return 0;
+    int16_t channel[3] = {foot[0], foot[1], (int16_t)(field->bank_end_z + 64)};
+    BfmForestContact ground, water;
+    return bfm_forest_ground(field, foot[0], foot[1], foot[2], &ground) &&
+           !ground.bridge && !ground.flags && ground.slope == 0x2000 &&
+           !ground.normal[0] && !ground.normal[2] && ground.height == foot[1] &&
+           bfm_forest_ground(field, channel[0], channel[1], channel[2], &water) &&
+           first_creek_water(field, channel, &water);
+}
+
+static int crosses_creek_water(const BfmForestField *field, const int16_t from[3],
+                               const int16_t end[3], const BfmForestContact *ground)
+{
+    const FloorGrid *grid = &field->grid;
+    ContactCell cell = contact_cell(grid, end);
+    for (unsigned i = 0; i < cell.count; ++i) {
+        u16 token = cell.tokens[i];
+        const FloorFace *face = contact_face(grid, token);
+        const FloorPoint *normal = &grid->verts[face->e[0].v];
+        if (face->flags == ground->flags && !normal->x && !normal->z &&
+            (s16)normal->y == ground->normal[1] &&
+            crossing_margin(grid, face, (token & 0x8000) ? 4 : 3, from, end) >= -EDGE_TOLERANCE)
+            return 1;
+    }
+    return 0;
+}
+
 /* The steep sides and water may be below a jump, but cannot land the player.
  * At lower altitudes, sweep the feet against the bounded floor faces too. */
 static int clears_creek(const BfmForestField *field, const int16_t from[3],
@@ -2434,9 +2479,10 @@ static int clears_creek(const BfmForestField *field, const int16_t from[3],
 /* Sweep the actor base while it is above the entrance floor. The ordinary
  * downward probe starts above the proposed contact so a thin raised surface
  * is not lost after the feet pass through it. */
-int bfm_forest_air_step(const BfmForestField *field, const int16_t from[3],
-                        int16_t to[3], BfmForestContact *contact, int *landed)
+int bfm_forest_player_air_step(const BfmForestField *field, const int16_t from[3],
+                               int16_t to[3], BfmForestContact *contact, int *landed, int *water)
 {
+    if (water) *water = 0;
     if (!field || !from || !to || !contact || !landed ||
         abs(to[0] - from[0]) > 16 || abs(to[2] - from[2]) > 16 ||
         abs(to[1] - from[1]) > 32)
@@ -2451,10 +2497,22 @@ int bfm_forest_air_step(const BfmForestField *field, const int16_t from[3],
     /* A probe starting underwater could see the unmarked bed instead. */
     if (creek && upper > field->bank_height)
         upper = (s16)field->bank_height;
-    if (!bfm_forest_ground(field, end[0], upper, end[2], &ground) ||
-        (!bfm_forest_jump_surface(&ground) &&
-         (!creek || !clears_creek(field, from, end, &ground))))
+    if (!bfm_forest_ground(field, end[0], upper, end[2], &ground))
         return 0;
+    if (!bfm_forest_jump_surface(&ground) && (!creek || !clears_creek(field, from, end, &ground))) {
+        if (!water || !first_creek_water(field, end, &ground)) return 0;
+        if (crosses_creek_water(field, from, end, &ground)) {
+            *water = 1;
+            end[1] = ground.height;
+            memcpy(to, end, sizeof end);
+            *contact = ground;
+            *landed = 1;
+            return 1;
+        }
+        /* A short descent can end between the floor probe's two units
+         * of clearance and the actual plane; finish that step in the air. */
+        if (from[1] > ground.height + 2 || end[1] > ground.height + 2) return 0;
+    }
     int hit = end[1] >= from[1] && end[1] > ground.height + 2;
     /* A wall slide may move the downward probe just inside a raised face's
      * edge tolerance. The feet can land there only if their own sweep
@@ -2492,6 +2550,12 @@ int bfm_forest_air_step(const BfmForestField *field, const int16_t from[3],
     *contact = ground;
     *landed = hit;
     return 1;
+}
+
+int bfm_forest_air_step(const BfmForestField *field, const int16_t from[3],
+                        int16_t to[3], BfmForestContact *contact, int *landed)
+{
+    return bfm_forest_player_air_step(field, from, to, contact, landed, NULL);
 }
 
 /* Resolve the earliest indexed plain floor that the body segment

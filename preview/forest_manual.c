@@ -219,9 +219,9 @@ int bfm_forest_fall_begin(BfmForestJump *jump, BfmForestManual *manual,
     return 1;
 }
 
-BfmForestJumpResult bfm_forest_jump_tick(BfmForestJump *jump, const BfmForestField *field,
+BfmForestJumpResult bfm_forest_player_jump_tick(BfmForestJump *jump, const BfmForestField *field,
     ForestPlayerState *actor, const BfmForestCamera *camera, int x, int y, int cross_held,
-    int16_t *yaw, int16_t cached[3])
+    int16_t *yaw, int16_t cached[3], int has_dry_bank)
 {
     if (!jump || !jump->active || !field || !actor || !camera || !yaw || !cached ||
         x < -1 || x > 1 || y < -1 || y > 1)
@@ -282,13 +282,14 @@ BfmForestJumpResult bfm_forest_jump_tick(BfmForestJump *jump, const BfmForestFie
     int16_t end[3];
     for (unsigned a = 0; a < 3; ++a)
         end[a] = (int16_t)(next.position[a] >> 16);
-    int landed;
-    if (!bfm_forest_air_step(field, cached, end, &next_jump.ground, &landed)) {
+    int landed, water = 0;
+    int *water_contact = has_dry_bank ? &water : NULL;
+    if (!bfm_forest_player_air_step(field, cached, end, &next_jump.ground, &landed, water_contact)) {
         /* Keep falling in the last supported column when a lateral route
          * leads into terrain that this movement path cannot resolve. */
         end[0] = cached[0];
         end[2] = cached[2];
-        if (!bfm_forest_air_step(field, cached, end, &next_jump.ground, &landed))
+        if (!bfm_forest_player_air_step(field, cached, end, &next_jump.ground, &landed, water_contact))
             return BFM_FOREST_JUMP_BOUNDARY;
         next.position[0] = actor->position[0];
         next.position[2] = actor->position[2];
@@ -316,7 +317,15 @@ BfmForestJumpResult bfm_forest_jump_tick(BfmForestJump *jump, const BfmForestFie
     *actor = next;
     *yaw = next_yaw;
     memcpy(cached, end, sizeof end);
+    if (water) return BFM_FOREST_JUMP_WATER;
     return landed ? BFM_FOREST_JUMP_LANDED : BFM_FOREST_JUMP_AIRBORNE;
+}
+
+BfmForestJumpResult bfm_forest_jump_tick(BfmForestJump *jump, const BfmForestField *field,
+    ForestPlayerState *actor, const BfmForestCamera *camera, int x, int y, int cross_held,
+    int16_t *yaw, int16_t cached[3])
+{
+    return bfm_forest_player_jump_tick(jump, field, actor, camera, x, y, cross_held, yaw, cached, 0);
 }
 
 void bfm_forest_jump_resume(BfmForestManual *manual, const BfmForestJump *jump,

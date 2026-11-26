@@ -109,6 +109,9 @@ struct BfmForestWalk {
     BfmForestJumpPoses stride_poses;
     int stride_x, stride_y, stride_jump;
     BfmForestJump jump;
+    int16_t dry_bank[3];
+    int has_dry_bank;
+    unsigned water_age;
     BfmForestSpeechActor speaker;
     BfmForestManual manual;
     BfmForestHud *hud;
@@ -1074,9 +1077,52 @@ static int submit_gunshot_action(BfmForestWalk *w, BfmForestGunshotEvent shot)
     return 1;
 }
 
+enum { CREEK_HEALTH_COST = 15, CREEK_SINK_UPDATES = 17 };
+
+/* The opening creek takes the player's feet below the surface, then returns
+ * each axis toward the last supported bank, by an eighth of the distance
+ * per update and at least one whole unit until it reaches the target. */
+static int recover_from_creek(BfmForestWalk *w)
+{
+    if (w->actor.kind == 25 && w->actor.action == 4) {
+        w->water_age = 0;
+        w->jump = (BfmForestJump){0};
+        w->manual = (BfmForestManual){0};
+        w->actor.kind = w->actor.state = 0;
+        w->actor.action = w->actor.phase = 1;
+        w->motion = IDLE;
+        w->elapsed = 0;
+        bfm_forest_status_debit(&w->gameplay->player, CREEK_HEALTH_COST);
+        if (bfm_forest_status_values(&w->gameplay->player).hp <= 0)
+            w->fatal_hit = 1;
+        return update_pose(w);
+    }
+    w->actor.kind = w->actor.state = 25;
+    if (w->water_age <= CREEK_SINK_UPDATES) {
+        w->actor.position[1] += (4u << 16) + (w->water_age << 14);
+        w->cached[1] = (int16_t)(w->actor.position[1] >> 16);
+        w->actor.action = w->actor.phase = w->water_age == CREEK_SINK_UPDATES ? 3 : 2;
+    } else {
+        int settled = 1;
+        for (unsigned axis = 0; axis < 3; ++axis) {
+            int delta = w->dry_bank[axis] - w->cached[axis];
+            int stride = delta / 8;
+            if (!stride) stride = (delta > 0) - (delta < 0);
+            w->cached[axis] += stride;
+            if (w->cached[axis] != w->dry_bank[axis]) settled = 0;
+        }
+        restore_whole_position(w, w->cached);
+        w->actor.action = w->actor.phase = settled ? 4 : 3;
+    }
+    ++w->water_age;
+    update_root(w);
+    return 1;
+}
+
 static int step_jump(BfmForestWalk *w, const BfmForestField *room, int launched, int continuing_stride,
                      int x, int y, int jump_held, BfmForestDustEmission *dust)
 {
+    if (w->water_age) return recover_from_creek(w);
     if (w->jump.active && w->jump.walk_off && !w->stride_poses.visible &&
         !bfm_forest_walkoff_poses_load(w->disc, w->data.animation_table, &w->stride_poses))
         return 0;
@@ -1096,9 +1142,18 @@ static int step_jump(BfmForestWalk *w, const BfmForestField *room, int launched,
         if (!select_jump_pose(w)) return 0;
     } else if (w->jump.active) {
         int previously_landed = w->jump.landed;
-        BfmForestJumpResult result = bfm_forest_jump_tick(&w->jump, room,
-            &w->actor, &w->camera, x, y, jump_held, &w->yaw, w->cached);
+        BfmForestJumpResult result = bfm_forest_player_jump_tick(&w->jump, room,
+            &w->actor, &w->camera, x, y, jump_held, &w->yaw, w->cached,
+            w->has_dry_bank && room == w->field);
         w->at_boundary = result == BFM_FOREST_JUMP_BOUNDARY;
+        if (result == BFM_FOREST_JUMP_WATER) {
+            w->water_age = 1;
+            w->actor.kind = w->actor.state = 3;
+            w->actor.action = w->actor.phase = 2;
+            w->actor.field_24.word = w->actor.local_y.word = w->actor.field_2c.word = 0;
+            update_root(w);
+            return bfm_forest_queue_hurt_number(w->field, w->cached, CREEK_HEALTH_COST);
+        }
         if (w->at_boundary) {
             w->blocked_x = x;
             w->blocked_y = y;
@@ -1148,6 +1203,10 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
     uint32_t sweep_pose = 0;
     BfmForestLessonStage before = w->lesson.stage;
     int incoming_yaw = w->yaw, square_edge = attack_pressed;
+    if (!w->jump.active && w->actor.state <= 1 && bfm_forest_dry_creek_bank(w->field, w->cached)) {
+        memcpy(w->dry_bank, w->cached, sizeof w->dry_bank);
+        w->has_dry_bank = 1;
+    }
     int owned = bfm_forest_lesson_owns_player(&w->lesson) ||
         (w->fusion.award.phase > BFM_AWARD_IDLE && w->fusion.award.phase < BFM_AWARD_COMPLETE);
     int at_mark = 0;
@@ -1173,7 +1232,9 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
     bfm_forest_hud_tick(w->hud);
     int16_t hit_yaw = 0;
     unsigned power = bfm_forest_take_player_strike(w->field, &hit_yaw);
-    int result = tick_hurt(w, power, hit_yaw, 0, &dust);
+    /* A separate guard's hit may still debit HP during the creek action.
+     * Keep the bank and the scripted water movement when that hit ends. */
+    int result = tick_hurt(w, power, hit_yaw, w->water_age != 0, &dust);
     if (result <= 0) return result;
     if (result == 1) {
         if (owned) {
@@ -1246,6 +1307,7 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
         } else if (!step_jump(w, w->field, launched, continuing_stride, x, y, jump_held, &dust)) {
             return -1;
         }
+        if (w->fatal_hit) return 0;
         if (!submit_gunshot_action(w, shot)) return -1;
         if (casting == BFM_CAST_STANCE || casting == BFM_CAST_THROW || casting == BFM_CAST_LAUNCH) {
             w->actor.state = casting == BFM_CAST_STANCE ? 17 : 21;
