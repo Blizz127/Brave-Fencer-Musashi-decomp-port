@@ -84,6 +84,7 @@ add_executable(musashi_native_boot
     tower_figures.c
     tower_lightning.c
     tower_note.c
+    tower_note_pose.c
     tower_sky.c
     forest_field.c
     forest_fusion_power.c
