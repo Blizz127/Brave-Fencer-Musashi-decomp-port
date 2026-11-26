@@ -15,7 +15,7 @@ int bfm_bedroom_step(BfmBedroom *room);
 /* A stop result asks the desktop to cancel the queued voice output. */
 /* Menu directions are digital. Field axes preserve stick deflection in -127..127. */
 int bfm_bedroom_step_axes(BfmBedroom *room, int confirm_edge, int reveal_edge,
-                          int direction, int held, int accept_edge, int back_edge, int x, int y);
+                          int direction, int held, int accept_edge, int back_edge, int x, int y, int talk_edge);
 int bfm_bedroom_step_directions(BfmBedroom *room, int confirm_edge, int reveal_edge,
                                 int direction, int held, int accept_edge, int back_edge, int horizontal);
 int bfm_bedroom_step_pad(BfmBedroom *room, int confirm_edge, int reveal_edge,

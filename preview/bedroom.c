@@ -604,9 +604,10 @@ static const BfmForestMessageFrame *advance_message(BfmBedroom *room, int confir
     return frame;
 }
 
-static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int x, int y)
+static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int x, int y, int talk_edge)
 {
     int result = BFM_BEDROOM_ADVANCED;
+    int was_in_dialogue = room->message != NULL;
     advance_voice(room);
     if (room->message) {
         const BfmForestMessageFrame *frame = advance_message(room, confirm_edge, reveal_edge, &result);
@@ -621,7 +622,14 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
         if (!apply(room, BFM_BED_SOUND_READY, 0) || !bfm_village_arrival_continue(room->village))
             return 0;
     }
-    if (!bfm_village_arrival_step(room->village, room->run, x, y)) return 0;
+    BfmForestMessage *opened = NULL;
+    if (!bfm_village_arrival_step_input(room->village, room->run, x, y,
+                                        talk_edge && !was_in_dialogue, &opened)) return 0;
+    if (opened) {
+        room->message = opened;
+        if (room->story_flags != room->entry.state.flags)
+            memcpy(room->story_flags, room->entry.state.flags, sizeof room->entry.state.flags);
+    }
     const BfmVillagePlayer *player = bfm_village_arrival_player(room->village);
     if (player->events & BFM_VILLAGE_CAMERA) {
         unsigned minute = half(room->entry.state.progress + 0x1a);
@@ -688,12 +696,12 @@ static int cable_trip_step(BfmBedroom *room)
 }
 
 int bfm_bedroom_step_axes(BfmBedroom *room, int confirm_edge, int reveal_edge,
-                          int direction, int held, int accept_edge, int back_edge, int x, int y)
+                          int direction, int held, int accept_edge, int back_edge, int x, int y, int talk_edge)
 {
     room->effect_request = 0;
     room->slider_event = 0;
     int result = BFM_BEDROOM_ADVANCED;
-    if (room->village) return village_step(room, confirm_edge, reveal_edge, x, y);
+    if (room->village) return village_step(room, confirm_edge, reveal_edge, x, y, talk_edge);
     if (room->village_trip && room->cable_tick>=COURT_WIPE) return cable_trip_step(room);
     if (room->village_trip) {
         ++room->cable_tick;
@@ -948,7 +956,7 @@ int bfm_bedroom_step_directions(BfmBedroom *room, int confirm_edge, int reveal_e
                                 int direction, int held, int accept_edge, int back_edge, int horizontal)
 {
     return bfm_bedroom_step_axes(room, confirm_edge, reveal_edge, direction, held,
-                                 accept_edge, back_edge, horizontal * 127, held * 127);
+                                 accept_edge, back_edge, horizontal * 127, held * 127, 0);
 }
 
 int bfm_bedroom_step_pad(BfmBedroom *room, int confirm_edge, int reveal_edge,

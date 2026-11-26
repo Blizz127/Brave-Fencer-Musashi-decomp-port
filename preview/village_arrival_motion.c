@@ -30,6 +30,9 @@ struct BfmVillageMotion {
     int64_t position[3];
     int32_t starting_speed, speed;
     int walking, pending, message_due;
+    enum { NO_TALK, TALK_APPROACH, TALK_FACE, TALK_HOLD } talk;
+    unsigned talk_dispatch;
+    int16_t talk_x, talk_z, resident_x, resident_z;
 };
 
 static uint32_t read32(const uint8_t *p)
@@ -227,15 +230,21 @@ static int move(BfmVillageMotion *m, int speed, int vertical, int require_floor)
     return 1;
 }
 
-static int heading(int x, int z)
+static int heading(int64_t x, int64_t z)
 {
-    int a = abs(x), b = abs(z);
+    int64_t a = llabs(x), b = llabs(z);
     if (!a && !b) return 0;
-    int ratio = a <= b ? a*1024/b : b*1024/a;
+    int ratio = (int)(a <= b ? a*1024/b : b*1024/a);
     int angle = (int)lround(atan((ratio+0.375)/1024.0)/angle_unit);
     if (a > b) angle = 1024-angle;
     if (z < 0) angle = 2048-angle;
     return (x < 0 ? -angle : angle) & 4095;
+}
+
+int bfm_village_motion_view_yaw(const int32_t eye[3], const int32_t target[3])
+{
+    if (!eye || !target) return 0;
+    return heading((int64_t)target[0]-eye[0], (int64_t)target[2]-eye[2]);
 }
 
 static int turn(BfmVillageMotion *m)
@@ -255,19 +264,10 @@ static int pad_axis(int angle, int power)
     return value < -127 ? -127 : value > 127 ? 127 : value;
 }
 
-static int waypoint(BfmVillageMotion *m, unsigned leg, int camera, BfmBedroomAction *action)
+static int walk_toward(BfmVillageMotion *m, int dx, int dz, int power, int camera,
+                       BfmBedroomAction *action)
 {
-    const uint8_t *point = m->waypoint[leg];
-    int dx = read16(point) - m->player.root.xyz[0], dz = read16(point+4) - m->player.root.xyz[2];
-    if ((int64_t)dx*dx + (int64_t)dz*dz < 16*16) {
-        place(m,point);
-        *action = BFM_BEDROOM_STAND;
-        m->walking = 0;
-        m->message_due = 1;
-        return 1;
-    }
     int relative = (heading(dx,dz)-camera) & 4088;
-    int power = read16(point+6);
     int px = pad_axis(relative,power), pz = pad_axis(relative+1024,power);
     m->player.root.yaw = (unsigned)(camera+2048+heading(px,pz)) & 4095;
     /* Keeping WALK selected preserves the walking cycle at partial deflection. */
@@ -279,6 +279,44 @@ static int waypoint(BfmVillageMotion *m, unsigned leg, int camera, BfmBedroomAct
     int magnitude = (int)hypot(px,pz);
     if (magnitude > 127) magnitude = 127;
     return move(m, 11*Q*magnitude/127, 0, 1);
+}
+
+static int waypoint(BfmVillageMotion *m, unsigned leg, int camera, BfmBedroomAction *action)
+{
+    const uint8_t *point = m->waypoint[leg];
+    int dx = read16(point) - m->player.root.xyz[0], dz = read16(point+4) - m->player.root.xyz[2];
+    if ((int64_t)dx*dx + (int64_t)dz*dz < 16*16) {
+        place(m,point);
+        *action = BFM_BEDROOM_STAND;
+        m->walking = 0;
+        m->message_due = 1;
+        return 1;
+    }
+    return walk_toward(m,dx,dz,read16(point+6),camera,action);
+}
+
+static int talking_input(BfmVillageMotion *m, int camera, BfmBedroomAction *action)
+{
+    /* The resident accepts the input, then dispatches the player action.
+     * Both updates precede the first synthesized walking input. */
+    if (m->talk_dispatch) {
+        --m->talk_dispatch;
+        return 1;
+    }
+    if (m->talk == TALK_APPROACH) {
+        int dx = m->talk_x - m->player.root.xyz[0], dz = m->talk_z - m->player.root.xyz[2];
+        if ((int64_t)dx*dx + (int64_t)dz*dz >= 16*16)
+            return walk_toward(m,dx,dz,0,camera,action);
+        m->position[0] = (int64_t)m->talk_x*Q + (m->position[0] & (Q-1));
+        m->position[2] = (int64_t)m->talk_z*Q + (m->position[2] & (Q-1));
+        m->walking = 0;
+        *action = BFM_BEDROOM_STAND;
+        m->turn = (unsigned)heading(m->talk_x-m->resident_x,m->talk_z-m->resident_z);
+        m->talk = TALK_FACE;
+    } else if (m->talk == TALK_FACE && turn(m)) {
+        m->talk = TALK_HOLD;
+    }
+    return 1;
 }
 
 static int ordinary_input(BfmVillageMotion *m, int x, int y, int camera, BfmBedroomAction *action)
@@ -387,7 +425,9 @@ static int advance(BfmVillageMotion *m, int stick_x, int stick_y, int camera)
         }
         break;
     case BFM_VILLAGE_CONTROL:
-        if (!ordinary_input(m,stick_x,stick_y,camera,&action)) return 0;
+        if (m->talk != NO_TALK) {
+            if (!talking_input(m,camera,&action)) return 0;
+        } else if (!ordinary_input(m,stick_x,stick_y,camera,&action)) return 0;
         break;
     }
     if (!publish_root(m)) return 0;
@@ -409,6 +449,44 @@ int bfm_village_motion_continue(BfmVillageMotion *m)
         m->player.phase != BFM_VILLAGE_FIRST_MESSAGE && m->player.phase != BFM_VILLAGE_SECOND_MESSAGE))
         return 0;
     m->pending = 1;
+    return 1;
+}
+
+int bfm_village_motion_begin_talk(BfmVillageMotion *m, const int16_t resident[3], unsigned yaw)
+{
+    if (!m || !resident || yaw >= 4096 || !m->player.controlled || m->talk != NO_TALK)
+        return 0;
+    const uint8_t *approach = at(&m->scene, 0x801898b4u, 16);
+    if (!approach || read32(approach) != 4 || read32(approach+8) != 10) return 0;
+    int local_x = read16(approach+4), local_z = read16(approach+6);
+    int sine = (int)lround(sin(yaw*angle_unit)*4096);
+    int cosine = (int)lround(cos(yaw*angle_unit)*4096);
+    int x = resident[0] + (int)floor((local_x*cosine + local_z*sine)/4096.0);
+    int z = resident[2] + (int)floor((local_z*cosine - local_x*sine)/4096.0);
+    if (x < INT16_MIN || x > INT16_MAX || z < INT16_MIN || z > INT16_MAX) return 0;
+    m->resident_x = resident[0];
+    m->resident_z = resident[2];
+    m->talk_x = (int16_t)x;
+    m->talk_z = (int16_t)z;
+    m->walking = 0;
+    m->talk_dispatch = 2;
+    m->talk = TALK_APPROACH;
+    m->player.controlled = 0;
+    m->player.root.busy = 1;
+    return 1;
+}
+
+int bfm_village_motion_talk_ready(const BfmVillageMotion *m)
+{
+    return m && m->talk == TALK_HOLD;
+}
+
+int bfm_village_motion_end_talk(BfmVillageMotion *m)
+{
+    if (!bfm_village_motion_talk_ready(m)) return 0;
+    m->talk = NO_TALK;
+    m->player.controlled = 1;
+    m->player.root.busy = 0;
     return 1;
 }
 

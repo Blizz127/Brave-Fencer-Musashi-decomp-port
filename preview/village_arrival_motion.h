@@ -37,6 +37,14 @@ const BfmVillagePlayer *bfm_village_motion_player(const BfmVillageMotion *motion
 int bfm_village_motion_step(BfmVillageMotion *motion, int stick_x, int stick_y, int camera_yaw);
 /* Signal music readiness or closure of the current message before the next step. */
 int bfm_village_motion_continue(BfmVillageMotion *motion);
+/* Start only after the resident has accepted Talk. The mounted conversation
+ * specifies the walking offset in the resident's local coordinates. */
+int bfm_village_motion_begin_talk(BfmVillageMotion *motion, const int16_t resident_xyz[3],
+                                  unsigned resident_yaw);
+/* Pass the previous view's eye and target while its conversation zoom moves. */
+int bfm_village_motion_view_yaw(const int32_t eye[3], const int32_t target[3]);
+int bfm_village_motion_talk_ready(const BfmVillageMotion *motion);
+int bfm_village_motion_end_talk(BfmVillageMotion *motion);
 int bfm_village_motion_face(const BfmVillageMotion *motion, uint16_t tiles[512][1024]);
 void bfm_village_motion_free(BfmVillageMotion *motion);
 

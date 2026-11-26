@@ -392,7 +392,8 @@ static int play(Player *p, char *error, size_t size) {
                                            p->keys[SDL_SCANCODE_DOWN] || (p->digital & PAD_DOWN), p->axis_y);
                         int result = bfm_bedroom_step_axes(p->bedroom,
                                     pressed & (PAD_CIRCLE | PAD_CROSS | PAD_TRIANGLE),
-                                    pressed & PAD_CIRCLE, direction, held, pressed & PAD_CROSS, pressed & PAD_TRIANGLE, x, y);
+                                    pressed & PAD_CIRCLE, direction, held, pressed & PAD_CROSS,
+                                    pressed & PAD_TRIANGLE, x, y, pressed & PAD_SQUARE);
                         if (!result) {
                             snprintf(error, size, "Could not advance the mounted bedroom scene.");
                             return 2;

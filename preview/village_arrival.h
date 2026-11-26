@@ -12,6 +12,8 @@ BfmVillageArrival *bfm_village_arrival_open(const MusashiDiscMedia *disc, BfmBed
 void bfm_village_arrival_free(BfmVillageArrival *arrival);
 const BfmVillagePlayer *bfm_village_arrival_player(const BfmVillageArrival *arrival);
 int bfm_village_arrival_step(BfmVillageArrival *arrival, BfmGameplayRun *run, int x, int y);
+int bfm_village_arrival_step_input(BfmVillageArrival *arrival, BfmGameplayRun *run,
+                                   int x, int y, int talk_edge, BfmForestMessage **opened);
 int bfm_village_arrival_continue(BfmVillageArrival *arrival);
 BfmForestMessage *bfm_village_arrival_speech(const BfmVillageArrival *arrival);
 int bfm_village_arrival_draw(BfmVillageArrival *arrival, const uint8_t flags[64],

@@ -25,12 +25,14 @@ add_executable(musashi_native_boot
     village_arrival.c
     village_arrival_motion.c
     village_camera.c
+    village_talk_camera.c
     village_cable.c
     village_field.c
     village_gate.c
     village_greeting.c
     village_impact.c
     village_impact_sound.c
+    village_portrait.c
     village_residents.c
     village_sky.c
     bedroom_score.c
