@@ -33,6 +33,8 @@ struct BfmInnField *bfm_bedroom_inn_counter(BfmBedroom *room);
 int bfm_bedroom_leave_inn(BfmBedroom *room);
 int bfm_bedroom_draw_counter(BfmBedroom *room, int dialogue, uint32_t pixels[240][320]);
 int bfm_bedroom_draw(BfmBedroom *room, uint32_t pixels[240][320]);
+/* Mounted field used for display, or zero when the location is unknown. */
+uint16_t bfm_bedroom_display_room(const BfmBedroom *room);
 struct BfmBedroomEffects *bfm_bedroom_effect(const BfmBedroom *room, unsigned *command);
 struct BfmForestScore *bfm_bedroom_score(const BfmBedroom *room);
 struct BfmVillageImpactSound *bfm_bedroom_landing(const BfmBedroom *room);

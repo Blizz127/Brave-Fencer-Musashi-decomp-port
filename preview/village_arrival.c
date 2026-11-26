@@ -149,6 +149,14 @@ BfmVillageArrival *bfm_village_resume_inn(const MusashiDiscMedia *disc, BfmBedro
     return a;
 }
 
+uint16_t bfm_village_arrival_room(const BfmVillageArrival *a)
+{
+    /* The transfer descriptor can change while the outgoing field still draws. */
+    if (a->woods) return 0x3025;
+    if (a->lower) return 0x1010;
+    return a->motion ? 0x1011 : 0;
+}
+
 const BfmVillagePlayer *bfm_village_arrival_player(const BfmVillageArrival *a)
 {
     if (a->woods) return bfm_southern_woods_player(a->woods);
