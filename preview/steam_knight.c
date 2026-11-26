@@ -18,6 +18,7 @@
 #include "forest_message_art.h"
 #include "steam_knight_street_route.h"
 #include "steam_knight_flail.h"
+#include "steam_knight_spin_contact.h"
 #include "../pc_port/forest_player_bytes.h"
 #include <stdlib.h>
 #include <string.h>
@@ -34,6 +35,7 @@ struct BfmSteamKnight {
     BfmSteamKnightHeroMotion *hero;
     BfmSteamKnightArmor armor;
     BfmForestFusionPower power;
+    BfmSteamSpinData spin;
     BfmSteamKnightArmorHit hit;
     struct {
         BfmForestDamageDigits digits;
@@ -65,6 +67,7 @@ struct BfmSteamKnight {
     unsigned transfer_age, arrival_wait;
     unsigned core_hp, core_max;
     uint16_t pending_body_damage;
+    unsigned core_lock;
     unsigned round, weak_stage, weak_age, core_struck, recovery_left;
     unsigned body_stage, pending_kneel_joint;
     uint32_t battle_flags, pending_kneel_flags;
@@ -107,6 +110,7 @@ BfmSteamKnight *bfm_steam_knight_open(const MusashiDiscMedia *disc,
         !bfm_steam_knight_core_boxes_load(&s->core_boxes, scene, size) ||
         !bfm_steam_carry_load(&s->carry, disc, scene, size) ||
         !bfm_steam_knight_armor_load_power(disc, scene, size, &s->power) ||
+        !bfm_steam_spin_load(disc, scene, size, &s->spin) ||
         !bfm_steam_knight_boss_hud_load(&s->boss_hud, disc, scene, size) || !bfm_lumina_rotation_load(disc, &s->rotation) ||
         !bfm_steam_weapons_load(&s->weapons, scene, size) ||
         !bfm_steam_knight_flames_load(&s->flames, scene, size) ||
@@ -179,7 +183,7 @@ static int core_attachment(const BfmSteamKnight *s, BfmForestTransform *attachme
 }
 
 static int core_contact(BfmSteamKnight *s, const BfmSteamKnightHeroStrike *strike,
-                        uint16_t amount)
+                        uint16_t amount, unsigned *struck)
 {
     int street = s->round == 2 && s->body_stage == 6;
     if (!street && s->body_stage != 11) return 1;
@@ -187,14 +191,14 @@ static int core_contact(BfmSteamKnight *s, const BfmSteamKnightHeroStrike *strik
     /* The free blade intersects the socket after the machine lands and
      * extends its waist. A separate actor owns the liftable chassis. */
     if (street && (s->street.landing.core_extension != 24 || s->carry.held ||
-                   (strike->type != 1 && strike->type != 2))) return 1;
+                   (strike->type != 1 && strike->type != 2 && strike->type != 12))) return 1;
     BfmSteamKnightCoreState body = {.round = s->round, .body_stage = s->body_stage,
         .weak_stage = s->weak_stage, .flags = s->battle_flags, .hp = (int)s->core_hp,
         .max_hp = (int)s->core_max, .pending_damage = s->pending_body_damage};
     BfmForestTransform attachment;
     if (!core_attachment(s, &attachment, NULL)) return 0;
     BfmSteamKnightCoreHit hit;
-    if (!bfm_steam_knight_core_strike(&body, &s->core_struck, &s->core_boxes,
+    if (!bfm_steam_knight_core_strike(&body, struck, &s->core_boxes,
             &attachment, strike->from, strike->ends, strike->count, amount, &hit)) return 1;
 
     s->hit_sound = 1;
@@ -206,6 +210,7 @@ static int core_contact(BfmSteamKnight *s, const BfmSteamKnightHeroStrike *strik
     bfm_steam_knight_machine_flash_core(s->machine);
     s->core_hp = (unsigned)hit.hp_after;
     s->pending_body_damage = 0;
+    s->core_lock = 8;
     s->battle_flags = (s->battle_flags & ~hit.clear_flags) | hit.set_flags;
     if (hit.response == BFM_STEAM_CORE_DEPLETED) {
         if (!bfm_steam_carry_knockdown(&s->carry, s->machine, s->round)) return 0;
@@ -270,6 +275,26 @@ static int transfer_tick(BfmSteamKnight *s)
     }
     return bfm_steam_knight_machine_round_pose(s->machine, s->body_stage,
                                                s->round, s->transfer_age++);
+}
+
+static int charged_spin_tick(BfmSteamKnight *s, const BfmSteamKnightHeroSample *player,
+                             int16_t previous_heading, int core_ready)
+{
+    if (!bfm_lumina_rotation_turn_step(&s->rotation, player->elapsed)) return 1;
+    BfmSteamSpinRoll roll;
+    if (!bfm_steam_spin_roll(&s->spin, s->event.run, bfm_steam_hero_flags(s->hero), &roll))
+        return 0;
+    if (!core_ready || s->round != 2 || s->body_stage != 6) return 1;
+
+    BfmForestTransform root;
+    BfmSteamSpinSegments span;
+    bfm_forest_actor_root((unsigned)player->heading, player->feet, &root);
+    if (!bfm_steam_spin_segments_yaw(&root, previous_heading, player->heading, &span)) return 0;
+    BfmSteamKnightHeroStrike strike = {.type = 12, .count = span.count};
+    memcpy(strike.from, span.pivot, sizeof strike.from);
+    memcpy(strike.ends, span.ends, span.count * sizeof span.ends[0]);
+    unsigned struck = 0;
+    return core_contact(s, &strike, roll.strength, &struck);
 }
 
 static int street_jump_frame(BfmSteamKnight *s)
@@ -415,6 +440,8 @@ static int street_tick(BfmSteamKnight *s)
 static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t held)
 {
     BfmSteamKnightEvent *e = &s->event;
+    int core_ready = !s->core_lock;
+    if (!core_ready) --s->core_lock;
     ++e->age;
     ++e->stage_age;
     bfm_forest_voice_step(s->voice);
@@ -443,6 +470,7 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
     int16_t previous[3], machine_position[3];
     const BfmSteamKnightHeroSample *player = bfm_steam_hero_sample(s->hero);
     unsigned previous_action = player->action;
+    int16_t previous_heading = player->heading;
     memcpy(previous, player->feet, sizeof previous);
     if (!bfm_steam_knight_machine_world_root(s->machine, machine_position)) return -1;
     bfm_steam_knight_field_track_arena(s->field, s->round, s->body_stage, previous, machine_position);
@@ -480,8 +508,11 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
         if (strike.count && bfm_steam_knight_armor_strike(&s->armor, s->machine,
                 strike.from, strike.ends, strike.count, strike.type, amount, &s->hit) &&
             !plate_contact(s, amount)) return -1;
-        if (strike.count && !core_contact(s, &strike, amount)) return -1;
+        if (core_ready && strike.count && !core_contact(s, &strike, amount, &s->core_struck))
+            return -1;
     }
+    if (lumina == BFM_STEAM_LUMINA_ROTATE &&
+        !charged_spin_tick(s, player, previous_heading, core_ready)) return -1;
     if (s->body_stage == 11 && !s->recovery_left && (s->battle_flags & 0x80000) &&
         !(s->battle_flags & 0x60000) && bfm_steam_knight_machine_recover(s->machine))
         s->recovery_left = 16;

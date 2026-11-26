@@ -68,6 +68,13 @@ int bfm_lumina_rotation_load(const MusashiDiscMedia *disc, BfmLuminaRotation *mo
 }
 
 enum { SPIN_UPDATES = 11, FIRST_TURN = 286, ACCELERATION = 30 };
+unsigned bfm_lumina_rotation_turn_step(const BfmLuminaRotation *motion, unsigned age)
+{
+    if (!motion || !motion->held || age <= motion->held + 2) return 0;
+    unsigned step = age - motion->held - 2;
+    return step < SPIN_UPDATES ? step : 0;
+}
+
 static int turn(unsigned n)
 {
     return n ? (int)(n * FIRST_TURN + n * (n - 1) / 2 * ACCELERATION) : 0;

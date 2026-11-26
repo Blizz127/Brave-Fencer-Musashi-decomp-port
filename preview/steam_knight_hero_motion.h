@@ -35,6 +35,7 @@ BfmSteamKnightHeroMotion *bfm_steam_hero_open(const MusashiDiscMedia *disc,
 int bfm_steam_hero_place(BfmSteamKnightHeroMotion *hero, const int16_t feet[3], int16_t heading);
 void bfm_steam_hero_free(BfmSteamKnightHeroMotion *hero);
 const BfmSteamKnightHeroSample *bfm_steam_hero_sample(const BfmSteamKnightHeroMotion *hero);
+uint32_t bfm_steam_hero_flags(const BfmSteamKnightHeroMotion *hero);
 /* One ordinary field update. x and y are the live controller axes (right/down
  * positive). Segments are valid only for this update's active blade window. */
 int bfm_steam_hero_tick(BfmSteamKnightHeroMotion *hero, const BfmForestCamera *camera,

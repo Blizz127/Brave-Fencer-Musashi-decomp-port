@@ -17,6 +17,8 @@ int bfm_lumina_charge(unsigned *grip, uint8_t *gauge, int shoulder, int triangle
 int bfm_lumina_rotation_load(const MusashiDiscMedia *disc, BfmLuminaRotation *motion);
 const BfmLuminaRotationKey *bfm_lumina_rotation_pose(const BfmLuminaRotation *motion,
     unsigned age, int16_t initial_heading, int16_t *heading);
+/* Returns 1..10 during the charged attack's turning updates. */
+unsigned bfm_lumina_rotation_turn_step(const BfmLuminaRotation *motion, unsigned age);
 size_t bfm_lumina_rotation_rays(const BfmLuminaRotation *motion, unsigned age,
     const int16_t position[3], int16_t initial_heading, BfmSteamFlameRay rays[BFM_ROTATION_RAYS]);
 #endif

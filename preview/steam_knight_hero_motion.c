@@ -74,6 +74,11 @@ const BfmSteamKnightHeroSample *bfm_steam_hero_sample(const BfmSteamKnightHeroMo
     return h ? &h->sample : NULL;
 }
 
+uint32_t bfm_steam_hero_flags(const BfmSteamKnightHeroMotion *h)
+{
+    return h ? h->actor.flags : 0;
+}
+
 static void rest(BfmSteamKnightHeroMotion *h)
 {
     memset(h->actor.velocity, 0, sizeof h->actor.velocity);
@@ -302,6 +307,7 @@ BfmSteamHeroLumina bfm_steam_hero_lumina(BfmSteamKnightHeroMotion *h,
         return BFM_STEAM_LUMINA_FINISHED;
     }
     *count = bfm_lumina_rotation_rays(rotation, h->spin_age, h->sample.feet, h->spin_heading, rays);
+    if (h->spin_age >= rotation->held + 13) h->sample.heading = h->spin_heading;
     h->sample.action = 8;
     h->sample.elapsed = h->spin_age;
     h->sample.body = pose->body;

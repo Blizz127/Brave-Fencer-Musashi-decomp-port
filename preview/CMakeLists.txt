@@ -194,6 +194,7 @@ add_executable(musashi_native_boot
     steam_knight_machine.c
     steam_knight_street_route.c
     steam_knight_flail.c
+    steam_knight_spin_contact.c
     steam_knight_armor.c
     steam_knight_core_contact.c
     steam_knight_core_damage.c
