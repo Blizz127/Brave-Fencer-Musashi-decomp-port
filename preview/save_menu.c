@@ -63,34 +63,31 @@ static BfmSaveRow read_row(const uint8_t *summary, const uint8_t *payload)
 static void read_directory(BfmSaveMenu *menu, CardImage image)
 {
     static const char name[] = "BASLUS-00726MUSASHI";
-    CardEntry entries[CARD_MAX_FILES];
-    size_t count;
-    if (card_list(image, entries, &count) != CARD_OK) {
-        menu->issue = "Unreadable memory card or game file.";
-        return;
-    }
-    if (count == 0) {
+    CardEntry entry;
+    CardResult result = card_open(image, name, &entry);
+    if (result == CARD_NOT_FOUND) {
         menu->page = BFM_SAVE_CARD_LOADING;
         return;
     }
-    size_t i = 0;
-    while (i < count && strcmp(entries[i].name, name)) ++i;
-    if (i == count) return;
     uint8_t game[CARD_BLOCK_SIZE];
     size_t size;
-    if (entries[i].size != sizeof game ||
+    if (result != CARD_OK || entry.size != sizeof game ||
         card_read(image, name, 0, game, sizeof game, &size) != CARD_OK ||
         size != sizeof game || game[0] != 'S' || game[1] != 'C' || game[3] != 1) {
         menu->issue = "Unreadable memory card or game file.";
         return;
     }
     if (game[512] < MUSASHI_SAVE_FILES) menu->selected = game[512];
+    unsigned empty_slots = 0;
     for (unsigned i = 0; i < MUSASHI_SAVE_FILES; ++i) {
         const uint8_t *payload = game + musashi_save_payload_offset(i + 1);
         menu->rows[i] = read_row(game + SUMMARY_START + i * SUMMARY_SIZE, payload);
         if (menu->rows[i].state == BFM_SAVE_VALID)
             memcpy(&menu->records[i], payload, sizeof menu->records[i]);
+        else if (menu->rows[i].state == BFM_SAVE_EMPTY)
+            ++empty_slots;
     }
+    if (empty_slots == MUSASHI_SAVE_FILES) menu->page = BFM_SAVE_CARD_LOADING;
 }
 
 void bfm_save_menu_open(BfmSaveMenu *menu, const char *path)
