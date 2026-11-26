@@ -29,7 +29,7 @@ int bfm_steam_event_begin(BfmSteamKnightEvent *, const uint8_t *scene, size_t by
                           const RoomTransferDescriptor *, BfmGameplayRun *, ForestVoice *);
 void bfm_steam_event_clear(BfmSteamKnightEvent *);
 int bfm_steam_event_tick(BfmSteamKnightEvent *, uint16_t pressed, uint16_t held, unsigned live_flames);
-int bfm_steam_event_captor_gesture(const BfmSteamKnightEvent *);
+void bfm_steam_event_captor_pose(const BfmSteamKnightEvent *, unsigned *clip, unsigned *age);
 int bfm_steam_event_ring_started(const BfmSteamKnightEvent *);
 int bfm_steam_event_hud(const BfmSteamKnightEvent *);
 unsigned bfm_steam_event_shade(const BfmSteamKnightEvent *);

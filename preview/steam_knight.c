@@ -128,7 +128,10 @@ int bfm_steam_knight_hero(const BfmSteamKnight *s, int16_t feet[3], int16_t *hea
 
 uint32_t bfm_steam_knight_body(const BfmSteamKnight *s)
 {
-    if (!s || s->event.stage != BFM_STEAM_ROTATING) return 0;
+    if (!s) return 0;
+    if (s->event.shot == BFM_STEAM_REPLY_CAMERA)
+        return s->rotation.keys[s->rotation.held].body;
+    if (s->event.stage != BFM_STEAM_ROTATING) return 0;
     int16_t heading;
     const BfmLuminaRotationKey *key = bfm_lumina_rotation_pose(&s->rotation,
         s->event.stage_age, s->event.heading, &heading);
@@ -164,10 +167,11 @@ int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
     const int16_t floor_positions[][3] = {{-80,-2050,z}, {-192,-2050,z}};
     for (unsigned i = 0; i < 2; ++i) {
         bfm_forest_actor_root(0, floor_positions[i], &actor_roots[i]);
-        int gesture = i == BFM_STEAM_ROOTRICK ? bfm_steam_event_captor_gesture(&s->event) : -1;
-        unsigned clip = gesture >= 0 ? 4 : (i == BFM_STEAM_FILLET &&
-            s->event.shot == BFM_STEAM_PRINCESS_CAMERA ? 1 : 0);
-        unsigned age = gesture >= 0 ? (unsigned)gesture : s->event.age;
+        unsigned clip = 0, age = s->event.age;
+        if (i == BFM_STEAM_ROOTRICK)
+            bfm_steam_event_captor_pose(&s->event, &clip, &age);
+        else if (s->event.shot == BFM_STEAM_PRINCESS_CAMERA)
+            clip = 1;
         if (!bfm_steam_knight_hostage_actor(s->hostages, i, clip, age,
                                              &actor_roots[i], &actor_poses[i], &actors[i]))
             return 0;

@@ -168,10 +168,20 @@ int bfm_steam_event_tick(BfmSteamKnightEvent *e, uint16_t pressed, uint16_t held
     }
     return 1;
 }
-int bfm_steam_event_captor_gesture(const BfmSteamKnightEvent *e)
+void bfm_steam_event_captor_pose(const BfmSteamKnightEvent *e, unsigned *clip, unsigned *age)
 {
-    if (e->step != CAPTOR_BARGAIN || e->message_age < 2 || e->message_age >= 52) return -1;
-    return (int)e->message_age - 2;
+    *clip = 0;
+    *age = e->age;
+    if (!e->message) return;
+    /* The fist rises briefly during the introduction. The later bargain
+     * has a longer, separate speaking gesture. Both return to standing. */
+    if (e->step == CAPTOR_INTRO && e->message_age >= 13 && e->message_age < 34) {
+        *clip = 6;
+        *age = e->message_age - 13;
+    } else if (e->step == CAPTOR_BARGAIN && e->message_age >= 2 && e->message_age < 52) {
+        *clip = 4;
+        *age = e->message_age - 2;
+    }
 }
 int bfm_steam_event_ring_started(const BfmSteamKnightEvent *e)
 {
