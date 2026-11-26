@@ -53,20 +53,22 @@ int bfm_forest_hurt_begin(BfmForestHurt *hurt, int body_yaw, int hit_yaw)
 BfmForestHurtResult bfm_forest_hurt_step(BfmForestHurt *hurt, const BfmForestHurtClip *clip,
     ForestPlayerState *actor, BfmForestManual *manual, uint32_t *pose)
 {
-    if (!hurt || !clip || !actor || !manual || !pose) return BFM_FOREST_HURT_INVALID;
+    if (!hurt || !clip || !pose || (actor == NULL) != (manual == NULL)) return BFM_FOREST_HURT_INVALID;
     if (!hurt->active) return BFM_FOREST_HURT_FREE;
     unsigned key = hurt->next_key;
     if (hurt->side > 1 || key > BFM_FOREST_HURT_KEYS || !clip->visible)
         return BFM_FOREST_HURT_INVALID;
     if (key == BFM_FOREST_HURT_KEYS) {
         hurt->active = 0;
-        actor->kind = actor->state = 0;
-        actor->action = actor->phase = 1;
+        if (actor) {
+            actor->kind = actor->state = 0;
+            actor->action = actor->phase = 1;
+        }
         return BFM_FOREST_HURT_RECOVERED;
     }
     uint32_t frame = clip->pose[hurt->side][key];
     if (!frame) return BFM_FOREST_HURT_INVALID;
-    if (!key) {
+    if (!key && actor) {
         manual->moving = manual->after_jump = manual->left_support = 0;
         manual->motion = manual->elapsed = 0;
         manual->last_descent = 0;

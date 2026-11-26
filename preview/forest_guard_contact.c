@@ -66,6 +66,8 @@ static void radial_normal(const int16_t point[3], const int16_t center[3], int16
     normal[2] = (int16_t)floor_div((int64_t)dz * gain, divisor);
 }
 
+enum { CONTACT_POINT, SLIDE, SLIDE_ON_ENTRY };
+
 static int resolve_segment(const BfmForestGuardBox *box, const int16_t start[3],
                            const int16_t end[3], int16_t hit[3], int16_t normal[3], int slide)
 {
@@ -79,6 +81,7 @@ static int resolve_segment(const BfmForestGuardBox *box, const int16_t start[3],
         face[axis] = below ? box->low[axis] : box->high[axis];
     }
     if (!outside[0] && !outside[1] && !outside[2]) {
+        if (slide == SLIDE_ON_ENTRY) return 0;
         for (unsigned axis = 0; axis < 3; ++axis) hit[axis] = start[axis];
         return 1;
     }
@@ -146,14 +149,21 @@ int bfm_forest_guard_contact_point(const BfmForestGuardBox *box, const BfmForest
                                    const int16_t start[3], const int16_t end[3],
                                    int16_t center[3], int16_t contact[3], int16_t normal[3])
 {
-    return world_contact(box, root, start, end, center, contact, normal, 0);
+    return world_contact(box, root, start, end, center, contact, normal, CONTACT_POINT);
 }
 
 int bfm_forest_body_slide(const BfmForestGuardBox *box, const BfmForestTransform *root,
                           const int16_t start[3], const int16_t end[3], int16_t contact[3])
 {
     int16_t center[3];
-    return world_contact(box, root, start, end, center, contact, NULL, 1);
+    return world_contact(box, root, start, end, center, contact, NULL, SLIDE);
+}
+
+int bfm_forest_body_slide_on_entry(const BfmForestGuardBox *box, const BfmForestTransform *root,
+                                  const int16_t start[3], const int16_t end[3], int16_t contact[3])
+{
+    int16_t center[3];
+    return world_contact(box, root, start, end, center, contact, NULL, SLIDE_ON_ENTRY);
 }
 
 int bfm_forest_guard_contact(const BfmForestGuardBox *box, const BfmForestTransform *root,

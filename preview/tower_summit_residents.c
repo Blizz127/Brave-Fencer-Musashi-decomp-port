@@ -5,6 +5,7 @@
 #include "forest_guard_contact.h"
 #include "forest_pose.h"
 #include "forest_rifles.h"
+#include "forest_rifle_contact.h"
 #include "forest_shore_motion.h"
 #include "../pc_port/forest_player_bytes.h"
 #include <stdlib.h>
@@ -15,7 +16,7 @@ typedef struct {
     BfmForestTransform root;
     BfmForestPose pose;
     uint32_t generation;
-    int bound, tether_meter, tether_width, returning;
+    int bound, tether_meter, tether_width, returning, striking;
     unsigned health, stun_timer, stun_frame, turn_timer;
     int64_t prior_radius2;
 } Resident;
@@ -24,12 +25,24 @@ struct BfmTowerSummitResidents {
     const BfmForestField *room;
     MusashiForestPlayerMesh *mesh;
     BfmForestGuardClip clip[BFM_SHORE_FOLLOW_THROUGH + 1], stunned;
-    BfmForestGuardBox box;
+    BfmForestGuardBox box, obstruction;
     int16_t origin[3], pursuit_point[3];
     uint32_t generation;
     unsigned limit, count, clock, health, reward;
     Resident member[BFM_SUMMIT_RESIDENTS];
 };
+
+static int read_box(const BfmForestField *room, uint32_t address, BfmForestGuardBox *out)
+{
+    const uint8_t *box = bfm_forest_room_bytes(room, address, 16);
+    if (!box || u32le(box)) return 0;
+    for (unsigned axis = 0; axis < 3; ++axis) {
+        out->low[axis] = s16le(box + 4 + 4 * axis);
+        out->high[axis] = s16le(box + 6 + 4 * axis);
+        if (out->low[axis] > out->high[axis]) return 0;
+    }
+    return 1;
+}
 
 BfmTowerSummitResidents *bfm_tower_summit_residents_open(const BfmForestField *room)
 {
@@ -41,11 +54,11 @@ BfmTowerSummitResidents *bfm_tower_summit_residents_open(const BfmForestField *r
     const uint8_t *pursuit = bfm_forest_room_bytes(room, UINT32_C(0x8018e6e4), 6);
     if (!manager || u16le(manager + 6) != 53 || !profile || !limit || !origin || !pursuit ||
         !u32le(limit) || u32le(limit) > BFM_SUMMIT_RESIDENTS || s16le(profile) <= 0) return NULL;
-    const uint8_t *box = bfm_forest_room_bytes(room, u32le(profile + 8), 16);
-    if (!box || u32le(box)) return NULL;
     BfmTowerSummitResidents *p = calloc(1, sizeof *p);
     if (!p) return NULL;
     p->room = room;
+    if (!read_box(room, u32le(profile + 8), &p->box) ||
+        !read_box(room, UINT32_C(0x8018e980), &p->obstruction)) goto fail;
     p->health = u16le(profile);
     p->reward = u16le(profile + 44);
     p->limit = u32le(limit);
@@ -54,9 +67,6 @@ BfmTowerSummitResidents *bfm_tower_summit_residents_open(const BfmForestField *r
     for (unsigned axis = 0; axis < 3; ++axis) {
         p->origin[axis] = s16le(origin + 2 * axis);
         p->pursuit_point[axis] = s16le(pursuit + 2 * axis);
-        p->box.low[axis] = s16le(box + 4 + 4 * axis);
-        p->box.high[axis] = s16le(box + 6 + 4 * axis);
-        if (p->box.low[axis] > p->box.high[axis]) goto fail;
     }
     static const struct { BfmForestShorePhase phase; uint32_t keys; } clips[] = {
         {BFM_SHORE_WALK, UINT32_C(0x801a648c)}, {BFM_SHORE_NOTICE, UINT32_C(0x801a65bc)},
@@ -202,6 +212,7 @@ static int update(BfmTowerSummitResidents *p, Resident *r, const int16_t hero[3]
                   int pickup, BfmGameplayRun *run)
 {
     BfmForestShoreMotion *m = &r->motion;
+    r->striking = 0;
     if (r->bound) {
         int width = (144 - r->tether_meter) * 4096 / 144;
         if (!r->tether_meter) r->tether_width = 4096;
@@ -243,6 +254,8 @@ static int update(BfmTowerSummitResidents *p, Resident *r, const int16_t hero[3]
     }
     unsigned yaw = m->yaw, notice = m->notice_delay;
     if (pickup && prior == BFM_SHORE_WALK && notice < 2) m->notice_delay = 2;
+    r->striking = (prior == BFM_SHORE_STRIKE && m->patrol_timer == 7) ||
+                  (prior == BFM_SHORE_FOLLOW_THROUGH && m->patrol_timer == 10);
     int moved = bfm_forest_shore_tick(m, p->room, hero, p->clip[prior].count, run);
     if ((!moved || m->phase == BFM_SHORE_TURN) &&
         (prior == BFM_SHORE_WALK || prior == BFM_SHORE_PURSUIT)) {
@@ -282,6 +295,13 @@ int bfm_tower_summit_residents_tick(BfmTowerSummitResidents *p, const int16_t pl
     for (unsigned i = 0; i < p->limit; ++i)
         if (p->member[i].health && !update(p, &p->member[i], player, pickup, run)) return 0;
     return 1;
+}
+
+void bfm_tower_summit_residents_pause(BfmTowerSummitResidents *p)
+{
+    if (!p) return;
+    for (unsigned i = 0; i < p->limit; ++i)
+        p->member[i].striking = 0;
 }
 
 static unsigned state(const Resident *r)
@@ -326,6 +346,44 @@ int bfm_tower_summit_residents_contact(const BfmTowerSummitResidents *p, unsigne
 {
     return p && slot < p->limit && p->member[slot].health && !p->member[slot].bound && from && to && center &&
            bfm_forest_guard_contact_point(&p->box, &p->member[slot].root, from, to, center, point, NULL);
+}
+
+int bfm_tower_summit_residents_slide(const BfmTowerSummitResidents *p,
+                                    const int16_t from[3], const int16_t to[3],
+                                    int16_t contact[3])
+{
+    if (!p || !from || !to || !contact) return 0;
+    int16_t end[3] = {to[0], to[1], to[2]};
+    int collided = 0;
+    for (unsigned pass = 0; pass < 2; ++pass) {
+        int adjusted = 0;
+        for (unsigned slot = 0; slot < p->limit; ++slot) {
+            const Resident *r = &p->member[slot];
+            if (r->health && !r->bound &&
+                bfm_forest_body_slide_on_entry(&p->obstruction, &r->root, from, end, end))
+                adjusted = 1;
+        }
+        if (!adjusted) break;
+        collided = 1;
+    }
+    if (collided) memcpy(contact, end, sizeof end);
+    return collided;
+}
+
+unsigned bfm_tower_summit_residents_strike(const BfmTowerSummitResidents *p,
+                                          const BfmForestTransform *player, int16_t *yaw)
+{
+    if (!p || !player || !yaw) return 0;
+    for (unsigned i = 0; i < p->limit; ++i) {
+        const Resident *r = &p->member[i];
+        if (r->health && r->striking && !r->bound && !r->stun_timer &&
+            bfm_forest_attack_segment_hits_player(p->room, UINT32_C(0x8018e6d4), UINT32_C(0x8018c5ac),
+                                                   &r->root, player)) {
+            *yaw = (int16_t)r->motion.yaw;
+            return 11;
+        }
+    }
+    return 0;
 }
 
 static Resident *member(BfmTowerSummitResidents *p, unsigned slot, uint32_t generation)

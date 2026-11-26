@@ -25,7 +25,8 @@ int bfm_forest_hurt_load(const MusashiDiscMedia *disc, BfmForestHurtClip *out);
 int bfm_forest_hurt_begin(BfmForestHurt *hurt, int body_yaw, int hit_yaw);
 /* Step before ground, jump or attack input. LOCKED supplies the logical pose
  * and retains position and heading. RECOVERED consumes the update in standing
- * entry. Read ordinary input on the next update. */
+ * entry. Read ordinary input on the next update. A room script that owns the
+ * actor can pass NULL for both actor and manual to advance only the clock. */
 BfmForestHurtResult bfm_forest_hurt_step(BfmForestHurt *hurt, const BfmForestHurtClip *clip,
     ForestPlayerState *actor, BfmForestManual *manual, uint32_t *pose);
 

@@ -16,6 +16,7 @@ BfmTowerSummitResidents *bfm_tower_summit_residents_open(const BfmForestField *r
 void bfm_tower_summit_residents_free(BfmTowerSummitResidents *pool);
 int bfm_tower_summit_residents_tick(BfmTowerSummitResidents *pool, const int16_t player[3],
                                     int player_scripted, int pickup_started, BfmGameplayRun *run);
+void bfm_tower_summit_residents_pause(BfmTowerSummitResidents *pool);
 /* Returns zero for an unoccupied pool slot. */
 int bfm_tower_summit_residents_get(const BfmTowerSummitResidents *pool, unsigned slot,
                                    BfmTowerSummitResident *out);
@@ -24,6 +25,13 @@ size_t bfm_tower_summit_residents_actors(const BfmTowerSummitResidents *pool,
 /* A segment must contact this resident's mounted body before an effector can use it. */
 int bfm_tower_summit_residents_contact(const BfmTowerSummitResidents *pool, unsigned slot,
                                       const int16_t from[3], const int16_t to[3], int16_t center[3], int16_t point[3]);
+/* Sweep the player's proposed body step against the live guards' obstruction boxes. */
+int bfm_tower_summit_residents_slide(const BfmTowerSummitResidents *pool,
+                                    const int16_t from[3], const int16_t to[3],
+                                    int16_t contact[3]);
+/* A completed attack can deliver raw power and attacker yaw to the player. */
+unsigned bfm_tower_summit_residents_strike(const BfmTowerSummitResidents *pool,
+                                          const BfmForestTransform *player, int16_t *yaw);
 /* The caller resolves the attack's contact and supplies the winning slot. */
 int bfm_tower_summit_residents_stun(BfmTowerSummitResidents *pool, unsigned slot, uint32_t generation);
 int bfm_tower_summit_residents_bind(BfmTowerSummitResidents *pool, unsigned slot, uint32_t generation);

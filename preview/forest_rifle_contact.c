@@ -6,10 +6,11 @@
 
 /* Each attack tests a segment on the attacker's completed model transform
  * against the player's world-aligned default body. */
-static int hits_player(const BfmForestField *field, const BfmForestTransform *attacker,
+static int hits_player(const BfmForestField *field, uint32_t body_address,
+                       const BfmForestTransform *attacker,
                        const BfmForestTransform *player, const int16_t local[2][3])
 {
-    const uint8_t *shape = bfm_forest_room_bytes(field, UINT32_C(0x801884cc), 16);
+    const uint8_t *shape = bfm_forest_room_bytes(field, body_address, 16);
     if (!shape || u32le(shape)) return 0;
     BfmForestGuardBox box;
     BfmForestTransform body = {0};
@@ -42,12 +43,12 @@ int bfm_forest_rifle_hits_player(const BfmForestField *field,
     if (!offset) return 0;
     int16_t local[2][3] = {0};
     for (unsigned i = 0; i < 3; ++i) local[0][i] = s16le(offset + 2 * i);
-    return hits_player(field, projectile, player, local);
+    return hits_player(field, UINT32_C(0x801884cc), projectile, player, local);
 }
 
-static int mounted_segment_hits(const BfmForestField *field, uint32_t descriptor,
-                                const BfmForestTransform *attacker,
-                                const BfmForestTransform *player)
+int bfm_forest_attack_segment_hits_player(const BfmForestField *field, uint32_t descriptor,
+                                         uint32_t body_address, const BfmForestTransform *attacker,
+                                         const BfmForestTransform *player)
 {
     if (!field || !attacker || !player) return 0;
     const uint8_t *points = bfm_forest_room_bytes(field, descriptor, 16);
@@ -56,19 +57,21 @@ static int mounted_segment_hits(const BfmForestField *field, uint32_t descriptor
     for (unsigned i = 0; i < 2; ++i)
         for (unsigned axis = 0; axis < 3; ++axis)
             local[i][axis] = s16le(points + 8 * i + 2 * axis);
-    return hits_player(field, attacker, player, local);
+    return hits_player(field, body_address, attacker, player, local);
 }
 
 int bfm_forest_soldier_hits_player(const BfmForestField *field,
                                    const BfmForestTransform *soldier,
                                    const BfmForestTransform *player)
 {
-    return mounted_segment_hits(field, UINT32_C(0x8018aad4), soldier, player);
+    return bfm_forest_attack_segment_hits_player(field, UINT32_C(0x8018aad4), UINT32_C(0x801884cc),
+                                               soldier, player);
 }
 
 int bfm_forest_mouth_hits_player(const BfmForestField *field,
                                  const BfmForestTransform *figure,
                                  const BfmForestTransform *player)
 {
-    return mounted_segment_hits(field, UINT32_C(0x8018af78), figure, player);
+    return bfm_forest_attack_segment_hits_player(field, UINT32_C(0x8018af78), UINT32_C(0x801884cc),
+                                               figure, player);
 }

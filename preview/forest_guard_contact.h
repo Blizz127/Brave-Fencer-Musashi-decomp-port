@@ -27,4 +27,8 @@ int bfm_forest_guard_contact_point(const BfmForestGuardBox *box, const BfmForest
 int bfm_forest_body_slide(const BfmForestGuardBox *box, const BfmForestTransform *root,
                           const int16_t start[3], const int16_t end[3], int16_t contact[3]);
 
+/* An actor with interior push disabled corrects only a crossing from outside. */
+int bfm_forest_body_slide_on_entry(const BfmForestGuardBox *box, const BfmForestTransform *root,
+                                  const int16_t start[3], const int16_t end[3], int16_t contact[3]);
+
 #endif

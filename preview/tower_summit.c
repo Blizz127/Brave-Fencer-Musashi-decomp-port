@@ -144,8 +144,13 @@ int bfm_tower_summit_step_fixtures(BfmTowerSummit *summit, const int16_t player[
 {
     if (!summit || !eye) return 0;
     for (unsigned i = 0; i < 3; ++i) summit->eye[i] = eye[i];
-    if (!bfm_tower_summit_residents_tick(summit->residents, player, scripted,
-                                         summit->pressure.sword_requested, run)) return 0;
+    /* The absorption award suspends the guard manager and its actors. */
+    if (!scripted && summit->skill_frame.action == 22) {
+        bfm_tower_summit_residents_pause(summit->residents);
+    } else if (!bfm_tower_summit_residents_tick(summit->residents, player, scripted,
+                                                summit->pressure.sword_requested, run)) {
+        return 0;
+    }
     unsigned events = bfm_tower_summit_pressure_step(&summit->pressure, player, summit->residents);
     if (events & BFM_SUMMIT_SWORD_IN_REACH) {
         summit->pickup = bfm_tower_summit_pickup_begin(summit->field, summit->disc, parts);

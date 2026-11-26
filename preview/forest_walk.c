@@ -587,15 +587,17 @@ static int start_lift(BfmForestWalk *w)
     return select_pose(w, w->lift_data.motion[BFM_LIFT_RAISE].frames[0], w->walk.visible) ? 1 : -1;
 }
 
-/* Static room faces have already advanced the standing player. Clip that
- * stride against any intact pylon at the same body height as a forest brace. */
-static int slide_tower_stride(BfmForestWalk *w, const int16_t previous[3])
+/* After the terrain step, sweep the standing player against the room actors. */
+static int slide_tower_stride(BfmForestWalk *w, BfmForestField *room, const int16_t previous[3])
 {
     int16_t from[3] = {previous[0], previous[1] - 16, previous[2]};
     int16_t to[3] = {w->cached[0], w->cached[1] - 16, w->cached[2]}, contact[3];
-    if (!bfm_tower_field_body_slide(w->tower, from, to, contact)) return 1;
+    int blocked = w->summit_free
+                ? bfm_tower_summit_residents_slide(bfm_tower_summit_residents(w->summit), from, to, contact)
+                : bfm_tower_field_body_slide(w->tower, from, to, contact);
+    if (!blocked) return 1;
     BfmForestContact floor;
-    if (!bfm_forest_ground(bfm_tower_field_room(w->tower), contact[0], w->cached[1], contact[2], &floor))
+    if (!bfm_forest_ground(room, contact[0], w->cached[1], contact[2], &floor))
         return 0;
     contact[1] = floor.height;
     memcpy(w->cached, contact, sizeof contact);
@@ -631,7 +633,8 @@ static int tick_ground(BfmForestWalk *w, int x, int y, int enter_stance,
     }
     if (result <= BFM_FOREST_MANUAL_BOUNDARY)
         return -1;
-    if (w->tower_placed && !w->inner_free && result == BFM_FOREST_MANUAL_MOVING && !slide_tower_stride(w, before))
+    int has_bodies = w->summit_free || (w->tower_placed && !w->inner_free);
+    if (has_bodies && result == BFM_FOREST_MANUAL_MOVING && !slide_tower_stride(w, room, before))
         return -1;
     /* A submitted direction becomes a stride only after a ground step. */
     int advanced = result == BFM_FOREST_MANUAL_MOVING &&
@@ -924,12 +927,10 @@ static int tick_lift(BfmForestWalk *w, int x, int y, int square, BfmForestDustEm
     return select_pose(w, w->lift_data.motion[lift->clip].frames[lift->age], w->walk.visible);
 }
 
-/* The field retires a round on contact. The player receives that delivery
- * before processing the next pad sample, even while a previous hit protects him. */
-static int tick_hurt(BfmForestWalk *w, BfmForestDustEmission *dust)
+/* Consume the preceding field update's contact before reading the next pad. */
+static int tick_hurt(BfmForestWalk *w, unsigned received, int16_t hit_yaw,
+                     int scripted, BfmForestDustEmission *dust)
 {
-    int16_t shot_yaw;
-    unsigned received = bfm_forest_take_player_strike(w->field, &shot_yaw);
     if (w->actor.field_a8) {
         --w->actor.field_a8;
         received = 0;
@@ -938,20 +939,24 @@ static int tick_hurt(BfmForestWalk *w, BfmForestDustEmission *dust)
         if (w->jump.active) return 0;
         if ((!w->hurt_clip.visible && !bfm_forest_hurt_load(w->disc, &w->hurt_clip)) ||
             !bfm_forest_hit_damage(w->disc, &w->gameplay->player, w->actor.flags, received, &w->pending_damage) ||
-            !bfm_forest_hurt_begin(&w->hurt, w->yaw, shot_yaw)) return -1;
-        if (!release_lift(w, w->actor.state == 13)) return -1;
-        w->lift = (BfmForestLift){0};
-        w->braced = 0;
-        w->push_body = 0;
-        if (!bfm_forest_queue_hurt_number(w->field, w->cached, w->pending_damage)) return -1;
+            !bfm_forest_hurt_begin(&w->hurt, w->yaw, hit_yaw)) return -1;
+        if (!w->summit_free) {
+            if (!release_lift(w, w->actor.state == 13)) return -1;
+            w->lift = (BfmForestLift){0};
+            w->braced = 0;
+            w->push_body = 0;
+            if (!bfm_forest_queue_hurt_number(w->field, w->cached, w->pending_damage)) return -1;
+        }
         w->at_boundary = 0;
     }
     uint32_t frame;
-    switch (bfm_forest_hurt_step(&w->hurt, &w->hurt_clip, &w->actor, &w->manual, &frame)) {
+    switch (bfm_forest_hurt_step(&w->hurt, &w->hurt_clip, scripted ? NULL : &w->actor,
+                                scripted ? NULL : &w->manual, &frame)) {
     case BFM_FOREST_HURT_FREE:
         return 1;
     case BFM_FOREST_HURT_LOCKED:
-        return select_pose(w, frame, w->hurt_clip.visible) ? 2 : -1;
+        if (scripted) return 2;
+        return select_pose(w, frame, w->summit_free ? w->walk.visible : w->hurt_clip.visible) ? 2 : -1;
     case BFM_FOREST_HURT_RECOVERED: {
         unsigned debit = w->pending_damage;
         if (w->actor.flags & UINT32_C(0x02000000))
@@ -959,13 +964,33 @@ static int tick_hurt(BfmForestWalk *w, BfmForestDustEmission *dust)
         bfm_forest_status_debit(&w->gameplay->player, debit);
         w->pending_damage = 0;
         w->actor.field_a8 = 32;
-        w->hurt_tail = 3;
+        w->hurt_tail = scripted ? 0 : 3;
         if (bfm_forest_status_values(&w->gameplay->player).hp <= 0) return 0;
+        if (scripted) return 2;
         return tick_ground(w, 0, 0, 1, dust) == 1 ? 2 : -1;
     }
     default:
         return -1;
     }
+}
+
+static int update_hurt_display(BfmForestWalk *w, uint32_t pose)
+{
+    BfmForestBodySample sample = {w->root, pose, w->visible};
+    /* During the protection countdown only the actor model blinks. The
+     * independent sword halo, shot, number and terrain still submit. */
+    if (w->actor.field_a8 & 1u) sample.visible = 0;
+    BfmForestBodySample delayed = bfm_forest_hurt_display(&w->hurt_display, sample);
+    w->hide_recovering_body = !delayed.visible;
+    if (w->hurt.active || w->hurt_tail) {
+        if (delayed.pose && delayed.pose != w->displayed_body.pose &&
+            !read_body(w, delayed.pose, &w->displayed_pose, w->displayed_anchors, NULL)) return 0;
+        w->displayed_body = delayed;
+        if (w->hurt_tail) --w->hurt_tail;
+    } else {
+        w->displayed_body.pose = 0;
+    }
+    return 1;
 }
 
 static int tick_gunshot_action(BfmForestWalk *w, GunshotInput circle, int interrupted,
@@ -1090,7 +1115,9 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
     BfmForestCast *cast = &w->fusion.cast;
     BfmForestCastEvent casting = BFM_CAST_GROUND;
     bfm_forest_hud_tick(w->hud);
-    int result = tick_hurt(w, &dust);
+    int16_t hit_yaw = 0;
+    unsigned power = bfm_forest_take_player_strike(w->field, &hit_yaw);
+    int result = tick_hurt(w, power, hit_yaw, 0, &dust);
     if (result <= 0) return result;
     if (result == 1) {
         if (owned) {
@@ -1223,20 +1250,7 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
         !update_lesson_view(w, before, incoming_yaw) || !bfm_forest_tick_shore_actor_with_run(w->field, w->cached, w->gameplay) ||
         !bfm_forest_submit_guard_and_impacts_with_run(w->field, hits, hit_count, w->eye, &w->camera, w->gameplay))
         return -1;
-    BfmForestBodySample sample = {w->root, sweep_pose ? sweep_pose : w->frame, w->visible};
-    /* During the protection countdown only the actor model blinks. The
-     * independent sword halo, shot, number and terrain still submit. */
-    if (w->actor.field_a8 & 1u) sample.visible = 0;
-    BfmForestBodySample delayed = bfm_forest_hurt_display(&w->hurt_display, sample);
-    w->hide_recovering_body = !delayed.visible;
-    if (w->hurt.active || w->hurt_tail) {
-        if (delayed.pose != w->displayed_body.pose &&
-            !read_body(w, delayed.pose, &w->displayed_pose, w->displayed_anchors, NULL)) return -1;
-        w->displayed_body = delayed;
-        if (w->hurt_tail) --w->hurt_tail;
-    } else {
-        w->displayed_body.pose = 0;
-    }
+    if (!update_hurt_display(w, sweep_pose ? sweep_pose : w->frame)) return -1;
     bfm_forest_hud_submit_points(w->hud, &w->gameplay->player);
     w->hit_sound = hit_count != 0;
     bfm_forest_tick_dust(w->field, dust, w->cached, w->eye, w->yaw);
@@ -1710,16 +1724,27 @@ static int step_summit_pickup(BfmForestWalk *w, BfmTowerSummitPickup *pickup)
 static int step_summit_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jump_held,
                               BfmSummitSkillInput input)
 {
+    BfmForestDustEmission dust = BFM_FOREST_DUST_NONE;
+    BfmForestField *room = bfm_tower_summit_room(w->summit);
+    unsigned power = 0;
+    int16_t hit_yaw = 0;
+    if (!w->jump.active && !w->hurt.active && !w->actor.field_a8 && !w->actor.field_aa) {
+        power = bfm_tower_summit_residents_strike(bfm_tower_summit_residents(w->summit),
+                                                  &w->root, &hit_yaw);
+    }
+    int control = tick_hurt(w, power, hit_yaw, 0, &dust);
+    if (control <= 0) return control;
+    if (control == 2) input = (BfmSummitSkillInput){0};
     input.visible = w->visible;
-    input.moving = x || y;
-    input.grounded = !w->jump.active && !jump_pressed && w->actor.state != 5;
+    input.moving = control == 1 && (x || y);
+    input.grounded = control == 1 && !w->jump.active && !jump_pressed && w->actor.state != 5;
     const BfmSummitSkillFrame *skill = bfm_tower_summit_skill_tick(w->summit,
         w->data.animation_table, &w->root, w->yaw, w->tick, &input, w->gameplay);
     if (!skill) return -1;
     bfm_forest_hud_gauges(w->hud, w->gameplay->player.record[0x47], skill->tether_gauge);
+    /* A detached blade keeps updating while the hit reaction owns Musashi. */
+    if (control == 2) return 1;
     int16_t facing = w->yaw;
-    BfmForestDustEmission dust = BFM_FOREST_DUST_NONE;
-    BfmForestField *room = bfm_tower_summit_room(w->summit);
     int stride = (x || y) && x == w->stride_x && y == w->stride_y;
     int launched = !skill->action && !skill->blade_away && jump_pressed &&
                    bfm_forest_jump_begin(&w->jump, room, &w->actor, w->cached);
@@ -1803,6 +1828,13 @@ static int summit_play(BfmForestWalk *w, int x, int y, int ready, BfmSummitSkill
         BfmTowerSummitLesson *lesson = bfm_tower_summit_active_lesson(w->summit);
         if (pickup && bfm_tower_summit_pickup_goal(pickup, NULL, NULL) == BFM_SUMMIT_PICKUP_FOLLOWUP)
             return step_summit_escape(w, pickup, x, jump_pressed, jump_held);
+        if (pickup || lesson) {
+            int alive = tick_hurt(w, 0, 0, 1, NULL);
+            if (alive <= 0) return alive;
+            w->displayed_body.pose = 0;
+            w->hide_recovering_body = 0;
+            w->hurt_tail = 0;
+        }
         if (pickup) {
             if (!step_summit_pickup(w, pickup)) return -1;
         } else if (lesson) {
@@ -1810,6 +1842,7 @@ static int summit_play(BfmForestWalk *w, int x, int y, int ready, BfmSummitSkill
         } else {
             int moved = step_summit_player(w, x, y, jump_pressed, jump_held, input);
             if (moved != 1) return moved;
+            if (!update_hurt_display(w, w->frame)) return -1;
         }
         bfm_forest_hud_tick(w->hud);
         bfm_forest_hud_submit_points(w->hud, &w->gameplay->player);
@@ -1822,6 +1855,7 @@ static int summit_play(BfmForestWalk *w, int x, int y, int ready, BfmSummitSkill
             w->manual.moving = 0;
             w->motion = IDLE;
             w->elapsed = 0;
+            w->hurt_display = (BfmForestHurtDisplay){0};
             /* Sword contact holds the previous pose until its next update. */
             if (current && !update_pose(w)) return -1;
         }
@@ -2188,13 +2222,20 @@ int bfm_forest_walk_draw(BfmForestWalk *w,uint32_t pixels[240][320])
         BfmTowerSummitFrame frame = bfm_tower_summit_transfer_frame(&w->summit_transfer);
         if (frame.shade >= 255) return 1;
         BfmForestBladeFrame blade = {.tick = w->tick};
-        BfmForestTransform blade_root = w->root;
+        const BfmForestBodySample *delayed = w->summit_free && w->displayed_body.pose
+                                          ? &w->displayed_body : NULL;
+        BfmForestTransform blade_root = delayed ? delayed->root : w->root;
+        const int8_t (*anchors)[3] = delayed ? w->displayed_anchors : w->blade_anchors;
         if (frame.wide_camera) bfm_tower_summit_departure_hero(frame.beam_age, &blade_root);
         int has_blade = (w->visible & (UINT32_C(1) << 22)) &&
-            bfm_forest_blade_transform(w->blade_anchors, &blade_root, w->eye, &blade.world);
+            bfm_forest_blade_transform(anchors, &blade_root, w->eye, &blade.world);
         if (frame.show_destination) {
-            if (!w->summit_placed || !bfm_tower_summit_draw(w->summit, &w->camera, &w->pose,
-                    &w->root, w->visible, w->tick & 1u, has_blade ? &blade : NULL, pixels)) return 0;
+            const BfmForestPose *pose = delayed ? &w->displayed_pose : &w->pose;
+            const BfmForestTransform *root = delayed ? &delayed->root : &w->root;
+            uint32_t visible = delayed ? delayed->visible : w->visible;
+            if (w->summit_free && w->hide_recovering_body) visible = 0;
+            if (!w->summit_placed || !bfm_tower_summit_draw(w->summit, &w->camera, pose, root,
+                    visible, w->tick & 1u, has_blade ? &blade : NULL, pixels)) return 0;
         } else {
             if (!bfm_tower_interior_draw_lift(w->inner, &w->camera, &w->pose, &w->root,
                     w->visible, w->tick & 1u, has_blade ? &blade : NULL, &frame, pixels)) return 0;
