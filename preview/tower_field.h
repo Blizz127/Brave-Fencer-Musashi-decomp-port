@@ -16,6 +16,18 @@ BfmForestField *bfm_tower_field_room(BfmTowerField *tower);
 int bfm_tower_field_place(BfmTowerField *tower, ForestPlayerState *player,
                           int16_t *model_yaw, int16_t cached[3]);
 void bfm_tower_field_tick(BfmTowerField *tower, const int16_t player[3], BfmGameplayRun *gameplay);
+/* Each physical swing supplies a fresh nonzero stroke ID for all its rays.
+ * A success clips the segment to the mounted column and returns a Q12 normal. */
+int bfm_tower_field_blade_contact(BfmTowerField *tower, unsigned stroke_id,
+                                  const int16_t start[3], const int16_t end[3],
+                                  int16_t contact[3], int16_t normal[3]);
+int bfm_tower_field_body_slide(const BfmTowerField *tower, const int16_t from[3],
+                               const int16_t to[3], int16_t contact[3]);
+/* Acknowledge when the player dismisses the presenter's final page. */
+int bfm_tower_field_plate_note(const BfmTowerField *tower);
+void bfm_tower_field_close_plate_note(BfmTowerField *tower);
+int bfm_tower_field_plate_pressing(const BfmTowerField *tower);
+unsigned bfm_tower_field_plate_count(const BfmTowerField *tower);
 int bfm_tower_field_camera(const BfmTowerField *tower, const int16_t player[3],
                            BfmForestCamera *out, int32_t eye[3]);
 /* Draw the mounted sky, field geometry, figures and world-space effects.

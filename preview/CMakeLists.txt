@@ -82,6 +82,8 @@ add_executable(musashi_native_boot
     tower_camera.c
     tower_field.c
     tower_figures.c
+    tower_pylons.c
+    tower_press_effect.c
     tower_lightning.c
     tower_note.c
     tower_note_pose.c

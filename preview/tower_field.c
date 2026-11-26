@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "tower_field.h"
 #include "tower_camera.h"
+#include "tower_pylons.h"
 #include "tower_figures.h"
 #include "tower_sky.h"
 #include "tower_lightning.h"
@@ -10,6 +11,7 @@
 struct BfmTowerField {
     BfmForestField *field;
     BfmTowerCamera camera;
+    BfmTowerPylons pylons;
     BfmTowerFigures *figures;
     BfmTowerSky *sky;
     BfmTowerCircuit *circuit;
@@ -39,7 +41,8 @@ BfmTowerField *bfm_tower_field_open(const MusashiDiscMedia *disc,
     size_t bytes = 0;
     const uint8_t *scene = bfm_forest_field_scene(tower->field, &bytes);
     const uint8_t *door = bfm_forest_field_entrance(tower->field, tower->entrance);
-    if (scene && door && bfm_tower_camera_load(&tower->camera, door, 36))
+    if (scene && door && bfm_tower_pylons_load(&tower->pylons, scene, bytes) &&
+        bfm_tower_camera_load(&tower->camera, door, 36))
         tower->figures = bfm_tower_figures_open(scene, bytes);
     if (tower->figures) {
         tower->sky = bfm_tower_sky_open(scene, bytes, bfm_forest_field_tiles(tower->field));
@@ -66,9 +69,43 @@ int bfm_tower_field_place(BfmTowerField *tower, ForestPlayerState *player,
 void bfm_tower_field_tick(BfmTowerField *tower, const int16_t player[3], BfmGameplayRun *gameplay)
 {
     if (!tower || !player || !gameplay) return;
+    bfm_tower_pylons_tick(&tower->pylons, player, gameplay);
+    bfm_tower_camera_plate_hint(&tower->camera, bfm_tower_field_plate_note(tower));
     bfm_tower_camera_tick(&tower->camera, player);
-    /* All four registered electrodes are intact on this exterior approach. */
-    bfm_tower_lightning_tick(tower->circuit, gameplay, 0);
+    bfm_tower_lightning_tick(tower->circuit, gameplay, bfm_tower_pylons_broken(&tower->pylons));
+}
+
+int bfm_tower_field_blade_contact(BfmTowerField *tower, unsigned stroke_id,
+                                  const int16_t start[3], const int16_t end[3],
+                                  int16_t contact[3], int16_t normal[3])
+{
+    return tower && bfm_tower_pylons_hit(&tower->pylons, stroke_id, start, end, contact, normal);
+}
+
+int bfm_tower_field_body_slide(const BfmTowerField *tower, const int16_t from[3],
+                               const int16_t to[3], int16_t contact[3])
+{
+    return tower && bfm_tower_pylons_slide(&tower->pylons, from, to, contact);
+}
+
+int bfm_tower_field_plate_note(const BfmTowerField *tower)
+{
+    return tower && tower->pylons.note_started && !tower->pylons.note_closed;
+}
+
+void bfm_tower_field_close_plate_note(BfmTowerField *tower)
+{
+    if (bfm_tower_field_plate_note(tower)) tower->pylons.note_closed = 1;
+}
+
+int bfm_tower_field_plate_pressing(const BfmTowerField *tower)
+{
+    return tower && tower->pylons.pressing;
+}
+
+unsigned bfm_tower_field_plate_count(const BfmTowerField *tower)
+{
+    return tower ? tower->pylons.credits : 0;
 }
 
 int bfm_tower_field_camera(const BfmTowerField *tower, const int16_t player[3],
@@ -87,9 +124,10 @@ int bfm_tower_field_draw(BfmTowerField *tower, const BfmForestCamera *camera,
         return 0;
     BfmForestActor actors[BFM_TOWER_FIGURE_ACTORS];
     BfmForestDustCard cards[BFM_TOWER_LIGHTNING_CARDS + BFM_TOWER_FIGURE_CARDS];
-    size_t count = bfm_tower_figures_actors(tower->figures, field_tick, actors, BFM_TOWER_FIGURE_ACTORS);
+    const BfmTowerPylonFrame *posts = tower->pylons.history[field_tick % 3];
+    size_t count = bfm_tower_figures_actors(tower->figures, field_tick, posts, actors, BFM_TOWER_FIGURE_ACTORS);
     size_t arcs = bfm_tower_lightning_cards(tower->circuit, 2, camera, cards, BFM_TOWER_LIGHTNING_CARDS);
-    size_t glows = bfm_tower_figures_cards(tower->figures, field_tick, 15, field_tick & 1u,
+    size_t glows = bfm_tower_figures_cards(tower->figures, field_tick, posts, field_tick & 1u,
                                           camera, cards + arcs, BFM_TOWER_FIGURE_CARDS);
     return bfm_forest_draw_room(tower->field, camera, pose, root, visible_parts, field_tick & 1u, blade,
                                 actors, count, cards, arcs + glows, pixels);

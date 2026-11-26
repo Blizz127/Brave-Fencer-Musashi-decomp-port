@@ -3,7 +3,7 @@
 #include "../pc_port/forest_player_bytes.h"
 #include <stdlib.h>
 
-enum { CENTER_PARTS = 4, COLUMN_PARTS = 7, COLUMN_SHAPE = 4, SHAPES = 5 };
+enum { CENTER_PARTS = 4, COLUMN_PARTS = 7, COLUMN_SHAPE = 4, OPEN_PLATE, USED_PLATE, SHAPES };
 static const uint32_t scene_origin = UINT32_C(0x80128158);
 
 typedef struct {
@@ -15,10 +15,14 @@ typedef struct {
 
 struct BfmTowerFigures {
     BfmTowerGlow glow;
+    BfmTowerPressColors press_colors;
     MusashiForestPlayerMesh *mesh[SHAPES];
     BfmForestPose pose[SHAPES];
     BfmForestTransform root[BFM_TOWER_FIGURE_ACTORS];
-    int16_t center[3];
+    int16_t center[3], placement[BFM_TOWER_POSTS][3];
+    BfmForestTransform column_root[BFM_TOWER_POSTS];
+    BfmForestPose damaged_pose[4], column_pose[BFM_TOWER_POSTS];
+    uint8_t loose_joint[4];
 };
 
 static int glow_load(BfmTowerGlow *glow, const uint8_t *scene, size_t size)
@@ -170,7 +174,7 @@ BfmTowerFigures *bfm_tower_figures_open(const uint8_t *scene, size_t size)
 {
     /* The room figures using these mounts have the same visible local
      * transforms across their entrance clips. Their actor roots are separate. */
-    static const struct { uint32_t shape, clip; } mount[SHAPES] = {
+    static const struct { uint32_t shape, clip; } mount[COLUMN_SHAPE + 1] = {
         {0x801a37a4, 0x801899c4}, {0x801ae2d8, 0x8018a02c},
         {0x801ae850, 0x8018a044}, {0x801acc1c, 0x80189d04},
         {0x80188970, 0x80186f44}
@@ -179,11 +183,30 @@ BfmTowerFigures *bfm_tower_figures_open(const uint8_t *scene, size_t size)
     if (!records || u16le(records + 6) != 9) return NULL;
     BfmTowerFigures *figures = calloc(1, sizeof *figures);
     if (!figures) return NULL;
-    if (!glow_load(&figures->glow, scene, size)) goto failed;
-    for (unsigned i = 0; i < SHAPES; ++i)
+    if (!glow_load(&figures->glow, scene, size) ||
+        !bfm_tower_press_colors_load(&figures->press_colors, scene, size)) goto failed;
+    for (unsigned i = 0; i <= COLUMN_SHAPE; ++i)
         if (!load_shape(figures, i, scene, size, mount[i].shape, mount[i].clip,
                         i == COLUMN_SHAPE ? COLUMN_PARTS : 1)) goto failed;
 
+    const uint8_t *keys = mounted(scene, size, UINT32_C(0x80186fb0), 5*4);
+    const uint8_t *pieces = mounted(scene, size, UINT32_C(0x80186f8c), 4);
+    if (!keys || !pieces) goto failed;
+    for (unsigned hp = 0; hp < 4; ++hp) {
+        const uint8_t *key = mounted(scene, size, u32le(keys + hp*4), 8);
+        const uint8_t *frame = key ? mounted(scene, size, u32le(key), COLUMN_PARTS*12) : NULL;
+        if (!frame || pieces[hp] >= COLUMN_PARTS ||
+            !room_pose(frame, COLUMN_PARTS, &figures->damaged_pose[hp])) goto failed;
+        figures->loose_joint[hp] = pieces[hp];
+    }
+    const uint32_t plates[] = { UINT32_C(0x801891ac), UINT32_C(0x80189450) };
+    for (unsigned i = 0; i < 2; ++i) {
+        unsigned shape = OPEN_PLATE + i, count = 0;
+        figures->mesh[shape] = musashi_forest_player_mesh_from_table(scene, size, scene_origin,
+                                                                      plates[i], &count);
+        if (!figures->mesh[shape] || count != 1) goto failed;
+        bfm_forest_actor_root(0, (const int16_t[3]){0}, &figures->pose[shape].local[0]);
+    }
     for (unsigned k = 0; k < 3; ++k)
         figures->center[k] = s16le(records + 2*k);
     for (unsigned i = 0; i < CENTER_PARTS; ++i)
@@ -193,7 +216,10 @@ BfmTowerFigures *bfm_tower_figures_open(const uint8_t *scene, size_t size)
         if (u16le(placement + 6) != 20 || u16le(placement + 8) != i)
             goto failed;
         int16_t position[3];
-        for (unsigned k = 0; k < 3; ++k) position[k] = s16le(placement + 2*k);
+        for (unsigned k = 0; k < 3; ++k) {
+            position[k] = s16le(placement + 2*k);
+            figures->placement[i][k] = position[k];
+        }
         BfmForestTransform *root = &figures->root[CENTER_PARTS + i];
         bfm_forest_actor_root(u16le(placement + 12), position, root);
         for (unsigned row = 0; row < 3; ++row)
@@ -201,6 +227,7 @@ BfmTowerFigures *bfm_tower_figures_open(const uint8_t *scene, size_t size)
                 int v = root->rotation[row][col] * 7;
                 root->rotation[row][col] = (int16_t)(v / 4 - (v % 4 < 0));
             }
+        figures->column_root[i] = *root;
     }
     return figures;
 failed:
@@ -216,30 +243,62 @@ void bfm_tower_figures_free(BfmTowerFigures *figures)
 }
 
 size_t bfm_tower_figures_actors(BfmTowerFigures *figures, unsigned age,
+                                const BfmTowerPylonFrame posts[BFM_TOWER_POSTS],
                                 BfmForestActor *out, size_t capacity)
 {
-    if (!figures || !out || capacity < BFM_TOWER_FIGURE_ACTORS) return 0;
+    if (!figures || !posts || !out || capacity < BFM_TOWER_FIGURE_ACTORS) return 0;
     /* The body installs the statue and its base; both inherit its 448-unit
      * lift on their next update. The base uses the same integral model Y. */
     figures->root[1].translation[1] = figures->center[1] - (age ? 448 : 0);
     figures->root[2].translation[1] = figures->center[1] - (age ? 448 : 1);
-    for (unsigned i = 0; i < BFM_TOWER_FIGURE_ACTORS; ++i) {
-        unsigned shape = i < CENTER_PARTS ? i : COLUMN_SHAPE;
-        out[i] = (BfmForestActor){figures->mesh[shape], &figures->pose[shape], &figures->root[i],
-            i < CENTER_PARTS ? 1u : (1u << COLUMN_PARTS)-1, NULL};
+    for (unsigned i = 0; i < CENTER_PARTS; ++i) {
+        out[i] = (BfmForestActor){figures->mesh[i], &figures->pose[i], &figures->root[i], 1u, NULL};
+    }
+    for (unsigned i = 0; i < BFM_TOWER_POSTS; ++i) {
+        const BfmTowerPylonFrame *post = &posts[i];
+        unsigned actor = CENTER_PARTS + i, shape = COLUMN_SHAPE;
+        BfmForestTransform *root = &figures->root[actor];
+        const BfmForestPose *pose;
+        if (post->phase >= BFM_TOWER_EXPOSED) {
+            shape = post->phase == BFM_TOWER_CREDITED ? USED_PLATE : OPEN_PLATE;
+            bfm_forest_actor_root(post->plate_yaw, figures->placement[i], root);
+            pose = &figures->pose[shape];
+        } else {
+            *root = figures->column_root[i];
+            pose = post->remaining == 4 ? &figures->pose[shape] : &figures->damaged_pose[post->remaining];
+            if (post->phase == BFM_TOWER_FRACTURE) {
+                unsigned joint = figures->loose_joint[post->remaining];
+                int shift = post->shake_x;
+                BfmForestPose *moving = &figures->column_pose[i];
+                *moving = *pose;
+                for (unsigned axis = 0; axis < 3; ++axis) {
+                    root->translation[axis] += (int32_t)floor_ratio(shift*root->rotation[axis][0], 4096);
+                    moving->local[joint].translation[axis] = figures->pose[shape].local[joint].translation[axis]
+                        + post->fragment[axis] - (axis == 0 ? shift : 0);
+                }
+                pose = moving;
+            }
+        }
+        out[actor] = (BfmForestActor){figures->mesh[shape], pose, root,
+            shape == COLUMN_SHAPE ? (1u << COLUMN_PARTS)-1 : 1u, NULL};
     }
     return BFM_TOWER_FIGURE_ACTORS;
 }
 
 size_t bfm_tower_figures_cards(const BfmTowerFigures *figures, unsigned age,
-                               unsigned lit_nodes, unsigned field_parity,
+                               const BfmTowerPylonFrame posts[BFM_TOWER_POSTS], unsigned field_parity,
                                const BfmForestCamera *camera, BfmForestDustCard *out, size_t capacity)
 {
-    if (!figures || !age || !camera || !camera->projection || !out ||
+    if (!figures || !age || !posts || !camera || !camera->projection || !out ||
         capacity < BFM_TOWER_FIGURE_CARDS) return 0;
     size_t count = 0;
+    unsigned lit_nodes = bfm_tower_lit_nodes(posts);
     for (unsigned i = 0; i < 4; ++i)
         if ((lit_nodes & (1u << i)) && bulb(&figures->glow, figures->glow.roots[i],
                 camera, age & 1, field_parity & 1, out + count)) count += 7;
+    for (unsigned i = 0; i < BFM_TOWER_POSTS; ++i)
+        if (posts[i].phase == BFM_TOWER_PRESSING)
+            count += bfm_tower_press_cards(figures->placement[i], posts[i].ticks, camera,
+                                          &figures->press_colors, out + count);
     return count;
 }

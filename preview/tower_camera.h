@@ -5,13 +5,16 @@
 #include "forest_terrain.h"
 
 typedef struct {
-    uint16_t yaw, projection;
+    uint16_t yaw, projection, pitch, desired_pitch;
 } BfmTowerCamera;
 
 /* Select the ordinary exterior camera from the mounted entrance record. */
 int bfm_tower_camera_load(BfmTowerCamera *camera, const uint8_t *entrance, size_t size);
 
-/* Advance the radial follow angle once per field update. */
+/* While the first exposed plate is being explained, the radial camera
+ * pitches overhead. Closing the message restores its ordinary orbit. */
+void bfm_tower_camera_plate_hint(BfmTowerCamera *camera, int active);
+/* Advance the orbital angles once per field update. */
 void bfm_tower_camera_tick(BfmTowerCamera *camera, const int16_t player[3]);
 
 /* The renderer supplies the player sample belonging to this submission. */
