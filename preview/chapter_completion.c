@@ -32,6 +32,25 @@ int bfm_chapter_completion_begin(BfmChapterCompletion *state, BfmGameplayRun *ru
     return 1;
 }
 
+int bfm_chapter_completion_begin_earned(BfmChapterCompletion *state, BfmGameplayRun *run)
+{
+    if (!run || !run->has_player || run->banks.variables[0x2e] != 2 ||
+        memcmp(run->player.record + 8, (uint8_t[4]){0}, 4)) return 0;
+
+    /* An unset saved destination lets Continue select the castle bedroom.
+     * The active field's transfer descriptor is a different record. */
+    BfmSaveRecord record = {0};
+    memcpy(record.figure_prices, run->banks.figure_prices, sizeof record.figure_prices);
+    memcpy(record.variables, run->banks.variables, sizeof record.variables);
+    memcpy(record.timestamps, run->banks.timestamps, sizeof record.timestamps);
+    memcpy(record.flags, run->story_flags, sizeof record.flags);
+    run->player.record[8] = 2;
+    memcpy(record.progress, run->player.record, sizeof record.progress);
+    if (bfm_chapter_completion_begin(state, run, &record)) return 1;
+    run->player.record[8] = 0;
+    return 0;
+}
+
 static void fail(BfmChapterCompletion *state, const char *issue)
 {
     state->issue = issue;

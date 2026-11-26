@@ -25,6 +25,8 @@ typedef struct {
  * bedroom. Zero-initialize the receiver before first use. */
 int bfm_chapter_completion_begin(BfmChapterCompletion *state, BfmGameplayRun *run,
                                  const BfmSaveRecord *record);
+/* Consume the final 300E room departure using this playthrough's own banks. */
+int bfm_chapter_completion_begin_earned(BfmChapterCompletion *state, BfmGameplayRun *run);
 /* One NTSC field with fresh wire-order edges. Zero leaves an unimplemented
  * choice with the caller. The recorded branch accepted both Yes prompts. */
 int bfm_chapter_completion_step(BfmChapterCompletion *state, const MusashiDiscMedia *disc,
