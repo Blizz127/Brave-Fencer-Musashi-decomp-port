@@ -9,12 +9,14 @@ enum {
 /* Offsets within the entrance's own dialogue block. The disc supplies all
  * text, voice cues, icon commands and page holds, including the tutorial. */
 static const uint16_t dialogue_offsets[] = {
-    0, 0x44, 0x98, 0xc8, 0x1a4, 0x1f4, 0x25c, 0x294, 0x2b4, 0x2f4, 0x318, 0x3f0, 0x430
+    0, 0x44, 0x98, 0xc8, 0x1a4, 0x1f4, 0x25c, 0x294, 0x2b4, 0x2f4, 0x318, 0x3f0,
+    0x430, 0x498, 0x4f4, 0x558, 0x588, 0x5c4, 0x5e0, 0x610
 };
 enum {
     ARRIVAL_SPEECH, CAPTOR_INTRO, PRINCESS_CALL, CAPTOR_BARGAIN, MUSASHI_REFUSAL,
     CAPTOR_FLAMES, MUSASHI_TRAPPED, MUSASHI_QUESTION, PRINCESS_ADVICE,
-    MUSASHI_RECALL, ROTATION_TUTORIAL, MUSASHI_REPLY
+    MUSASHI_RECALL, ROTATION_TUTORIAL, MUSASHI_REPLY, FILLET_PRAISE, CAPTOR_THREAT,
+    CAPTOR_FAREWELL, MUSASHI_WAIT, MUSASHI_HEARS_MACHINE, MUSASHI_SEES_MACHINE, MUSASHI_CHALLENGE
 };
 static void stage(BfmSteamKnightEvent *e, BfmSteamStage next)
 {
@@ -40,8 +42,8 @@ int bfm_steam_event_begin(BfmSteamKnightEvent *e, const uint8_t *scene, size_t b
         !voice || entry->scene_data < origin)
         return 0;
     size_t offset = entry->scene_data - origin;
-    if (offset > bytes || bytes - offset < dialogue_offsets[MUSASHI_REPLY + 1]) return 0;
-    for (unsigned i = ARRIVAL_SPEECH; i <= MUSASHI_REPLY; ++i)
+    if (offset > bytes || bytes - offset < dialogue_offsets[MUSASHI_CHALLENGE + 1]) return 0;
+    for (unsigned i = ARRIVAL_SPEECH; i <= MUSASHI_CHALLENGE; ++i)
         if (scene[offset + dialogue_offsets[i]] != 5) return 0;
     *e = (BfmSteamKnightEvent){ .programs = scene + offset, .run = run, .voice = voice,
         .position = { (int16_t)entry->x, (int16_t)entry->y, (int16_t)entry->z },
@@ -75,7 +77,29 @@ static int finish_page(BfmSteamKnightEvent *e)
         stage(e, BFM_STEAM_READY);
         return 1;
     case MUSASHI_REPLY:
-        stage(e, BFM_STEAM_AFTER_REPLY);
+        stage(e, BFM_STEAM_HOSTAGE_PRAISE);
+        return speak(e, FILLET_PRAISE, BFM_STEAM_REPLY_CAMERA);
+    case FILLET_PRAISE:
+        stage(e, BFM_STEAM_SILENCE);
+        return 1;
+    case CAPTOR_THREAT:
+        stage(e, BFM_STEAM_FAREWELL);
+        return speak(e, CAPTOR_FAREWELL, BFM_STEAM_CARPET_CAMERA);
+    case CAPTOR_FAREWELL:
+        stage(e, BFM_STEAM_CHASE);
+        return speak(e, MUSASHI_WAIT, BFM_STEAM_CARPET_CAMERA);
+    case MUSASHI_WAIT:
+        stage(e, BFM_STEAM_RUMBLE);
+        return 1;
+    case MUSASHI_HEARS_MACHINE:
+        stage(e, BFM_STEAM_LOOK_UP);
+        return 1;
+    case MUSASHI_SEES_MACHINE:
+        stage(e, BFM_STEAM_DESCENT);
+        return 1;
+    case MUSASHI_CHALLENGE:
+        stage(e, BFM_STEAM_DUEL);
+        e->shot = BFM_STEAM_DUEL_CAMERA;
         return 1;
     default: return 0;
     }
@@ -85,6 +109,22 @@ static int forward(BfmSteamKnightEvent *e, int target, int stride)
     int z = e->position[2] + stride;
     e->position[2] = (int16_t)(z < target ? z : target);
     return z >= target;
+}
+/* The feet keep moving during speech. The challenge starts one normal
+ * step before Musashi reaches his destination. */
+static void postfire_motion(BfmSteamKnightEvent *e)
+{
+    if (e->stage == BFM_STEAM_HOSTAGE_PRAISE && e->stage_age >= 6)
+        e->shot = BFM_STEAM_PRINCESS_CAMERA;
+    if (e->stage == BFM_STEAM_CHASE && e->stage_age >= 3)
+        forward(e, -3840, ENTER_STRIDE);
+    if (e->stage == BFM_STEAM_LOOK_UP && e->stage_age >= 40)
+        e->shot = BFM_STEAM_ROOF_CAMERA;
+    if (e->stage == BFM_STEAM_BREACH || e->stage == BFM_STEAM_DESCENT ||
+        e->stage == BFM_STEAM_CHALLENGE)
+        ++e->landing_age;
+    if (e->stage == BFM_STEAM_CHALLENGE)
+        forward(e, -3456, ENTER_STRIDE);
 }
 static void charge(BfmSteamKnightEvent *e, uint16_t pressed, uint16_t held)
 {
@@ -106,9 +146,10 @@ static void charge(BfmSteamKnightEvent *e, uint16_t pressed, uint16_t held)
 int bfm_steam_event_tick(BfmSteamKnightEvent *e, uint16_t pressed, uint16_t held, unsigned live_flames)
 {
     if (!e || live_flames > 8) return -1;
-    if (e->stage == BFM_STEAM_AFTER_REPLY) return 0;
+    if (e->stage == BFM_STEAM_DUEL) return 0;
     ++e->age;
     ++e->stage_age;
+    postfire_motion(e);
     bfm_forest_voice_step(e->voice);
     if (e->message) {
         ++e->message_age;
@@ -164,6 +205,29 @@ int bfm_steam_event_tick(BfmSteamKnightEvent *e, uint16_t pressed, uint16_t held
             }
         }
         break;
+    case BFM_STEAM_SILENCE:
+        if (e->stage_age == 30 && !speak(e, CAPTOR_THREAT, BFM_STEAM_PRINCESS_CAMERA)) return -1;
+        break;
+    case BFM_STEAM_RUMBLE:
+        if (e->stage_age == 30 && !speak(e, MUSASHI_HEARS_MACHINE, BFM_STEAM_CARPET_CAMERA)) return -1;
+        break;
+    case BFM_STEAM_LOOK_UP:
+        if (e->stage_age >= 65) {
+            stage(e, BFM_STEAM_BREACH);
+            e->shot = BFM_STEAM_ROOF_CAMERA;
+            e->landing_age = 0;
+        }
+        break;
+    case BFM_STEAM_BREACH:
+        if (e->stage_age == 24 && !speak(e, MUSASHI_SEES_MACHINE, BFM_STEAM_ROOF_CAMERA)) return -1;
+        break;
+    case BFM_STEAM_DESCENT:
+        e->shot = BFM_STEAM_MACHINE_CAMERA;
+        if (e->stage_age >= 150) stage(e, BFM_STEAM_CHALLENGE);
+        break;
+    case BFM_STEAM_CHALLENGE:
+        if (e->position[2] >= -3467 && !speak(e, MUSASHI_CHALLENGE, BFM_STEAM_MACHINE_CAMERA)) return -1;
+        break;
     default: return -1;
     }
     return 1;
@@ -183,6 +247,14 @@ void bfm_steam_event_captor_pose(const BfmSteamKnightEvent *e, unsigned *clip, u
         *age = e->message_age - 2;
     }
 }
+int bfm_steam_event_show_captors(const BfmSteamKnightEvent *e)
+{
+    return e->stage < BFM_STEAM_CHASE || (e->stage == BFM_STEAM_CHASE && e->stage_age < 3);
+}
+int bfm_steam_event_title(const BfmSteamKnightEvent *e)
+{
+    return e->stage == BFM_STEAM_DESCENT;
+}
 int bfm_steam_event_ring_started(const BfmSteamKnightEvent *e)
 {
     return e->stage > BFM_STEAM_ENCLOSURE ||
@@ -190,7 +262,8 @@ int bfm_steam_event_ring_started(const BfmSteamKnightEvent *e)
 }
 int bfm_steam_event_hud(const BfmSteamKnightEvent *e)
 {
-    if (e->shot == BFM_STEAM_REPLY_CAMERA || e->stage == BFM_STEAM_AFTER_REPLY) return 0;
+    if (e->stage == BFM_STEAM_DUEL) return 1;
+    if (e->shot == BFM_STEAM_REPLY_CAMERA || e->stage > BFM_STEAM_REPLY) return 0;
     return e->stage >= BFM_STEAM_READY ||
            (e->stage == BFM_STEAM_INSTRUCTION && e->step == ROTATION_TUTORIAL);
 }

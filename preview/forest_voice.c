@@ -56,6 +56,12 @@ ForestVoice *bfm_library_voice_load(const MusashiDiscMedia *disc)
 int bfm_forest_voice_request(ForestVoice *v, unsigned bank, unsigned cue)
 {
     BfmDiscVoiceCue selected;
+    /* The hall's empty ST01 selector leads into a timed but silent line.
+     * Other archives have their own selector ranges. */
+    if (v && v->archive == BFM_VOICE_ST01 && !bank && !cue) {
+        bfm_forest_voice_stop(v);
+        return 1;
+    }
     if (!v || !bfm_disc_voice_request(v->source, bank, cue, &selected)) return 0;
     v->status = BFM_FOREST_VOICE_PENDING;
     v->until_read = FIRST_READ_UPDATE;

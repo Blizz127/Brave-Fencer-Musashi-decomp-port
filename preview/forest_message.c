@@ -130,9 +130,11 @@ static int print_update(BfmForestMessage *m)
             m->phase = OPENING;
             return 1;
         case 0x03: /* The closing pass keeps the cursor on this command. */
-            if (left < 1 || (arg[0] && !m->notice &&
-                             !(arg[0] == 10 && m->voice_script))) return 0;
-            if (m->notice && arg[0]) {
+            if (left < 1) return 0;
+            /* An unvoiced portrait reaction can end on a timed hold. */
+            int timed_close = arg[0] && (m->notice || (!m->voice_script && arg[0] == 30));
+            if (arg[0] && !timed_close && !(arg[0] == 10 && m->voice_script)) return 0;
+            if (timed_close) {
                 m->timer = arg[0];
                 m->phase = NOTICE_HOLD;
                 return 1;
