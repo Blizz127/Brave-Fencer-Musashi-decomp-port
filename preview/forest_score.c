@@ -283,7 +283,7 @@ static int prepare_schedule(BfmForestScore *score)
     return 0;
 }
 
-static int next_device_sample(BfmForestScore *score, int stereo[2])
+static int dispatch_events(BfmForestScore *score)
 {
     for (;;) {
         if (score->pending_bend && score->bend_deadline <= score->clock &&
@@ -317,6 +317,12 @@ static int next_device_sample(BfmForestScore *score, int stereo[2])
             score->event = score->phrase;
         }
     }
+    return 1;
+}
+
+static int next_device_sample(BfmForestScore *score, int stereo[2])
+{
+    if (!dispatch_events(score)) return 0;
     mix_frame(&score->orchestra, stereo);
     score->clock += score->divisor;
     return 1;
@@ -342,6 +348,63 @@ void bfm_forest_score_rewind(BfmForestScore *score)
     score->failed = 0;
 }
 
+/* Compute the longest release for a mounted rate, in device frames. Release
+ * always starts at phase zero, and its decay is monotone in the start level. */
+static uint64_t max_release_frames(unsigned rate)
+{
+    BfmSpuEnvelope env = {.adsr2 = (uint16_t)rate, .level = INT16_MAX,
+                          .stage = BFM_SPU_ENVELOPE_RELEASE};
+    unsigned shift = rate & 31u;
+    uint32_t period = shift > 11u ? UINT32_C(1) << (shift - 11u) : 1;
+    uint64_t frames = 0;
+    do {
+        env.phase = period - 1;
+        frames += period;
+    } while (bfm_spu_envelope_clock(&env));
+    return frames;
+}
+
+/* Prove that the first traversal fits the device without rendering discarded
+ * PCM. Treat a release as starting at full level: this can keep a slot
+ * occupied longer than playback, but never frees one too early. If that
+ * extra occupancy prevents admission, use the exact first-pass mixer. */
+static int validate_voice_capacity(BfmForestScore *score)
+{
+    uint64_t release_left[VOICES] = {0};
+    uint64_t release_limit[64] = {0};
+    uint64_t end = score->deadlines[score->count];
+    while (score->clock < end) {
+        if (!dispatch_events(score)) return 0;
+        uint64_t next = score->deadlines[score->event];
+        if (score->pending_bend && score->bend_deadline < next) next = score->bend_deadline;
+        uint64_t delta = next - score->clock;
+        uint64_t frames = delta / score->divisor + (delta % score->divisor != 0);
+        for (unsigned i = 0; i < VOICES; ++i) {
+            Note *n = &score->orchestra.notes[i];
+            if (!n->sample) continue;
+            if (n->releasing) {
+                if (!release_left[i]) {
+                    unsigned rate = n->envelope.adsr2 & 63u;
+                    if (!release_limit[rate]) release_limit[rate] = max_release_frames(rate);
+                    release_left[i] = release_limit[rate];
+                }
+                if (release_left[i] <= frames) n->sample = NULL;
+                else release_left[i] -= frames;
+            }
+            /* A looping sample cannot expire from sample position. For a
+             * one-shot, pitch is constant until the next scheduled event. */
+            if (n->sample && n->sample->loop_start == n->sample->frames && n->pitch) {
+                uint64_t distance = (uint64_t)n->sample->frames * 4096 - n->phase;
+                if (frames > (distance - 1) / n->pitch) n->sample = NULL;
+                else n->phase += frames * n->pitch;
+            }
+            if (!n->sample) release_left[i] = 0;
+        }
+        score->clock += frames * score->divisor;
+    }
+    return 1;
+}
+
 static BfmForestScore *load_score(const MusashiDiscMedia *disc, unsigned rate, const char *archive,
                                   unsigned member, unsigned track, unsigned gain)
 {
@@ -363,9 +426,12 @@ static BfmForestScore *load_score(const MusashiDiscMedia *disc, unsigned rate, c
     /* Resolve instruments and validate the mounted note/voice ownership on
      * the game thread. The callback only accesses prepared samples. */
     bfm_forest_score_rewind(score);
-    while (score->clock < score->deadlines[score->count]) {
-        int unused[2];
-        if (!next_device_sample(score, unused)) goto fail;
+    if (!validate_voice_capacity(score)) {
+        bfm_forest_score_rewind(score);
+        while (score->clock < score->deadlines[score->count]) {
+            int unused[2];
+            if (!next_device_sample(score, unused)) goto fail;
+        }
     }
     score->orchestra.samples_ready = 1;
     bfm_forest_score_rewind(score);
