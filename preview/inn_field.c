@@ -4,6 +4,7 @@
 #include "inn_greeting.h"
 #include "inn_keeper.h"
 #include "village_field.h"
+#include "village_clock.h"
 #include "forest_message_art.h"
 #include "scene_tiles.h"
 
@@ -11,7 +12,8 @@
 #include <string.h>
 
 static const uint32_t scene_base = UINT32_C(0x80128158);
-enum { KEEPER_POSITION = 0x40cc, WALK_TARGET = 0x4100, ROOM_OFFSET = 0x4218 };
+enum { KEEPER_POSITION = 0x40cc, WALK_TARGET = 0x4100, ROOM_OFFSET = 0x4218,
+       ROOM_HP = 0x9969c, ROOM_RATE = 0x996a8 };
 
 struct BfmInnField {
     uint8_t scene[BFM_FIELD_SCENE_CAPACITY];
@@ -29,7 +31,7 @@ struct BfmInnField {
     BfmForestMessageArt *art;
     uint16_t (*tiles)[1024];
     unsigned age, voice_status;
-    int finished, updated_greeting;
+    int finished, updated_greeting, paid;
 };
 
 static const uint8_t *source(const BfmInnField *inn, const uint8_t *slot, size_t count)
@@ -43,7 +45,7 @@ static const uint8_t *source(const BfmInnField *inn, const uint8_t *slot, size_t
 static int mount_inn(BfmInnField *inn, const MusashiDiscMedia *disc)
 {
     size_t resident = bfm_read_archive_field_scene(disc, "SC03.CD", 1, inn->scene);
-    if (!resident || resident > sizeof inn->scene - 3) return 0;
+    if (resident < ROOM_RATE + 6 || resident > sizeof inn->scene - 3) return 0;
     size_t offset = (resident + 3) & ~(size_t)3;
     uint8_t *module = bfm_village_event_data(disc, 76, &inn->module_size);
     if (!module) return 0;
@@ -148,7 +150,7 @@ int bfm_inn_field_step(BfmInnField *inn, uint16_t pressed)
            bfm_bedroom_motion_face(inn->motion, inn->tiles);
 }
 
-int bfm_inn_field_draw(BfmInnField *inn, int show_dialogue, uint32_t pixels[240][320])
+int bfm_inn_field_draw(BfmInnField *inn, int dialogue, uint32_t pixels[240][320])
 {
     if (!inn || !pixels) return 0;
     for (unsigned y = 0; y < 240; ++y)
@@ -161,8 +163,8 @@ int bfm_inn_field_draw(BfmInnField *inn, int show_dialogue, uint32_t pixels[240]
                             inn->age)) return 0;
     bfm_bedroom_field_draw(inn->field.field, inn->tiles, &pixels[0][0],
                            bfm_bedroom_figure_draw_to, inn->field.hero);
-    return !show_dialogue || inn->finished || !inn->greeting ||
-           bfm_inn_greeting_draw(inn->greeting, inn->art, inn->tiles, pixels);
+    return !dialogue || inn->finished || !inn->greeting ||
+           bfm_inn_greeting_draw(inn->greeting, dialogue, inn->art, inn->tiles, pixels);
 }
 
 const BfmForestMessageFrame *bfm_inn_field_window(const BfmInnField *inn)
@@ -178,6 +180,55 @@ void bfm_inn_field_voice_status(BfmInnField *inn, unsigned status)
 int bfm_inn_field_service(const BfmInnField *inn)
 {
     return inn && inn->greeting && !inn->finished && bfm_inn_greeting_service(inn->greeting);
+}
+
+unsigned bfm_inn_room_price(const BfmInnField *inn, unsigned room)
+{
+    /* The last two rooms are occupied on this early village visit. */
+    if (!inn || room >= 4) return 0;
+    unsigned rate = inn->scene[ROOM_RATE + room];
+    return rate > 127 ? 10 * (256 - rate) : 0;
+}
+
+static void put_word(uint8_t *out, uint32_t value)
+{
+    for (unsigned i = 0; i < 4; ++i)
+        out[i] = (uint8_t)(value >> (i * 8));
+}
+
+int bfm_inn_pay_room201(BfmInnField *inn)
+{
+    if (!bfm_inn_field_service(inn) || inn->paid) return 0;
+    uint8_t *record = inn->record->progress;
+    /* The wallet holds tens of Drans. An unaffordable stay changes nothing. */
+    unsigned charge = bfm_inn_room_price(inn, 0) / 10;
+    uint32_t wallet = u32le(record + 0x14);
+    if (!charge || charge > wallet) return 0;
+    put_word(record + 0x14, wallet - charge);
+    inn->paid = 1;
+    return 1;
+}
+
+static void restore_points(uint8_t *vital, unsigned amount)
+{
+    unsigned maximum = u16le(vital);
+    unsigned total = u16le(vital + 2) + amount;
+    if (total > maximum) total = maximum;
+    vital[2] = (uint8_t)total;
+    vital[3] = (uint8_t)(total >> 8);
+}
+
+void bfm_inn_finish_room201(BfmInnField *inn)
+{
+    if (!inn || !inn->paid) return;
+    inn->paid = 0;
+    uint8_t *p = inn->record->progress;
+    restore_points(p + 0x3a, u16le(inn->scene + ROOM_HP));
+    restore_points(p + 0x3e, 999);
+    /* Both fixed-point stamina reserves reach their rested limit. */
+    put_word(p + 0x2c, 160u << 16);
+    put_word(p + 0x60, 160u << 16);
+    bfm_village_clock_rest(inn->record, 8);
 }
 
 void bfm_inn_field_leave(BfmInnField *inn)

@@ -768,6 +768,11 @@ const BfmSaveRecord *bfm_bedroom_inn_record(const BfmBedroom *room)
     return room->inn && bfm_inn_field_service(room->inn) ? &room->entry.state : NULL;
 }
 
+BfmInnField *bfm_bedroom_inn_counter(BfmBedroom *room)
+{
+    return bfm_inn_field_service(room->inn) ? room->inn : NULL;
+}
+
 int bfm_bedroom_leave_inn(BfmBedroom *room)
 {
     if (!room->inn) return 0;
@@ -792,6 +797,8 @@ int bfm_bedroom_step_axes(BfmBedroom *room, int confirm_edge, int reveal_edge,
         apply_window_voice(room, bfm_inn_field_window(room->inn), &result);
         if (room->story_flags != room->entry.state.flags)
             memcpy(room->story_flags, room->entry.state.flags, sizeof room->entry.state.flags);
+        memcpy(room->status.record, room->entry.state.progress, sizeof room->status.record);
+        bfm_forest_hud_submit_points(room->hud, &room->status);
         ++room->update;
         return result;
     }

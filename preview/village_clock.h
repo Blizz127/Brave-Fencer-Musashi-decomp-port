@@ -8,4 +8,7 @@
  * transition pauses; accelerated selects the player's faster clock mode. */
 void bfm_village_clock_step(BfmSaveRecord *state, int accelerated);
 
+/* A stay moves the world clock by whole hours and preserves its fraction. */
+void bfm_village_clock_rest(BfmSaveRecord *state, unsigned hours);
+
 #endif

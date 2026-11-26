@@ -2,6 +2,7 @@
 #include "inn_greeting.h"
 #include "../pc_port/forest_player_bytes.h"
 #include <stdlib.h>
+#include <string.h>
 
 enum {
     FIRST_EXCHANGE = 0x40d4, RETURN_EXCHANGE = 0x4144,
@@ -144,7 +145,9 @@ static void short_at(uint8_t *destination, int value)
     destination[1] = (uint8_t)(word >> 8);
 }
 
-static int draw_service(const BfmInnGreeting *talk, const BfmForestMessageArt *art,
+/* The room descriptions, price highlighting and keeper's reply belong to
+ * the mounted room event. Its paid-room reply contains a room digit field. */
+static int draw_service(const BfmInnGreeting *talk, int dialogue, const BfmForestMessageArt *art,
                         const uint16_t tiles[512][1024], uint32_t pixels[240][320])
 {
     uint8_t face[16];
@@ -156,15 +159,36 @@ static int draw_service(const BfmInnGreeting *talk, const BfmForestMessageArt *a
     short_at(face + 10, 400 - 256);
     short_at(face + 12, 457 * 64 + 352 / 16);
     short_at(face + 14, 16 + 448 / 64);
-    return bfm_library_question_draw(art, talk->service_box, face, tiles, talk->module + SERVICE_QUESTION,
-                                     talk->bytes - SERVICE_QUESTION, talk->age, pixels);
+    static const size_t descriptions[] = {0x4f28, 0x4f74, 0x4fbc, 0x500c, 0x504c, 0x504c};
+    size_t offset = SERVICE_QUESTION;
+    if (dialogue == BFM_INN_LOW_FUNDS) offset = 0x4e9c;
+    else if (dialogue == BFM_INN_PAID_DIRECTIONS) offset = 0x4ecc;
+    else if (dialogue >= BFM_INN_FIRST_ROOM_DESCRIPTION && dialogue < BFM_INN_PAID_DIRECTIONS)
+        offset = descriptions[dialogue - BFM_INN_FIRST_ROOM_DESCRIPTION];
+    if (offset > talk->bytes || talk->bytes - offset < 4) return 0;
+
+    const uint8_t *message = talk->module + offset;
+    size_t bytes = talk->bytes - offset;
+    uint8_t directions[96];
+    if (dialogue == BFM_INN_PAID_DIRECTIONS) {
+        const uint8_t *end = memchr(message + 3, 0, bytes - 3);
+        if (!end || (size_t)(end - message) >= sizeof directions) return 0;
+        bytes = (size_t)(end - message) + 1;
+        memcpy(directions, message, bytes);
+        uint8_t *digit = memchr(directions + 3, 14, bytes - 3);
+        if (!digit) return 0;
+        *digit = '1';
+        message = directions;
+    }
+    return bfm_library_question_draw(art, talk->service_box, face, tiles, message, bytes,
+                                     talk->age, pixels);
 }
 
-int bfm_inn_greeting_draw(const BfmInnGreeting *talk, const BfmForestMessageArt *art,
+int bfm_inn_greeting_draw(const BfmInnGreeting *talk, int dialogue, const BfmForestMessageArt *art,
                           const uint16_t tiles[512][1024], uint32_t pixels[240][320])
 {
     if (!talk || !art || !tiles || !pixels) return 0;
-    if (talk->phase == SERVICE) return draw_service(talk, art, tiles, pixels);
+    if (talk->phase == SERVICE) return draw_service(talk, dialogue, art, tiles, pixels);
     if (talk->phase == END_AT_COUNTER) return 1;
     const BfmForestMessageFrame *frame = bfm_inn_greeting_frame(talk);
     if (!frame) return 0;

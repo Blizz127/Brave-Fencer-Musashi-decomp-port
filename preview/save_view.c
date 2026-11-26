@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "save_menu.h"
 #include "inn_menu.h"
+#include "inn_greeting.h"
 #include "scene_tiles.h"
 
 #include <stdio.h>
@@ -95,7 +96,9 @@ static unsigned quantize(int value, int adjustment, int dim)
     return (unsigned)level;
 }
 
-static void shade(Canvas *c, int x, int y, int w, int h, int stripe, int dim)
+enum PanelBand { BODY, HEADING, INN_HEADING };
+
+static void shade(Canvas *c, int x, int y, int w, int h, enum PanelBand band, int dim)
 {
     static const int dither[4][4] = {
         {-4, 0,-3, 1}, {2,-2, 3,-1}, {-3, 1,-4, 0}, {3,-1, 2,-2}
@@ -103,10 +106,11 @@ static void shade(Canvas *c, int x, int y, int w, int h, int stripe, int dim)
     for (int j = 0; j < h; ++j) {
         for (int i = 0; i < w; ++i) {
             int d = dither[(y+j) % 4][(x+i) % 4];
-            int numerator = (stripe ? 40 : 120) * j * w - 40 * i * h;
-            int blue = ((stripe ? 208 : 112) * w * h + numerator + w * h / 2) / (w * h);
-            unsigned red = quantize(stripe ? 8 : 0, d, dim);
-            unsigned green = quantize(stripe ? 16 : 8, d, dim);
+            int numerator = (band == BODY ? 120 : 40) * j * w - 40 * i * h;
+            int base = band == BODY ? 112 : (band == HEADING ? 208 : 192);
+            int blue = (base * w * h + numerator + w * h / 2) / (w * h);
+            unsigned red = quantize(band == HEADING ? 8 : 0, d, dim);
+            unsigned green = quantize(band == HEADING ? 16 : 8, d, dim);
             unsigned b = quantize(blue, d, dim);
             if (dim && c->over_field) {
                 uint32_t field = c->pixels[y+j][x+i];
@@ -119,11 +123,8 @@ static void shade(Canvas *c, int x, int y, int w, int h, int stripe, int dim)
     }
 }
 
-static void panel(Canvas *c, int x, int y, int w, int h, int heading_height)
+static void panel_frame(Canvas *c, int x, int y, int w, int h, unsigned light)
 {
-    unsigned light = heading_height ? 128u : 88u;
-    shade(c, x+4, y+6, w-8, h-9, 0, !heading_height);
-    if (heading_height) shade(c, x+4, y+4, w-8, heading_height, 1, 0);
     for (int side = 0; side <= 1; ++side) {
         int dx = side * (w-8), dy = side * (h-8);
         blit(c, GLYPHS, x+dx, y+8, 8, h-16, 32, 72, 8, 7, light);
@@ -131,6 +132,13 @@ static void panel(Canvas *c, int x, int y, int w, int h, int heading_height)
         blit(c, GLYPHS, x+dx, y, 8, 8, side * 8, 72, 8, 8, light);
         blit(c, GLYPHS, x+dx, y+h-8, 8, 8, 16 + side * 8, 72, 8, 8, light);
     }
+}
+
+static void panel(Canvas *c, int x, int y, int w, int h, int heading_height)
+{
+    shade(c, x+4, y+6, w-8, h-9, BODY, !heading_height);
+    if (heading_height) shade(c, x+4, y+4, w-8, heading_height, HEADING, 0);
+    panel_frame(c, x, y, w, h, heading_height ? 128 : 88);
 }
 
 static void draw_row(Canvas *c, const BfmSaveMenu *menu, unsigned i)
@@ -216,18 +224,92 @@ void bfm_save_menu_draw(const BfmSaveArt *art, const BfmSaveMenu *menu, unsigned
     file_cursor(&c, menu->selected, fields);
 }
 
+int bfm_inn_menu_dialogue(const BfmInnMenu *menu)
+{
+    switch (menu->page) {
+    case BFM_INN_SERVICE:
+    case BFM_INN_SERVICE_ERROR:
+        return BFM_INN_NORMAL_DIALOGUE;
+    case BFM_INN_ROOM_ERROR:
+        if (!menu->notice) return BFM_INN_LOW_FUNDS;
+        /* Keep the selected room visible behind the preview notice. */
+        break;
+    case BFM_INN_ROOMS:
+        break;
+    case BFM_INN_REST:
+        return BFM_INN_PAID_DIRECTIONS;
+    default:
+        return BFM_INN_HIDE_DIALOGUE;
+    }
+    return menu->room < 6 ? BFM_INN_FIRST_ROOM_DESCRIPTION + (int)menu->room :
+                            BFM_INN_NORMAL_DIALOGUE;
+}
+
+static void inn_service_list(Canvas *c, unsigned selected, int active)
+{
+    static const char *const services[] = {"Sleep", "Save", "Chat", "Quit"};
+    unsigned light = active ? 128 : 88;
+    panel(c, 4, 12, 88, 75, active ? 13 : 0);
+    text(c, 34, 20, "INN", light);
+    for (unsigned i = 0; i < 4; ++i)
+        text(c, 25, 33 + 13*(int)i, services[i], light);
+    blit(c, GLYPHS, 13, 33 + 13*(int)selected, 8, 8, 48, 72, 8, 8, light);
+}
+
+/* The early village visit shows four offered rooms followed by two guests. */
+static void inn_room_list(Canvas *c, const BfmInnMenu *menu, int active)
+{
+    unsigned light = active ? 128 : 88;
+    shade(c, 160, 91, 152, 13, INN_HEADING, !active);
+    shade(c, 160, 104, 152, 82, BODY, !active);
+    panel_frame(c, 156, 87, 160, 102, light);
+    text(c, 198, 95, "CUSTOMERS", light);
+    for (unsigned i = 0; i < 6; ++i) {
+        int y = 108 + 13 * (int)i;
+        char line[12];
+        snprintf(line, sizeof line, "%u", 201u+i);
+        text(c, 171, y, line, light);
+        unsigned cost = menu->prices[i];
+        if (cost) {
+            text(c, 199, y, "Vacancy", light);
+            snprintf(line, sizeof line, "$%u", cost);
+            text(c, 290 - 7*(int)strlen(line), y, line, light);
+        } else {
+            text(c, 199, y, i == 4 ? "Wanda" : "Macho", light);
+            text(c, 276, y, "-", light);
+        }
+    }
+    blit(c, GLYPHS, 163, 108 + 13*(int)menu->room, 8, 8, 48, 72, 8, 8, light);
+}
+
+static void inn_room_fade(uint32_t pixels[240][320], unsigned age)
+{
+    /* Ages are 30 Hz room updates. The picture loses levels from each
+     * channel, stays black, then brings the counter back into view. */
+    if (age <= 10 || age >= 105) return;
+    unsigned levels = age <= 74 ? age - 10 : 105 - age;
+    if (levels > 31) levels = 31;
+    for (int y = 0; y < 240; ++y) {
+        for (int x = 0; x < 320; ++x) {
+            uint32_t src = pixels[y][x];
+            unsigned r = (src >> 19) & 31, g = (src >> 11) & 31, b = (src >> 3) & 31;
+            pixels[y][x] = rgb(r > levels ? r-levels : 0, g > levels ? g-levels : 0,
+                               b > levels ? b-levels : 0);
+        }
+    }
+}
+
 void bfm_inn_menu_draw(const BfmInnMenu *menu, const BfmSaveArt *art,
                        unsigned fields, uint32_t pixels[240][320])
 {
     Canvas c = {art, pixels, 1};
-    if (menu->page == BFM_INN_SERVICE || menu->page == BFM_INN_SERVICE_ERROR) {
-        static const char *const services[] = {"Sleep", "Save", "Chat", "Quit"};
-        panel(&c, 4, 12, 88, 75, 13);
-        text(&c, 34, 20, "INN", 128);
-        for (unsigned i = 0; i < 4; ++i)
-            text(&c, 25, 33 + 13*(int)i, services[i], 128);
-        blit(&c, GLYPHS, 13, 33 + 13*(int)menu->service, 8, 8, 48, 72, 8, 8, 128);
-        if (menu->page == BFM_INN_SERVICE_ERROR) {
+    if (bfm_inn_menu_dialogue(menu) != BFM_INN_HIDE_DIALOGUE) {
+        int services = menu->page == BFM_INN_SERVICE || menu->page == BFM_INN_SERVICE_ERROR;
+        inn_service_list(&c, menu->service, services);
+        inn_room_list(&c, menu, !services);
+        if (menu->page == BFM_INN_REST) inn_room_fade(pixels, menu->rest_age);
+        if ((menu->page == BFM_INN_SERVICE_ERROR || menu->page == BFM_INN_ROOM_ERROR) &&
+            menu->notice) {
             panel(&c, 24, 116, 272, 38, 29);
             text(&c, 32, 130, menu->notice, 128);
         }

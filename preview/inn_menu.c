@@ -26,7 +26,10 @@ BfmInnAction bfm_inn_menu_input(BfmInnMenu *menu, uint16_t pressed)
         if ((pressed & (UP | DOWN)) == DOWN) menu->service = (menu->service + 1) % 4;
         if (pressed & CROSS) {
             if (menu->service == QUIT) return BFM_INN_LEAVE;
-            if (menu->service == SAVE && menu->writable) {
+            if (menu->service == SLEEP) {
+                menu->room = 0;
+                menu->page = BFM_INN_ROOMS;
+            } else if (menu->service == SAVE && menu->writable) {
                 menu->page = BFM_INN_FILES;
             } else {
                 menu->page = BFM_INN_SERVICE_ERROR;
@@ -34,6 +37,28 @@ BfmInnAction bfm_inn_menu_input(BfmInnMenu *menu, uint16_t pressed)
                                                       "This service is unavailable.";
             }
         }
+        break;
+    case BFM_INN_ROOMS:
+        if (pressed & TRIANGLE) {
+            menu->page = BFM_INN_SERVICE;
+            break;
+        }
+        if ((pressed & (UP | DOWN)) == UP) menu->room = (menu->room + 5) % 6;
+        if ((pressed & (UP | DOWN)) == DOWN) menu->room = (menu->room + 1) % 6;
+        if (pressed & CROSS) {
+            if (!menu->room) return BFM_INN_STAY;
+            menu->notice = menu->room >= 4 ? "This room is occupied." :
+                                             "This room is unavailable in the preview.";
+            menu->page = BFM_INN_ROOM_ERROR;
+        }
+        break;
+    case BFM_INN_ROOM_ERROR:
+        if (pressed & (CROSS | TRIANGLE)) menu->page = BFM_INN_ROOMS;
+        break;
+    case BFM_INN_REST:
+        ++menu->rest_age;
+        if (menu->rest_age == 56) return BFM_INN_RECOVER;
+        if (menu->rest_age >= 111) menu->page = BFM_INN_SERVICE;
         break;
     case BFM_INN_FILES: {
         if (pressed & TRIANGLE) { menu->page = BFM_INN_SERVICE; break; }
@@ -68,6 +93,14 @@ BfmInnAction bfm_inn_menu_input(BfmInnMenu *menu, uint16_t pressed)
         break;
     }
     return BFM_INN_NONE;
+}
+
+void bfm_inn_menu_stay(BfmInnMenu *menu, int paid)
+{
+    if (menu->page != BFM_INN_ROOMS || menu->room) return;
+    menu->notice = NULL;
+    menu->rest_age = 0;
+    menu->page = paid ? BFM_INN_REST : BFM_INN_ROOM_ERROR;
 }
 
 void bfm_inn_menu_complete(BfmInnMenu *menu, const BfmSaveMenu *readback, const char *error)

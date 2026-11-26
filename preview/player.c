@@ -8,6 +8,7 @@
 #include "save_menu.h"
 #include "inn_profile.h"
 #include "inn_menu.h"
+#include "inn_field.h"
 #include "forest_walk.h"
 #include "gameplay_run.h"
 #include "bedroom.h"
@@ -256,7 +257,7 @@ static int present(Player *p) {
 static int bedroom_frame(Player *p) {
     uint32_t (*pixels)[320] = (uint32_t (*)[320])p->pixels;
     if (p->inn_service) {
-        int at_counter = p->inn_menu.page == BFM_INN_SERVICE || p->inn_menu.page == BFM_INN_SERVICE_ERROR;
+        int at_counter = bfm_inn_menu_dialogue(&p->inn_menu);
         if (!bfm_bedroom_draw_counter(p->bedroom, at_counter, pixels)) return -1;
         bfm_inn_menu_draw(&p->inn_menu, p->save_art, p->inn_age * 2u, pixels);
     } else if (!bfm_bedroom_draw(p->bedroom, pixels)) return -1;
@@ -277,6 +278,9 @@ static int keeper_service(Player *p, unsigned pressed, int previously_open)
         if (!p->save_art) return 0;
         if (p->save_copy) bfm_inn_profile_menu(p->save_copy, &p->saves);
         bfm_inn_menu_begin(&p->inn_menu, p->save_copy ? &p->saves : NULL);
+        BfmInnField *inn = bfm_bedroom_inn_counter(p->bedroom);
+        for (unsigned i = 0; i < 6; ++i)
+            p->inn_menu.prices[i] = bfm_inn_room_price(inn, i);
         p->inn_service = 1;
         p->inn_age = 0;
         return 1;
@@ -289,7 +293,12 @@ static int keeper_service(Player *p, unsigned pressed, int previously_open)
         bfm_inn_menu_complete(&p->inn_menu, error ? NULL : &p->saves, error);
         return 1;
     }
-    if (bfm_inn_menu_input(&p->inn_menu, pressed) == BFM_INN_LEAVE) {
+    BfmInnAction action = bfm_inn_menu_input(&p->inn_menu, pressed);
+    if (action == BFM_INN_STAY) {
+        bfm_inn_menu_stay(&p->inn_menu, bfm_inn_pay_room201(bfm_bedroom_inn_counter(p->bedroom)));
+    } else if (action == BFM_INN_RECOVER) {
+        bfm_inn_finish_room201(bfm_bedroom_inn_counter(p->bedroom));
+    } else if (action == BFM_INN_LEAVE) {
         p->inn_service = 0;
         bfm_desktop_voice_room_skip(p->voice);
         return bfm_bedroom_leave_inn(p->bedroom);
