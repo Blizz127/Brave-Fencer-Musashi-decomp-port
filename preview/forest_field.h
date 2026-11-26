@@ -35,6 +35,9 @@ typedef enum {
 BfmForestShoreFloor bfm_forest_shore_floor_step(const BfmForestField *field,
                                                 const int16_t from[3], int16_t to[3]);
 
+/* Clip a mounted short stride along the bounded vertical faces before probing support. */
+void bfm_forest_clip_field_walls(const BfmForestField *field, const int16_t from[3], int16_t to[3]);
+int bfm_forest_escape_floor_step(const BfmForestField *field, const int16_t from[3], int16_t to[3]);
 BfmForestShoreFloor bfm_forest_pursuit_floor_step(const BfmForestField *field,
                                                   const int16_t from[3], int16_t to[3]);
 
@@ -43,6 +46,7 @@ BfmForestShoreFloor bfm_forest_pursuit_floor_step(const BfmForestField *field,
 BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t room);
 void bfm_forest_field_free(BfmForestField *field);
 /* Borrow this room's unpacked scene and 36-byte authored doorway. */
+int bfm_forest_mount_summit_road(BfmForestField *field, const MusashiDiscMedia *disc);
 const uint8_t *bfm_forest_field_scene(const BfmForestField *field, size_t *size);
 const uint16_t (*bfm_forest_field_tiles(const BfmForestField *field))[1024];
 const uint8_t *bfm_forest_field_entrance(const BfmForestField *field, unsigned index);
@@ -200,6 +204,8 @@ int bfm_forest_ground(const BfmForestField *field, int16_t x, int16_t y,
                       int16_t z, BfmForestContact *contact);
 /* Sweep an airborne target along its path, or follow its support after
  * landing. Returns zero on unsupported terrain with its outputs intact. */
+int bfm_forest_escape_head_probe(const BfmForestField *field, const int16_t from[3],
+                                 int16_t to[3], int follow_ground, int *grounded);
 int bfm_forest_thrown_probe(const BfmForestField *field, const int16_t from[3],
                             int16_t to[3], int follow_ground, int *grounded);
 /* Resolve a short airborne step against the mounted walls and landing surface. */

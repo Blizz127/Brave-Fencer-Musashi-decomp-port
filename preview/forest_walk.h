@@ -37,6 +37,8 @@ uint16_t bfm_forest_walk_room(const BfmForestWalk *walk);
 int bfm_forest_walk_gunshot_sound(const BfmForestWalk *walk);
 int bfm_forest_walk_swing_sound(const BfmForestWalk *walk);
 int bfm_forest_walk_hit_sound(const BfmForestWalk *walk);
+/* Consume the earned 300B escape request once, preserving the game run. */
+int bfm_forest_walk_take_castle_request(BfmForestWalk *walk, RoomTransferDescriptor *destination);
 /* Set once by a grounded contact with the earned summit door. */
 const RoomTransferDescriptor *bfm_forest_walk_inner_exit(const BfmForestWalk *walk);
 struct BfmTowerBellSound;

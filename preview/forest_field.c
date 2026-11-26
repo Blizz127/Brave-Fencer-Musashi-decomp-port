@@ -168,7 +168,7 @@ struct BfmForestField {
     BfmForestOpeningData opening;
     uint8_t *scene;
     size_t scene_size;
-    BfmForestTerrain *terrain;
+    BfmForestTerrain *terrain, *summit_road;
     ForestEntrance entrances[FOREST_ENTRANCES];
     MusashiForestPlayerMesh *player;
 };
@@ -483,6 +483,7 @@ void bfm_forest_field_free(BfmForestField *field)
         bfm_fusion_model_free(field->fusion_model);
         bfm_forest_shore_free(field->bank_patrol);
         bfm_forest_shore_free(field->shore);
+        bfm_forest_terrain_free(field->summit_road);
         bfm_forest_terrain_free(field->terrain);
         free(field->scene);
         free_grid(&field->grid);
@@ -629,13 +630,34 @@ const uint8_t *bfm_forest_field_entrance(const BfmForestField *field, unsigned i
         ? bfm_forest_room_bytes(field, field->entrances[index].address, 36) : NULL;
 }
 
+int bfm_forest_mount_summit_road(BfmForestField *field, const MusashiDiscMedia *disc)
+{
+    if (!field || field->room != SUMMIT_ROOM || !disc) return 0;
+    if (field->summit_road) return 1;
+    const uint8_t *slot = bfm_forest_room_bytes(field, summit_descriptor_slot, 4);
+    const uint8_t *room = slot ? bfm_forest_room_bytes(field, read32(slot), 0xcc) : NULL;
+    if (!room) return 0;
+    const uint8_t *mesh = bfm_forest_room_bytes(field, read32(room + 0x98), 8);
+    const uint8_t *end = bfm_forest_room_bytes(field, read32(room + 0x88), GRID_HEADER);
+    if (!mesh || !end || end <= mesh) return 0;
+    BfmForestTerrain *road = bfm_forest_terrain_load_archive(disc, "SC02.CD", SUMMIT_MEMBER,
+                                                             mesh, (size_t)(end - mesh));
+    if (!road || !bfm_forest_terrain_set_lighting(road, room, 0x98)) {
+        bfm_forest_terrain_free(road);
+        return 0;
+    }
+    field->summit_road = road;
+    return 1;
+}
+
 int bfm_forest_draw_room(const BfmForestField *field, const BfmForestCamera *camera,
                          const BfmForestPose *pose, const BfmForestTransform *root,
                          uint32_t visible_parts, unsigned buffer, const BfmForestBladeFrame *blade,
                          const BfmForestActor *actors, size_t actor_count, const BfmForestDustCard *cards, size_t card_count,
                          uint32_t pixels[240][320])
 {
-    return field && bfm_forest_terrain_draw_entrance_with_effects(field->terrain, camera,
+    return field && bfm_forest_terrain_draw_entrance_with_effects(
+        field->summit_road ? field->summit_road : field->terrain, camera,
         field->player, pose, root, visible_parts, &field->blade, buffer, blade,
         actors, actor_count, cards, card_count, pixels);
 }
@@ -1893,6 +1915,13 @@ BfmForestShoreFloor bfm_forest_shore_floor_step(const BfmForestField *field,
     return shore_floor_step(field, from, to, SHORE_PATROL);
 }
 
+void bfm_forest_clip_field_walls(const BfmForestField *field, const int16_t from[3], int16_t to[3])
+{
+    int16_t foot[3] = {to[0], to[1], to[2]};
+    if (resolve_walls(&field->grid, contact_cell(&field->grid, from), from, foot, WALL_SCAN_BOUNDED, NULL))
+        memcpy(to, foot, sizeof foot);
+}
+
 BfmForestShoreFloor bfm_forest_pursuit_floor_step(const BfmForestField *field,
                                                   const int16_t from[3], int16_t to[3])
 {
@@ -2145,7 +2174,8 @@ static BfmForestTopStep tower_foot_sweep(const BfmForestField *field,
     const BfmForestContact *previous, const int16_t from[3], int16_t to[3])
 {
     if (!previous || !from || !to ||
-        !tower_walkable(previous) || abs(previous->height - from[1]) > 4 ||
+        (!tower_walkable(previous) && !(field->room == SUMMIT_ROOM && previous->flags == 0x4000)) ||
+        abs(previous->height - from[1]) > 4 ||
         from[1] != to[1] || abs(to[0] - from[0]) > 16 || abs(to[2] - from[2]) > 16)
         return BFM_FOREST_TOP_BLOCKED;
     int depth = floor_sweep_span(from, to) + 1;
@@ -2178,6 +2208,14 @@ static BfmForestTopStep tower_foot_sweep(const BfmForestField *field,
         }
     }
     return BFM_FOREST_TOP_BLOCKED;
+}
+
+int bfm_forest_escape_floor_step(const BfmForestField *field, const int16_t from[3], int16_t to[3])
+{
+    BfmForestContact previous;
+    return field && field->room == SUMMIT_ROOM &&
+           bfm_forest_ground(field, from[0], from[1] - 16, from[2], &previous) &&
+           tower_foot_sweep(field, &previous, from, to) == BFM_FOREST_TOP_GROUNDED;
 }
 
 /* The broad standing probe and the walking sweep use different edge
@@ -2427,7 +2465,7 @@ int bfm_forest_air_step(const BfmForestField *field, const int16_t from[3],
  * enters. Keep the separate integer rounding of normal projection and
  * outward clearance, including on tilted creek banks. */
 static int thrown_ground_cell(const FloorGrid *grid, ContactCell cell,
-                              const int16_t from[3], int16_t end[3])
+                              const int16_t from[3], int16_t end[3], int road)
 {
     for (unsigned i = 0; i < cell.count; ++i) {
         uint16_t token = cell.tokens[i];
@@ -2438,7 +2476,8 @@ static int thrown_ground_cell(const FloorGrid *grid, ContactCell cell,
         int clearance = n[1] < -3584 ? 6144 : 12032;
         if (crossing_margin(grid, face, (token & 0x8000) ? 4 : 3, from, end) < -clearance)
             continue;
-        if (face->flags || n[1] >= -0xbcb) return -1;
+        if (n[1] >= -0xbcb || (face->flags && !(road &&
+            (face->flags == 0x2000 || face->flags == 0x4000 || face->flags == 2)))) return -1;
         int64_t penetration = -signed_distance(grid, plane, end);
         int64_t length = (int64_t)n[0] * n[0] + (int64_t)n[1] * n[1] + (int64_t)n[2] * n[2];
         int64_t projected[3];
@@ -2468,7 +2507,7 @@ static int thrown_ground_cell(const FloorGrid *grid, ContactCell cell,
 }
 
 static int thrown_segment(const BfmForestField *field, const int16_t from[3],
-                          int16_t to[3], int *grounded)
+                          int16_t to[3], int *grounded, int road)
 {
     if (!field || !from || !to || !grounded || abs(to[0] - from[0]) >= 128 ||
         abs(to[2] - from[2]) >= 128) return 0;
@@ -2482,11 +2521,11 @@ static int thrown_segment(const BfmForestField *field, const int16_t from[3],
         int cross_x = !same_grid_index(from[0], end[0]);
         int cross_z = !same_grid_index(from[2], end[2]);
         if (cross_x && cross_z) return 0;
-        int hit = thrown_ground_cell(grid, start, from, end);
+        int hit = thrown_ground_cell(grid, start, from, end, road);
         if (!hit && (cross_x || cross_z)) {
             ContactCell finish = contact_cell(grid, end);
             if (!finish.count) return 0;
-            hit = thrown_ground_cell(grid, finish, from, end);
+            hit = thrown_ground_cell(grid, finish, from, end, road);
         }
         if (hit < 0) return 0;
         if (!hit) {
@@ -2501,24 +2540,37 @@ static int thrown_segment(const BfmForestField *field, const int16_t from[3],
 
 /* A resting target follows the bank with a travel-length floor sweep,
  * then a short support probe. An airborne target tests its exact path. */
-int bfm_forest_thrown_probe(const BfmForestField *field, const int16_t from[3],
-                            int16_t to[3], int follow_ground, int *grounded)
+static int body_ground_probe(const BfmForestField *field, const int16_t from[3],
+                            int16_t to[3], int follow_ground, int *grounded, int road)
 {
-    if (!follow_ground) return thrown_segment(field, from, to, grounded);
+    if (!follow_ground) return thrown_segment(field, from, to, grounded, road);
     if (!from || !to || !grounded) return 0;
     int span = floor_sweep_span(from, to);
     if (from[1] < INT16_MIN + 4 || to[1] > INT16_MAX - span - 1) return 0;
     int16_t near[3] = {from[0], (int16_t)(from[1] - 4), from[2]};
     int16_t far[3] = {to[0], (int16_t)(to[1] + span + 1), to[2]};
     int hit;
-    if (!thrown_segment(field, near, far, &hit) || !hit || far[1] > INT16_MAX - 6) return 0;
+    if (!thrown_segment(field, near, far, &hit, road) || !hit || far[1] > INT16_MAX - 6) return 0;
     int16_t support[3] = {far[0], (int16_t)(far[1] + 6), far[2]};
-    if (!thrown_segment(field, far, support, &hit) || !hit) return 0;
+    if (!thrown_segment(field, far, support, &hit, road) || !hit) return 0;
     /* The support probe owns height only. */
     far[1] = support[1];
     memcpy(to, far, sizeof far);
     *grounded = 1;
     return 1;
+}
+
+int bfm_forest_thrown_probe(const BfmForestField *field, const int16_t from[3],
+                            int16_t to[3], int follow_ground, int *grounded)
+{
+    return body_ground_probe(field, from, to, follow_ground, grounded, 0);
+}
+
+int bfm_forest_escape_head_probe(const BfmForestField *field, const int16_t from[3],
+                                 int16_t to[3], int follow_ground, int *grounded)
+{
+    return field && field->room == SUMMIT_ROOM &&
+           body_ground_probe(field, from, to, follow_ground, grounded, 1);
 }
 
 /* Rifle rounds test the segment against the room faces listed in the

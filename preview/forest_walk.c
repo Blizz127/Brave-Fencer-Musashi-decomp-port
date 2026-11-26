@@ -6,6 +6,7 @@
 #include "tower_interior.h"
 #include "tower_interior_note.h"
 #include "tower_summit.h"
+#include "tower_escape_camera.h"
 #include "tower_summit_transfer.h"
 #include "tower_summit_departure.h"
 #include "forest_shore_motion.h"
@@ -66,6 +67,8 @@ struct BfmForestWalk {
     BfmTowerAscentDoor summit_door;
     BfmTowerSummitTransfer summit_transfer;
     BfmTowerSummit *summit;
+    BfmTowerEscape escape;
+    BfmTowerEscapeCamera escape_camera;
     int summit_placed, summit_free;
     BfmTowerInterior *inner;
     const RoomTransferDescriptor *inner_exit;
@@ -1265,9 +1268,16 @@ uint16_t bfm_forest_walk_room(const BfmForestWalk *w)
     return w ? bfm_forest_gateway_transition_frame(&w->gateway).room : 0;
 }
 
+int bfm_forest_walk_take_castle_request(BfmForestWalk *w, RoomTransferDescriptor *destination)
+{
+    return w && bfm_gameplay_story_flag(w->gameplay, 0x80) &&
+           bfm_tower_escape_take_castle(&w->escape, destination);
+}
+
 int bfm_forest_walk_control(const BfmForestWalk *w)
 {
     if (w && w->summit_transfer.phase != BFM_SUMMIT_TRANSFER_IDLE) {
+        if (w->escape.phase) return w->escape.phase == BFM_ESCAPE_UPPER || w->escape.phase == BFM_ESCAPE_LOWER;
         if (!w->summit_free || bfm_tower_summit_pickup(w->summit) || bfm_tower_summit_active_lesson(w->summit)) return 0;
         return w->at_boundary ? 2 : 1;
     }
@@ -1725,12 +1735,53 @@ static int step_summit_player(BfmForestWalk *w, int x, int y, BfmSummitSkillInpu
     return bfm_tower_summit_camera(w->cached, &w->camera, w->eye) ? 1 : -1;
 }
 
-static int summit_play(BfmForestWalk *w, int x, int y, int ready, BfmSummitSkillInput input)
+static int step_summit_escape(BfmForestWalk *w, BfmTowerSummitPickup *pickup,
+                              int horizontal, int cross_edge, int cross_held)
+{
+    BfmForestField *field = bfm_tower_summit_room(w->summit);
+    BfmTowerEscape *e = &w->escape;
+    if (!e->phase && (!bfm_gameplay_story_flag(w->gameplay, 0x80) ||
+        !bfm_tower_escape_begin(e, field, w->cached, w->yaw))) return -1;
+    unsigned action = e->action;
+    if (!bfm_tower_escape_tick(e, field, horizontal, cross_edge, cross_held)) return -1;
+    if (e->phase == BFM_ESCAPE_CAUGHT && e->age == 7) {
+        BfmForestStatusValues v = bfm_forest_status_values(&w->gameplay->player);
+        if (v.hp > 0) bfm_forest_status_debit(&w->gameplay->player, (unsigned)v.hp);
+    }
+    restore_whole_position(w, e->position);
+    w->yaw = e->yaw;
+    w->actor.state = (uint8_t)e->action;
+    w->actor.phase = 1;
+    w->elapsed = action == e->action ? w->elapsed + 1 : 0;
+    w->motion = e->action && e->action < 4 ? RUN : IDLE;
+    if (e->action == 2 || e->action == 3) {
+        if (!w->jump_poses.visible &&
+            !bfm_forest_jump_poses_load(w->disc, w->data.animation_table, &w->jump_poses)) return -1;
+        enum BfmForestJumpPhase phase = e->action == 2 ? BFM_FOREST_JUMP_RISING : BFM_FOREST_JUMP_FALLING;
+        uint32_t frame = bfm_forest_jump_pose_frame(&w->jump_poses, phase, w->elapsed);
+        if (!frame || !select_pose(w, frame, w->jump_poses.visible)) return -1;
+    } else if (!update_pose(w)) return -1;
+    /* Locomotion keeps the sword equipment selected by the pickup script. */
+    const uint32_t weapons = UINT32_C(0x3f) << 21;
+    w->visible = (w->visible & ~weapons) |
+                 (bfm_tower_summit_pickup_frame(pickup)->visible_parts & weapons);
+    if (e->phase >= BFM_ESCAPE_UPPER) bfm_forest_hud_show(w->hud);
+    bfm_forest_hud_tick(w->hud);
+    bfm_forest_hud_submit_points(w->hud, &w->gameplay->player);
+    if (!bfm_tower_summit_road_tick(w->summit, e)) return -1;
+    return bfm_tower_escape_lens(&w->escape_camera, e->phase, e->age, e->position,
+                                 &w->camera, w->eye) ? 1 : -1;
+}
+
+static int summit_play(BfmForestWalk *w, int x, int y, int ready, BfmSummitSkillInput input,
+                       int jump_pressed, int jump_held)
 {
     int confirm = input.confirm_edge, reveal = input.reveal_edge;
     if (w->summit_free) {
         BfmTowerSummitPickup *pickup = bfm_tower_summit_pickup(w->summit);
         BfmTowerSummitLesson *lesson = bfm_tower_summit_active_lesson(w->summit);
+        if (pickup && bfm_tower_summit_pickup_goal(pickup, NULL, NULL) == BFM_SUMMIT_PICKUP_FOLLOWUP)
+            return step_summit_escape(w, pickup, x, jump_pressed, jump_held);
         if (pickup) {
             if (!step_summit_pickup(w, pickup)) return -1;
         } else if (lesson) {
@@ -1779,7 +1830,8 @@ static int summit_play(BfmForestWalk *w, int x, int y, int ready, BfmSummitSkill
     return bfm_tower_summit_camera(w->cached, &w->camera, w->eye) ? 1 : -1;
 }
 
-static int step_summit_transfer(BfmForestWalk *w, int x, int y, BfmSummitSkillInput input)
+static int step_summit_transfer(BfmForestWalk *w, int x, int y, BfmSummitSkillInput input,
+                                int jump_pressed, int jump_held)
 {
     bfm_tower_summit_transfer_advance(&w->summit_transfer, w->summit != NULL);
     BfmTowerSummitFrame frame = bfm_tower_summit_transfer_frame(&w->summit_transfer);
@@ -1789,7 +1841,7 @@ static int step_summit_transfer(BfmForestWalk *w, int x, int y, BfmSummitSkillIn
     }
     if (frame.place_destination && !w->summit_placed && !place_on_summit(w)) return -1;
     if (w->summit_placed) {
-        int result = summit_play(w, x, y, frame.entrance_ready, input);
+        int result = summit_play(w, x, y, frame.entrance_ready, input, jump_pressed, jump_held);
         if (result != 1) return result;
     } else if (!step_summit_departure(w, &frame)) {
         return -1;
@@ -1921,7 +1973,7 @@ static int step_controller(BfmForestWalk *w, int x, int y, uint16_t pressed,
         BfmSummitSkillInput input = {.shoulder = shoulder, .square_edge = attack_pressed,
             .circle_edge = circle.edge, .confirm_edge = cross_pressed,
             .reveal_edge = (pressed & BFM_FOREST_TRIANGLE) != 0};
-        return step_summit_transfer(w, read_x, read_y, input);
+        return step_summit_transfer(w, read_x, read_y, input, jump_pressed, jump_held);
     }
     if (w->gateway.active) return tick_gateway(w, read_x, read_y, attack_pressed, jump_pressed, jump_held, circle,
                                               cross_pressed, (pressed & BFM_FOREST_TRIANGLE) != 0);

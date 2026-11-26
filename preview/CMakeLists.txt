@@ -117,6 +117,10 @@ add_executable(musashi_native_boot
     tower_summit_figures.c
     tower_summit_pressure.c
     tower_summit_residents.c
+    tower_escape.c
+    tower_escape_camera.c
+    tower_escape_head.c
+    tower_escape_props.c
     tower_summit_pickup.c
     tower_summit_stun.c
     tower_stun_cast.c

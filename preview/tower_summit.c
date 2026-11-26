@@ -3,6 +3,7 @@
 #include "tower_sky.h"
 #include "tower_summit_figures.h"
 #include "tower_summit_pressure.h"
+#include "tower_escape_props.h"
 
 #include <stdlib.h>
 
@@ -18,6 +19,9 @@ struct BfmTowerSummit {
     const MusashiDiscMedia *disc;
     BfmTowerSummitArrival arrival;
     BfmTowerSummitPressure pressure;
+    BfmTowerEscapeProps *road;
+    BfmForestTransform road_head;
+    int escaping, head_relocated, head_visible;
     BfmTowerSummitLesson lesson;
     unsigned field_updates;
     BfmForestMessageArt *art;
@@ -55,6 +59,7 @@ void bfm_tower_summit_free(BfmTowerSummit *summit)
         bfm_tower_summit_arrival_close(&summit->arrival);
         bfm_tower_summit_lesson_close(&summit->lesson);
         bfm_forest_message_art_free(summit->art);
+        bfm_tower_escape_props_free(summit->road);
         bfm_tower_summit_figures_free(summit->figures);
         bfm_tower_summit_stun_free(summit->skill);
         bfm_tower_summit_residents_free(summit->residents);
@@ -175,6 +180,23 @@ BfmTowerSummitLesson *bfm_tower_summit_active_lesson(BfmTowerSummit *summit)
     return summit && summit->lesson.phase ? &summit->lesson : NULL;
 }
 
+int bfm_tower_summit_road_tick(BfmTowerSummit *summit, const BfmTowerEscape *escape)
+{
+    if (!summit || !escape) return 0;
+    summit->escaping = 1;
+    summit->road_head = escape->head.root;
+    summit->head_relocated = escape->phase >= BFM_ESCAPE_REVEAL;
+    summit->head_visible = escape->head.visible;
+    if (escape->phase > BFM_ESCAPE_REVEAL || (escape->phase == BFM_ESCAPE_REVEAL && escape->age >= 19)) {
+        if (!bfm_forest_mount_summit_road(summit->field, summit->disc)) return 0;
+    }
+    if (escape->phase < BFM_ESCAPE_LOWER) return 1;
+    if (!summit->road) summit->road = bfm_tower_escape_props_open(summit->field);
+    if (!summit->road) return 0;
+    bfm_tower_escape_props_tick(summit->road, escape->head.position[2]);
+    return 1;
+}
+
 int bfm_tower_summit_draw(const BfmTowerSummit *summit, const BfmForestCamera *camera,
                           const BfmForestPose *pose, const BfmForestTransform *root,
                           uint32_t visible_parts, unsigned buffer, const BfmForestBladeFrame *blade,
@@ -200,16 +222,21 @@ int bfm_tower_summit_draw(const BfmTowerSummit *summit, const BfmForestCamera *c
         visible_parts &= ~((UINT32_C(1) << 21) | (UINT32_C(1) << 22));
         blade = NULL;
     }
-    BfmForestActor figures[BFM_TOWER_SUMMIT_FIGURES + BFM_SUMMIT_RESIDENTS + 1];
+    BfmForestActor figures[BFM_TOWER_SUMMIT_FIGURES + BFM_SUMMIT_RESIDENTS + 1 + BFM_TOWER_ESCAPE_PROPS];
     size_t count = bfm_tower_summit_figures_actors(summit->figures, figures,
                                                   BFM_TOWER_SUMMIT_FIGURES);
     if (count != BFM_TOWER_SUMMIT_FIGURES) return 0;
     count += bfm_tower_summit_residents_actors(summit->residents, figures + count, BFM_SUMMIT_RESIDENTS);
     if (skill && skill->blade) figures[count++] = *skill->blade;
+    if (summit->escaping) figures[0].root = &summit->road_head;
+    if (summit->head_relocated) {
+        count = summit->head_visible ? 1 : 0;
+        count += bfm_tower_escape_props_actors(summit->road, figures + count, BFM_TOWER_ESCAPE_PROPS);
+    }
 
     BfmForestDustCard glow[BFM_SUMMIT_PICKUP_GLOW_CARDS];
     size_t glow_count = 0;
-    if (pickup && pickup->has_pose && (pickup->visible_parts & (UINT32_C(1) << 25))) {
+    if (!summit->escaping && pickup && pickup->has_pose && (pickup->visible_parts & (UINT32_C(1) << 25))) {
         glow_count = bfm_tower_summit_pickup_glow(summit->field, pickup->lumina_anchors,
             &model, summit->eye, camera, summit->field_updates, glow, BFM_SUMMIT_PICKUP_GLOW_CARDS);
     }
