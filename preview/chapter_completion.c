@@ -107,7 +107,10 @@ int bfm_chapter_completion_step(BfmChapterCompletion *state, const MusashiDiscMe
         if (state->fields >= state->read_fields) page(state, BFM_CHAPTER_SAVE_FILES);
         break;
     case BFM_CHAPTER_SAVE_FILES: {
-        if (pressed & TRIANGLE) return 0;
+        if (pressed & TRIANGLE) {
+            page(state, BFM_CHAPTER_RESUME);
+            break;
+        }
         unsigned horizontal = pressed & (RIGHT | LEFT), vertical = pressed & (UP | DOWN);
         if (horizontal == RIGHT || horizontal == LEFT) state->files.selected ^= 1u;
         if (vertical == UP || vertical == DOWN) state->files.selected ^= 2u;
@@ -119,8 +122,8 @@ int bfm_chapter_completion_step(BfmChapterCompletion *state, const MusashiDiscMe
         break;
     }
     case BFM_CHAPTER_SAVE_CONFIRM:
-        if (pressed & TRIANGLE) return 0;
-        if (pressed & CROSS) page(state, BFM_CHAPTER_SAVE_WRITING);
+        if (pressed & TRIANGLE) page(state, BFM_CHAPTER_SAVE_FILES);
+        else if (pressed & CROSS) page(state, BFM_CHAPTER_SAVE_WRITING);
         break;
     case BFM_CHAPTER_SAVE_WRITING:
         if (state->fields >= CARD_WRITE_FIELDS) finish_write(state, copy, disc);

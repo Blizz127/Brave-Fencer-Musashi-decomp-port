@@ -379,9 +379,7 @@ static int advance_completed_chapter(Player *p, unsigned fields)
         uint16_t pressed = p->pressed;
         p->pressed = 0;
         BfmChapterSavePage before = p->chapter.page;
-        /* An unsupported Back choice leaves its prompt on screen. */
-        if (!bfm_chapter_completion_step(&p->chapter, p->disc, p->save_copy, pressed) &&
-            !(pressed & PAD_TRIANGLE)) return 0;
+        if (!bfm_chapter_completion_step(&p->chapter, p->disc, p->save_copy, pressed)) return 0;
         if (p->chapter.page == BFM_CHAPTER_TWO_TITLE && before != BFM_CHAPTER_TWO_TITLE)
             SDL_SetWindowTitle(p->window, "Brave Fencer Musashi - Chapter 2");
         if (p->chapter.page == BFM_CHAPTER_BEDROOM) {
