@@ -33,13 +33,13 @@ static int read_motion(const ForestPlayerArchive *archive, uint32_t table, unsig
     return 0;
 }
 
-int bfm_forest_lift_load(const BfmForestField *field, const MusashiDiscMedia *disc,
-                         uint32_t table, BfmForestLiftData *out)
+int bfm_forest_lift_motions(const MusashiDiscMedia *disc, uint32_t table,
+                            BfmForestLiftData *out)
 {
     static const unsigned slots[BFM_LIFT_CLIPS] = {18, 25, 26, 27, 28};
     BfmForestLiftData data = {0};
     ForestPlayerArchive archive;
-    if (!field || !disc || !out || !forest_player_archive_open(disc, &archive)) return 0;
+    if (!disc || !out || !forest_player_archive_open(disc, &archive)) return 0;
     for (unsigned clip = 0; clip < BFM_LIFT_CLIPS; ++clip) {
         int loop = clip != BFM_LIFT_RAISE && clip != BFM_LIFT_THROW;
         if (!read_motion(&archive, table, slots[clip], loop, &data.motion[clip])) return 0;
@@ -47,6 +47,17 @@ int bfm_forest_lift_load(const BfmForestField *field, const MusashiDiscMedia *di
     const BfmLiftMotion *raise = &data.motion[BFM_LIFT_RAISE];
     const BfmLiftMotion *toss = &data.motion[BFM_LIFT_THROW];
     if (raise->count < 2 || toss->event == 0 || toss->event >= toss->count) return 0;
+    *out = data;
+    return 1;
+}
+
+int bfm_forest_lift_load(const BfmForestField *field, const MusashiDiscMedia *disc,
+                         uint32_t table, BfmForestLiftData *out)
+{
+    BfmForestLiftData data;
+    if (!field || !out || !bfm_forest_lift_motions(disc, table, &data)) return 0;
+    const BfmLiftMotion *raise = &data.motion[BFM_LIFT_RAISE];
+    const BfmLiftMotion *toss = &data.motion[BFM_LIFT_THROW];
     data.raise_offsets = bfm_forest_room_bytes(field, UINT32_C(0x801893fc), 3 * raise->count);
     data.toss_offsets = bfm_forest_room_bytes(field, UINT32_C(0x80189438), 3 * toss->event);
     const uint8_t *velocity = bfm_forest_room_bytes(field, UINT32_C(0x8018917c), 12);

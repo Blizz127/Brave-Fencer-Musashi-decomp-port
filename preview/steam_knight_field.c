@@ -5,6 +5,7 @@
 #include "steam_knight_roof_cells.h"
 #include "tower_sky.h"
 #include "../pc_port/forest_player_bytes.h"
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -17,6 +18,16 @@ struct BfmSteamKnightField {
     size_t bytes;
     BfmForestTerrain *terrain;
     BfmTowerSky *sky;
+    uint8_t *damaged_mesh;
+    size_t damaged_size;
+    unsigned open_gates;
+    int arena_ready;
+    unsigned arena_round, arena_stage;
+    int16_t stomp_origin_z;
+    double arena_radius;
+    double town_radius_targets[3];
+    unsigned town_radius_slot;
+    BfmForestCamera arena_view;
     MusashiForestPlayerMesh *hero;
     RoomTransferDescriptor entrance;
 };
@@ -99,12 +110,50 @@ int bfm_steam_knight_field_open_roof(BfmSteamKnightField *field)
     BfmTowerSky *sky = bfm_steam_knight_sky_open(field->scene, field->bytes,
                                                  bfm_forest_terrain_tiles(field->terrain));
     int ready = sky && bfm_forest_terrain_replace_mesh(field->terrain, changed, new_length);
-    free(changed);
     if (!ready) {
+        free(changed);
         bfm_tower_sky_free(sky);
         return 0;
     }
     field->sky = sky;
+    field->damaged_mesh = changed;
+    field->damaged_size = new_length;
+    return 1;
+}
+
+/* Each throw breaks a wall in the existing field: the hall door, the
+ * approach to the town square, and the western wall beyond the houses. */
+int bfm_steam_knight_field_break_gate(BfmSteamKnightField *field, unsigned gate)
+{
+    static const struct { uint32_t address, end; } gates[] = {
+        {UINT32_C(0x801da5fc), UINT32_C(0x801db658)},
+        {UINT32_C(0x801db658), UINT32_C(0x801dc180)},
+        {UINT32_C(0x801de674), UINT32_C(0x801df3b4)}
+    };
+    if (!field || !field->damaged_mesh || !gate || gate > sizeof gates / sizeof gates[0])
+        return 0;
+    if (gate <= field->open_gates) return 1;
+
+    const uint8_t *base = field->damaged_mesh;
+    size_t bytes = field->damaged_size;
+    uint8_t *pending = NULL;
+    for (unsigned i = field->open_gates; i < gate; ++i) {
+        size_t size = gates[i].end - gates[i].address, new_size = 0;
+        const uint8_t *record = scene_range(field, gates[i].address, size);
+        uint8_t *next = bfm_steam_knight_gate_mesh(base, bytes, record, size, &new_size);
+        free(pending);
+        if (!next) return 0;
+        base = pending = next;
+        bytes = new_size;
+    }
+    if (!bfm_forest_terrain_replace_mesh(field->terrain, pending, bytes)) {
+        free(pending);
+        return 0;
+    }
+    free(field->damaged_mesh);
+    field->damaged_mesh = pending;
+    field->damaged_size = bytes;
+    field->open_gates = gate;
     return 1;
 }
 
@@ -112,6 +161,7 @@ void bfm_steam_knight_field_free(BfmSteamKnightField *field)
 {
     if (!field) return;
     musashi_forest_player_mesh_free(field->hero);
+    free(field->damaged_mesh);
     bfm_tower_sky_free(field->sky);
     bfm_forest_terrain_free(field->terrain);
     free(field->scene);
@@ -299,4 +349,74 @@ void bfm_steam_knight_duel_camera(BfmForestCamera *camera)
         .projection = 292
     };
     camera_at(camera, (const int16_t[3]){140, -2728, -3464});
+}
+
+void bfm_steam_knight_field_track_arena(BfmSteamKnightField *field, unsigned round,
+                                       unsigned stage, const int16_t hero[3],
+                                       const int16_t body[3])
+{
+    if (!field || !hero || !body || round > 2) return;
+    int town = round == 2;
+    int stomp = town && stage == 6;
+    int entering = !field->arena_ready || field->arena_round != round;
+    if (stomp && (entering || field->arena_stage != stage))
+        field->stomp_origin_z = body[2];
+
+    /* The first two venues frame the machine from the diagonal. Closing
+     * the distance to its exposed core also brings the camera closer. */
+    double target;
+    if (!town) {
+        double dx = hero[0] - body[0], dz = hero[2] - body[2];
+        target = fmin(900.0, 644.0 + hypot(dx, dz));
+    } else if (stomp) {
+        /* Pull back during each leap and keep the approach to the
+         * landing in view as the machine shifts along the street. */
+        target = 644.0 + fmax(0.0, -2050.0 - body[1]);
+    } else {
+        target = 1156.0;
+    }
+    if (town) {
+        if (entering) {
+            for (unsigned i = 0; i < 3; ++i) field->town_radius_targets[i] = target;
+            field->town_radius_slot = 0;
+        }
+        /* The view reacts three updates after the machine changes height. */
+        unsigned slot = field->town_radius_slot;
+        double delayed = field->town_radius_targets[slot];
+        field->town_radius_targets[slot] = target;
+        field->town_radius_slot = (slot + 1) % 3;
+        target = delayed;
+    }
+    field->arena_radius = entering ? target :
+        field->arena_radius + (target - field->arena_radius) * 0.25;
+
+    BfmForestCamera *view = &field->arena_view;
+    BfmForestTransform axes;
+    bfm_forest_actor_pitch_yaw((unsigned)-569, town ? 0u : (unsigned)-512,
+                               (const int16_t[3]){0, 0, 0}, &axes);
+    for (unsigned i = 0; i < 3; ++i)
+        for (unsigned j = 0; j < 3; ++j)
+            view->rotation[i][j] = axes.rotation[j][i];
+    const int target_z = stomp ? field->stomp_origin_z : body[2];
+    const int focus[3] = {
+        body[0] + (town ? 2 : -121), -2050, target_z - (town ? 5 : 132)
+    };
+    int16_t eye[3];
+    for (unsigned i = 0; i < 3; ++i)
+        eye[i] = (int16_t)lround(focus[i] - field->arena_radius * view->rotation[2][i] / 4096.0);
+    view->projection = 300;
+    camera_at(view, eye);
+    field->arena_round = round;
+    field->arena_stage = stage;
+    field->arena_ready = 1;
+}
+
+void bfm_steam_knight_field_arena_camera(const BfmSteamKnightField *field,
+                                        BfmForestCamera *camera)
+{
+    if (!camera) return;
+    if (field && field->arena_ready)
+        *camera = field->arena_view;
+    else
+        bfm_steam_knight_duel_camera(camera);
 }

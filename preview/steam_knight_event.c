@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "steam_knight_event.h"
 #include "forest_walk.h"
+#include "steam_knight_rotation.h"
 
 enum {
     REVEAL_HALL = 234, ENTER_STRIDE = 11, APPROACH_STRIDE = 12,
@@ -130,20 +131,9 @@ static void postfire_motion(BfmSteamKnightEvent *e)
 }
 static void charge(BfmSteamKnightEvent *e, uint16_t pressed, uint16_t held)
 {
-    uint8_t *gauge = &e->run->player.record[0x47];
-    if (!(held & BFM_FOREST_R1)) {
-        *gauge = 0;
-        e->grip = 0;
-    } else if (e->grip && (pressed & BFM_FOREST_TRIANGLE) && *gauge == 128) {
-        *gauge = 0;
-        e->grip = 0;
+    if (bfm_lumina_charge(&e->grip, &e->run->player.record[0x47],
+                          !!(held & BFM_FOREST_R1), !!(pressed & BFM_FOREST_TRIANGLE)))
         stage(e, BFM_STEAM_ROTATING);
-    } else if (e->grip) {
-        *gauge = *gauge >= 125 ? 128 : (uint8_t)(*gauge + 3);
-    } else {
-        e->grip = 1;
-        *gauge = 0;
-    }
 }
 int bfm_steam_event_tick(BfmSteamKnightEvent *e, uint16_t pressed, uint16_t held, unsigned live_flames)
 {

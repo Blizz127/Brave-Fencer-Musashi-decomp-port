@@ -16,7 +16,16 @@ struct BfmSteamKnightHeroMotion {
     BfmForestJump jump;
     BfmForestJumpPoses jump_poses;
     BfmForestSwing swing;
+    BfmForestCast charge_poses;
     BfmForestHurtClip hurt;
+    const BfmForestLiftData *lift_data;
+    BfmForestLift lift;
+    BfmLiftStep lift_step;
+    int16_t held_position[3];
+    int lift_start;
+    unsigned grip, charge_key, charge_moving, spin_age;
+    int16_t spin_heading;
+    unsigned braced, previous_brace, brace_age;
     BfmSteamKnightHeroSample sample;
     int32_t start_speed;
     unsigned swing_tick, next_kind, hurt_side, hurt_tick;
@@ -40,6 +49,7 @@ BfmSteamKnightHeroMotion *bfm_steam_hero_open(const MusashiDiscMedia *disc,
     if (!h->surface || !bfm_forest_ground(h->surface, feet[0], feet[1], feet[2], &support) ||
         abs(support.height - feet[1]) > 4 || !bfm_forest_jump_surface(&support) ||
         !bfm_forest_jump_poses_load(disc, table, &h->jump_poses) ||
+        !bfm_forest_cast_load(&h->charge_poses, disc, table) ||
         !bfm_forest_swing_load(disc, &h->swing) || !bfm_forest_hurt_load(disc, &h->hurt)) {
         bfm_steam_hero_free(h);
         return NULL;
@@ -73,6 +83,229 @@ static void rest(BfmSteamKnightHeroMotion *h)
     h->jump = (BfmForestJump){0};
     h->ground = (BfmForestManual){.entry_velocity = h->start_speed};
     h->sample.body = h->sample.motion = h->sample.elapsed = 0;
+    h->braced = h->previous_brace = 0;
+}
+
+int bfm_steam_hero_place(BfmSteamKnightHeroMotion *h, const int16_t feet[3], int16_t heading)
+{
+    BfmForestContact support;
+    if (!h || !feet || !bfm_forest_ground(h->surface, feet[0], feet[1], feet[2], &support) ||
+        abs(support.height - feet[1]) > 4 || !bfm_forest_jump_surface(&support)) return 0;
+    if (h->lift_data && (h->lift.clip != BFM_LIFT_THROW ||
+        h->lift.age < h->lift_data->motion[BFM_LIFT_THROW].event)) return 0;
+    rest(h);
+    h->lift_data = NULL;
+    h->lift = (BfmForestLift){0};
+    h->lift_start = 0;
+    h->lift_step = BFM_LIFT_PLAY;
+    h->sample.action = 0;
+    h->sample.heading = heading;
+    for (unsigned i = 0; i < 3; ++i) {
+        h->sample.feet[i] = feet[i];
+        h->actor.position[i] = (uint32_t)(uint16_t)feet[i] << 16;
+    }
+    return 1;
+}
+
+static const uint8_t *scene_row(const uint8_t *scene, size_t bytes, uint32_t address,
+                                size_t size)
+{
+    const uint32_t base = UINT32_C(0x80128158);
+    if (!scene || address < base || address - base > bytes || size > bytes - (address - base))
+        return NULL;
+    return scene + (address - base);
+}
+
+int bfm_steam_hero_lift_load(const MusashiDiscMedia *disc, const uint8_t *scene,
+                            size_t bytes, BfmForestLiftData *out)
+{
+    BfmForestLiftData data;
+    const uint8_t *room = scene_row(scene, bytes, UINT32_C(0x80190894), 4);
+    if (!out || !room) return 0;
+    const uint8_t *desc = scene_row(scene, bytes, u32le(room), 0x50);
+    if (!desc || !bfm_forest_lift_motions(disc, u32le(desc + 0x4c), &data)) return 0;
+    data.raise_offsets = scene_row(scene, bytes, UINT32_C(0x801931c0),
+                                   3 * (data.motion[BFM_LIFT_RAISE].count - 1));
+    data.toss_offsets = scene_row(scene, bytes, UINT32_C(0x801931fc),
+                                  3 * data.motion[BFM_LIFT_THROW].event);
+    const uint8_t *speed = scene_row(scene, bytes, UINT32_C(0x80192f48), 4);
+    if (!data.raise_offsets || !data.toss_offsets || !speed) return 0;
+    data.walking_speed = (int32_t)u32le(speed);
+    if (data.walking_speed >= 0) return 0;
+    *out = data;
+    return 1;
+}
+
+int bfm_steam_hero_brace(BfmSteamKnightHeroMotion *h, const int16_t corrected_feet[3],
+                         const BfmForestLiftData *data)
+{
+    if (!h) return 0;
+    if (!corrected_feet) {
+        h->braced = h->previous_brace = 0;
+        return 1;
+    }
+    if (!data || h->actor.state != 1 || h->jump.active || h->lift_data) return 0;
+    const BfmLiftMotion *clip = &data->motion[BFM_LIFT_BRACE];
+    if (!clip->count || clip->count > BFM_LIFT_KEYS) return 0;
+    if (!h->braced)
+        h->brace_age = h->previous_brace ? (h->brace_age + 1) % clip->count : 0;
+    h->braced = 1;
+    for (unsigned axis = 0; axis < 3; axis += 2) {
+        h->sample.feet[axis] = corrected_feet[axis];
+        h->actor.position[axis] = ((uint32_t)(uint16_t)corrected_feet[axis] << 16) |
+                                  (h->actor.position[axis] & 0xffffu);
+    }
+    h->sample.elapsed = h->brace_age;
+    h->sample.body = clip->frames[h->brace_age];
+    return 1;
+}
+
+static int grab_ready(const BfmSteamKnightHeroMotion *h, uint16_t pressed)
+{
+    return h && h->braced && h->actor.state == 1 && !h->jump.active &&
+           (pressed & BFM_FOREST_SQUARE) && !(pressed & BFM_FOREST_CROSS);
+}
+
+int bfm_steam_hero_grab_segment(const BfmSteamKnightHeroMotion *h, uint16_t pressed,
+                                int16_t from[3], int16_t to[3])
+{
+    if (!from || !to || !grab_ready(h, pressed)) return 0;
+    const int16_t reach[3] = {0, -16, -32};
+    BfmForestTransform root;
+    bfm_forest_actor_root(h->sample.heading, h->sample.feet, &root);
+    memcpy(from, h->sample.feet, sizeof h->sample.feet);
+    bfm_forest_lift_world(&root, reach, to);
+    return 1;
+}
+
+int bfm_steam_hero_grab(BfmSteamKnightHeroMotion *h, uint16_t pressed,
+                        const BfmForestLiftData *data, const int16_t local_grip[3])
+{
+    if (!grab_ready(h, pressed) || !data || !local_grip) return 0;
+    h->lift_data = data;
+    h->lift = (BfmForestLift){.clip = BFM_LIFT_RAISE, .target = 1};
+    memcpy(h->lift.grip, local_grip, sizeof h->lift.grip);
+    rest(h);
+    h->actor.state = 13;
+    h->lift_start = 1;
+    return 1;
+}
+
+BfmLiftStep bfm_steam_hero_carry(const BfmSteamKnightHeroMotion *h, int16_t world[3])
+{
+    if (!h) return BFM_LIFT_PLAY;
+    if (world && (h->lift_step == BFM_LIFT_ATTACH || h->lift_step == BFM_LIFT_WALK_ATTACH))
+        memcpy(world, h->held_position, sizeof h->held_position);
+    return h->lift_step;
+}
+
+static int carry(BfmSteamKnightHeroMotion *h, const BfmForestCamera *camera,
+                 int x, int y, uint16_t pressed)
+{
+    const BfmForestLiftData *data = h->lift_data;
+    if (h->lift_start) {
+        h->lift_start = 0;
+    } else {
+        h->lift_step = bfm_forest_lift_tick(&h->lift, data, x || y,
+                                           !!(pressed & BFM_FOREST_SQUARE));
+    }
+    if (h->lift_step == BFM_LIFT_FINISHED) {
+        h->lift_data = NULL;
+        rest(h);
+        return 1;
+    }
+    if (h->lift_step == BFM_LIFT_ATTACH || h->lift_step == BFM_LIFT_WALK_ATTACH) {
+        BfmForestTransform root;
+        bfm_forest_actor_root(h->sample.heading, h->sample.feet, &root);
+        if (!bfm_forest_lift_grip(data, &h->lift, &root, h->held_position)) return 0;
+        if (h->lift_step == BFM_LIFT_WALK_ATTACH) {
+            int16_t heading;
+            if (!bfm_forest_manual_heading(camera, x, y, &heading)) return 0;
+            if (bfm_forest_carry_step(h->surface, &h->actor, heading,
+                                      data->walking_speed, h->sample.feet))
+                h->sample.heading = heading;
+        }
+    }
+    h->actor.state = h->lift.clip == BFM_LIFT_THROW ? 14 : 13;
+    h->sample.elapsed = h->lift.age;
+    h->sample.body = data->motion[h->lift.clip].frames[h->lift.age];
+    return 1;
+}
+
+BfmSteamHeroLumina bfm_steam_hero_lumina(BfmSteamKnightHeroMotion *h,
+    const BfmLuminaRotation *rotation, BfmForestStatus *player,
+    const BfmForestCamera *camera, int x, int y, uint16_t pressed, uint16_t held,
+    BfmSteamFlameRay rays[BFM_ROTATION_RAYS], size_t *count)
+{
+    if (!h || !rotation ||
+        !rotation->held || !player || !camera || !rays || !count ||
+        x < -1 || x > 1 || y < -1 || y > 1) return BFM_STEAM_LUMINA_ERROR;
+    *count = 0;
+    uint8_t *gauge = &player->record[0x47];
+    if (h->actor.state != 8) {
+        int charging = h->actor.state == 17;
+        if (h->jump.active || h->lift_data || (!charging && h->actor.state > 1) ||
+            (pressed & (BFM_FOREST_CROSS | BFM_FOREST_SQUARE))) {
+            if (h->grip) {
+                h->grip = *gauge = 0;
+                if (charging) h->actor.state = h->ground.moving ? 1 : 0;
+            }
+            return BFM_STEAM_LUMINA_PASS;
+        }
+        int triangle = !!(pressed & BFM_FOREST_TRIANGLE);
+        if (!charging && !(held & BFM_FOREST_R1))
+            return triangle ? BFM_STEAM_LUMINA_SLASH : BFM_STEAM_LUMINA_PASS;
+        int spin = bfm_lumina_charge(&h->grip, gauge, !!(held & BFM_FOREST_R1), triangle);
+        if (!spin && triangle) {
+            h->grip = *gauge = 0;
+            if (charging) h->actor.state = h->ground.moving ? 1 : 0;
+            return BFM_STEAM_LUMINA_SLASH;
+        }
+        if (!spin && !h->grip) {
+            if (charging) h->actor.state = h->ground.moving ? 1 : 0;
+            return BFM_STEAM_LUMINA_PASS;
+        }
+        if (!spin) {
+            if (charging) h->actor.state = h->ground.moving ? 1 : 0;
+            BfmForestManualResult ground = bfm_forest_manual_tick(&h->ground, h->surface,
+                &h->actor, camera, x, y, &h->sample.heading, h->sample.feet);
+            if (ground == BFM_FOREST_MANUAL_ERROR) return BFM_STEAM_LUMINA_ERROR;
+            if (ground == BFM_FOREST_MANUAL_FALL) {
+                h->grip = *gauge = 0;
+                if (!bfm_forest_fall_begin(&h->jump, &h->ground, &h->actor))
+                    return BFM_STEAM_LUMINA_ERROR;
+                return BFM_STEAM_LUMINA_PASS;
+            }
+            unsigned moving = !!(x || y);
+            const BfmForestCastClip *clip = moving ? &h->charge_poses.strafe : &h->charge_poses.stance;
+            if (!charging || h->charge_moving != moving) h->charge_key = 0;
+            else h->charge_key = (h->charge_key + 1) % clip->count;
+            h->charge_moving = moving;
+            h->actor.state = h->sample.action = 17;
+            h->sample.elapsed = h->charge_key;
+            h->sample.body = clip->keys[h->charge_key].pose;
+            return BFM_STEAM_LUMINA_STANCE;
+        }
+        rest(h);
+        h->spin_heading = h->sample.heading;
+        h->spin_age = 1;
+        h->actor.state = 8;
+    } else {
+        ++h->spin_age;
+    }
+    const BfmLuminaRotationKey *pose = bfm_lumina_rotation_pose(rotation, h->spin_age,
+                                            h->spin_heading, &h->sample.heading);
+    if (!pose) {
+        rest(h);
+        h->sample.action = 0;
+        h->sample.heading = h->spin_heading;
+        return BFM_STEAM_LUMINA_FINISHED;
+    }
+    *count = bfm_lumina_rotation_rays(rotation, h->spin_age, h->sample.feet, h->spin_heading, rays);
+    h->sample.action = 8;
+    h->sample.elapsed = h->spin_age;
+    h->sample.body = pose->body;
+    return BFM_STEAM_LUMINA_ROTATE;
 }
 
 static int jump_pose(BfmSteamKnightHeroMotion *h)
@@ -124,7 +357,7 @@ static int swing(BfmSteamKnightHeroMotion *h, int starting, BfmSteamKnightHeroSt
 
 int bfm_steam_hero_recoil(BfmSteamKnightHeroMotion *h, int16_t heading)
 {
-    if (!h || h->actor.state == RECOIL) return 0;
+    if (!h || h->lift_data || h->actor.state == RECOIL) return 0;
     BfmForestHurt direction = {0};
     if (!bfm_forest_hurt_begin(&direction, h->sample.heading, heading)) return 0;
     h->hurt_side = direction.side;
@@ -172,7 +405,12 @@ int bfm_steam_hero_tick(BfmSteamKnightHeroMotion *h, const BfmForestCamera *came
     if (!h || !camera || !strike || x < -1 || x > 1 || y < -1 || y > 1) return 0;
     *strike = (BfmSteamKnightHeroStrike){0};
     int ok = 1;
-    if (h->actor.state == RECOIL) {
+    h->lift_step = BFM_LIFT_PLAY;
+    h->previous_brace = h->braced;
+    h->braced = 0;
+    if (h->lift_data) {
+        ok = carry(h, camera, x, y, pressed);
+    } else if (h->actor.state == RECOIL) {
         ok = recoil_step(h);
     } else if (h->actor.state == SWING) {
         ok = swing(h, 0, strike);

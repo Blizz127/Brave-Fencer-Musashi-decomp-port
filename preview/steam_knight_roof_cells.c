@@ -31,29 +31,33 @@ static void write32(uint8_t *p, uint32_t value)
     for (unsigned i = 0; i < 4; ++i) p[i] = (uint8_t)(value >> (8 * i));
 }
 
-static int read_roof(const uint8_t *record, size_t bytes, RoofCell roof[ROOF_CELLS],
-                     Span *materials)
+static int read_cells(const uint8_t *record, size_t bytes, unsigned count,
+                      RoofCell roof[ROOF_CELLS], Span *materials)
 {
-    enum { HEADER = 16, ENTRY = 12, INDEX_BYTES = ROOF_CELLS * ENTRY };
-    if (bytes < HEADER + INDEX_BYTES || read32(record) != 0x43 ||
-        read32(record + 4) != 0 || read32(record + 8) != ROOF_CELLS) return 0;
+    enum { HEADER = 16, ENTRY = 12 };
+    size_t index_bytes = count * ENTRY;
+    if (bytes < HEADER + index_bytes || read32(record) != 0x43 ||
+        read32(record + 4) != 0 || read32(record + 8) != count) return 0;
     const uint8_t *body = record + HEADER;
     size_t start = read32(record + 12);
-    if (start < INDEX_BYTES || start > bytes - HEADER) return 0;
+    if (start < index_bytes || start > bytes - HEADER) return 0;
     *materials = (Span){body + start, bytes - HEADER - start};
     if (!materials->size || materials->size % 16) return 0;
 
     size_t end = start;
-    for (unsigned i = ROOF_CELLS; i-- > 0;) {
+    for (unsigned i = count; i-- > 0;) {
         const uint8_t *entry = body + i * ENTRY;
         size_t slot = read32(entry), offset = read32(entry + 4);
         if (slot >= DIRECTORY || slot % 4 || read32(entry + 8) != 0 ||
-            offset < INDEX_BYTES || offset % 4 || offset >= end) return 0;
+            offset < index_bytes || offset % 4 || offset >= end) return 0;
         roof[i] = (RoofCell){slot / 4, {body + offset, end - offset}};
         end = offset;
     }
-    return end == INDEX_BYTES && roof[0].index % WIDTH != WIDTH - 1 &&
-           roof[1].index == roof[0].index + 1 && roof[2].index == roof[0].index + WIDTH &&
+    if (end != index_bytes) return 0;
+    int next_column = roof[0].index % WIDTH != WIDTH - 1 &&
+                      roof[1].index == roof[0].index + 1;
+    if (count == 2) return next_column || roof[1].index == roof[0].index + WIDTH;
+    return next_column && roof[2].index == roof[0].index + WIDTH &&
            roof[3].index == roof[2].index + 1;
 }
 
@@ -98,9 +102,9 @@ static int copy_cell(Span cell, Span base_materials, Span local_materials, uint8
     return 1;
 }
 
-uint8_t *bfm_steam_knight_roof_mesh(const uint8_t *base_mesh, size_t base_size,
-                                    const uint8_t *replacement, size_t replacement_size,
-                                    size_t *out_size)
+static uint8_t *replace_cells(const uint8_t *base_mesh, size_t base_size,
+                              const uint8_t *replacement, size_t replacement_size,
+                              unsigned count, size_t *out_size)
 {
     if (!out_size) return NULL;
     *out_size = 0;
@@ -109,7 +113,7 @@ uint8_t *bfm_steam_knight_roof_mesh(const uint8_t *base_mesh, size_t base_size,
         read32(base_mesh) != 0x42 || base_mesh[4] != 0) return NULL;
     RoofCell roof[ROOF_CELLS];
     Span local;
-    if (!read_roof(replacement, replacement_size, roof, &local)) return NULL;
+    if (!read_cells(replacement, replacement_size, count, roof, &local)) return NULL;
 
     const uint8_t *table = base_mesh + 8;
     unsigned old_count = read16(base_mesh + 6);
@@ -140,7 +144,7 @@ uint8_t *bfm_steam_knight_roof_mesh(const uint8_t *base_mesh, size_t base_size,
         if (previous) {
             Span source = {table + previous, offset - previous};
             Span extra = {NULL, 0};
-            if (applied < ROOF_CELLS && roof[applied].index == previous_index) {
+            if (applied < count && roof[applied].index == previous_index) {
                 Span changed = roof[applied++].cell;
                 if (!copy_cell(source, materials, extra, NULL) || changed.size < 28 ||
                     read32(source.data + 8) != read32(changed.data + 8) ||
@@ -156,11 +160,23 @@ uint8_t *bfm_steam_knight_roof_mesh(const uint8_t *base_mesh, size_t base_size,
         previous = offset;
         previous_index = i;
     }
-    if (applied != ROOF_CELLS) goto reject;
+    if (applied != count) goto reject;
     *out_size = cursor;
     return out;
 
 reject:
     free(out);
     return NULL;
+}
+
+uint8_t *bfm_steam_knight_roof_mesh(const uint8_t *mesh, size_t bytes,
+                                    const uint8_t *record, size_t size, size_t *out_size)
+{
+    return replace_cells(mesh, bytes, record, size, ROOF_CELLS, out_size);
+}
+
+uint8_t *bfm_steam_knight_gate_mesh(const uint8_t *mesh, size_t bytes,
+                                    const uint8_t *record, size_t size, size_t *out_size)
+{
+    return replace_cells(mesh, bytes, record, size, 2, out_size);
 }

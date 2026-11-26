@@ -50,6 +50,12 @@ const MusashiForestPlayerPart *musashi_forest_player_mesh_part(
 MusashiForestPlayerMesh *musashi_forest_player_mesh_white_part_view(
     const MusashiForestPlayerMesh *mesh, unsigned part);
 uint32_t musashi_forest_player_mesh_white_parts(const MusashiForestPlayerMesh *mesh);
+/* Borrow geometry with extra vertex modulation for the selected parts.
+ * Textured faces retain the mounted material. The source outlives the view. */
+MusashiForestPlayerMesh *musashi_forest_player_mesh_lit_view(
+    const MusashiForestPlayerMesh *mesh, uint32_t parts, uint8_t extra_light);
+unsigned musashi_forest_player_mesh_extra_light(const MusashiForestPlayerMesh *mesh,
+                                                unsigned part);
 void musashi_forest_player_mesh_free(MusashiForestPlayerMesh *mesh);
 
 #ifdef __cplusplus

@@ -36,6 +36,9 @@ typedef enum {
  * per effective field update. A release event consumes the existing held root. */
 BfmLiftStep bfm_forest_lift_tick(BfmForestLift *lift, const BfmForestLiftData *data,
                                  int direction, int square_edge);
+/* Decode the shared player clips. The room supplies its attachment offsets and speed. */
+int bfm_forest_lift_motions(const MusashiDiscMedia *disc, uint32_t animation_table,
+                            BfmForestLiftData *data);
 int bfm_forest_lift_load(const BfmForestField *field, const MusashiDiscMedia *disc,
                          uint32_t animation_table, BfmForestLiftData *data);
 void bfm_forest_lift_world(const BfmForestTransform *root, const int16_t local[3],

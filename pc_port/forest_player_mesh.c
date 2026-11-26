@@ -17,7 +17,8 @@ static const uint32_t payload_origin = UINT32_C(0x800cedf8);
 
 struct MusashiForestPlayerMesh {
     unsigned count;
-    uint32_t white_parts;
+    uint32_t white_parts, lit_parts;
+    uint8_t extra_light;
     MusashiForestPlayerPart parts[MUSASHI_FOREST_PLAYER_PARTS];
     MusashiForestPlayerVector *vectors;
     MusashiForestPlayerFace *faces;
@@ -226,16 +227,41 @@ const MusashiForestPlayerPart *musashi_forest_player_mesh_part(
     return mesh->parts+index;
 }
 
-MusashiForestPlayerMesh *musashi_forest_player_mesh_white_part_view(
-    const MusashiForestPlayerMesh *mesh, unsigned part)
+static MusashiForestPlayerMesh *borrow_parts(const MusashiForestPlayerMesh *mesh)
 {
-    if (!mesh || part >= mesh->count) return NULL;
     MusashiForestPlayerMesh *view = calloc(1, sizeof *view);
     if (!view) return NULL;
     view->count = mesh->count;
     memcpy(view->parts, mesh->parts, mesh->count * sizeof view->parts[0]);
-    view->white_parts = UINT32_C(1) << part;
     return view;
+}
+
+MusashiForestPlayerMesh *musashi_forest_player_mesh_white_part_view(
+    const MusashiForestPlayerMesh *mesh, unsigned part)
+{
+    if (!mesh || part >= mesh->count) return NULL;
+    MusashiForestPlayerMesh *view = borrow_parts(mesh);
+    if (view) view->white_parts = UINT32_C(1) << part;
+    return view;
+}
+
+MusashiForestPlayerMesh *musashi_forest_player_mesh_lit_view(
+    const MusashiForestPlayerMesh *mesh, uint32_t parts, uint8_t extra_light)
+{
+    if (!mesh || !parts || !extra_light || (parts >> mesh->count)) return NULL;
+    MusashiForestPlayerMesh *view = borrow_parts(mesh);
+    if (view) {
+        view->lit_parts = parts;
+        view->extra_light = extra_light;
+    }
+    return view;
+}
+
+unsigned musashi_forest_player_mesh_extra_light(const MusashiForestPlayerMesh *mesh,
+                                                unsigned part)
+{
+    return mesh && part < mesh->count && (mesh->lit_parts & (UINT32_C(1) << part)) ?
+           mesh->extra_light : 0;
 }
 
 uint32_t musashi_forest_player_mesh_white_parts(const MusashiForestPlayerMesh *mesh)
