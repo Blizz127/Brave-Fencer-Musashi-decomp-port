@@ -1036,6 +1036,9 @@ int bfm_forest_tick_shore_actor_with_run(BfmForestField *field, const int16_t pl
                 field->player_hit_yaw = yaw;
             }
         }
+        if (!field->player_hit_power &&
+            bfm_forest_shore_figures_bite(field->shore_figures, &field->player_hit_yaw))
+            field->player_hit_power = 9;
         for (unsigned i = 0; i < FOREST_BANK_ROUNDS; ++i) {
             BfmForestRifleRound *round = &field->rounds[i];
             if (!round->active) continue;

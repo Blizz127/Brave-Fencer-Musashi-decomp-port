@@ -4,7 +4,7 @@
 #include "forest_opening_data.h"
 #include "../pc_port/forest_player_bytes.h"
 
-/* Both attacks test a segment on the attacker's completed model transform
+/* Each attack tests a segment on the attacker's completed model transform
  * against the player's world-aligned default body. */
 static int hits_player(const BfmForestField *field, const BfmForestTransform *attacker,
                        const BfmForestTransform *player, const int16_t local[2][3])
@@ -45,16 +45,30 @@ int bfm_forest_rifle_hits_player(const BfmForestField *field,
     return hits_player(field, projectile, player, local);
 }
 
-int bfm_forest_soldier_hits_player(const BfmForestField *field,
-                                   const BfmForestTransform *soldier,
-                                   const BfmForestTransform *player)
+static int mounted_segment_hits(const BfmForestField *field, uint32_t descriptor,
+                                const BfmForestTransform *attacker,
+                                const BfmForestTransform *player)
 {
-    if (!field || !soldier || !player) return 0;
-    const uint8_t *points = bfm_forest_room_bytes(field, UINT32_C(0x8018aad4), 16);
+    if (!field || !attacker || !player) return 0;
+    const uint8_t *points = bfm_forest_room_bytes(field, descriptor, 16);
     if (!points) return 0;
     int16_t local[2][3];
     for (unsigned i = 0; i < 2; ++i)
         for (unsigned axis = 0; axis < 3; ++axis)
             local[i][axis] = s16le(points + 8 * i + 2 * axis);
-    return hits_player(field, soldier, player, local);
+    return hits_player(field, attacker, player, local);
+}
+
+int bfm_forest_soldier_hits_player(const BfmForestField *field,
+                                   const BfmForestTransform *soldier,
+                                   const BfmForestTransform *player)
+{
+    return mounted_segment_hits(field, UINT32_C(0x8018aad4), soldier, player);
+}
+
+int bfm_forest_mouth_hits_player(const BfmForestField *field,
+                                 const BfmForestTransform *figure,
+                                 const BfmForestTransform *player)
+{
+    return mounted_segment_hits(field, UINT32_C(0x8018af78), figure, player);
 }

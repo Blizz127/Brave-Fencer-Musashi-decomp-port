@@ -12,6 +12,9 @@ enum { BFM_FOREST_SHORE_FIGURES = 4 };
 BfmForestShoreFigures *bfm_forest_shore_figures_open(const BfmForestField *field);
 void bfm_forest_shore_figures_free(BfmForestShoreFigures *figures);
 
+/* The active mouth frame reports the yaw only on an actual body contact. */
+int bfm_forest_shore_figures_bite(const BfmForestShoreFigures *figures, int16_t *yaw);
+
 /* Called after the player's position has been committed for this field update. */
 void bfm_forest_shore_figures_tick(BfmForestShoreFigures *figures,
                                    const int16_t position[3]);

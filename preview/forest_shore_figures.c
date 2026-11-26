@@ -2,6 +2,7 @@
 #include "forest_shore_figures.h"
 #include "forest_shore_pose.h"
 #include "forest_guard_contact.h"
+#include "forest_rifle_contact.h"
 #include "forest_boulders.h"
 #include "forest_shore_behavior.h"
 #include "forest_shore_response.h"
@@ -34,6 +35,8 @@ struct BfmForestShoreFigures {
     BfmForestPose base_pose;
     BfmForestGuardBox boxes[BODY_BOXES];
     uint16_t initial_health, initial_flags;
+    int bite_landed;
+    int16_t bite_yaw;
     int16_t grip_offset[3], base_offset[3];
     ShoreFigure placed[BFM_FOREST_SHORE_FIGURES];
 };
@@ -318,6 +321,7 @@ void bfm_forest_shore_figures_tick_aim(BfmForestShoreFigures *figures, const int
                                       const int16_t aim[3], int targetable)
 {
     if (!figures || !player || !aim) return;
+    figures->bite_landed = 0;
     for (unsigned i = 0; i < BFM_FOREST_SHORE_FIGURES; ++i) {
         ShoreFigure *f = &figures->placed[i];
         uint32_t clip = 0;
@@ -340,6 +344,13 @@ void bfm_forest_shore_figures_tick_aim(BfmForestShoreFigures *figures, const int
             }
             if (step == BFM_SHORE_RESPONSE_NORMAL) {
                 unsigned event = bfm_forest_shore_behavior_tick(&f->behavior, f->at, player, aim, targetable);
+                if ((event & BFM_SHORE_FIGURE_ATTACK_CONTACT) && targetable) {
+                    BfmForestTransform body = {.translation = {player[0], player[1], player[2]}};
+                    if (bfm_forest_mouth_hits_player(figures->field, &f->root, &body)) {
+                        figures->bite_landed = 1;
+                        figures->bite_yaw = f->behavior.yaw;
+                    }
+                }
                 if (event & BFM_SHORE_FIGURE_RETIRE) {
                     f->behavior.state = 0;
                     continue;
@@ -380,6 +391,13 @@ void bfm_forest_shore_figures_tick_aim(BfmForestShoreFigures *figures, const int
             if (!release) f->attachment_root = f->root;
         }
     }
+}
+
+int bfm_forest_shore_figures_bite(const BfmForestShoreFigures *figures, int16_t *yaw)
+{
+    if (!figures || !yaw || !figures->bite_landed) return 0;
+    *yaw = figures->bite_yaw;
+    return 1;
 }
 
 void bfm_forest_shore_figures_tick(BfmForestShoreFigures *figures, const int16_t player[3])

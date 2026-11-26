@@ -17,4 +17,8 @@ int bfm_forest_soldier_hits_player(const BfmForestField *field,
                                    const BfmForestTransform *soldier,
                                    const BfmForestTransform *player);
 
+int bfm_forest_mouth_hits_player(const BfmForestField *field,
+                                 const BfmForestTransform *figure,
+                                 const BfmForestTransform *player);
+
 #endif
