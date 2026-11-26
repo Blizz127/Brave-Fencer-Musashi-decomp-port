@@ -288,7 +288,7 @@ static int keeper_service(Player *p, unsigned pressed, int previously_open)
     ++p->inn_age;
     if (p->inn_menu.page == BFM_INN_WRITING) {
         unsigned file = p->inn_menu.card.selected + 1;
-        const char *error = bfm_inn_profile_save(p->save_copy, file, record);
+        const char *error = bfm_inn_profile_save(p->save_copy, file, record, p->disc);
         if (!error) bfm_inn_profile_menu(p->save_copy, &p->saves);
         bfm_inn_menu_complete(&p->inn_menu, error ? NULL : &p->saves, error);
         return 1;

@@ -61,10 +61,11 @@ BfmInnProfile *bfm_inn_profile_create(const char *seed, const char *directory, c
     *error = "Could not read a complete 128 KiB source memory card.";
     if (!valid_size) goto failed;
     bfm_save_menu_read_image(&menu, profile->image, sizeof profile->image);
-    *error = "The source must have a readable Musashi file with an occupied slot.";
+    *error = "Use an empty formatted card or a readable Musashi file with an occupied slot.";
     unsigned valid = 0;
     for (unsigned i = 0; i < 4; ++i) valid += menu.rows[i].state == BFM_SAVE_VALID;
-    if (menu.issue || !valid) goto failed;
+    CardImage image = {profile->image, sizeof profile->image};
+    if (menu.issue || (!valid && !card_is_unallocated(image))) goto failed;
     *error = "Could not select the save-copy directory.";
     profile->storage = cs_storage_create();
     if (!profile->storage || bfm_plat_memcard_set_dir(directory) != BFM_PLAT_OK) goto failed;
@@ -85,8 +86,9 @@ void bfm_inn_profile_menu(BfmInnProfile *profile, BfmSaveMenu *menu)
     bfm_save_menu_read_image(menu, profile->image, sizeof profile->image);
 }
 
-const char *bfm_inn_profile_save(BfmInnProfile *profile, unsigned file, const BfmSaveRecord *record)
+const char *bfm_inn_profile_save(BfmInnProfile *profile, unsigned file, const BfmSaveRecord *record,
+                                 const MusashiDiscMedia *disc)
 {
     if (!profile) return "This card is read-only.";
-    return bfm_inn_card_save(profile->image, file, record, checked_commit, profile);
+    return bfm_inn_card_save(profile->image, file, record, checked_commit, profile, disc);
 }

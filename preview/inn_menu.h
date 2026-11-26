@@ -21,7 +21,7 @@ typedef struct {
 } BfmInnMenu;
 
 /* Begin after Hotelo's hospitality dialogue. Supply a parsed snapshot only for
- * a distinct writable card with an existing Musashi file. NULL keeps the
+ * a distinct writable profile with an occupied file or an unused card. NULL keeps the
  * normal read-only player's card outside the save flow. */
 void bfm_inn_menu_begin(BfmInnMenu *menu, const BfmSaveMenu *card);
 /* Each call consumes fresh PlayStation button edges. WRITE is emitted once;

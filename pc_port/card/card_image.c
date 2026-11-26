@@ -235,6 +235,20 @@ CardResult card_validate(CardImage image)
     return load_directory(image, &dir);
 }
 
+int card_is_unallocated(CardImage image)
+{
+    Directory dir;
+    if (load_directory(image, &dir) != CARD_OK) return 0;
+    for (unsigned i = 0; i < CARD_MAX_FILES; ++i) {
+        const uint8_t *record = dir.records[i];
+        if (record[0] != FREE_BLOCK || get32(record + 4) != 0 ||
+            get16(record + 8) != END_LINK ||
+            memcmp(record + 10, (const uint8_t[CARD_MAX_NAME]){0}, CARD_MAX_NAME))
+            return 0;
+    }
+    return 1;
+}
+
 CardResult card_format(CardImage image)
 {
     uint8_t *header = image.bytes;

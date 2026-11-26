@@ -8,11 +8,15 @@ enum { SLEEP, SAVE, CHAT, QUIT };
 void bfm_inn_menu_begin(BfmInnMenu *menu, const BfmSaveMenu *card)
 {
     *menu = (BfmInnMenu){ .page = BFM_INN_SERVICE };
-    if (card && card->selected < 4 && !card->issue && card->page == BFM_SAVE_PICK) {
+    /* The writable profile supplies either a decoded file or a validated,
+     * unallocated card. Continue handles its no-data screen separately. */
+    if (card && card->selected < 4 && !card->issue &&
+        (card->page == BFM_SAVE_PICK || card->page == BFM_SAVE_CARD_LOADING)) {
         menu->card = *card;
+        menu->card.page = BFM_SAVE_PICK;
         menu->writable = 1;
     } else {
-        menu->card.issue = card ? "An existing Musashi file is required." :
+        menu->card.issue = card ? "The writable card could not be read." :
                                   "Open a writable card copy to save.";
     }
 }

@@ -39,6 +39,8 @@ typedef enum {
 CardResult card_validate(CardImage image);
 /* True only for an entire, exactly-sized, all-zero unformatted image. */
 int card_is_blank(CardImage image);
+/* A valid formatted directory whose 15 logical entries are all unused. */
+int card_is_unallocated(CardImage image);
 /* Inspect only the logical header's two identifier bytes. Check the image
    length and replacement table before resolving sector zero. A completely
    blank image has no identifier. Other header bytes and directory contents

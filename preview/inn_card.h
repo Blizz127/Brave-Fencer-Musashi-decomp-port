@@ -17,9 +17,10 @@ typedef int (*BfmInnCardCommit)(void *context, unsigned port, const uint8_t *exp
 
 /* The expected image was captured when the Save picker was opened. The
  * caller retains it. Return NULL after a successful commit or an error for
- * the player. Read-only sessions do not supply a commit function. */
+ * the player. The mounted US disc supplies the header for a formatted empty
+ * card. Read-only sessions do not supply a commit function. */
 const char *bfm_inn_card_save(const uint8_t *expected, unsigned file,
                               const BfmSaveRecord *record, BfmInnCardCommit commit,
-                              void *context);
+                              void *context, const MusashiDiscMedia *disc);
 
 #endif

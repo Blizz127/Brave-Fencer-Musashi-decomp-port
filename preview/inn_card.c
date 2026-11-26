@@ -15,6 +15,8 @@ enum {
 /* All fields of the on-card live record are byte arrays. */
 typedef char InnRecordSize[sizeof(BfmSaveRecord) == 732 ? 1 : -1];
 
+static const char name[] = "BASLUS-00726MUSASHI";
+
 static int empty_bytes(const uint8_t *bytes, size_t size)
 {
     for (size_t i = 0; i < size; ++i)
@@ -32,7 +34,6 @@ static void store_sum(uint8_t *result, const uint8_t *bytes, size_t size)
 
 const char *bfm_inn_card_encode(CardImage image, unsigned file, const BfmSaveRecord *record)
 {
-    static const char name[] = "BASLUS-00726MUSASHI";
     if (!record || file < 1 || file > MUSASHI_SAVE_FILES)
         return "Choose a save file.";
 
@@ -74,15 +75,40 @@ const char *bfm_inn_card_encode(CardImage image, unsigned file, const BfmSaveRec
     return NULL;
 }
 
+/* The mounted US disc supplies the title and three 16x16 four-bit TIMs.
+ * Each image uses the same palette. The remaining header fields are zero. */
+static int create_game_file(CardImage image, const MusashiDiscMedia *disc)
+{
+    enum { TIM_START = 0x542d8, TIM_BYTES = 192, FRAME_BYTES = 128 };
+    uint8_t header[512] = {'S', 'C', 0x13, 1};
+    size_t size;
+    if (!disc || !musashi_disc_media_read_root_range(disc, "SLUS_007.26", 0x63610,
+                                header + 4, 40, &size) ||
+        !musashi_disc_media_read_root_range(disc, "SLUS_007.26", TIM_START + 20,
+                                header + 96, 32, &size)) return 0;
+    for (unsigned i = 0; i < 3; ++i) {
+        size_t pixels = TIM_START + i * TIM_BYTES + 64;
+        if (!musashi_disc_media_read_root_range(disc, "SLUS_007.26", pixels,
+                        header + 128 + i * FRAME_BYTES, FRAME_BYTES, &size)) return 0;
+    }
+    return card_create(image, name, 1) == CARD_OK &&
+           card_write(image, name, 0, header, sizeof header) == CARD_OK;
+}
+
 const char *bfm_inn_card_save(const uint8_t *expected, unsigned file,
                               const BfmSaveRecord *record, BfmInnCardCommit commit,
-                              void *context)
+                              void *context, const MusashiDiscMedia *disc)
 {
     if (!expected || !commit) return "Select a writable card copy to save.";
     uint8_t *replacement = malloc(CARD_IMAGE_SIZE);
     if (!replacement) return "Insufficient memory to save.";
     memcpy(replacement, expected, CARD_IMAGE_SIZE);
-    const char *issue = bfm_inn_card_encode((CardImage){replacement, CARD_IMAGE_SIZE}, file, record);
+    CardImage image = {replacement, CARD_IMAGE_SIZE};
+    const char *issue;
+    if (card_is_unallocated(image) && !create_game_file(image, disc))
+        issue = "Could not create the Musashi game file from your disc.";
+    else
+        issue = bfm_inn_card_encode(image, file, record);
     if (!issue && !commit(context, 0, expected, replacement))
         issue = "Could not commit this save. Reopen the card and try again.";
     free(replacement);
