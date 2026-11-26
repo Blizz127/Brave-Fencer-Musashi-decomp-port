@@ -588,6 +588,18 @@
       "span_sha256": "0d5abf9efbd0fd074bdc9adfd40f39996b0c652b38fce98e511f5a0f7ecff381"
     },
     {
+      "name": "func_8017435C",
+      "region": "sc01_0005",
+      "vram": 2149008220,
+      "size": 40,
+      "source": "src/overlays/sc01_0005/8017435c.c",
+      "recovery": "c",
+      "extent": "function",
+      "origin": "Independently reconstructed from the USA bedroom scene overlay. Registers its scene callback at script startup.",
+      "source_sha256": "b580e09895fe15c0699dde6c3fcfdaea2a8a2ccc52c404be47429a80e1c536f8",
+      "span_sha256": "fd9d460d33fe988a3e09694c6f798a9f069a1a54b5199c10a7512e71984245a5"
+    },
+    {
       "name": "func_80178CBC",
       "region": "sc01_0005",
       "vram": 2149027004,
