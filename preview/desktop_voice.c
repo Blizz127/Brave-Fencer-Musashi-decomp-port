@@ -415,7 +415,11 @@ void bfm_desktop_voice_room_score(DesktopVoice *v, BfmForestScore *score)
         v->fading_score = v->room_score;
         bfm_castle_score_fade(v->fading_score);
     }
-    if (score) stop_tower_music(v);
+    if (score) {
+        if (v->fading_score == score) v->fading_score = NULL;
+        bfm_forest_score_rewind(score);
+        stop_tower_music(v);
+    }
     v->room_score = score;
     if (v->device) SDL_UnlockAudioDevice(v->device);
     if (v->device && score) SDL_PauseAudioDevice(v->device, 0);
