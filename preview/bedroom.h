@@ -9,4 +9,5 @@ void bfm_bedroom_free(BfmBedroom *room);
 int bfm_bedroom_step(BfmBedroom *room);
 int bfm_bedroom_draw(BfmBedroom *room, uint32_t pixels[240][320]);
 int bfm_bedroom_endpoint(const BfmBedroom *room);
+struct ForestVoice *bfm_bedroom_voice(BfmBedroom *room, unsigned *generation);
 #endif

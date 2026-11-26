@@ -23,6 +23,8 @@ int bfm_desktop_voice_pump(DesktopVoice *voice, unsigned field, unsigned *bank, 
 struct ForestVoice;
 /* Supply the already clocked forest transport to the same SDL output device. */
 void bfm_desktop_voice_forest(DesktopVoice *voice, struct ForestVoice *source, unsigned generation);
+/* Finish the already-scheduled samples up to the final scene field. */
+void bfm_desktop_voice_finish(DesktopVoice *voice);
 void bfm_desktop_voice_stop(DesktopVoice *voice);
 void bfm_desktop_voice_free(DesktopVoice *voice);
 #endif

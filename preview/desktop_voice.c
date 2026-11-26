@@ -3,6 +3,7 @@
 #include "palace_voice.h"
 #include "forest_voice.h"
 #include "palace_effects.h"
+#include "scene_views.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -22,7 +23,7 @@ struct DesktopVoice {
     PalaceVoice *decoder;
     BfmPalaceEffects *effects;
     Uint64 opening_start;
-    int court_active;
+    enum { COURT_IDLE, COURT_PLAYING, COURT_FINISHING } court;
     VoiceClip *pending;
     SDL_AudioDeviceID device;
     unsigned bank, cue, request_field, ready_delay, active_field, forest_generation;
@@ -78,7 +79,7 @@ static void SDLCALL render_voice(void *userdata, Uint8 *stream, int bytes)
     size_t n = copy_frames(&v->outgoing, stream, frames);
     n += copy_frames(&v->active, stream + n * FRAME_BYTES, frames - n);
     memset(stream + n * FRAME_BYTES, 0, (size_t)bytes - n * FRAME_BYTES);
-    if (v->court_active)
+    if (v->court != COURT_IDLE)
         bfm_palace_effects_mix(v->effects, SDL_GetTicks64() - v->opening_start,
                               (int16_t *)(void *)stream, frames);
 }
@@ -119,7 +120,7 @@ void bfm_desktop_voice_opening(DesktopVoice *v, Uint64 start)
     if (v->device) SDL_LockAudioDevice(v->device);
     bfm_palace_effects_reset(v->effects);
     v->opening_start = start;
-    v->court_active = 1;
+    v->court = COURT_PLAYING;
     if (v->device) SDL_UnlockAudioDevice(v->device);
 }
 
@@ -135,7 +136,7 @@ void bfm_desktop_voice_stop(DesktopVoice *v)
     v->outgoing = (Playback){0};
     v->active = (Playback){0};
     v->pending = NULL;
-    v->court_active = 0;
+    v->court = COURT_IDLE;
     v->forest_generation = 0;
     v->selected = v->message_ready = v->playing = v->reported = 0;
     bfm_palace_voice_stop(v->decoder);
@@ -150,7 +151,7 @@ void bfm_desktop_voice_event(DesktopVoice *v, const SDL_AudioDeviceEvent *e)
         v->playing = 0;
     } else if (e->type == SDL_AUDIODEVICEADDED && !v->device) {
         open_device(v);
-        if (v->device && v->court_active && v->effects) {
+        if (v->device && v->court == COURT_PLAYING && v->effects) {
             bfm_palace_effects_reset(v->effects);
             SDL_PauseAudioDevice(v->device, 0);
         }
@@ -162,9 +163,27 @@ static Uint64 elapsed_frames(unsigned fields)
     return (Uint64)fields * BFM_PALACE_VOICE_RATE * 1001 / 60000;
 }
 
+/* Each active track already has its scene-bounded sample count. Let the
+ * device consume it after the final pose; a return to title still stops it. */
+void bfm_desktop_voice_finish(DesktopVoice *v)
+{
+    if (!v) return;
+    if (!v->device) {
+        bfm_desktop_voice_stop(v);
+        v->court = COURT_FINISHING;
+        return;
+    }
+    SDL_LockAudioDevice(v->device);
+    v->court = COURT_FINISHING;
+    SDL_UnlockAudioDevice(v->device);
+    free(v->pending);
+    v->pending = NULL;
+    v->selected = 0;
+}
+
 int bfm_desktop_voice_request(DesktopVoice *v, unsigned bank, unsigned cue, unsigned field)
 {
-    if (!v || (v->selected && v->bank == bank && v->cue == cue)) return 0;
+    if (!v || v->court == COURT_FINISHING || (v->selected && v->bank == bank && v->cue == cue)) return 0;
     /* Disc readiness follows the scene clock even if the host device runs
      * slowly, disappears, or is completely silent. */
     int interrupted = !v->forest_generation && v->active.clip &&
@@ -202,7 +221,13 @@ static void start_clip(DesktopVoice *v, unsigned due, unsigned forest_generation
         v->outgoing = (Playback){old, v->active.cursor, old->signal_end};
         old = NULL;
     }
-    v->active = (Playback){v->pending, 0, v->pending->frames};
+    size_t frames = v->pending->frames;
+    if (!forest_generation) {
+        /* Limit the clip before exposing it to a faster audio callback. */
+        Uint64 left = due < BFM_OPENING_LAST_FIELD ? elapsed_frames(BFM_OPENING_LAST_FIELD - due) : 0;
+        if (left < frames) frames = (size_t)left;
+    }
+    v->active = (Playback){v->pending, 0, frames};
     v->pending = NULL;
     v->active_field = due;
     v->forest_generation = forest_generation;

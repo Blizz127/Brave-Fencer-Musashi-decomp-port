@@ -18,16 +18,26 @@ struct ForestVoice {
     size_t frames_left, lead_in;
 };
 
-ForestVoice *bfm_forest_voice_load(const MusashiDiscMedia *disc)
+static ForestVoice *load_voice(const MusashiDiscMedia *disc, BfmDiscVoiceArchive archive)
 {
     ForestVoice *v = calloc(1, sizeof(*v));
     if (!v) return NULL;
-    v->source = bfm_disc_voice_load(disc, BFM_VOICE_ST01);
+    v->source = bfm_disc_voice_load(disc, archive);
     if (!v->source) {
         free(v);
         return NULL;
     }
     return v;
+}
+
+ForestVoice *bfm_forest_voice_load(const MusashiDiscMedia *disc)
+{
+    return load_voice(disc, BFM_VOICE_ST01);
+}
+
+ForestVoice *bfm_bedroom_voice_load(const MusashiDiscMedia *disc)
+{
+    return load_voice(disc, BFM_VOICE_ST02);
 }
 
 int bfm_forest_voice_request(ForestVoice *v, unsigned bank, unsigned cue)

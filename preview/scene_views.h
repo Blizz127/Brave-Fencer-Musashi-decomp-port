@@ -18,6 +18,7 @@ void bfm_title_free(void *scene);
 
 int bfm_opening_load(const MusashiDiscMedia *disc, void **scene, char *error,
                      size_t error_size);
+enum { BFM_OPENING_LAST_FIELD = 8316 };
 enum { BFM_OPENING_END, BFM_OPENING_FRAME, BFM_OPENING_FOREST_PENDING };
 /* A fresh Cross edge selects the authored chapter transition. Returns one
  * when accepted, zero for an already selected route and negative on failure. */

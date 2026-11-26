@@ -17,7 +17,7 @@ typedef struct { Point eye, aim; } Pose;
 typedef struct { Point right, down, forward; } Basis;
 enum { INWARD_POSES = 100, STAIR_POSES = 504, LANDING_POSES = 98,
        CRYSTAL_WIDE_POSES = 50, STILL_POSES = 2, GATHERED_POSES = 70,
-       MUSASHI_ORBIT_POSES = 268 };
+       MUSASHI_ORBIT_POSES = 268, JUMP_CAMERA_POSES = 60, FILLET_REPLY_POSES = 140 };
 static const struct { unsigned start, count; size_t offset; } court_shots[] = {
     {1512, STAIR_POSES, 0x9b424}, {2520, LANDING_POSES, 0x9d504},
     {2760, CRYSTAL_WIDE_POSES, 0x9da70}, {2854, STILL_POSES, 0x9dd3c},
@@ -28,7 +28,13 @@ static const struct { unsigned start, count; size_t offset; } court_shots[] = {
     {4276, STILL_POSES, 0xa4764},   /* Fillet faces the crystal. */
     {4636, STILL_POSES, 0xa4790},   /* Butler Livers reacts to the flash. */
     {4984, STILL_POSES, 0xa47bc},   /* The court sees Musashi on the dais. */
-    {5156, MUSASHI_ORBIT_POSES, 0xa47e8}
+    {5156, MUSASHI_ORBIT_POSES, 0xa47e8},
+    {5698, STILL_POSES, 0xa56a0},   /* Fillet addresses the court below the dais. */
+    {6676, STILL_POSES, 0xa56cc},   /* Musashi stirs under the palace light. */
+    {6874, JUMP_CAMERA_POSES, 0xa56f8},
+    {7082, STILL_POSES, 0xa5a50},   /* Musashi turns away from the great door. */
+    {7406, FILLET_REPLY_POSES, 0xa5a7c}, /* The view moves closer during Fillet’s reply. */
+    {7774, STILL_POSES, 0xa6234}    /* The court intercedes, seen from the side. */
 };
 enum { COURT_SHOT_COUNT = sizeof(court_shots) / sizeof(court_shots[0]) };
 typedef struct {
@@ -41,7 +47,8 @@ typedef struct { int depth; size_t index; } Draw;
 struct Palace {
     size_t vertex_count, face_count;
     Pose track[STAIR_POSES + LANDING_POSES + CRYSTAL_WIDE_POSES + GATHERED_POSES +
-               MUSASHI_ORBIT_POSES + 8 * STILL_POSES];
+               MUSASHI_ORBIT_POSES + JUMP_CAMERA_POSES + FILLET_REPLY_POSES +
+               12 * STILL_POSES];
     BfmStairActors *actors;
     PalaceDialogue *dialogue;
     uint8_t *scene;

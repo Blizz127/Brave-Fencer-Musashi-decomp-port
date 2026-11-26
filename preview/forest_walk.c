@@ -46,6 +46,7 @@ struct BfmForestWalk {
     unsigned voice_generation;
     int32_t eye[3], target[3], follow_offset[3];
     int look_x, look_z;
+    int support_y, support_z;
     int16_t entrance_yaw, yaw, cached[3];
     int follow_projection;
     unsigned tick, elapsed, motion;
@@ -102,22 +103,21 @@ static int setup_cameras(BfmForestWalk *w)
     return 1;
 }
 
-/* The camera target leads Musashi along his current heading. The heading
- * offset keeps settling after the actor stops or turns in place. */
-static int approach_lead(int value, int desired)
+static int approach(int value, int desired, int divisor)
 {
     int delta = desired - value;
-    int step = delta / 16;
+    int step = delta / divisor;
     if (!step && delta) step = delta < 0 ? -1 : 1;
     return value + step;
 }
 
+/* The camera leads the current heading and keeps settling after a stop. */
 static int follow(BfmForestWalk *w)
 {
     int dz = (int)lround(cos(w->yaw * radians) * 4096);
     int dx = (int)lround(sin(w->yaw * radians) * 4096);
-    w->look_x = approach_lead(w->look_x, -dx / 64);
-    w->look_z = approach_lead(w->look_z, -dz / 32);
+    w->look_x = approach(w->look_x, -dx / 64, 16);
+    w->look_z = approach(w->look_z, -dz / 32, 16);
     w->target[0] = w->cached[0] + w->look_x;
     w->target[1] = w->cached[1];
     w->target[2] = w->cached[2] + w->look_z;
@@ -159,6 +159,42 @@ static int load_motion(const ForestPlayerArchive *a, uint32_t table,unsigned id,
     return 0;
 }
 
+/* The doorway and its first uphill face share a horizontal X axis. Ease
+ * their mounted normal in world space, independently of the actor's facing. */
+static void settle_ground(BfmForestWalk *w, const int16_t normal[3])
+{
+    if (!normal[1]) return;
+    if (!w->support_y) w->support_y = normal[1];
+    w->support_y = approach(w->support_y, normal[1], 8);
+    w->support_z = approach(w->support_z, normal[2], 8);
+}
+
+static void update_root(BfmForestWalk *w)
+{
+    int s = (int)lround(sin(w->yaw * radians) * 4096);
+    int c = (int)lround(cos(w->yaw * radians) * 4096);
+    w->root = (BfmForestTransform){.rotation = {{c,0,s},{0,4096,0},{-s,0,c}},
+        .translation = {w->cached[0], w->cached[1], w->cached[2]}};
+    if (!w->support_z) return;
+
+    /* The inclination samples the same 10-bit angular intervals as the
+     * bedroom walking direction. Quantize the support basis before applying
+     * the player's yaw, so the two signed sine coefficients round separately. */
+    int ratio = abs(w->support_z) * 1024 / -w->support_y;
+    int pitch = (int)lround(atan((ratio + 0.375) / 1024.0) / radians);
+    if (w->support_z > 0) pitch = -pitch;
+    int sp = (int)lround(sin(pitch * radians) * 4096);
+    int cp = (int)lround(cos(pitch * radians) * 4096);
+    int up[3] = {0, cp, sp}, forward[3] = {0, -sp, cp};
+    normalize_axis(up);
+    normalize_axis(forward);
+    for (unsigned axis = 1; axis < 3; ++axis) {
+        w->root.rotation[axis][0] = (int16_t)floor_shift(-s * forward[axis], 12);
+        w->root.rotation[axis][1] = (int16_t)up[axis];
+        w->root.rotation[axis][2] = (int16_t)floor_shift(c * forward[axis], 12);
+    }
+}
+
 static int update_pose(BfmForestWalk *w)
 {
     const Motion *m=w->motion==IDLE?&w->idle:(w->motion==WALK?&w->walk:&w->run);
@@ -171,9 +207,7 @@ static int update_pose(BfmForestWalk *w)
                                         sizeof(w->blade_anchors))) return 0;
     }
     w->frame=frame; w->visible=m->visible;
-    int16_t s=(int16_t)lround(sin(w->yaw*radians)*4096), c=(int16_t)lround(cos(w->yaw*radians)*4096);
-    w->root=(BfmForestTransform){.rotation={{c,0,s},{0,4096,0},{-s,0,c}},
-        .translation={w->cached[0],w->cached[1],w->cached[2]}};
+    update_root(w);
     return 1;
 }
 
@@ -280,14 +314,26 @@ static int tick_player(BfmForestWalk *w, int x, int y)
     }
     if (result <= BFM_FOREST_MANUAL_BOUNDARY)
         return -1;
+    settle_ground(w, w->manual.ground_normal);
     if (result == BFM_FOREST_MANUAL_STARTED || result == BFM_FOREST_MANUAL_MOVING) {
         w->motion = w->manual.motion;
         w->elapsed = w->manual.elapsed;
         if (!update_pose(w)) return -1;
     } else {
-        if (!bfm_forest_standing_tick(&w->speaker, result == BFM_FOREST_MANUAL_STOPPED,
-                                      &w->actor, &w->pose))
+        BfmForestStandingEvent event = BFM_FOREST_STANDING_CONTINUE;
+        if (result == BFM_FOREST_MANUAL_STOPPED || result == BFM_FOREST_MANUAL_RUN_STOPPED)
+            event = result == BFM_FOREST_MANUAL_RUN_STOPPED && !w->at_boundary ?
+                    BFM_FOREST_STANDING_RUN_STOP : BFM_FOREST_STANDING_STOP;
+        if (!bfm_forest_standing_tick(&w->speaker, event, &w->actor, &w->pose))
             return -1;
+        w->actor.field_2c.word = bfm_forest_standing_forward_q16(&w->speaker);
+        if (w->actor.field_2c.word && event == BFM_FOREST_STANDING_CONTINUE &&
+            !w->at_boundary && !bfm_forest_manual_coast(w->field, &w->actor, w->yaw, w->cached)) {
+            w->at_boundary = 1;
+            w->blocked_x = x;
+            w->blocked_y = y;
+        }
+        update_root(w);
         w->frame = w->speaker.frame;
         w->visible = w->speaker.visible;
         memcpy(w->blade_anchors, w->speaker.blade_anchors, sizeof w->blade_anchors);

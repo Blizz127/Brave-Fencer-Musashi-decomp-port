@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-enum { WIDTH = 320, HEIGHT = 240, INTERIOR_START_FIELD = 1188, LAST_FIELD = 5430 };
+enum { WIDTH = 320, HEIGHT = 240, INTERIOR_START_FIELD = 1188 };
 enum { TITLE_WIDTH = 256, TITLE_HEIGHT = 64 };
 enum { CREDIT_X = 80, CREDIT_Y = 104, CREDIT_WIDTH = 160, CREDIT_HEIGHT = 32 };
 
@@ -305,7 +305,7 @@ int bfm_opening_request_skip(void *scene, const MusashiDiscMedia *disc, unsigned
     }
     view->skip_member = fields < INTERIOR_START_FIELD ? 0u : 1u;
     view->skip_field = fields;
-    view->skip_pose = fields < LAST_FIELD ? fields : LAST_FIELD;
+    view->skip_pose = fields < BFM_OPENING_LAST_FIELD ? fields : BFM_OPENING_LAST_FIELD;
     return 1;
 }
 
@@ -322,7 +322,7 @@ int bfm_opening_frame(void *scene, unsigned fields, uint32_t *pixels, int width,
     const OpeningView *view = scene;
     if (!view || !pixels || width != WIDTH || height != HEIGHT) return -1;
     if (!view->chapter) {
-        if (fields > LAST_FIELD) return BFM_OPENING_END;
+        if (fields > BFM_OPENING_LAST_FIELD) return BFM_OPENING_END;
         return draw_opening(view, fields, pixels);
     }
     unsigned age = fields >= view->skip_field ? fields - view->skip_field : 0;
@@ -340,7 +340,7 @@ int bfm_opening_voice_schedule(void *scene, unsigned field, unsigned *bank, unsi
                               unsigned *issue_field)
 {
     OpeningView *view = scene;
-    return view && !view->chapter && field <= LAST_FIELD &&
+    return view && !view->chapter && field <= BFM_OPENING_LAST_FIELD &&
            bfm_palace_dialogue_voice_schedule(bfm_palace_speech(view->stairs), field,
                                             bank, cue, issue_field);
 }
@@ -353,13 +353,13 @@ int bfm_opening_voice_due(void *scene, unsigned field, unsigned *bank, unsigned 
 int bfm_opening_voice_started(void *scene, unsigned bank, unsigned cue, unsigned field)
 {
     OpeningView *view = scene;
-    return view && !view->chapter && field <= LAST_FIELD &&
+    return view && !view->chapter && field <= BFM_OPENING_LAST_FIELD &&
            bfm_palace_dialogue_voice_started(bfm_palace_speech(view->stairs), bank, cue, field);
 }
 
 int bfm_opening_final_frame(void *scene, uint32_t *pixels, int width, int height)
 {
-    return bfm_opening_frame(scene, LAST_FIELD, pixels, width, height);
+    return bfm_opening_frame(scene, BFM_OPENING_LAST_FIELD, pixels, width, height);
 }
 
 void bfm_opening_free(void *scene)

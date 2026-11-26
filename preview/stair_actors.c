@@ -23,6 +23,25 @@ typedef struct {
     Face faces[MAX_FACES];
 } Model;
 typedef struct { const uint8_t *data; unsigned count; } Journey;
+typedef struct { const uint8_t *frames; unsigned count; int repeat; } CourtMotion;
+
+enum { HERO_WAKE = 6674, HERO_LEAP = 6876, HERO_TURN = 7082,
+       HERO_FILLET_CLOSE = 7406, HERO_COURT_WIDE = 7774 };
+/* The palace actors advance one key every two displayed fields. Each entry
+ * in the mounted list addresses a full pose of the shared player model. */
+static const struct { unsigned field, descriptor, count, phase; } hero_actions[] = {
+    {HERO_WAKE, 0x5f438, 12, 0}, /* wake */
+    {6698,      0x5f1e0,  4, 0}, /* yawn */
+    {HERO_LEAP, 0x5f2d8,  8, 7}, /* forward rolls */
+    {6958,      0x5f678,  3, 2}, /* descend after the final complete roll */
+    {6996,      0x5f280, 10, 0}, /* bend the knees on landing */
+    {7080,      0x5f180, 11, 0}, /* standing turn */
+    {8088,      0x5f528, 26, 0}, /* gesture on giving his name */
+    {8140,      0x5f600, 14, 0}, /* keep the gesture through the reply */
+    {8324,      0x5f180, 11, 0}  /* lower his arms */
+};
+enum { HERO_ACTIONS = sizeof(hero_actions) / sizeof(hero_actions[0]) };
+enum { MAX_HERO_POSES = 26 };
 typedef struct {
     const uint8_t *bones, *roots, *landing_bones;
     unsigned first, count, frames;
@@ -49,8 +68,15 @@ struct BfmStairActors {
     Performer actor[ACTORS];
     const uint8_t *princess_landing;
     Journey arrival[ACTORS], step_forward[2], gathered[ACTORS], retreat[ACTORS];
+    Journey question_paths[3];
+    CourtMotion question, face_hero, answer[2], fillet_reply;
+    Journey greetings[3][ACTORS];
     const uint8_t *princess_turn, *princess_speech, *princess_cast, *steward_retreat;
     const uint8_t *butler_reaction, *hero_pose;
+    const uint8_t *hero_frames[HERO_ACTIONS][MAX_HERO_POSES];
+    uint8_t hero_repeats[HERO_ACTIONS];
+    Journey hero_jump, hero_turn;
+    unsigned hero_face_row, fillet_expression;
     Draw order[MAX_DRAW + MAX_RITUAL_DRAW];
     size_t used, next;
 };
@@ -310,6 +336,56 @@ static int read_journey(Journey *out, const uint8_t *scene, size_t bytes, size_t
     return 0;
 }
 
+/* The court's motion lists reference packed local poses. Each entry lasts
+ * one scene update. The terminator either repeats the motion or holds its
+ * final pose while the next line plays. */
+static int read_court_motion(CourtMotion *out, const uint8_t *s, size_t bytes,
+                             size_t table, unsigned bones)
+{
+    const uint32_t origin = UINT32_C(0x80128158);
+    size_t stride = 12 * bones, first = 0;
+    for (unsigned i = 0; within(bytes, table, 8); ++i, table += 8) {
+        uint32_t address = longword(s + table), duration = longword(s + table + 4);
+        if (!address) {
+            if (!i || (duration != 0xfffe && duration != 0xffff)) return 0;
+            *out = (CourtMotion){s + first, i, duration == 0xffff};
+            return 1;
+        }
+        if (address < origin || duration != 1) return 0;
+        size_t pos = address - origin;
+        if (!within(bytes, pos, stride)) return 0;
+        if (!i) first = pos;
+        else if (pos != first + i * stride) return 0;
+    }
+    return 0;
+}
+
+static int load_hero_actions(BfmStairActors *a, const uint8_t *scene, size_t bytes, uint32_t load_address)
+{
+    const size_t pose_bytes = MUSASHI_FOREST_PLAYER_PARTS * 12;
+    if (!within(bytes, 0x8a6d4, pose_bytes) ||
+        !read_journey(&a->hero_jump, scene, bytes, 0xab044) || a->hero_jump.count != 60 ||
+        !read_journey(&a->hero_turn, scene, bytes, 0xab7cc) || a->hero_turn.count != 21)
+        return 0;
+    for (unsigned i = 0; i < HERO_ACTIONS; ++i) {
+        unsigned pos = hero_actions[i].descriptor, count = hero_actions[i].count;
+        if (count > MAX_HERO_POSES || !within(bytes, pos, (count + 1) * 8u)) return 0;
+        const uint8_t *list = scene + pos;
+        for (unsigned j = 0; j < count; ++j) {
+            uint32_t ptr = longword(list + j * 8u);
+            if (ptr < load_address || !within(bytes, ptr - load_address, pose_bytes) ||
+                longword(list + j * 8u + 4) != 1) return 0;
+            a->hero_frames[i][j] = scene + (ptr - load_address);
+        }
+        const uint8_t *end = list + count * 8u;
+        if (longword(end) || (longword(end + 4) != 0xfffe && longword(end + 4) != 0xffff))
+            return 0;
+        a->hero_repeats[i] = (uint8_t)(longword(end + 4) == 0xffff);
+    }
+    a->hero_pose = scene + 0x8a6d4;
+    return 1;
+}
+
 static int load_smoke(BfmStairActors *actors, const uint8_t *scene, size_t bytes)
 {
     if (!bfm_hero_smoke_load(&actors->smoke, scene, bytes)) return 0;
@@ -359,8 +435,24 @@ BfmStairActors *bfm_stair_actors_load(const MusashiDiscMedia *disc, const uint8_
     out->princess_cast = s + 0x7e914;
     out->steward_retreat = s + 0x81f14;
     out->butler_reaction = s + 0x84a34;
+    if (!read_journey(&out->question_paths[0], s, bytes, 0xb1c7c) ||
+        !read_journey(&out->question_paths[1], s, bytes, 0xc0108) ||
+        !read_journey(&out->question_paths[2], s, bytes, 0xb87f0) ||
+        !read_court_motion(&out->question, s, bytes, 0x5f9c0, layout[0].count) ||
+        !read_court_motion(&out->face_hero, s, bytes, 0x5fd08, layout[0].count) ||
+        !read_court_motion(&out->answer[0], s, bytes, 0x60410, layout[2].count) ||
+        !read_court_motion(&out->answer[1], s, bytes, 0x60870, layout[4].count)) goto fail;
     if (!read_journey(&out->step_forward[0], s, bytes, 0xbc910) ||
         !read_journey(&out->step_forward[1], s, bytes, 0xb8738)) goto fail;
+    static const unsigned greetings[3][ACTORS] = {
+        {0xb29fc, 0xb5570, 0xc0a6c, 0xbce68, 0xb9154},
+        {0xb2fe8, 0xb5b5c, 0xc0a80, 0xbce7c, 0xb9740},
+        {0xb33ac, 0xb5b70, 0xc0e44, 0xbce90, 0xb9754}
+    };
+    for (unsigned line = 0; line < 3; ++line)
+        for (unsigned i = 0; i < ACTORS; ++i)
+            if (!read_journey(&out->greetings[line][i], s, bytes, greetings[line][i])) goto fail;
+    if (!read_court_motion(&out->fillet_reply, s, bytes, 0x5fc38, layout[0].count)) goto fail;
     unsigned part = 1;
     if (!bfm_ritual_light_load(&out->lights_on_crystal, s, bytes) ||
         !load_smoke(out, s, bytes)) goto fail;
@@ -390,9 +482,7 @@ BfmStairActors *bfm_stair_actors_load(const MusashiDiscMedia *disc, const uint8_
             if (total_faces > MAX_DRAW) goto fail;
         }
     }
-    if (!within(bytes, 0x8a6d4, MUSASHI_FOREST_PLAYER_PARTS * 12) ||
-        !load_summoned_hero(out, disc, total_faces)) goto fail;
-    out->hero_pose = s + 0x8a6d4;
+    if (!load_hero_actions(out, s, bytes, load_address) || !load_summoned_hero(out, disc, total_faces)) goto fail;
     return out;
 fail:
     free(out);
@@ -497,16 +587,16 @@ static int farthest(const void *one, const void *two)
     return a->sequence > b->sequence ? -1 : a->sequence < b->sequence;
 }
 
-static uint16_t texture(const Face *face, const uint16_t tiles[512][1024], unsigned u, unsigned v)
+static uint16_t texture(const Face *face, const uint16_t tiles[512][1024], unsigned u, unsigned v,
+                        unsigned hero_face_row)
 {
     unsigned bits = (face->page & 128) ? 8u : 4u, count = 16 / bits;
     unsigned row = (face->page & 16) * 16 + v;
     unsigned col = ((face->page & 15) * 64 + u / count) & 1023u;
-    /* The second flash copies the closed-eye patch onto the hero's face.
-     * Sample its mounted source so earlier poses can still be redrawn. */
+    /* The sleeping and startled expressions occupy two mounted texture rectangles. */
     if (face->summoned && col >= 512 && col < 528 && row >= 256 && row < 296) {
         col += 256;
-        row += 40;
+        row += hero_face_row;
     }
     unsigned idx = (tiles[row][col] >> (bits * (u % count))) & ((1u << bits) - 1u);
     return tiles[face->palette >> 6][(face->palette & 63) * 16 + idx];
@@ -517,7 +607,7 @@ static int closed(Vec a, Vec b)
     return a.v[1] > b.v[1] || (a.v[1] == b.v[1] && a.v[0] < b.v[0]);
 }
 static void draw_triangle(const Draw *d, const uint16_t tiles[512][1024], uint32_t *out,
-                          unsigned i, unsigned j, unsigned k)
+                          unsigned i, unsigned j, unsigned k, unsigned hero_face_row)
 {
     const Face *f = d->face;
     Vec a = d->point[i], b = d->point[j], c = d->point[k];
@@ -547,7 +637,7 @@ static void draw_triangle(const Draw *d, const uint16_t tiles[512][1024], uint32
             for (unsigned ch = 0; ch < 2; ++ch)
                 coord[ch] = (unsigned)(((int64_t)wa * f->uv[i][ch] + (int64_t)wb * f->uv[j][ch] +
                                         (int64_t)wc * f->uv[k][ch] + area / 2) / area);
-            ink = texture(f, tiles, coord[0], coord[1]);
+            ink = texture(f, tiles, coord[0], coord[1], hero_face_row);
             if (!ink) continue;
         }
         uint32_t pixel = UINT32_C(0xff000000);
@@ -649,14 +739,14 @@ void bfm_stair_actors_draw_to(BfmStairActors *a, int depth,
             draw_ritual_line(d, pixels);
             continue;
         }
-        draw_triangle(d, tiles, pixels, 0, 1, 2);
-        if (d->face->count == 4) draw_triangle(d, tiles, pixels, 2, 1, 3);
+        draw_triangle(d, tiles, pixels, 0, 1, 2, a->hero_face_row);
+        if (d->face->count == 4) draw_triangle(d, tiles, pixels, 2, 1, 3, a->hero_face_row);
     }
 }
 
 /* The shadow is a square from the scene texture upload. It lies in the
  * local tangent plane under the walking figure and turns with its heading. */
-static void shoe_shadow(BfmStairActors *a, Vec root, int yaw, Mat view, Vec translation)
+static void shoe_shadow(BfmStairActors *a, Vec root, int yaw, int scale, Mat view, Vec translation)
 {
     Vec n; int y;
     if (a->used == MAX_DRAW || !ground(a, root, &n, &y)) return;
@@ -676,7 +766,7 @@ static void shoe_shadow(BfmStairActors *a, Vec root, int yaw, Mat view, Vec tran
     for (unsigned j = 0; j < 4; ++j) {
         int u = a->shadow_left + a->shadow.uv[j][0] - 64 + ((j & 1) ? 1 : 0);
         int v = a->shadow_top + a->shadow.uv[j][1] - 160 + ((j & 2) ? 1 : 0);
-        Vec point = add(center, transform(axes, (Vec){{3*u,3*v,0}}));
+        Vec point = add(center, transform(axes, (Vec){{scale*u,scale*v,0}}));
         if (point.v[2] <= 0) return;
         d->point[j] = project(point);
         d->shade[j] = shade;
@@ -793,6 +883,101 @@ static void retreat_keys(const BfmStairActors *a, unsigned actor, unsigned field
     *bones = motion + 12 * p->count * pose;
 }
 
+/* Fillet turns to ask the two attendants beside her about the real Musashi.
+ * The attendants stop moving before they answer. Fillet continues her track,
+ * pausing its cursor for one update each time their exchange changes motion. */
+enum { QUESTION_FIELD = 5696 };
+
+static void question_keys(const BfmStairActors *a, unsigned actor, unsigned field,
+                          const uint8_t **root, const uint8_t **bones)
+{
+    enum { STEP = 5698, ATTENDANTS_STOP = 6286, ANSWER = 6288,
+           ANSWER_END = 6402, FACE_HERO = 6404, RELAX = 6872 };
+    const Performer *p = a->actor + actor;
+    unsigned side = actor / 2;
+    if (field >= STEP) {
+        unsigned until = actor && field > ATTENDANTS_STOP ? ATTENDANTS_STOP : field;
+        unsigned progress = (until - STEP) / 2;
+        if (!actor && field >= ANSWER) --progress;
+        if (!actor && field >= ANSWER_END) --progress;
+        *root = journey_pose(a->question_paths[side], progress);
+    }
+    CourtMotion action;
+    unsigned start;
+    if (actor) {
+        if (field < ATTENDANTS_STOP) return;
+        if (field < ANSWER || field >= ANSWER_END) {
+            unsigned pose = field < ANSWER ? 0 : (field - ANSWER_END) / 2 % idle_frames[actor];
+            *bones = p->landing_bones + 12 * p->count * pose;
+            return;
+        }
+        action = a->answer[side - 1];
+        start = ANSWER;
+    } else if ((field >= ANSWER && field < FACE_HERO) || field >= RELAX) {
+        unsigned pose = (field - (field >= RELAX ? RELAX : ANSWER)) / 2 % p->frames;
+        *bones = p->bones + 12 * p->count * pose;
+        return;
+    } else {
+        action = field < ANSWER ? a->question : a->face_hero;
+        start = field < ANSWER ? QUESTION_FIELD : FACE_HERO;
+    }
+    unsigned tick = (field - start) / 2;
+    unsigned pose = action.repeat ? tick % action.count : (tick < action.count ? tick : action.count - 1);
+    *bones = action.frames + 12 * p->count * pose;
+}
+
+enum { GREETING_FIELD = 7404 };
+
+/* The court turns when Musashi finishes his introduction. Short tracks
+ * settle their attendants first, while Fillet pauses to speak and then turns
+ * to the courtier who crosses the floor. */
+static void greeting_keys(const BfmStairActors *a, unsigned actor, unsigned field,
+                          const uint8_t **root, const uint8_t **bones)
+{
+    enum { ASK = 7604, REPLY = 7772, INTERCEDE = 8088 };
+    const Performer *p = a->actor + actor;
+    unsigned line = field >= INTERCEDE ? 2 : field >= REPLY ? 1 : 0;
+    unsigned start;
+    if (!line) start = actor == 3 ? GREETING_FIELD : GREETING_FIELD + 2;
+    else if (line == 1) start = actor == 2 || actor == 3 ? REPLY + 2 : REPLY + 4;
+    else start = INTERCEDE + 2;
+    if (field >= start) {
+        unsigned tick = (field - start) / 2;
+        if (!line && actor == 0 && field >= ASK) tick = (ASK - 2 - start) / 2;
+        *root = journey_pose(a->greetings[line][actor], tick);
+    } else if (line == 1) {
+        unsigned last = actor == 0 ? ASK - 2 : REPLY;
+        unsigned previous = (last - (GREETING_FIELD + 2)) / 2;
+        *root = journey_pose(a->greetings[0][actor], previous);
+    } else if (line == 2) {
+        *root = journey_pose(a->greetings[1][actor], a->greetings[1][actor].count);
+    }
+    if (!actor) {
+        if (field < ASK) {
+            unsigned tick = (field - GREETING_FIELD) / 2 % p->frames;
+            *bones = p->bones + 12 * p->count * tick;
+        } else {
+            CourtMotion motion = field < REPLY + 2 ? a->question : a->fillet_reply;
+            unsigned tick = (field - (field < REPLY + 2 ? ASK : REPLY + 2)) / 2;
+            unsigned pose = motion.repeat ? tick % motion.count :
+                                            (tick < motion.count ? tick : motion.count - 1);
+            *bones = motion.frames + 12 * p->count * pose;
+        }
+    } else if (actor == 2) {
+        unsigned crossing_end = REPLY + 2 * a->greetings[1][actor].count;
+        start = GREETING_FIELD + 4;
+        if (field >= crossing_end) start = crossing_end;
+        if (field >= INTERCEDE + 4) start = INTERCEDE + 4;
+        if (field >= start)
+            *bones = p->landing_bones + 12 * p->count * ((field - start) / 2 % idle_frames[actor]);
+    } else if ((actor == 1 || actor == 4) && field >= REPLY) {
+        start = REPLY;
+        if (field >= REPLY + 6) start = REPLY + 6;
+        if (field >= INTERCEDE + 4) start = INTERCEDE + 4;
+        *bones = p->landing_bones + 12 * p->count * ((field - start) / 2 % idle_frames[actor]);
+    }
+}
+
 /* The court gathers beside the crystal, then the two keepers turn to speak.
  * A new movement selects the walking cycle before its first translation.
  * Attendants return to their own idle cycle at the end of a short path. */
@@ -802,6 +987,9 @@ static int crystal_keys(const BfmStairActors *a, unsigned actor, unsigned field,
     const Performer *p = a->actor + actor;
     if (field >= 4014) {
         retreat_keys(a, actor, field, root, bones);
+        if (field >= QUESTION_FIELD && (actor == 0 || actor == 2 || actor == 4))
+            question_keys(a, actor, field, root, bones);
+        if (field >= GREETING_FIELD) greeting_keys(a, actor, field, root, bones);
         return 1;
     }
     unsigned cue = 2756, start = 2758;
@@ -837,11 +1025,83 @@ static int crystal_keys(const BfmStairActors *a, unsigned actor, unsigned field,
     return 1;
 }
 
+/* Fillet first frowns at the costume, then keeps her mouth open while the
+ * courtier answers. All three expressions share her head mesh and palette.
+ * Select the mounted face rectangle once when the expression changes. */
+static void fillet_expression(BfmStairActors *a, unsigned field)
+{
+    static const struct { unsigned page, u, v; } tile[] = {
+        {0x1a, 0, 136}, {0x1c, 64, 224}, {0x1c, 128, 192}
+    };
+    enum { FROWN_VISIBLE = 7494, OPEN_VISIBLE = 7614 };
+    unsigned next = field >= OPEN_VISIBLE ? 2u : field >= FROWN_VISIBLE ? 1u : 0u;
+    unsigned previous = a->fillet_expression;
+    if (next == previous) return;
+    Model *head = &a->parts[a->actor[0].first];
+    for (unsigned i = 0; i < head->nf; ++i) {
+        Face *f = &head->faces[i];
+        if (!f->textured || f->palette != 0x55d6 || f->page != tile[previous].page) continue;
+        unsigned j = 0;
+        for (; j < f->count; ++j) {
+            if ((unsigned)f->uv[j][0] - tile[previous].u >= 32 ||
+                (unsigned)f->uv[j][1] - tile[previous].v >= 32) break;
+        }
+        if (j != f->count) continue;
+        f->page = (uint16_t)tile[next].page;
+        for (j = 0; j < f->count; ++j) {
+            f->uv[j][0] = (uint8_t)(tile[next].u + f->uv[j][0] - tile[previous].u);
+            f->uv[j][1] = (uint8_t)(tile[next].v + f->uv[j][1] - tile[previous].v);
+        }
+    }
+    a->fillet_expression = next;
+}
+
+static const uint8_t *summoned_pose(const BfmStairActors *a, unsigned field)
+{
+    if (field < HERO_WAKE) return a->hero_pose;
+    unsigned action = 0;
+    while (action + 1 < HERO_ACTIONS && field >= hero_actions[action + 1].field) ++action;
+    unsigned count = hero_actions[action].count;
+    unsigned frame = (field - hero_actions[action].field) / 2 + hero_actions[action].phase;
+    if (a->hero_repeats[action]) frame %= count;
+    else if (frame >= count) frame = count - 1;
+    return a->hero_frames[action][frame];
+}
+
+static void prepare_summoned_hero(BfmStairActors *a, unsigned field, Mat view, Vec translation)
+{
+    Vec root = {{5,-658,-21}};
+    int heading = 0;
+    if (field >= HERO_LEAP) {
+        const uint8_t *step = field < HERO_TURN
+            ? journey_pose(a->hero_jump, (field - HERO_LEAP) / 2)
+            : journey_pose(a->hero_turn, (field - HERO_TURN) / 2);
+        root = triple(step);
+        heading = signed_word(step + 6);
+    }
+    Vec base = add(translation, transform(view, root));
+    /* During Fillet's close-up Musashi's limbs reach past the near plane.
+     * The shot omits both his body and its ground shadow. */
+    if (field >= HERO_FILLET_CLOSE && field < HERO_COURT_WIDE && base.v[2] <= 128) return;
+    if (field >= HERO_LEAP) shoe_shadow(a, root, heading, 2, view, translation);
+    const uint8_t *frame = summoned_pose(a, field);
+    a->hero_face_row = field >= HERO_LEAP ? 0u : 40u;
+    Mat yaw = rotation(1, heading), turned = multiply(view, yaw);
+    for (unsigned j = 0; j < MUSASHI_FOREST_PLAYER_PARTS; ++j) {
+        if (j >= 21 && j < 27) continue;
+        const uint8_t *bone = frame + 12 * j;
+        Mat pose = angles(triple(bone + 6));
+        Vec position = add(base, transform(turned, triple(bone)));
+        prepare_model(a, a->hero + j, multiply(turned, pose), position, multiply(yaw, pose));
+    }
+}
+
 void bfm_stair_actors_prepare(BfmStairActors *a, unsigned field,
                               const int axes[3][3], const int origin[3])
 {
     if (!a) return;
     a->used = 0; a->next = 0;
+    fillet_expression(a, field);
     unsigned profile = field >= 2758 ? 1 : 0;
     if (field >= 4634) profile = 2;
     a->selected_light = a->lights[profile];
@@ -853,17 +1113,7 @@ void bfm_stair_actors_prepare(BfmStairActors *a, unsigned field,
         Mat spin = rotation(1, (int)turns);
         prepare_model(a, &a->crystal, multiply(view, spin), translation, spin);
     }
-    if (field >= 4984) {
-        /* On the pedestal the six equipment parts are hidden. */
-        Vec base = add(translation, transform(view, (Vec){{5,-658,-21}}));
-        for (unsigned j = 0; j < MUSASHI_FOREST_PLAYER_PARTS; ++j) {
-            if (j >= 21 && j < 27) continue;
-            const uint8_t *bone = a->hero_pose + 12 * j;
-            Mat pose = angles(triple(bone + 6));
-            Vec position = add(base, transform(view, triple(bone)));
-            prepare_model(a, a->hero + j, multiply(view, pose), position, pose);
-        }
-    }
+    if (field >= 4984) prepare_summoned_hero(a, field, view, translation);
     if (field >= 1510) {
         unsigned tick = (field - 1510) / 2;
         if (tick) for (unsigned i = 0; i < ACTORS; ++i) {
@@ -876,7 +1126,7 @@ void bfm_stair_actors_prepare(BfmStairActors *a, unsigned field,
                 actor_keys(a, i, tick, &root, &frame);
             }
             int heading = signed_word(root + 6);
-            shoe_shadow(a, triple(root), heading, view, translation);
+            shoe_shadow(a, triple(root), heading, 3, view, translation);
             Mat yaw = rotation(1, heading), turned = multiply(view, yaw);
             Vec base = add(translation, transform(view, triple(root)));
             for (unsigned j = 0; j < p->count; ++j) {

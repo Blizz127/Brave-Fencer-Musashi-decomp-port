@@ -6,6 +6,7 @@
 #include "forest_hud.h"
 #include "scene_payload.h"
 
+#include <math.h>
 #include <stdlib.h>
 
 enum {
@@ -437,6 +438,16 @@ static int on_doorway_floor(const FloorGrid *grid, ContactCell doorway, const in
     return 0;
 }
 
+/* The traced corridor consists of the entrance floor, a one-in-four rise
+ * along Z, and a level landing. The registered downward probe chooses the
+ * actual bounded floor in the current cell. */
+static int corridor_ground(const BfmForestContact *ground)
+{
+    return !ground->flags && ground->slope == 0x2000 && !ground->normal[0] &&
+           ground->normal[1] < 0 &&
+           (!ground->normal[2] || ground->normal[1] == 4 * ground->normal[2]);
+}
+
 /* Intersect the segment with the actual bounded wall polygon. Signed edge
  * distances interpolate linearly, so no division or rounded point is needed. */
 static int crosses_face(const FloorGrid *grid, const FloorFace *face, unsigned sides,
@@ -493,12 +504,23 @@ static int resolve_cell(const FloorGrid *grid, ContactCell cell, int oblique,
         u16 token = cell.tokens[i];
         const FloorFace *face = contact_face(grid, token);
         const FloorPoint *n = &grid->verts[face->e[0].v];
-        if (flat_floor(face, n))
+        /* Upward-facing surfaces, including overlapping floor records, are
+         * resolved at the horizontal endpoint by the vertical field probe. */
+        if ((s16)n->y < 0 && !(face->flags & 0x300))
             continue;
+        unsigned sides = (token & 0x8000) ? 4 : 3;
+        if (face->flags == 0x2000 && !n->y) {
+            /* The raised obstacle on the landing shares a cell with open
+             * ground. Block a crossing of its bounded side, not the cell. */
+            if (crosses_face(grid, face, sides, from, to) ||
+                crosses_face(grid, face, sides, to, from))
+                return 0;
+            continue;
+        }
         if (face->flags != 0x100 || n->y || (!n->x && !n->z))
             return 0;
         if ((n->x && n->z) != oblique ||
-            !crosses_face(grid, face, (token & 0x8000) ? 4 : 3, from, to))
+            !crosses_face(grid, face, sides, from, to))
             continue;
         if (oblique) {
             if (!slide_doorway_wall(grid, face->e[0], from, clipped))
@@ -521,20 +543,90 @@ static int resolve_cell(const FloorGrid *grid, ContactCell cell, int oblique,
     return 1;
 }
 
-int bfm_forest_doorway_step(const BfmForestField *field, const int16_t origin[3],
-                            const int16_t from[3], int16_t to[3])
+/* Adjacent polygons on the ramp share a plane. Recover the actual support
+ * under the actor; another floor in the same cell may face the same way. */
+static const FloorPlane *support_plane(const FloorGrid *grid, ContactCell cell,
+                                       const BfmForestContact *ground, const int16_t from[3])
 {
-    if (!field || !origin || !from || !to || origin[1] != from[1] || from[1] != to[1] ||
+    if (ground->height > INT16_MAX - 2)
+        return NULL;
+    int16_t hit[3] = {from[0], (int16_t)(ground->height + 2), from[2]};
+    for (unsigned i = cell.count; i; --i) {
+        u16 token = cell.tokens[i - 1];
+        const FloorFace *face = contact_face(grid, token);
+        const FloorPoint *n = &grid->verts[face->e[0].v];
+        if (face->flags != ground->flags || (s16)n->x != ground->normal[0] ||
+            (s16)n->y != ground->normal[1] || (s16)n->z != ground->normal[2] ||
+            llabs(signed_distance(grid, face->e[0], hit)) > -(s16)n->y)
+            continue;
+        unsigned sides = (token & 0x8000) ? 4 : 3;
+        unsigned j = 1;
+        while (j <= sides && signed_distance(grid, face->e[j], hit) >= -EDGE_TOLERANCE)
+            ++j;
+        if (j > sides)
+            return &face->e[0];
+    }
+    return NULL;
+}
+
+/* Sample the terrain grid toward the lower integer coordinate on either side
+ * of zero. The divisor must be positive. */
+static int64_t grid_floor(int64_t numerator, int64_t denominator)
+{
+    int64_t quotient = numerator / denominator;
+    return quotient - (numerator % denominator < 0);
+}
+
+/* The terrain sweep lowers its far endpoint by the horizontal step length.
+ * Its projection supplies the grid sample for the actor base. The lateral
+ * correction removes only whole units of penetration. */
+static int follow_corridor_floor(const FloorGrid *grid, ContactCell cell,
+                                 const BfmForestContact *ground,
+                                 const int16_t from[3], int16_t end[3])
+{
+    if (!ground->normal[2]) {
+        end[1] = ground->height;
+        return 1;
+    }
+    const FloorPlane *plane = support_plane(grid, cell, ground, from);
+    if (!plane)
+        return 0;
+    int dx = end[0] - from[0], dz = end[2] - from[2];
+    int span = (int)sqrt((double)(dx * dx + dz * dz));
+    if (span < 3)
+        span = 4;
+    else if (span < 5)
+        ++span;
+    int ny = ground->normal[1], nz = ground->normal[2];
+    int64_t bias = grid->dist[plane->d];
+    int64_t distance = (int64_t)ny * (end[1] + span + 1) + (int64_t)nz * end[2] + bias;
+    int64_t length_sq = (int64_t)ny * ny + (int64_t)nz * nz;
+    int64_t penetration_z = nz * distance;
+    int64_t sample_z = end[2] + grid_floor(-penetration_z, length_sq);
+    int64_t y = grid_floor((int64_t)nz * sample_z + bias, -ny) - 2;
+    int64_t z = end[2] - penetration_z / length_sq;
+    if (y < INT16_MIN || y > INT16_MAX || z < INT16_MIN || z > INT16_MAX)
+        return 0;
+    end[1] = (int16_t)y;
+    end[2] = (int16_t)z;
+    return 1;
+}
+
+int bfm_forest_corridor_step(const BfmForestField *field, const BfmForestContact *previous,
+                             const int16_t from[3], int16_t to[3])
+{
+    if (!field || !previous || !from || !to || from[1] != to[1] ||
         abs(to[0] - from[0]) > 16 || abs(to[2] - from[2]) > 16)
         return 0;
     const FloorGrid *grid = &field->grid;
-    ContactCell doorway = contact_cell(grid, origin), start = contact_cell(grid, from);
+    ContactCell start = contact_cell(grid, from);
     ContactCell end = contact_cell(grid, to);
     int same_x = same_grid_index(from[0], to[0]), same_z = same_grid_index(from[2], to[2]);
     if (!same_x && !same_z)
         return 0;
     int16_t clipped[3] = {to[0], to[1], to[2]};
-    if (!on_doorway_floor(grid, doorway, from) ||
+    BfmForestContact ground;
+    if (!corridor_ground(previous) || abs(previous->height - from[1]) > 4 ||
         !resolve_cell(grid, start, 0, from, to, clipped) ||
         ((!same_x || !same_z) && !resolve_cell(grid, end, 0, from, to, clipped)))
         return 0;
@@ -542,9 +634,30 @@ int bfm_forest_doorway_step(const BfmForestField *field, const int16_t origin[3]
     if (!resolve_cell(grid, start, 1, from, clipped, clipped) ||
         ((!same_grid_index(from[0], clipped[0]) || !same_grid_index(from[2], clipped[2])) &&
          !resolve_cell(grid, end, 1, from, clipped, clipped)) ||
-        !on_doorway_floor(grid, doorway, clipped))
+        !follow_corridor_floor(grid, start, previous, from, clipped) ||
+        !bfm_forest_ground(field, clipped[0], clipped[1], clipped[2], &ground) ||
+        !corridor_ground(&ground) || abs(ground.height - clipped[1]) > 4)
         return 0;
     to[0] = clipped[0];
+    to[1] = clipped[1];
     to[2] = clipped[2];
+    return 1;
+}
+
+int bfm_forest_doorway_step(const BfmForestField *field, const int16_t origin[3],
+                            const int16_t from[3], int16_t to[3])
+{
+    if (!field || !origin || !from || !to || origin[1] != from[1])
+        return 0;
+    ContactCell doorway = contact_cell(&field->grid, origin);
+    BfmForestContact ground;
+    int16_t end[3] = {to[0], to[1], to[2]};
+    if (!on_doorway_floor(&field->grid, doorway, from) ||
+        !bfm_forest_ground(field, from[0], from[1], from[2], &ground) ||
+        !bfm_forest_corridor_step(field, &ground, from, end) ||
+        end[1] != from[1] || !on_doorway_floor(&field->grid, doorway, end))
+        return 0;
+    to[0] = end[0];
+    to[2] = end[2];
     return 1;
 }

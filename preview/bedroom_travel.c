@@ -294,6 +294,28 @@ static int direction(int64_t x, int64_t z)
     return (x < 0 ? -angle : angle) & 4095;
 }
 
+static int turn_toward(BfmBedroomTravel *t, int goal)
+{
+    int delta = goal - (int)t->root.yaw;
+    if (delta > 2048) delta -= 4096;
+    if (delta < -2048) delta += 4096;
+    int step = delta / 4;
+    if (!step) step = delta / 2;
+    if (!step) step = delta;
+    t->root.yaw = (unsigned)((int)t->root.yaw + step) & 4095u;
+    return delta;
+}
+
+void bfm_bedroom_travel_look(BfmBedroomTravel *t, int yaw)
+{
+    turn_toward(t, yaw);
+}
+
+void bfm_bedroom_travel_face_point(BfmBedroomTravel *t, int x, int z)
+{
+    t->root.yaw = (unsigned)direction(t->root.xyz[0] - x, t->root.xyz[2] - z);
+}
+
 static int sine(int yaw)
 {
     return (int)lround(4096 * sin((yaw & 4095) * angle_unit));
@@ -382,14 +404,7 @@ int bfm_bedroom_travel_step(BfmBedroomTravel *t,
         t->state = t->action;
         return 1;
     case TURN: {
-        int delta = t->goal_yaw - (int)t->root.yaw;
-        if (delta > 2048) delta -= 4096;
-        if (delta < -2048) delta += 4096;
-        if (!delta) t->state = FINISH;
-        int step = delta / 4;
-        if (!step) step = delta / 2;
-        if (!step) step = delta;
-        t->root.yaw = (unsigned)((int)t->root.yaw + step) & 4095u;
+        if (!turn_toward(t, t->goal_yaw)) t->state = FINISH;
         return 1;
     }
     case START_WALK:

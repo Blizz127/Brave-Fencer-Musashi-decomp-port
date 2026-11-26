@@ -4,32 +4,41 @@
 #include <stdlib.h>
 #include <string.h>
 
+enum { DOORWAY_BYTES = 160 };
+
 enum MessagePhase {
     PRINT, OPENING, WAIT_VOICE, WAIT_TIMER, WAIT_CONFIRM, CLOSING, CLOSED, INVALID
 };
 
 struct BfmForestMessage {
     BfmForestMessageFrame frame;
-    uint8_t program[160];
-    size_t cursor;
+    uint8_t program[DOORWAY_BYTES];
+    size_t size, cursor;
     enum MessagePhase phase;
     unsigned row, column, ink;
     unsigned timer, delay, glyph_interval;
     int speaker_name, voiced_page;
 };
 
-BfmForestMessage *bfm_forest_message_open(const uint8_t *program, size_t length)
+BfmForestMessage *bfm_field_message_open(const uint8_t *program, size_t length)
 {
     BfmForestMessage *message;
-    if (!program || length != sizeof(message->program))
+    if (!program || !length || length > sizeof(message->program))
         return NULL;
     message = calloc(1, sizeof(*message));
     if (message) {
         memcpy(message->program, program, length);
+        message->size = length;
         message->frame.focused = 1;
         message->ink = 1;
     }
     return message;
+}
+
+BfmForestMessage *bfm_forest_message_open(const uint8_t *program, size_t length)
+{
+    if (length != DOORWAY_BYTES) return NULL;
+    return bfm_field_message_open(program, length);
 }
 
 void bfm_forest_message_free(BfmForestMessage *message)
@@ -55,10 +64,10 @@ static int set_style(BfmForestMessage *message, unsigned style)
 static int print_update(BfmForestMessage *m)
 {
     BfmForestMessageFrame *f = &m->frame;
-    while (m->cursor < sizeof(m->program)) {
+    while (m->cursor < m->size) {
         unsigned op = m->program[m->cursor++];
         const uint8_t *arg = m->program + m->cursor;
-        size_t left = sizeof(m->program) - m->cursor;
+        size_t left = m->size - m->cursor;
         switch (op) {
         case 0x01: /* Ink */
             if (left < 1 || (arg[0] != 1 && arg[0] != 2)) return 0;
@@ -119,12 +128,12 @@ static int print_update(BfmForestMessage *m)
         case 0x10: {
             if (left < 2) return 0;
             unsigned event = arg[0] | ((unsigned)arg[1] << 8);
+            if (event < 0x125 || event > 0x129) return 0;
+            f->actor_flags |= 1u << (event - 0x125);
             if (event == 0x125)
                 f->events |= BFM_FOREST_FIRST_GESTURE;
             else if (event == 0x126)
                 f->events |= BFM_FOREST_SECOND_GESTURE;
-            else
-                return 0;
             m->cursor += 2;
             break;
         }
@@ -169,6 +178,7 @@ const BfmForestMessageFrame *bfm_forest_message_tick(BfmForestMessage *m,
         return NULL;
     BfmForestMessageFrame *f = &m->frame;
     f->events = 0;
+    f->actor_flags = 0;
     if (m->timer)
         --m->timer;
     switch (m->phase) {

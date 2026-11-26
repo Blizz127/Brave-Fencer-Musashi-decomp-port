@@ -179,6 +179,7 @@ static int update(BfmBedroomMotion *m, BfmBedroomAction action)
         m->activity = RISING;
         break;
     case BFM_BEDROOM_YAWN:
+        m->frame.draw_current = 1;
         if (!pair(m, 36, 29)) return 0;
         m->activity = YAWNING;
         break;
@@ -197,6 +198,16 @@ static int update(BfmBedroomMotion *m, BfmBedroomAction action)
         break;
     case BFM_BEDROOM_STAND:
         if (!pair(m, 4, 17)) return 0;
+        m->activity = STANDING;
+        break;
+    case BFM_BEDROOM_REST:
+        m->frame.draw_current = 0;
+        if (!pair(m, 0, 17)) return 0;
+        m->activity = QUIET;
+        break;
+    case BFM_BEDROOM_SEARCH:
+        m->frame.draw_current = 1;
+        if (!select_body(m, 34)) return 0;
         m->activity = STANDING;
         break;
     case BFM_BEDROOM_UPRIGHT:
@@ -231,7 +242,10 @@ static int update(BfmBedroomMotion *m, BfmBedroomAction action)
     } else if (m->body.ended && m->activity != QUIET) {
         if (m->activity == UNROLLING && !pair(m, 39, 31)) return 0;
         if (m->activity == YAWNING && !select_body(m, 37)) return 0;
-        if (m->activity == STANDING && !select_body(m, 0)) return 0;
+        if (m->activity == STANDING) {
+            if (!select_body(m, 0)) return 0;
+            m->frame.draw_current = 0;
+        }
         m->frame.finished = m->activity != STANDING;
         m->activity = m->activity == RISING ? RETURNING : QUIET;
     }

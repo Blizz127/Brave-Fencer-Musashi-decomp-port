@@ -149,8 +149,8 @@ int bfm_forest_speech_actor_tick(BfmForestSpeechActor *actor, int first, int sec
 }
 
 /* These are motion slots in the room's mounted player animation table. */
-enum { BASE_STANCE, SHIFT_STANCE, DRAW_BLADE, BLADE_READY, RETURN_TO_STAND };
-enum { RESTING, SHIFTING, RESTING_AFTER_SHIFT, DRAWING, READY };
+enum { BASE_STANCE, SHIFT_STANCE, DRAW_BLADE, BLADE_READY, RETURN_TO_STAND, RUN_TO_STAND = 9 };
+enum { RESTING, SHIFTING, RESTING_AFTER_SHIFT, DRAWING, READY, COASTING };
 
 static int standing_motion(BfmForestSpeechActor *actor, unsigned slot, BfmForestPose *pose)
 {
@@ -166,18 +166,19 @@ static int standing_motion(BfmForestSpeechActor *actor, unsigned slot, BfmForest
 
 /* The ordinary standing action (SC01 member 77, 80159C84) makes its
  * decisions at the ends of mounted motions, including their loop marks. */
-int bfm_forest_standing_tick(BfmForestSpeechActor *actor, int newly_stopped,
+int bfm_forest_standing_tick(BfmForestSpeechActor *actor, BfmForestStandingEvent event,
                              const ForestPlayerState *player, BfmForestPose *pose)
 {
     if (!actor || !actor->field || !player || !pose ||
         actor->phase != BFM_FOREST_TALK_RELEASED || (player->flags & 0x200))
         return 0;
-    if (newly_stopped) {
-        actor->standing_step = RESTING;
+    if (event != BFM_FOREST_STANDING_CONTINUE) {
+        int leaving_run = event == BFM_FOREST_STANDING_RUN_STOP;
+        actor->standing_step = leaving_run ? COASTING : RESTING;
         actor->standing_cycles = 0;
         /* The shared pose may have changed while the player was moving. */
         actor->frame = 0;
-        return standing_motion(actor, RETURN_TO_STAND, pose);
+        return standing_motion(actor, leaving_run ? RUN_TO_STAND : RETURN_TO_STAND, pose);
     }
     if (!advance(actor, pose, 1))
         return 0;
@@ -185,6 +186,8 @@ int bfm_forest_standing_tick(BfmForestSpeechActor *actor, int newly_stopped,
         return 1;
 
     unsigned slot = BASE_STANCE;
+    if (actor->standing_step == COASTING)
+        actor->standing_step = RESTING;
     if (player->scene_callback & UINT32_C(0x80ffffff)) {
         actor->standing_step = RESTING;
         actor->standing_cycles = 0;
@@ -228,4 +231,9 @@ int bfm_forest_standing_tick(BfmForestSpeechActor *actor, int newly_stopped,
         actor->visible &= ~(UINT32_C(1) << 22);
     }
     return 1;
+}
+
+int32_t bfm_forest_standing_forward_q16(const BfmForestSpeechActor *actor)
+{
+    return actor && actor->standing_step == COASTING ? -(4 * 65536) : 0;
 }

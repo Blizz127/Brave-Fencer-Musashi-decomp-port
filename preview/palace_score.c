@@ -6,6 +6,7 @@
 #include "sqv_track.h"
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
 enum { VOICES = 24, SAMPLES = 256, CHANNELS = 16, DEVICE_RATE = 44100 };
 typedef struct {
@@ -63,8 +64,9 @@ static int start_note(Orchestra *o, const BfmSqvEvent *e)
         Note *n = &o->notes[slot];
         *n = (Note){.sample = s, .channel = e->channel, .key = e->number};
         double pitch = 4096 * exp2(((int)e->number - (int)tone->center) / 12.0);
-        if (pitch < 1 || pitch >= 16384) return 0;
-        n->pitch = (unsigned)pitch;
+        if (pitch < 1) return 0;
+        /* The top of the mounted phrase saturates at the 14-bit device rate. */
+        n->pitch = pitch > 0x3fff ? 0x3fffu : (unsigned)pitch;
         int pan = (int)o->pan[e->channel] + (int)tone->program_pan + (int)tone->tone_pan - 128;
         if (pan < 1 || pan > 127) return 0;
         n->left = ear_level(e->value, pan > 64 ? (unsigned)(127 - pan) : 63);
@@ -79,6 +81,17 @@ static int initial_parameter(const BfmSqvEvent *e)
     return e->tick == 0 && e->channel == 0 &&
         (((e->number == 98 || e->number == 99) && e->value == 16) ||
          (e->number == 6 && e->value == 55));
+}
+
+/* The paired controller marks the beginning of the repeated court phrase. */
+static int first_pass_pair(const BfmSqvTrack *track, size_t i)
+{
+    if (i + 1 >= track->event_count) return 0;
+    const BfmSqvEvent *first = &track->events[i], *second = first + 1;
+    return first->kind == BFM_SQV_CONTROL && first->channel == 0 &&
+        first->number == 99 && first->value == 20 &&
+        second->kind == BFM_SQV_CONTROL && second->channel == first->channel &&
+        second->tick == first->tick && second->number == 6 && second->value == 127;
 }
 
 static int event(Orchestra *o, const BfmSqvEvent *e)
@@ -102,8 +115,8 @@ static int event(Orchestra *o, const BfmSqvEvent *e)
         o->program[e->channel] = e->number;
         return 1;
     case BFM_SQV_CONTROL:
-        /* Observed initial parameter messages for this dry entrance. */
-        return initial_parameter(e);
+        /* fits_entrance has already checked the controls in this interval. */
+        return 1;
     case BFM_SQV_TEMPO:
     case BFM_SQV_END:
         return 1;
@@ -192,11 +205,53 @@ static int fits_entrance(const BfmSqvTrack *track, size_t frames, unsigned rate)
         if (delta && step > (UINT64_MAX - elapsed) / delta) return 0;
         elapsed += step * delta;
         tick = e->tick;
+        if (first_pass_pair(track, i)) {
+            ++i;
+            continue;
+        }
         if (e->kind == BFM_SQV_END || (e->kind == BFM_SQV_CONTROL && !initial_parameter(e)))
             return frames <= elapsed / divisor;
         if (e->kind == BFM_SQV_TEMPO) tempo = e->tempo_us_per_quarter;
     }
     return 0;
+}
+
+/* The first terminal on the mounted court track returns to its marked phrase.
+ * Append one traversal while preserving instrument, envelope and channel state.
+ * Multiple traversals and the eventual exit are outside the observed scene. */
+static int append_court_reprise(BfmSqvTrack *track)
+{
+    if (track->event_count < 5) return 0;
+    size_t terminal = track->event_count - 2;
+    const BfmSqvEvent *close = &track->events[terminal];
+    if (close->kind != BFM_SQV_CONTROL || close->channel != 0 ||
+        close->number != 99 || close->value != 30 ||
+        track->events[terminal + 1].kind != BFM_SQV_END ||
+        track->events[terminal + 1].tick != close->tick) return 0;
+
+    size_t start = 0;
+    for (size_t i = 0; i < terminal; ++i) {
+        if (first_pass_pair(track, i)) {
+            if (start) return 0;
+            start = i + 2;
+        }
+    }
+    if (!start || start >= terminal) return 0;
+    uint32_t mark = track->events[start - 1].tick;
+    if (mark >= close->tick) return 0;
+    uint32_t length = close->tick - mark;
+    if (length > UINT32_MAX - close->tick) return 0;
+    size_t added = terminal - start;
+    if (added > SIZE_MAX / sizeof(*track->events) - track->event_count) return 0;
+    size_t count = track->event_count + added;
+    BfmSqvEvent *events = realloc(track->events, count * sizeof(*events));
+    if (!events) return 0;
+    memmove(events + terminal, events + start, (count - terminal) * sizeof(*events));
+    for (size_t i = terminal; i < count; ++i) events[i].tick += length;
+    track->duration_ticks = events[count - 1].tick;
+    track->events = events;
+    track->event_count = count;
+    return 1;
 }
 
 int bfm_palace_score_render(const MusashiDiscMedia *disc, unsigned rate, size_t frames, int16_t **stereo)
@@ -207,7 +262,13 @@ int bfm_palace_score_render(const MusashiDiscMedia *disc, unsigned rate, size_t 
         (rate != DEVICE_RATE && rate != 37800)) return 0;
     BfmSqvTrack track;
     if (bfm_sqv_track_load(disc, 1, &track) != BFM_SQV_OK) return 0;
-    int16_t *out = fits_entrance(&track, frames, rate) ? malloc(2 * frames * sizeof(*out)) : NULL;
+    /* The observed reprise reaches the close of the reply 3686 original fields
+     * after the second flash. Do not infer another traversal from the marker. */
+    int supported = fits_entrance(&track, frames, rate);
+    if (!supported && frames <= UINT64_C(3686) * rate * 1001 / 60000 &&
+        append_court_reprise(&track))
+        supported = fits_entrance(&track, frames, rate);
+    int16_t *out = supported ? malloc(2 * frames * sizeof(*out)) : NULL;
     Orchestra *o = out ? calloc(1, sizeof(*o)) : NULL;
     int ok = 0;
     if (o) {

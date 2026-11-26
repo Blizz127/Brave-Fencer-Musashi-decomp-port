@@ -344,6 +344,7 @@ static int play(Player *p, char *error, size_t size) {
                 if (p->pressed & PAD_CROSS) p->forest_confirm = 1;
             } else if (p->flow.phase == BFM_TITLE_BEDROOM) {
                 if (bfm_bedroom_endpoint(p->bedroom) && (p->pressed & (PAD_TRIANGLE | PAD_START | PAD_CROSS))) {
+                    bfm_desktop_voice_stop(p->voice);
                     bfm_bedroom_free(p->bedroom);
                     p->bedroom = NULL;
                     bfm_title_begin(&p->flow, p->held | p->pressed);
@@ -444,7 +445,7 @@ static int play(Player *p, char *error, size_t size) {
                     snprintf(error, size, "Could not render the final opening frame.");
                     return 2;
                 }
-                if (!p->forest) bfm_desktop_voice_stop(p->voice);
+                if (!p->forest) bfm_desktop_voice_finish(p->voice);
                 p->opening_finished = 1;
                 SDL_SetWindowTitle(p->window, p->forest ? "Brave Fencer Musashi - Giant Forest preview" :
                                                       "Brave Fencer Musashi - End of opening preview");
@@ -460,9 +461,12 @@ static int play(Player *p, char *error, size_t size) {
                 continue;
             }
         } else if (bedroom) {
+            unsigned generation;
+            struct ForestVoice *voice = bfm_bedroom_voice(p->bedroom, &generation);
+            bfm_desktop_voice_forest(p->voice, voice, generation);
             frame = bfm_bedroom_draw(p->bedroom, (uint32_t (*)[320])p->pixels);
             if (frame && bfm_bedroom_endpoint(p->bedroom))
-                status_line(p, "End of bedroom wake. Press Start to return.");
+                status_line(p, "End of Musashi's first bedroom speech. Press Start to return.");
             if (!frame) frame = -1;
         } else if (files) {
             bfm_save_menu_draw(p->save_art, &p->saves, fields, (uint32_t (*)[320])p->pixels);

@@ -10,6 +10,7 @@ enum { BFM_FOREST_VOICE_IDLE = 0, BFM_FOREST_VOICE_PENDING = 1,
 
 /* A game-thread service. The mounted image must outlive the voice. */
 ForestVoice *bfm_forest_voice_load(const MusashiDiscMedia *disc);
+ForestVoice *bfm_bedroom_voice_load(const MusashiDiscMedia *disc);
 int bfm_forest_voice_request(ForestVoice *voice, unsigned bank, unsigned cue);
 /* Advance once per two NTSC fields, before the forest script checks status. */
 void bfm_forest_voice_step(ForestVoice *voice);

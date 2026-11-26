@@ -12,8 +12,14 @@ typedef struct BfmForestMessageArt BfmForestMessageArt;
 BfmForestMessageArt *bfm_forest_message_art_load(const MusashiDiscMedia *disc,
                                                 const uint8_t *scene, size_t bytes,
                                                 const BfmForestTerrain *terrain);
+/* The room owns its contour inset and portrait already present in mounted VRAM. */
+BfmForestMessageArt *bfm_bedroom_message_art_load(const MusashiDiscMedia *disc,
+                                                  const uint8_t *scene, size_t bytes,
+                                                  const uint16_t tiles[512][1024]);
 void bfm_forest_message_art_free(BfmForestMessageArt *art);
 void bfm_forest_message_art_draw(const BfmForestMessageArt *art,
                                  const BfmForestMessageFrame *frame,
                                  uint32_t pixels[240][320]);
+void bfm_bedroom_message_art_draw(const BfmForestMessageArt *art, const BfmForestMessageFrame *frame,
+                                  int speaker_x, uint32_t pixels[240][320]);
 #endif

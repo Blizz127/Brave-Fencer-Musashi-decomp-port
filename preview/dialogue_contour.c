@@ -60,3 +60,25 @@ void bfm_dialogue_contour(const BfmDialoguePoint border[BFM_DIALOGUE_CORNERS],
     for (unsigned i = 0; i < BFM_DIALOGUE_CORNERS; ++i)
         edge_line(pixels, border[i], border[(i + 1) % BFM_DIALOGUE_CORNERS], outline, top);
 }
+
+/* A reflected textured quad is split along its diagonal. The span to the
+ * right of that edge starts at the interpolated edge texel. The opposite
+ * span starts at the left vertex, which can round a half texel differently. */
+BfmDialoguePoint bfm_dialogue_reflected_texel(unsigned x, unsigned y, unsigned width, unsigned height,
+                             unsigned last_v)
+{
+    const int one = 65536;
+    int extent = (int)width - 1;
+    int du = extent * one / (int)width;
+    int diagonal = (int)((int64_t)y * width * one / height);
+    int distance = (int)x * one - diagonal;
+    int u = extent * one;
+    if (distance < 0) {
+        u -= (int)x * du;
+    } else {
+        u -= (int)y * (extent * one / (int)height);
+        u -= (int)(((int64_t)distance * du + one - 1) / one);
+    }
+    unsigned v = y * (last_v * one / height);
+    return (BfmDialoguePoint){(u + one / 2) / one, (int)(v + one / 2) / one};
+}

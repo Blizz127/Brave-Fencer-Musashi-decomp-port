@@ -3,18 +3,18 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { GROUPS = 16, SECTOR_FRAMES = 18 * 4 * 28, INTERLEAVE = 8, EXE_HEADER = 2048 };
+enum { GROUPS = 16, STEREO_FRAMES = 18 * 4 * 28, MONO_FRAMES = 2 * STEREO_FRAMES, EXE_HEADER = 2048 };
 
 struct PalaceVoice {
     const MusashiDiscMedia *disc;
     uint32_t archive_start, archive_sectors, group_start[GROUPS];
     size_t cue_directory;
     BfmDiscVoiceArchive archive;
-    unsigned half_channels;
+    unsigned half_channels, interleave;
     uint32_t next, limit;
     unsigned channel, pending, consumed;
     int last[2], older[2];
-    int16_t pcm[SECTOR_FRAMES * 2];
+    int16_t pcm[MONO_FRAMES * 2];
 };
 
 static uint32_t little32(const uint8_t *p)
@@ -30,9 +30,10 @@ static int exe_read(const MusashiDiscMedia *disc, size_t offset, uint8_t *out, s
 
 DiscVoice *bfm_disc_voice_load(const MusashiDiscMedia *disc, BfmDiscVoiceArchive archive)
 {
-    if (archive != BFM_VOICE_OPEN && archive != BFM_VOICE_ST01) return NULL;
-    const char *file = archive == BFM_VOICE_OPEN ? "OPEN.STR" : "ST01.STR";
-    const uint32_t table_address = archive == BFM_VOICE_OPEN ? UINT32_C(0x8006a774) : UINT32_C(0x8006a69c);
+    if (archive != BFM_VOICE_OPEN && archive != BFM_VOICE_ST01 && archive != BFM_VOICE_ST02) return NULL;
+    const char *file = archive == BFM_VOICE_OPEN ? "OPEN.STR" : archive == BFM_VOICE_ST02 ? "ST02.STR" : "ST01.STR";
+    const uint32_t table_address = archive == BFM_VOICE_OPEN ? UINT32_C(0x8006a774) :
+                                   archive == BFM_VOICE_ST02 ? UINT32_C(0x8006a6e4) : UINT32_C(0x8006a69c);
     uint8_t header[32], directory[8 + 4 * GROUPS];
     uint32_t first, sectors;
     if (!disc || !musashi_disc_media_root_frames(disc, file, &first, &sectors) ||
@@ -50,6 +51,7 @@ DiscVoice *bfm_disc_voice_load(const MusashiDiscMedia *disc, BfmDiscVoiceArchive
     v->archive_sectors = sectors;
     v->cue_directory = EXE_HEADER + (size_t)(table - origin);
     v->half_channels = directory[4] ? 4 : 8;
+    v->interleave = v->half_channels * 2;
     for (unsigned i = 0; i < GROUPS; ++i)
         v->group_start[i] = little32(directory + 8 + 4 * i);
     return v;
@@ -69,11 +71,11 @@ void bfm_disc_voice_free(DiscVoice *v)
     free(v);
 }
 
-static int audio_sector(const uint8_t *sector, unsigned channel)
+static int audio_sector(const uint8_t *sector, unsigned channel, unsigned interleave)
 {
     return sector[15] == 2 && !memcmp(sector + 16, sector + 20, 4) &&
            sector[16] == 1 && sector[17] == channel &&
-           (sector[18] & 0x64) == 0x64 && sector[19] == 1;
+           (sector[18] & 0x64) == 0x64 && sector[19] == (interleave == 8 ? 1 : 0);
 }
 
 int bfm_disc_voice_request(DiscVoice *v, unsigned bank, unsigned cue, BfmDiscVoiceCue *selected)
@@ -81,13 +83,13 @@ int bfm_disc_voice_request(DiscVoice *v, unsigned bank, unsigned cue, BfmDiscVoi
     if (!v) return 0;
     /* The mounted descriptor maps each pair of selector rows onto one
      * interleaved group. Bits 9..13 select the sound archive. */
-    unsigned script_bank = v->archive == BFM_VOICE_OPEN ? 8u : 0u;
-    unsigned prefix = v->archive == BFM_VOICE_OPEN ? 0x4600u : 0x4000u;
+    unsigned script_bank = v->archive == BFM_VOICE_OPEN ? 8u : v->archive == BFM_VOICE_ST02 ? 1u : 0u;
+    unsigned prefix = v->archive == BFM_VOICE_OPEN ? 0x4600u : v->archive == BFM_VOICE_ST02 ? 0x4200u : 0x4000u;
     if (bank != script_bank || (cue & ~0x1ffu) != prefix) return 0;
     unsigned pair = (cue >> 4) & 31u;
     unsigned group = pair / 2;
     unsigned channel = (cue & 15u) + (pair % 2) * v->half_channels;
-    if (channel >= INTERLEAVE) return 0;
+    if (channel >= v->interleave) return 0;
     uint8_t record[4];
     if (!exe_read(v->disc, v->cue_directory + group * 64 + channel * 4, record, sizeof(record)) ||
         !(record[1] & 0xf0)) return 0;
@@ -98,7 +100,7 @@ int bfm_disc_voice_request(DiscVoice *v, unsigned bank, unsigned cue, BfmDiscVoi
     uint8_t sector[MUSASHI_DISC_RAW_SECTOR_SIZE];
     uint32_t first = v->archive_start + begin + channel;
     if (!musashi_disc_media_read_sector(v->disc, first, sector, sizeof(sector)) ||
-        !audio_sector(sector, channel)) return 0;
+        !audio_sector(sector, channel, v->interleave)) return 0;
     bfm_disc_voice_stop(v);
     v->next = first;
     v->limit = v->archive_start + end;
@@ -118,26 +120,28 @@ static int floor_div64(int x)
 static int decode(DiscVoice *v, const uint8_t *sector)
 {
     static const int feedback[4][2] = {{0, 0}, {60, 0}, {115, -52}, {98, -55}};
-    /* Each group contains four consecutive 28-frame stereo blocks. The
-     * low and high nibbles are the left and right channel samples. */
+    /* Stereo alternates channels between the low and high nibble units.
+     * In a mono sector all eight units advance one shared predictor. */
+    unsigned channels = v->interleave == 8 ? 2 : 1;
     for (unsigned g = 0; g < 18; ++g) {
         const uint8_t *group = sector + 24 + 128 * g;
         for (unsigned unit = 0; unit < 8; ++unit) {
             unsigned parameter = group[4 + unit];
             unsigned filter = parameter >> 4, shift = parameter & 15u;
             if (filter >= 4 || shift > 12) return 0;
-            unsigned ch = unit % 2;
+            unsigned ch = unit % channels;
             int a = v->last[ch], b = v->older[ch];
             for (unsigned i = 0; i < 28; ++i) {
                 uint8_t byte = group[16 + i * 4 + unit / 2];
-                int nibble = (byte >> (4 * ch)) & 15;
+                int nibble = (byte >> (4 * (unit % 2))) & 15;
                 if (nibble >= 8) nibble -= 16;
                 int sample = nibble * (1 << (12 - shift));
                 sample += floor_div64(a * feedback[filter][0] + b * feedback[filter][1] + 32);
                 if (sample > 32767) sample = 32767;
                 if (sample < -32768) sample = -32768;
-                unsigned frame = (g * 4 + unit / 2) * 28 + i;
+                unsigned frame = ((g * 8 + unit) / channels) * 28 + i;
                 v->pcm[2 * frame + ch] = (int16_t)sample;
+                if (channels == 1) v->pcm[2 * frame + 1] = (int16_t)sample;
                 b = a;
                 a = sample;
             }
@@ -155,13 +159,13 @@ int bfm_disc_voice_prime(DiscVoice *v)
     if (v->next >= v->limit) return 0;
     uint8_t sector[MUSASHI_DISC_RAW_SECTOR_SIZE];
     if (!musashi_disc_media_read_sector(v->disc, v->next, sector, sizeof(sector)) ||
-        !audio_sector(sector, v->channel) || !decode(v, sector)) {
+        !audio_sector(sector, v->channel, v->interleave) || !decode(v, sector)) {
         bfm_disc_voice_stop(v);
         return 0;
     }
-    if ((sector[18] & 0x80) || v->limit - v->next <= INTERLEAVE) v->next = v->limit;
-    else v->next += INTERLEAVE;
-    v->pending = SECTOR_FRAMES;
+    if ((sector[18] & 0x80) || v->limit - v->next <= v->interleave) v->next = v->limit;
+    else v->next += v->interleave;
+    v->pending = v->interleave == 8 ? STEREO_FRAMES : MONO_FRAMES;
     v->consumed = 0;
     return 1;
 }

@@ -4,6 +4,7 @@
 #include "palace_rise.h"
 #include "palace_score.h"
 #include "palace_sound_bank.h"
+#include "scene_views.h"
 #include "palace_voice.h"
 #include <stdlib.h>
 
@@ -15,7 +16,7 @@ typedef struct {
 } Instrument;
 
 enum { RISE, FLASH, AFTER_FLASH, SCORE, NOTES };
-enum { SCORE_FIELD = 4630, END_OF_SCORE_PREVIEW = 5430 };
+enum { SCORE_FIELD = 4630 };
 struct BfmPalaceEffects {
     Instrument notes[NOTES];
 };
@@ -64,7 +65,7 @@ BfmPalaceEffects *bfm_palace_effects_load(const MusashiDiscMedia *disc)
          * through the same final field as the neutral court scene. */
         Instrument *score = &effects->notes[SCORE];
         score->field = SCORE_FIELD;
-        size_t frames = (uint64_t)(END_OF_SCORE_PREVIEW - SCORE_FIELD) *
+        size_t frames = (uint64_t)(BFM_OPENING_LAST_FIELD - SCORE_FIELD) *
                         BFM_PALACE_VOICE_RATE * 1001 / 60000;
         if (bfm_palace_score_render(disc, BFM_PALACE_VOICE_RATE, frames, &score->pcm))
             score->frames = frames;
