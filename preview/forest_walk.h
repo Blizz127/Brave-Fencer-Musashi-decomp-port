@@ -13,6 +13,8 @@ enum { BFM_FOREST_R1 = 1u << 11, BFM_FOREST_TRIANGLE = 1u << 12, BFM_FOREST_CIRC
 BfmForestWalk *bfm_forest_walk_open(const MusashiDiscMedia *disc, const RoomTransferDescriptor *entry);
 /* Attach the application-owned gameplay stream before player control starts. */
 int bfm_forest_walk_bind_gameplay(BfmForestWalk *walk, BfmGameplayRun *run);
+/* The two palace exits enter the first visible forest fade at different fields. */
+void bfm_forest_walk_set_palace_exit(BfmForestWalk *walk, unsigned member);
 /* Completed world updates at the first forest pose. A caller without the
  * departing scene's clock can still use action-triggered effects. */
 void bfm_forest_walk_inherit_clock(BfmForestWalk *walk, uint16_t first_tick);

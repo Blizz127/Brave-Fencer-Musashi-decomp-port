@@ -15,7 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { SELECT_HALL = 30, PLACE_HERO = 188 };
+enum { SELECT_HALL = 30, PLACE_HERO = 188, HALL_LIVE = 250 };
 struct BfmSteamKnight {
     BfmSteamKnightField *field;
     BfmForestMessageArt *art;
@@ -190,6 +190,9 @@ int bfm_steam_knight_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uin
         bfm_forest_hud_submit_points(s->hud, &e->run->player);
         bfm_forest_hud_tick(s->hud);
     }
+    /* The hall becomes active after selection, placement and its entry fade. */
+    if (e->age > HALL_LIVE && e->run->player.record[8] == 0)
+        bfm_gameplay_advance_playtime(e->run->player.record, 1);
     return 1;
 }
 

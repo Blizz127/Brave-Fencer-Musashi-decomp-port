@@ -4,7 +4,7 @@
 #include <string.h>
 
 enum {
-    SELECT_CASTLE = 30, PLACE_ACTOR = 124, REVEAL_START = 128, FULL_LIGHT = 150,
+    SELECT_CASTLE = 30, PLACE_ACTOR = 124, REVEAL_START = 128, FULL_LIGHT = 150, ROOM_LIVE = 146,
     BEGIN_CROSSING = 164, RELEASE_GATE = 287,
     BRIDGE_APPROACH_Z = 182, BRIDGE_LIP_Z = 128, GATE_LANDING_Z = -320, GATE_Z = -432
 };
@@ -102,6 +102,11 @@ int bfm_castle_drawbridge_tick(BfmCastleDrawbridge *b)
     set_motion(b, b->airborne ? BFM_DRAWBRIDGE_JUMP :
         (z > GATE_Z ? BFM_DRAWBRIDGE_RUN : BFM_DRAWBRIDGE_STAND));
     return 1;
+}
+
+int bfm_castle_drawbridge_live(const BfmCastleDrawbridge *b)
+{
+    return b && b->age >= ROOM_LIVE;
 }
 
 unsigned bfm_castle_drawbridge_room(const BfmCastleDrawbridge *b)

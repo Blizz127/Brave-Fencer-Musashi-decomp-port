@@ -26,6 +26,9 @@ int bfm_gameplay_start_banks(BfmGameplayBanks *banks, const MusashiDiscMedia *di
 /* The final Steam Knight cutscene advances the figure chapter before departure. */
 int bfm_gameplay_advance_figures(BfmGameplayRun *run);
 
+/* Count completed active scene updates in the saved player record. */
+void bfm_gameplay_advance_playtime(uint8_t progress[152], unsigned updates);
+
 uint16_t bfm_gameplay_random(BfmGameplayRun *run);
 int bfm_gameplay_story_flag(const BfmGameplayRun *run, unsigned flag);
 

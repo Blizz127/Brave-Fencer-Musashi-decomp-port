@@ -20,6 +20,8 @@ int bfm_castle_drawbridge_tick(BfmCastleDrawbridge *bridge);
 int bfm_castle_drawbridge_draw(BfmCastleDrawbridge *bridge,
     const BfmForestPose *pose, const BfmForestTransform *root, uint32_t visible_parts,
     uint32_t pixels[240][320]);
+/* During the bridge transfer, the room is selected before it goes live. */
+int bfm_castle_drawbridge_live(const BfmCastleDrawbridge *bridge);
 unsigned bfm_castle_drawbridge_room(const BfmCastleDrawbridge *bridge);
 int bfm_castle_drawbridge_descending(const BfmCastleDrawbridge *bridge);
 int bfm_castle_drawbridge_actor(const BfmCastleDrawbridge *bridge, int16_t feet[3],
