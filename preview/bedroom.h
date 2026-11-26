@@ -6,6 +6,10 @@
 
 typedef struct BfmBedroom BfmBedroom;
 BfmBedroom *bfm_bedroom_open(const MusashiDiscMedia *disc, const BfmSaveRecord *record);
+/* Enter the new chapter on the existing run, including the wake script's
+ * resource changes. The retained chapter save remains at its pre-wake state. */
+BfmBedroom *bfm_bedroom_open_chapter(const MusashiDiscMedia *disc, const BfmSaveRecord *record,
+                                     BfmGameplayRun *run);
 /* Adopt the restored room flags into the process-owned bank after loading. */
 void bfm_bedroom_bind_story_flags(BfmBedroom *room, uint8_t flags[64]);
 void bfm_bedroom_bind_run(BfmBedroom *room, BfmGameplayRun *run);
