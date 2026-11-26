@@ -2367,6 +2367,8 @@ int bfm_forest_walk_tick_controller(BfmForestWalk *w, int x, int y, uint16_t pre
                 if (!select_pose(w, special, w->visible)) return -1;
             } else if (!update_pose(w)) return -1;
             w->visible = (w->visible & ~weapon_parts) | equipped;
+            if (!bfm_steam_knight_step_effects(w->steam_knight, &w->root, w->lumina_anchors))
+                return -1;
         }
         return 1;
     }

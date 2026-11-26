@@ -4,6 +4,7 @@
 #include "steam_knight_cast.h"
 #include "steam_knight_rotation.h"
 #include "steam_knight_effects.h"
+#include "steam_knight_charge_effect.h"
 #include "steam_knight_entry_light.h"
 #include "steam_knight_machine.h"
 #include "steam_knight_armor.h"
@@ -23,7 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { SELECT_HALL = 30, PLACE_HERO = 188, HALL_LIVE = 250 };
+enum { SELECT_HALL = 30, PLACE_HERO = 188, HALL_LIVE = 250, DAMAGE_NUMBER_KIND = 29 };
 struct BfmSteamKnight {
     BfmSteamKnightField *field;
     BfmForestMessageArt *art;
@@ -37,10 +38,11 @@ struct BfmSteamKnight {
     BfmForestFusionPower power;
     BfmSteamSpinData spin;
     BfmSteamKnightArmorHit hit;
+    BfmSteamChargeEffects charge_effects;
     struct {
         BfmForestDamageDigits digits;
         unsigned delay;
-    } numbers[BFM_STEAM_ARMOR_PLATES];
+    } numbers[BFM_STEAM_CHARGE_SLOTS];
     const uint8_t *damage_palette;
     int swing_sound, hit_sound;
     BfmSteamKnightBossHud boss_hud;
@@ -146,18 +148,45 @@ static void hall_camera(const BfmSteamKnight *s, BfmForestCamera *camera);
 
 static int damage_number(BfmSteamKnight *s, const int16_t point[3], uint16_t amount, int hurt)
 {
-    for (size_t i = 0; i < BFM_STEAM_ARMOR_PLATES; ++i) {
-        if (s->numbers[i].digits.amount) continue;
-        if (!bfm_forest_damage_digits_start_data(&s->numbers[i].digits, s->damage_palette + hurt,
-                                                point, amount)) return 0;
-        if (hurt) {
-            s->numbers[i].digits.hurt = 1;
-            bfm_forest_damage_digits_scatter(&s->numbers[i].digits, bfm_gameplay_random(s->event.run));
-        }
-        s->numbers[i].delay = 2;
-        break;
+    if (!amount || (hurt && amount == 1000)) return 1;
+    if (hurt && amount > 999) return 0;
+    int slot = bfm_steam_charge_reserve(&s->charge_effects, DAMAGE_NUMBER_KIND);
+    if (slot < 0) return 1;
+    BfmForestDamageDigits *digits = &s->numbers[slot].digits;
+    if (!bfm_forest_damage_digits_start_data(digits, s->damage_palette + hurt, point, amount)) {
+        bfm_steam_charge_release(&s->charge_effects, (unsigned)slot, DAMAGE_NUMBER_KIND);
+        return 0;
     }
+    digits->hurt = hurt != 0;
+    s->numbers[slot].delay = 2;
     return 1;
+}
+
+static void advance_number(void *context, unsigned i, uint8_t kind)
+{
+    if (kind != DAMAGE_NUMBER_KIND) return;
+    BfmSteamKnight *s = context;
+    BfmForestDamageDigits *digits = &s->numbers[i].digits;
+    BfmSteamChargeSlot *slot = &s->charge_effects.slots[i];
+    if (!slot->started) {
+        slot->started = 1;
+        if (digits->hurt) bfm_forest_damage_digits_scatter(digits, bfm_gameplay_random(s->event.run));
+    } else if (s->numbers[i].delay) {
+        --s->numbers[i].delay;
+    } else {
+        bfm_forest_damage_digits_advance(digits);
+        if (!digits->amount) bfm_steam_charge_release(&s->charge_effects, i, DAMAGE_NUMBER_KIND);
+    }
+}
+
+int bfm_steam_knight_step_effects(BfmSteamKnight *s, const BfmForestTransform *root,
+                                 const int8_t lumina[2][3])
+{
+    if (!s) return 0;
+    if (!s->hero) return 1;
+    return bfm_steam_charge_step_shared(&s->charge_effects, s->event.run,
+                                       s->event.run->player.record[0x47], root, lumina,
+                                       advance_number, s);
 }
 
 static int plate_contact(BfmSteamKnight *s, uint16_t amount)
@@ -587,11 +616,6 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
     bfm_forest_voice_step(s->voice);
     bfm_steam_knight_machine_step_light(s->machine);
     bfm_steam_knight_machine_present(s->machine, e->stage_age);
-    /* Existing world numbers advance before any new impact in this update. */
-    for (size_t i = 0; i < BFM_STEAM_ARMOR_PLATES; ++i) {
-        if (s->numbers[i].delay) --s->numbers[i].delay;
-        else if (s->numbers[i].digits.amount) bfm_forest_damage_digits_advance(&s->numbers[i].digits);
-    }
     if (s->weak_stage == 3) {
         ++s->weak_age;
         if (s->weak_age == 17) bfm_steam_knight_machine_open_cover(s->machine);
@@ -637,6 +661,8 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
         if ((lumina == BFM_STEAM_LUMINA_PASS || lumina == BFM_STEAM_LUMINA_SLASH) &&
             !bfm_steam_hero_tick(s->hero, &camera, x, y, pressed, held, &strike)) return -1;
     }
+    if (previous_action != 17 && player->action == 17)
+        bfm_steam_charge_enter(&s->charge_effects, e->run->player.record[0x48]);
     int recovered = bfm_steam_hero_mace_debit(s->hero, &e->run->player);
     if (recovered < 0) return -1;
     if (recovered && bfm_forest_status_values(&e->run->player).hp <= 0) return 0;
@@ -876,6 +902,23 @@ static void hall_camera(const BfmSteamKnight *s, BfmForestCamera *camera)
         views[s->event.shot](camera);
 }
 
+static size_t project_shared_effects(const BfmSteamKnight *s, const BfmForestCamera *camera,
+                                     BfmForestDustCard *cards)
+{
+    size_t count = 0;
+    BfmForestDustCard streaks[BFM_STEAM_CHARGE_SLOTS];
+    unsigned streak_count = bfm_steam_charge_project(&s->charge_effects, camera, streaks,
+                                                      BFM_STEAM_CHARGE_SLOTS);
+    unsigned streak = 0;
+    for (unsigned slot = 0; slot < BFM_STEAM_CHARGE_SLOTS; ++slot) {
+        if (streak < streak_count && streaks[streak].slot == slot)
+            cards[count++] = streaks[streak++];
+        if (s->charge_effects.slots[slot].kind == DAMAGE_NUMBER_KIND)
+            count += bfm_forest_damage_digits_project(&s->numbers[slot].digits, camera, cards + count);
+    }
+    return count;
+}
+
 int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
     const BfmForestTransform *root, uint32_t visible, const int8_t fusion[2][3],
     const int8_t lumina[2][3], uint32_t pixels[240][320])
@@ -925,7 +968,7 @@ int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
             s->street.detached ? &s->street.head : NULL, actors, sizeof actors / sizeof actors[0]);
     BfmForestDustCard cards[BFM_STEAM_ENTRY_LIGHT_CARDS + BFM_STEAM_FLAMES + BFM_STEAM_WEAPON_CARDS
                             + BFM_STEAM_WEAK_HALO_CARDS
-                            + BFM_STEAM_ARMOR_PLATES * BFM_FOREST_DAMAGE_DIGIT_CARDS];
+                            + BFM_STEAM_CHARGE_SLOTS * BFM_FOREST_DAMAGE_DIGIT_CARDS];
     size_t count = s->event.shot == BFM_STEAM_ENTRY_CAMERA
                  ? bfm_steam_entry_light(&camera, s->event.age, cards) : 0;
     count += bfm_steam_knight_flames_project(&s->flames, &camera, cards + count);
@@ -941,9 +984,7 @@ int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
     int has_blade;
     count += bfm_steam_weapons_project(&s->weapons, &camera, root, visible, fusion, lumina,
                                        s->event.age, &blade, &has_blade, cards + count);
-    for (size_t i = 0; i < BFM_STEAM_ARMOR_PLATES; ++i)
-        count += bfm_forest_damage_digits_project(&s->numbers[i].digits, &camera, cards + count);
-    for (size_t i = 0; i < count; ++i) cards[i].slot = (unsigned)i;
+    count += project_shared_effects(s, &camera, cards + count);
     if (bfm_steam_hero_mace_hidden(s->hero)) visible = 0;
     if (!bfm_steam_knight_field_draw(s->field, &camera, pose, root, visible,
             has_blade ? &s->weapons.fusion : NULL, has_blade ? &blade : NULL, s->event.age & 1,

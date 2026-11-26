@@ -189,6 +189,7 @@ add_executable(musashi_native_boot
     steam_knight_event.c
     steam_knight_finale.c
     steam_knight_effects.c
+    steam_knight_charge_effect.c
     steam_knight_entry_light.c
     steam_knight_cast.c
     steam_knight_machine.c

@@ -12,6 +12,9 @@ int bfm_steam_knight_take_chapter(BfmSteamKnight *s);
 void bfm_steam_knight_free(BfmSteamKnight *encounter);
 int bfm_steam_knight_tick(BfmSteamKnight *encounter, int x, int y, uint16_t pressed, uint16_t held,
                           int32_t initial_walk_velocity);
+/* Advance room effects once after the player's selected model and blade anchors are current. */
+int bfm_steam_knight_step_effects(BfmSteamKnight *encounter, const BfmForestTransform *root,
+                                 const int8_t lumina[2][3]);
 int bfm_steam_knight_swing_sound(const BfmSteamKnight *encounter);
 int bfm_steam_knight_hit_sound(const BfmSteamKnight *encounter);
 int bfm_steam_knight_control(const BfmSteamKnight *encounter);
