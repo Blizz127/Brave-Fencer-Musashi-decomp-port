@@ -9,6 +9,7 @@
 #include "steam_knight_armor.h"
 #include "steam_knight_core_damage.h"
 #include "steam_knight_core_origin.h"
+#include "steam_knight_carry.h"
 #include "steam_knight_hero_motion.h"
 #include "steam_knight_boss_hud.h"
 #include "forest_hud.h"
@@ -38,6 +39,8 @@ struct BfmSteamKnight {
     int swing_sound, hit_sound;
     BfmSteamKnightBossHud boss_hud;
     BfmSteamKnightCoreBoxes core_boxes;
+    BfmSteamKnightCarry carry;
+    unsigned transfer_age, arrival_wait;
     unsigned core_hp, core_max;
     unsigned round, weak_stage, weak_age, core_struck, recovery_left;
     unsigned body_stage, pending_kneel_joint;
@@ -78,6 +81,7 @@ BfmSteamKnight *bfm_steam_knight_open(const MusashiDiscMedia *disc,
     if (!s->art || !s->hostages || !s->machine || !s->hud ||
         !bfm_steam_knight_armor_load(&s->armor, scene, size) ||
         !bfm_steam_knight_core_boxes_load(&s->core_boxes, scene, size) ||
+        !bfm_steam_carry_load(&s->carry, disc, scene, size) ||
         !bfm_steam_knight_armor_load_power(disc, scene, size, &s->power) ||
         !bfm_steam_knight_boss_hud_load(&s->boss_hud, disc, scene, size) || !bfm_lumina_rotation_load(disc, &s->rotation) ||
         !bfm_steam_weapons_load(&s->weapons, scene, size) ||
@@ -159,9 +163,50 @@ static int core_contact(BfmSteamKnight *s, const BfmSteamKnightHeroStrike *strik
     }
     s->core_hp = (unsigned)hit.hp_after;
     s->battle_flags = (s->battle_flags & ~hit.clear_flags) | hit.set_flags;
-    if (hit.response == BFM_STEAM_CORE_DEPLETED)
+    if (hit.response == BFM_STEAM_CORE_DEPLETED) {
+        if (!bfm_steam_carry_knockdown(&s->carry, s->machine, s->round)) return 0;
         s->body_stage = 10;
+        s->transfer_age = 0;
+    }
     return damage_number(s, hit.contact.point, amount);
+}
+
+static int transfer_tick(BfmSteamKnight *s)
+{
+    if (s->body_stage == 9) {
+        /* First arrival includes the machine's second rising clip. The
+         * street machine goes straight from its first clip to neutral. */
+        unsigned duration = s->round == 1 ? 58 : 34;
+        if (s->transfer_age >= duration) {
+            if (!bfm_steam_knight_machine_reset_round(s->machine, s->round)) return 0;
+            s->body_stage = 1;
+            return s->round == 2 || bfm_steam_knight_armor_rearm(&s->armor, s->round, 1);
+        }
+    } else {
+        unsigned edges;
+        if (!bfm_steam_carry_tick(&s->carry, s->hero, s->machine, &edges)) return 0;
+        if (edges & BFM_STEAM_THROW_LIFTABLE) {
+            s->body_stage = 8;
+            s->transfer_age = 0;
+        }
+        if ((edges & BFM_STEAM_THROW_GATE_CROSSED) &&
+            !bfm_steam_knight_field_break_gate(s->field, s->round + 1)) return 0;
+        if ((edges & BFM_STEAM_THROW_HERO_REPOSITION) && s->round < 2) {
+            int16_t feet[3] = {-128, -2052, s->round == 0 ? -1280 : 1664};
+            if (!bfm_steam_hero_place(s->hero, feet, 2048)) return 0;
+        }
+        if (edges & BFM_STEAM_THROW_BODY_ARRIVED) {
+            s->arrival_wait = s->round == 0 ? 23 : 16;
+        } else if (s->arrival_wait && !--s->arrival_wait) {
+            ++s->round;
+            s->body_stage = 9;
+            s->transfer_age = 0;
+            s->core_hp = s->core_max;
+            s->battle_flags &= 2;
+        }
+    }
+    return bfm_steam_knight_machine_round_pose(s->machine, s->body_stage,
+                                               s->round, s->transfer_age++);
 }
 
 static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t held)
@@ -185,10 +230,18 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
         if (s->numbers[i].delay) --s->numbers[i].delay;
         else if (s->numbers[i].digits.amount) bfm_forest_damage_digits_advance(&s->numbers[i].digits);
     }
+    int16_t previous[3], machine_position[3];
+    memcpy(previous, bfm_steam_hero_sample(s->hero)->feet, sizeof previous);
+    if (!bfm_steam_knight_machine_world_root(s->machine, machine_position)) return -1;
+    bfm_steam_knight_field_track_arena(s->field, s->round, s->body_stage, previous, machine_position);
     BfmForestCamera camera;
     hall_camera(s, &camera);
+    if (s->body_stage == 8)
+        bfm_steam_carry_try_grab(&s->carry, s->hero, pressed);
     BfmSteamKnightHeroStrike strike;
     if (!bfm_steam_hero_tick(s->hero, &camera, x, y, pressed, held, &strike)) return -1;
+    if (s->body_stage == 8 && !bfm_steam_carry_check_brace(&s->carry, s->hero, previous))
+        return -1;
     if (strike.issued) {
         bfm_steam_knight_armor_begin_swing(&s->armor);
         s->core_struck = 0;
@@ -212,6 +265,8 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
         s->battle_flags |= s->pending_kneel_flags;
         s->pending_kneel_flags = s->pending_kneel_joint = 0;
     }
+    if ((s->body_stage == 8 || s->body_stage == 9 || s->body_stage == 10) &&
+        !transfer_tick(s)) return -1;
     return 1;
 }
 
@@ -348,6 +403,8 @@ static void hall_camera(const BfmSteamKnight *s, BfmForestCamera *camera)
         bfm_steam_knight_title_camera(camera, ground_age * 2);
     } else if (s->event.stage == BFM_STEAM_DUEL && !s->event.stage_age)
         bfm_steam_knight_machine_camera(camera);
+    else if (s->hero)
+        bfm_steam_knight_field_arena_camera(s->field, camera);
     else
         views[s->event.shot](camera);
 }

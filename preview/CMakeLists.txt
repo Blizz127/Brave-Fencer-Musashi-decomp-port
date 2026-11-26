@@ -193,6 +193,9 @@ add_executable(musashi_native_boot
     steam_knight_core_contact.c
     steam_knight_core_damage.c
     steam_knight_core_origin.c
+    steam_knight_carry.c
+    steam_knight_grip.c
+    steam_knight_throw.c
     steam_knight_hero_motion.c
     steam_knight_boss_hud.c
     steam_knight_rotation.c

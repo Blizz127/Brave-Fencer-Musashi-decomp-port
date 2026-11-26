@@ -22,7 +22,7 @@ int bfm_steam_knight_machine_set_chassis_clip(BfmSteamKnightMachine *machine,
 typedef enum {
     BFM_STEAM_MACHINE_DORMANT, BFM_STEAM_MACHINE_NEUTRAL, BFM_STEAM_MACHINE_WALKING,
     BFM_STEAM_MACHINE_KNEELING, BFM_STEAM_MACHINE_GETTING_UP,
-    BFM_STEAM_MACHINE_STRIKING, BFM_STEAM_MACHINE_SMASHING
+    BFM_STEAM_MACHINE_STRIKING, BFM_STEAM_MACHINE_SMASHING, BFM_STEAM_MACHINE_TRANSFERRING
 } BfmSteamKnightStance;
 BfmSteamKnightStance bfm_steam_knight_machine_stance(const BfmSteamKnightMachine *machine);
 int bfm_steam_knight_machine_world_root(const BfmSteamKnightMachine *machine, int16_t position[3]);
@@ -35,6 +35,11 @@ typedef enum {
     BFM_STEAM_WALK_RIGHT, BFM_STEAM_WALK_LEFT, BFM_STEAM_WALK_FORWARD
 } BfmSteamKnightWalk;
 int bfm_steam_knight_machine_walk(BfmSteamKnightMachine *machine, BfmSteamKnightWalk direction);
+/* World-space movement and field progression come from the encounter. */
+int bfm_steam_knight_machine_root_q12(const BfmSteamKnightMachine *machine, int32_t position[3]);
+int bfm_steam_knight_machine_round_pose(BfmSteamKnightMachine *machine, unsigned stage,
+                                       unsigned round, unsigned active_age);
+int bfm_steam_knight_machine_reset_round(BfmSteamKnightMachine *machine, unsigned round);
 /* Sample the physical knee key before the display delay. hold_age starts
  * at zero when the terminal key is first selected. */
 int bfm_steam_knight_machine_knee_pose(const BfmSteamKnightMachine *machine,
