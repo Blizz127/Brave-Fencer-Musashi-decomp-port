@@ -235,9 +235,10 @@ static int climb_to_upper(BfmVillageArrival *a)
     return 1;
 }
 
-int bfm_village_arrival_step_input(BfmVillageArrival *a, BfmGameplayRun *run,
-                                   int x, int y, int talk_edge, BfmForestMessage **opened)
+int bfm_village_arrival_step_field(BfmVillageArrival *a, BfmGameplayRun *run,
+                                   BfmFieldInput field, BfmForestMessage **opened)
 {
+    int x = field.x, y = field.y, talk_edge = field.square_pressed;
     if (opened) *opened = NULL;
     /* The upper field and the lower street share the running world clock. The
      * player is already on the incoming actor list for its 17 fade-in updates. */
@@ -271,7 +272,7 @@ int bfm_village_arrival_step_input(BfmVillageArrival *a, BfmGameplayRun *run,
     if (a->woods) {
         if (bfm_southern_woods_player(a->woods)->controlled)
             bfm_village_clock_step(a->record, 0);
-        return bfm_southern_woods_step(a->woods, x, y, talk_edge, opened);
+        return bfm_southern_woods_step_field(a->woods, run, field, opened);
     }
     if (a->lower) {
         if (!bfm_village_lower_step(a->lower, x, y, talk_edge, opened)) return 0;
@@ -330,6 +331,18 @@ int bfm_village_arrival_step_input(BfmVillageArrival *a, BfmGameplayRun *run,
     bfm_village_talk_camera_step(&a->talk_camera, &a->presented_camera);
     ++a->age;
     return bfm_village_motion_face(a->motion, a->tiles);
+}
+
+int bfm_village_arrival_tether_gauge(const BfmVillageArrival *a)
+{
+    return a->woods ? bfm_southern_woods_tether_gauge(a->woods) : -1;
+}
+
+int bfm_village_arrival_step_input(BfmVillageArrival *a, BfmGameplayRun *run, int x, int y,
+                                   int talk_edge, BfmForestMessage **opened)
+{
+    return bfm_village_arrival_step_field(a, run,
+        (BfmFieldInput){.x=x, .y=y, .square_pressed=talk_edge}, opened);
 }
 
 int bfm_village_arrival_step(BfmVillageArrival *a, BfmGameplayRun *run, int x, int y)

@@ -656,7 +656,7 @@ static const BfmForestMessageFrame *advance_message(BfmBedroom *room, int confir
 }
 
 static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int direction,
-                        int accept_edge, int x, int y, int talk_edge)
+                        int accept_edge, BfmFieldInput field)
 {
     int result = BFM_BEDROOM_ADVANCED;
     int was_in_dialogue = room->message != NULL;
@@ -678,8 +678,8 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
             return 0;
     }
     BfmForestMessage *opened = NULL;
-    if (!bfm_village_arrival_step_input(room->village, room->run, x, y,
-                                        talk_edge && !was_in_dialogue, &opened)) return 0;
+    if (was_in_dialogue) field.square_pressed = field.shoulder_held = 0;
+    if (!bfm_village_arrival_step_field(room->village, room->run, field, &opened)) return 0;
     if (opened) room->message = opened;
     const uint8_t *inn_door = bfm_village_arrival_inn_transfer(room->village);
     if (inn_door) {
@@ -717,6 +717,11 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
     if (!bfm_village_arrival_draw(room->village, room->story_flags,
                 room->message ? bfm_forest_message_frame(room->message) : NULL, frame)) return 0;
     memcpy(room->status.record, room->entry.state.progress, sizeof room->status.record);
+    if (bfm_village_arrival_room(room->village) == 0x3025) {
+        bfm_forest_hud_gauges(room->hud, room->status.record[0x47],
+                              bfm_village_arrival_tether_gauge(room->village));
+        bfm_forest_hud_submit_points(room->hud, &room->status);
+    }
     bfm_forest_hud_draw(room->hud, &room->status, frame);
     room->presented = (room->presented + 1) % 3;
     ++room->village_updates;
@@ -781,8 +786,8 @@ int bfm_bedroom_leave_inn(BfmBedroom *room)
     return 1;
 }
 
-int bfm_bedroom_step_axes(BfmBedroom *room, int confirm_edge, int reveal_edge,
-                          int direction, int held, int accept_edge, int back_edge, int x, int y, int talk_edge)
+int bfm_bedroom_step_field(BfmBedroom *room, int confirm_edge, int reveal_edge,
+                           int direction, int held, int accept_edge, int back_edge, BfmFieldInput field)
 {
     room->effect_request = 0;
     room->slider_event = 0;
@@ -804,7 +809,7 @@ int bfm_bedroom_step_axes(BfmBedroom *room, int confirm_edge, int reveal_edge,
         return result;
     }
     if (room->village) return village_step(room, confirm_edge, reveal_edge, direction,
-                                            accept_edge, x, y, talk_edge);
+                                            accept_edge, field);
     if (room->village_trip && room->cable_tick>=COURT_WIPE) return cable_trip_step(room);
     if (room->village_trip) {
         ++room->cable_tick;
@@ -1053,6 +1058,14 @@ BfmBedroomEffects *bfm_bedroom_effect(const BfmBedroom *room, unsigned *command)
 BfmForestScore *bfm_bedroom_score(const BfmBedroom *room)
 {
     return room ? room->current_score : NULL;
+}
+
+int bfm_bedroom_step_axes(BfmBedroom *room, int confirm_edge, int reveal_edge,
+                          int direction, int held, int accept_edge, int back_edge,
+                          int x, int y, int talk_edge)
+{
+    return bfm_bedroom_step_field(room, confirm_edge, reveal_edge, direction, held, accept_edge,
+                                  back_edge, (BfmFieldInput){.x=x, .y=y, .square_pressed=talk_edge});
 }
 
 int bfm_bedroom_step_directions(BfmBedroom *room, int confirm_edge, int reveal_edge,

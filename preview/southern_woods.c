@@ -5,6 +5,10 @@
 #include "scene_tiles.h"
 #include "forest_message_art.h"
 #include "woods_sign_model.h"
+#include "woods_caster.h"
+#include "woods_fusion.h"
+#include "woods_fusion_art.h"
+#include "woods_shrink_message.h"
 #include "../pc_port/forest_player_bytes.h"
 #include <limits.h>
 #include <string.h>
@@ -18,6 +22,13 @@ struct BfmSouthernWoods {
     BfmVillageCamera camera;
     uint16_t (*tiles)[1024];
     BfmWoodsSignModel *sign;
+    BfmWoodsCaster *caster;
+    BfmWoodsFusion *fusion;
+    BfmWoodsFusionFrame action;
+    BfmSaveRecord *save;
+    const uint8_t *main;
+    size_t main_bytes;
+    int award_open;
     BfmForestMessageArt *writing;
     const uint8_t *sign_text;
     size_t sign_bytes;
@@ -37,13 +48,15 @@ static void follow(BfmSouthernWoods *woods, int entering)
         cam->target[axis] = entering ? target : cam->target[axis] + step;
     }
     int bearing = bfm_village_motion_view_yaw(origin,position);
-    bfm_village_camera_woods_orbit(cam,bearing);
+    bfm_village_camera_woods_orbit(cam, bearing, root->xyz[2], entering);
 }
 
 void bfm_southern_woods_free(BfmSouthernWoods *woods)
 {
     if (!woods) return;
     bfm_forest_message_art_free(woods->writing);
+    bfm_woods_fusion_free(woods->fusion);
+    bfm_woods_caster_free(woods->caster);
     bfm_woods_sign_model_free(woods->sign);
     bfm_village_motion_free(woods->motion);
     bfm_village_field_clear(&woods->field);
@@ -79,7 +92,13 @@ BfmSouthernWoods *bfm_southern_woods_open(const MusashiDiscMedia *disc, BfmBedro
     woods->sign_bytes = (size_t)(end - woods->sign_text) + 1;
     woods->sign = bfm_woods_sign_model_load(woods->scene,woods->bytes,UINT32_C(0x8018ea38));
     woods->writing = bfm_castle_message_art_load(disc,woods->scene,woods->bytes,tiles,0x5fd88);
-    if (!woods->sign || !woods->writing) goto fail;
+    woods->caster = bfm_woods_caster_load(woods->scene, woods->bytes);
+    woods->fusion = bfm_woods_fusion_open(disc, woods->scene, woods->bytes);
+    if (!woods->sign || !woods->writing || !woods->caster || !woods->fusion) goto fail;
+    woods->main = main;
+    woods->main_bytes = main_bytes;
+    woods->save = &entry->state;
+    woods->action.tether_gauge = -1;
     woods->tiles = tiles;
     woods->camera.focal = 400;
     follow(woods,1);
@@ -97,12 +116,24 @@ const BfmVillagePlayer *bfm_southern_woods_player(const BfmSouthernWoods *woods)
 
 int bfm_southern_woods_close(BfmSouthernWoods *woods)
 {
+    if (woods->award_open) {
+        woods->award_open = 0;
+        return bfm_woods_fusion_close_award(woods->fusion);
+    }
     return bfm_village_motion_end_read(woods->motion);
 }
 
-int bfm_southern_woods_step(BfmSouthernWoods *woods, int x, int y,
-                            int talk_edge, BfmForestMessage **opened)
+int bfm_southern_woods_tether_gauge(const BfmSouthernWoods *woods)
 {
+    return woods->action.tether_gauge;
+}
+
+int bfm_southern_woods_step_field(BfmSouthernWoods *woods, BfmGameplayRun *run,
+                                  BfmFieldInput field, BfmForestMessage **opened)
+{
+    if (opened) *opened = NULL;
+    int x = woods->action.movement_locked ? 0 : field.x;
+    int y = woods->action.movement_locked ? 0 : field.y;
     const BfmVillagePlayer *p = bfm_village_motion_player(woods->motion);
     int16_t previous[3], endpoint[3];
     memcpy(previous,p->root.xyz,sizeof previous);
@@ -113,7 +144,8 @@ int bfm_southern_woods_step(BfmSouthernWoods *woods, int x, int y,
         bfm_woods_sign_model_slide(woods->sign,previous,endpoint);
         if (!bfm_village_motion_correct_contact(woods->motion,endpoint)) return 0;
     }
-    if (opened && talk_edge && p->controlled) {
+    if (opened && field.square_pressed && !field.shoulder_held && !woods->action.blade_away &&
+        !woods->action.movement_locked && p->controlled) {
         const int16_t *point = bfm_woods_sign_model_position(woods->sign);
         int64_t distance = 0;
         for (unsigned axis = 0; axis < 3; ++axis) {
@@ -129,8 +161,38 @@ int bfm_southern_woods_step(BfmSouthernWoods *woods, int x, int y,
         if (!*opened) return 0;
     }
     follow(woods,0);
+    if (!bfm_bedroom_field_set_focal(woods->field.field, woods->camera.focal)) return 0;
+    bfm_bedroom_field_viewpoint(woods->field.field, woods->camera.eye, woods->camera.target, 1, 1);
+    const BfmBedroomView *view = bfm_bedroom_field_view(woods->field.field);
+    if (!bfm_woods_caster_step(woods->caster, view, &p->root)) return 0;
+    if (run) {
+        memcpy(run->player.record, woods->save->progress, sizeof run->player.record);
+        BfmWoodsFusionInput cast = {
+            .controllable=p->controlled && !woods->award_open,
+            .moving=p->root.xyz[0] != previous[0] || p->root.xyz[2] != previous[2],
+            .shoulder=field.shoulder_held, .square_edge=field.square_pressed,
+            .visible=bfm_village_field_visible(&p->pose, woods->save->flags)
+        };
+        if (!bfm_woods_fusion_step(woods->fusion, woods->caster, run, &run->player, &p->root,
+                                   woods->age, &cast, &woods->action)) return 0;
+        memcpy(woods->save->progress, run->player.record, sizeof woods->save->progress);
+        if (woods->action.open_award) {
+            if (!opened || *opened) return 0;
+            *opened = bfm_woods_shrink_message_open(woods->scene, woods->bytes,
+                                                   woods->main, woods->main_bytes);
+            if (!*opened) return 0;
+            woods->award_open = 1;
+        }
+    }
     ++woods->age;
     return bfm_village_motion_face(woods->motion,woods->tiles);
+}
+
+int bfm_southern_woods_step(BfmSouthernWoods *woods, int x, int y,
+                            int talk_edge, BfmForestMessage **opened)
+{
+    return bfm_southern_woods_step_field(woods, NULL,
+        (BfmFieldInput){.x=x, .y=y, .square_pressed=talk_edge}, opened);
 }
 
 static void draw_actors(void *context, int depth)
@@ -152,10 +214,17 @@ int bfm_southern_woods_draw(BfmSouthernWoods *woods, const uint8_t flags[64],
 {
     const BfmVillagePlayer *p = bfm_southern_woods_player(woods);
     const size_t room = 0x8018ea38u - 0x80128158u;
-    if (!bfm_village_sky_draw(woods->scene+room,woods->bytes-room,pixels) ||
-        !bfm_village_field_prepare(&woods->field,&woods->camera,&p->root,&p->pose,flags,
+    BfmBedroomPose displayed = p->pose;
+    if (!bfm_woods_fusion_art_pose(woods->main, woods->main_bytes, woods->action.pose,
+                                   woods->action.visible, woods->action.blade_away, &displayed) ||
+        !bfm_village_sky_draw(woods->scene+room,woods->bytes-room,pixels) ||
+        !bfm_village_field_prepare(&woods->field,&woods->camera,&p->root,&displayed,flags,
                                    woods->age,woods->tiles,&pixels[0][0])) return 0;
-    if (!bfm_woods_sign_model_prepare(woods->sign,bfm_bedroom_field_view(woods->field.field),
+    const BfmBedroomView *view = bfm_bedroom_field_view(woods->field.field);
+    if (!bfm_woods_caster_add(woods->caster, woods->field.hero, view) ||
+        !bfm_woods_fusion_art_append(woods->field.hero, view, woods->action.blade,
+                                     woods->action.trails) ||
+        !bfm_woods_sign_model_prepare(woods->sign,view,
                                       woods->tiles,&pixels[0][0])) return 0;
     bfm_bedroom_field_draw(woods->field.field,woods->tiles,&pixels[0][0],draw_actors,woods);
     if (window) bfm_forest_message_art_draw(woods->writing,window,pixels);

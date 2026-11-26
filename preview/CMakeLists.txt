@@ -39,6 +39,10 @@ add_executable(musashi_native_boot
     village_cable.c
     southern_woods.c
     woods_sign_model.c
+    woods_caster.c
+    woods_fusion.c
+    woods_fusion_art.c
+    woods_shrink_message.c
     village_field.c
     village_gate.c
     village_greeting.c

@@ -603,10 +603,12 @@ static int play(Player *p, char *error, size_t size) {
                                            p->keys[SDL_SCANCODE_RIGHT] || (p->digital & PAD_RIGHT), p->axis_x);
                         int y = field_axis(p->keys[SDL_SCANCODE_UP] || (p->digital & PAD_UP),
                                            p->keys[SDL_SCANCODE_DOWN] || (p->digital & PAD_DOWN), p->axis_y);
-                        int result = bfm_bedroom_step_axes(p->bedroom,
+                        BfmFieldInput field = {.x=x, .y=y, .square_pressed=scene_input & PAD_SQUARE,
+                                               .shoulder_held=!service && (p->held & BFM_FOREST_R1)};
+                        int result = bfm_bedroom_step_field(p->bedroom,
                                     scene_input & (PAD_CIRCLE | PAD_CROSS | PAD_TRIANGLE),
                                     scene_input & PAD_CIRCLE, direction, held, scene_input & PAD_CROSS,
-                                    scene_input & PAD_TRIANGLE, x, y, scene_input & PAD_SQUARE);
+                                    scene_input & PAD_TRIANGLE, field);
                         if (!result || !keeper_service(p, pressed, service)) {
                             snprintf(error, size, "Could not advance the mounted room.");
                             return 2;

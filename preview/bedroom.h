@@ -3,6 +3,7 @@
 #define BFM_BEDROOM_H
 #include "bedroom_record.h"
 #include "gameplay_run.h"
+#include "field_input.h"
 
 typedef struct BfmBedroom BfmBedroom;
 BfmBedroom *bfm_bedroom_open(const MusashiDiscMedia *disc, const BfmSaveRecord *record);
@@ -18,6 +19,8 @@ enum { BFM_BEDROOM_ADVANCED = 1, BFM_BEDROOM_VOICE_STOPPED };
 int bfm_bedroom_step(BfmBedroom *room);
 /* A stop result asks the desktop to cancel the queued voice output. */
 /* Menu directions are digital. Field axes preserve stick deflection in -127..127. */
+int bfm_bedroom_step_field(BfmBedroom *room, int confirm_edge, int reveal_edge,
+                           int direction, int held, int accept_edge, int back_edge, BfmFieldInput field);
 int bfm_bedroom_step_axes(BfmBedroom *room, int confirm_edge, int reveal_edge,
                           int direction, int held, int accept_edge, int back_edge, int x, int y, int talk_edge);
 int bfm_bedroom_step_directions(BfmBedroom *room, int confirm_edge, int reveal_edge,

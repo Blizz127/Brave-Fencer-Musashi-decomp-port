@@ -2,6 +2,7 @@
 #ifndef BFM_VILLAGE_ARRIVAL_H
 #define BFM_VILLAGE_ARRIVAL_H
 #include "forest_hud.h"
+#include "field_input.h"
 #include "bedroom_record.h"
 #include "gameplay_run.h"
 #include "forest_message.h"
@@ -17,6 +18,9 @@ void bfm_village_arrival_free(BfmVillageArrival *arrival);
 uint16_t bfm_village_arrival_room(const BfmVillageArrival *arrival);
 const BfmVillagePlayer *bfm_village_arrival_player(const BfmVillageArrival *arrival);
 int bfm_village_arrival_step(BfmVillageArrival *arrival, BfmGameplayRun *run, int x, int y);
+int bfm_village_arrival_step_field(BfmVillageArrival *arrival, BfmGameplayRun *run,
+                                   BfmFieldInput field, BfmForestMessage **opened);
+int bfm_village_arrival_tether_gauge(const BfmVillageArrival *arrival);
 int bfm_village_arrival_step_input(BfmVillageArrival *arrival, BfmGameplayRun *run,
                                    int x, int y, int talk_edge, BfmForestMessage **opened);
 void bfm_village_arrival_set_scene_tick(BfmVillageArrival *arrival, unsigned tick);
