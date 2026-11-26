@@ -25,6 +25,8 @@ typedef struct {
     const MusashiForestPlayerMesh *hero;
     const uint8_t *data;
     size_t bytes;
+    /* Optional recovery on the update after the defeat dialogue closes. */
+    void (*restore_status)(BfmForestStatus *);
 } BfmRetryMountedRoom;
 
 /* The active room supplies its bounded defeat dialogue/light records at

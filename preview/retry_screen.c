@@ -183,6 +183,7 @@ BfmRetryScreen *bfm_retry_screen_open_mounted(const MusashiDiscMedia *disc,
     if (s) {
         s->terrain = room->terrain;
         s->hero = room->hero;
+        s->restore_status = room->restore_status;
     }
     return s;
 }
