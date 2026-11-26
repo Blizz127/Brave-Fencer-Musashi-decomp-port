@@ -23,4 +23,9 @@ const char *bfm_inn_card_save(const uint8_t *expected, unsigned file,
                               const BfmSaveRecord *record, BfmInnCardCommit commit,
                               void *context, const MusashiDiscMedia *disc);
 
+/* Chapter completion saves the earned story-two record to an empty file. */
+const char *bfm_chapter_card_save(const uint8_t *expected, unsigned file,
+                                 const BfmSaveRecord *record, BfmInnCardCommit commit,
+                                 void *context, const MusashiDiscMedia *disc);
+
 #endif
