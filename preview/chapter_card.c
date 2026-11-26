@@ -6,12 +6,12 @@
 enum { WIDTH = 320, HEIGHT = 240, CARD_W = 256, CARD_H = 144 };
 struct BfmChapterCard { uint16_t color[CARD_H][CARD_W]; };
 
-BfmChapterCard *bfm_chapter_card_load(const MusashiDiscMedia *disc)
+static BfmChapterCard *load_chapter(const MusashiDiscMedia *disc, unsigned member)
 {
     uint16_t (*tiles)[1024] = calloc(512, sizeof(*tiles));
     if (!tiles) return NULL;
     BfmChapterCard *card = NULL;
-    if (bfm_scene_read_tiles(disc, "SC01.CD", 76, tiles)) {
+    if (bfm_scene_read_tiles(disc, "SC01.CD", member, tiles)) {
         card = malloc(sizeof(*card));
         if (card) {
             for (unsigned y = 0; y < CARD_H; ++y) {
@@ -25,6 +25,16 @@ BfmChapterCard *bfm_chapter_card_load(const MusashiDiscMedia *disc)
     }
     free(tiles);
     return card;
+}
+
+BfmChapterCard *bfm_chapter_card_load(const MusashiDiscMedia *disc)
+{
+    return load_chapter(disc, 76);
+}
+
+BfmChapterCard *bfm_chapter_two_card_load(const MusashiDiscMedia *disc)
+{
+    return load_chapter(disc, 3);
 }
 
 void bfm_chapter_card_free(BfmChapterCard *card) { free(card); }

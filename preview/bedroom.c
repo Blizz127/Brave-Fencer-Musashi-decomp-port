@@ -122,6 +122,18 @@ void bfm_bedroom_bind_run(BfmBedroom *room, BfmGameplayRun *run)
     room->run = run;
 }
 
+BfmBedroom *bfm_bedroom_open_chapter(const MusashiDiscMedia *disc, const BfmSaveRecord *record,
+                                     BfmGameplayRun *run)
+{
+    if (!run) return NULL;
+    BfmBedroom *room = bfm_bedroom_open(disc, record);
+    if (room) {
+        bfm_bedroom_bind_run(room, run);
+        run->player = room->status;
+    }
+    return room;
+}
+
 void bfm_bedroom_free(BfmBedroom *room)
 {
     if (!room) return;

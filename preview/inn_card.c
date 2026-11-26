@@ -32,15 +32,18 @@ static void store_sum(uint8_t *result, const uint8_t *bytes, size_t size)
     result[1] = (uint8_t)(sum >> 8);
 }
 
-const char *bfm_inn_card_encode(CardImage image, unsigned file, const BfmSaveRecord *record)
+static const char *encode_file(CardImage image, unsigned file, const BfmSaveRecord *record,
+                               unsigned story)
 {
     if (!record || file < 1 || file > MUSASHI_SAVE_FILES)
         return "Choose a save file.";
 
-    /* Only the story-ten inn record has a confirmed exterior restore. */
     const uint8_t *p = record->progress;
-    if (p[8] != 10 || p[9] || p[10] || p[11] || !bfm_save_uses_default_room_table(record))
-        return "This story cannot be saved at the inn.";
+    if (p[8] != story || p[9] || p[10] || p[11] || !bfm_save_uses_default_room_table(record))
+        return story == 10 ? "This story cannot be saved at the inn." : "Invalid chapter save.";
+    if (story == 2 && (!(record->flags[16] & 1u) ||
+                       !empty_bytes(record->destination, sizeof record->destination)))
+        return "Invalid chapter destination or sword state.";
     if (!(p[52] || p[53]) || p[6] >= 60 || p[56] >= 60 || p[57] >= 24)
         return "Invalid play time or game clock.";
 
@@ -59,8 +62,7 @@ const char *bfm_inn_card_encode(CardImage image, unsigned file, const BfmSaveRec
     if (!empty_bytes(summary, SUMMARY_BYTES) || !empty_bytes(payload, MUSASHI_PAYLOAD_BYTES))
         return "Choose an empty save file.";
 
-    /* The inn records progress and its four state banks. Its destination and
-     * trailing reserved bytes stay zero: Continue selects the exterior. */
+    /* These two saves use the resident destination for their story. */
     BfmSaveRecord saved = *record;
     memset(saved.destination, 0, sizeof saved.destination);
     memcpy(payload, &saved, sizeof saved);
@@ -73,6 +75,11 @@ const char *bfm_inn_card_encode(CardImage image, unsigned file, const BfmSaveRec
     if (card_write(image, name, 0, game, sizeof game) != CARD_OK)
         return "Could not update the Musashi game file.";
     return NULL;
+}
+
+const char *bfm_inn_card_encode(CardImage image, unsigned file, const BfmSaveRecord *record)
+{
+    return encode_file(image, file, record, 10);
 }
 
 /* The mounted US disc supplies the title and three 16x16 four-bit TIMs.
@@ -95,9 +102,9 @@ static int create_game_file(CardImage image, const MusashiDiscMedia *disc)
            card_write(image, name, 0, header, sizeof header) == CARD_OK;
 }
 
-const char *bfm_inn_card_save(const uint8_t *expected, unsigned file,
+static const char *save_file(const uint8_t *expected, unsigned file,
                               const BfmSaveRecord *record, BfmInnCardCommit commit,
-                              void *context, const MusashiDiscMedia *disc)
+                              void *context, const MusashiDiscMedia *disc, unsigned story)
 {
     if (!expected || !commit) return "Select a writable card copy to save.";
     uint8_t *replacement = malloc(CARD_IMAGE_SIZE);
@@ -108,9 +115,23 @@ const char *bfm_inn_card_save(const uint8_t *expected, unsigned file,
     if (card_is_unallocated(image) && !create_game_file(image, disc))
         issue = "Could not create the Musashi game file from your disc.";
     else
-        issue = bfm_inn_card_encode(image, file, record);
+        issue = encode_file(image, file, record, story);
     if (!issue && !commit(context, 0, expected, replacement))
         issue = "Could not commit this save. Reopen the card and try again.";
     free(replacement);
     return issue;
+}
+
+const char *bfm_inn_card_save(const uint8_t *expected, unsigned file,
+                              const BfmSaveRecord *record, BfmInnCardCommit commit,
+                              void *context, const MusashiDiscMedia *disc)
+{
+    return save_file(expected, file, record, commit, context, disc, 10);
+}
+
+const char *bfm_chapter_card_save(const uint8_t *expected, unsigned file,
+                                 const BfmSaveRecord *record, BfmInnCardCommit commit,
+                                 void *context, const MusashiDiscMedia *disc)
+{
+    return save_file(expected, file, record, commit, context, disc, 2);
 }
