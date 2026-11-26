@@ -2214,6 +2214,8 @@ static int reenter_forest(BfmForestWalk *w)
     next->voice = bfm_forest_voice_load(w->disc);
     next->message_art = bfm_forest_open_message_art(next->field, w->disc);
     next->reentry_age = 1;
+    /* The room becomes live at entrance step 16, while Musashi is still walking. */
+    next->forest_live_update = 16;
     if (!next->voice || !next->message_art || !bfm_forest_walk_bind_gameplay(next, &resumed)) {
         bfm_forest_walk_free(next);
         return 0;
@@ -2296,11 +2298,11 @@ int bfm_forest_walk_tick_controller(BfmForestWalk *w, int x, int y, uint16_t pre
         /* The measured warm-disc transfer takes 149 updates to the first
          * active entrance pose. Movement and the incoming palette follow. */
         if (++w->reentry_age <= 149) return 1;
-        int stepped = step_controller(w, 0, 0, 0, 0, 0);
-        if (stepped > 0) bfm_forest_submit_atmosphere(w->field, &w->camera, w->eye);
-        return stepped;
-    }
-    if (w && w->reentry_age) {
+        /* The automatic walk owns movement through its last step. Use the
+         * normal controller path so live entrance updates accrue playtime. */
+        x = y = stick_direction = 0;
+        pressed = held = 0;
+    } else if (w && w->reentry_age) {
         /* The summit loader places the hero while black. The chase begins its
          * automatic stride during the incoming wipe, before ordinary control. */
         if (++w->reentry_age < 8) return 1;
