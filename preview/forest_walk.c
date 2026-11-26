@@ -1320,7 +1320,7 @@ static int step_tower_note(BfmForestWalk *w, int confirm, int reveal)
             bfm_tower_field_close_plate_note(w->tower);
         w->actor.state = 0;
         w->actor.phase = 1;
-        w->manual = (BfmForestManual){0};
+        w->manual = (BfmForestManual){.entry_velocity = w->data.initial_velocity};
         w->motion = IDLE;
         w->elapsed = 0;
         return update_pose(w);
