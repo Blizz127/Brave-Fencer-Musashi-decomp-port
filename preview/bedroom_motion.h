@@ -33,6 +33,7 @@ typedef struct {
     unsigned draw_current; /* The active scripted gesture submits its current pose. */
     unsigned finished; /* Player action completed in this update. */
     unsigned knock_contact; /* One update when the knocking hand strikes the door. */
+    unsigned hide_fusion; /* The detached sword is submitted as a separate actor. */
 } BfmBedroomPose;
 
 /* The expanded room member and MAIN/10 type-0x101 payload (after its header)

@@ -2,7 +2,7 @@
 #ifndef BFM_BEDROOM_FIGURE_H
 #define BFM_BEDROOM_FIGURE_H
 #include "bedroom_field.h"
-#include "forest_blade.h"
+#include "forest_dust.h"
 #include "musashi_forest_player_mesh.h"
 
 typedef struct BfmBedroomFigure BfmBedroomFigure;
@@ -34,6 +34,10 @@ BfmBedroomFigure *bfm_bedroom_figure_load(const MusashiDiscMedia *disc,
 void bfm_bedroom_figure_free(BfmBedroomFigure *figure);
 int bfm_bedroom_figure_prepare(BfmBedroomFigure *figure, const BfmBedroomView *view,
                      const BfmBedroomBody *body, uint16_t tiles[512][1024], uint32_t *pixels);
+/* Append the detached one-part sword and projected tether quads to the prepared
+ * figure queue, before its first draw. Both use the room's normal depth order. */
+int bfm_bedroom_figure_add_fusion(BfmBedroomFigure *figure, const BfmBedroomView *view,
+                     const BfmForestActor *blade, const BfmForestDustCard *cards, size_t count);
 /* Supply this callback to the field's ordering-table draw. */
 int bfm_bedroom_figure_next_depth(const BfmBedroomFigure *figure);
 void bfm_bedroom_figure_draw_to(void *figure, int depth);

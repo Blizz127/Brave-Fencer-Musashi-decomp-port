@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "bedroom_visitor.h"
 #include "forest_raster.h"
+#include "forest_tether_trails.h"
 
 #include <limits.h>
 #include <math.h>
@@ -297,8 +298,14 @@ static void collect_part(BfmBedroomFigure *figure, const BfmBedroomView *camera,
             continue;
         uint32_t rgb = 0;
         for (unsigned k = 0; k < face->corners; ++k) {
-            if (!k || (face->mode & 16))
-                rgb = shade(figure, light, &part->normals[face->normal[k]], face->corner_rgb[k]);
+            if (!k || (face->mode & 16)) {
+                const uint8_t *ink = face->corner_rgb[k];
+                /* Unlit mounted effects carry their own vertex colors. */
+                if (face->mode & 1)
+                    rgb = ink[0] | ((uint32_t)ink[1] << 8) | ((uint32_t)ink[2] << 16);
+                else
+                    rgb = shade(figure, light, &part->normals[face->normal[k]], ink);
+            }
             out->v[k].rgb = rgb;
             include_pixel(figure,out->v[k].x,out->v[k].y);
         }
@@ -489,6 +496,70 @@ int bfm_bedroom_figure_prepare(BfmBedroomFigure *figure, const BfmBedroomView *v
     return 1;
 }
 
+static int reserve_faces(BfmBedroomFigure *figure, size_t extra)
+{
+    if (extra > SIZE_MAX / sizeof(*figure->faces) - figure->count) return 0;
+    size_t needed = figure->count + extra;
+    if (needed <= figure->capacity) return 1;
+    FigureFace *faces = realloc(figure->faces, needed * sizeof(*faces));
+    if (!faces) return 0;
+    figure->faces = faces;
+    figure->capacity = needed;
+    return 1;
+}
+
+static Transform model_transform(const BfmForestTransform *source)
+{
+    Transform transform;
+    for (unsigned i = 0; i < 3; ++i) {
+        for (unsigned j = 0; j < 3; ++j) transform.r[i][j] = source->rotation[i][j];
+        transform.t[i] = source->translation[i];
+    }
+    return transform;
+}
+
+int bfm_bedroom_figure_add_fusion(BfmBedroomFigure *figure, const BfmBedroomView *view,
+                     const BfmForestActor *blade, const BfmForestDustCard *cards, size_t count)
+{
+    if (!figure || !view || figure->next || !figure->surface.pixels ||
+        count > BFM_TETHER_CARDS || (count && !cards) || view->focal <= 0 ||
+        view->focal > UINT16_MAX) return 0;
+    if (!count && !blade) return 1;
+    for (size_t i = 0; i < count; ++i)
+        if (cards[i].material.count != 4 || cards[i].bucket > INT_MAX) return 0;
+    const MusashiForestPlayerPart *part = NULL;
+    if (blade) {
+        if (!blade->mesh || !blade->root || !blade->pose || blade->visible_parts != 1) return 0;
+        part = musashi_forest_player_mesh_part(blade->mesh, 0);
+        if (!part || part->face_count > SIZE_MAX - count) return 0;
+    }
+    if (!reserve_faces(figure, count + (part ? part->face_count : 0))) return 0;
+    if (blade) {
+        Transform eye;
+        memcpy(eye.r, view->axes, sizeof eye.r);
+        memcpy(eye.t, view->translation, sizeof eye.t);
+        Transform root = model_transform(blade->root);
+        Transform local = model_transform(&blade->pose->local[0]);
+        Transform world = compose(&root, &local), base = compose(&eye, &root);
+        Transform posed = compose(&base, &local);
+        BfmBedroomView camera = {.focal = view->focal};
+        memcpy(camera.axes, posed.r, sizeof camera.axes);
+        memcpy(camera.translation, posed.t, sizeof camera.translation);
+        collect_part(figure, &camera, &world, part, 0);
+    }
+    for (size_t i = 0; i < count; ++i) {
+        const BfmForestDustCard *card = &cards[i];
+        FigureFace *face = &figure->faces[figure->count];
+        memcpy(face->v, card->vertices, sizeof face->v);
+        face->material = card->material;
+        face->depth = (int)card->bucket;
+        face->order = figure->count++;
+        for (unsigned k = 0; k < 4; ++k) include_pixel(figure, face->v[k].x, face->v[k].y);
+    }
+    qsort(figure->faces, figure->count, sizeof(*figure->faces), back_to_front);
+    return 1;
+}
+
 int bfm_bedroom_figure_next_depth(const BfmBedroomFigure *figure)
 {
     return figure && figure->next < figure->count ? figure->faces[figure->next].depth : INT_MIN;
@@ -575,13 +646,7 @@ int bfm_bedroom_visitor_add(const BfmBedroomVisitor *visitor, BfmBedroomFigure *
     if (offset > visitor->bytes || visitor->parts[index] > (visitor->bytes-offset)/8) return 0;
     for (unsigned k = 0; k < 3; ++k)
         if (position[k] < INT16_MIN || position[k] > INT16_MAX) return 0;
-    size_t needed = figure->count + visitor->faces[index] + 1;
-    if (needed > figure->capacity) {
-        FigureFace *faces = realloc(figure->faces,needed*sizeof(*faces));
-        if (!faces) return 0;
-        figure->faces = faces;
-        figure->capacity = needed;
-    }
+    if (!reserve_faces(figure, visitor->faces[index] + 1)) return 0;
     int sine, cosine;
     angle((unsigned)heading,&sine,&cosine);
     Transform root, eye;

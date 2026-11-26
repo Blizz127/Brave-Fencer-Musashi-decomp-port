@@ -22,6 +22,8 @@ int bfm_village_field_load_lower(BfmVillageField *field, const MusashiDiscMedia 
 int bfm_village_field_load_woods(BfmVillageField *field, const MusashiDiscMedia *disc,
                                  const uint8_t *scene, size_t size);
 void bfm_village_field_clear(BfmVillageField *field);
+/* Effective body parts for this pose and current equipment. */
+uint32_t bfm_village_field_visible(const BfmBedroomPose *pose, const uint8_t flags[64]);
 int bfm_village_field_prepare(BfmVillageField *field, const BfmVillageCamera *camera,
                               const BfmBedroomRoot *root, const BfmBedroomPose *pose,
                               const uint8_t flags[64], unsigned field_age,

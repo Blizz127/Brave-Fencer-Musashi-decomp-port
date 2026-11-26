@@ -49,6 +49,26 @@ int bfm_village_field_load_woods(BfmVillageField *field, const MusashiDiscMedia 
     return load_field(field, disc, scene, size, 0x8018ea38u, 0x8018963cu);
 }
 
+uint32_t bfm_village_field_visible(const BfmBedroomPose *pose, const uint8_t flags[64])
+{
+    uint32_t visible = (UINT32_C(1) << MUSASHI_FOREST_PLAYER_PARTS) - 1u;
+    if (pose->hide_fusion) {
+        visible &= ~((1u << 21) | (1u << 22));
+    } else if (pose->show_weapon && !(flags[303 / 8] & (1u << (303 % 8)))) {
+        visible &= ~(1u << 21);
+    } else {
+        visible &= ~(1u << 22);
+    }
+    if (!(flags[128 / 8] & 1u)) {
+        visible &= ~((1u << 24) | (1u << 25));
+    } else if (pose->show_lumina) {
+        visible &= ~(1u << 24);
+    } else {
+        visible &= ~(1u << 25);
+    }
+    return visible;
+}
+
 int bfm_village_field_prepare(BfmVillageField *field, const BfmVillageCamera *camera,
                               const BfmBedroomRoot *root, const BfmBedroomPose *pose,
                               const uint8_t flags[64], unsigned field_age,
@@ -59,7 +79,7 @@ int bfm_village_field_prepare(BfmVillageField *field, const BfmVillageCamera *ca
     BfmBedroomBody body = {
         .pose = pose->pose, .pose_bytes = 256, .heading = root->yaw, .pitch = pose->pitch,
         .face_word = pose->face_word, .shadow_visible = root->shadow_visible,
-        .visible_parts = 0x7fffffff, .blade_tick = field_age,
+        .visible_parts = bfm_village_field_visible(pose, flags), .blade_tick = field_age,
         .green_blade = (flags[129 / 8] >> (129 % 8)) & 1u
     };
     for (unsigned axis = 0; axis < 3; ++axis) {
@@ -68,20 +88,10 @@ int bfm_village_field_prepare(BfmVillageField *field, const BfmVillageCamera *ca
         body.shadow_position[axis] = root->shadow_xyz[axis];
         body.shadow_normal[axis] = root->shadow_normal[axis];
     }
-    if (pose->show_weapon && !(flags[303 / 8] & (1u << (303 % 8)))) {
-        body.visible_parts &= ~(1u << 21);
-        body.blade = &field->fusion;
-    } else {
-        body.visible_parts &= ~(1u << 22);
-    }
-    if (!(flags[128 / 8] & 1u)) {
-        body.visible_parts &= ~((1u << 24) | (1u << 25));
-    } else if (pose->show_lumina) {
-        body.visible_parts &= ~(1u << 24);
+    if (body.visible_parts & (1u << 22)) body.blade = &field->fusion;
+    if (body.visible_parts & (1u << 25)) {
         body.lumina_guard = field->guard;
         body.lumina_blade = field->blade;
-    } else {
-        body.visible_parts &= ~(1u << 25);
     }
     return bfm_bedroom_figure_prepare(field->hero, bfm_bedroom_field_view(field->field),
                                        &body, tiles, pixels);
