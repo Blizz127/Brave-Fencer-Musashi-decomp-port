@@ -269,11 +269,7 @@ int bfm_village_arrival_step_field(BfmVillageArrival *a, BfmGameplayRun *run,
         if (a->transfer_tick < reveal + (a->entering_woods ? 2 : 16)) return 1;
         if (a->transfer_tick >= reveal + 21) a->transfer_tick = 0;
     }
-    if (a->woods) {
-        if (bfm_southern_woods_player(a->woods)->controlled)
-            bfm_village_clock_step(a->record, 0);
-        return bfm_southern_woods_step_field(a->woods, run, field, opened);
-    }
+    if (a->woods) return bfm_southern_woods_step_field(a->woods, run, field, opened);
     if (a->lower) {
         if (!bfm_village_lower_step(a->lower, x, y, talk_edge, opened)) return 0;
         if (!a->transfer_tick && bfm_village_lower_departure(a->lower)) {

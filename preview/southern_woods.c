@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "southern_woods.h"
 #include "village_field.h"
+#include "village_clock.h"
 #include "village_sky.h"
 #include "scene_tiles.h"
 #include "forest_message_art.h"
@@ -135,6 +136,10 @@ int bfm_southern_woods_step_field(BfmSouthernWoods *woods, BfmGameplayRun *run,
     int x = woods->action.movement_locked ? 0 : field.x;
     int y = woods->action.movement_locked ? 0 : field.y;
     const BfmVillagePlayer *p = bfm_village_motion_player(woods->motion);
+    /* Ordinary outdoor time continues during the throw and absorption;
+     * the acquisition pose and its three message pages suspend it. */
+    if (run && p->controlled && !bfm_woods_fusion_awarding(woods->fusion))
+        bfm_village_clock_step(woods->save, 0);
     int16_t previous[3], endpoint[3];
     memcpy(previous,p->root.xyz,sizeof previous);
     int yaw = bfm_village_motion_view_yaw(woods->camera.eye,woods->camera.target);
@@ -223,7 +228,7 @@ int bfm_southern_woods_draw(BfmSouthernWoods *woods, const uint8_t flags[64],
     const BfmBedroomView *view = bfm_bedroom_field_view(woods->field.field);
     if (!bfm_woods_caster_add(woods->caster, woods->field.hero, view) ||
         !bfm_woods_fusion_art_append(woods->field.hero, view, woods->action.blade,
-                                     woods->action.trails) ||
+                                     woods->action.trails, woods->action.bp_digits) ||
         !bfm_woods_sign_model_prepare(woods->sign,view,
                                       woods->tiles,&pixels[0][0])) return 0;
     bfm_bedroom_field_draw(woods->field.field,woods->tiles,&pixels[0][0],draw_actors,woods);
