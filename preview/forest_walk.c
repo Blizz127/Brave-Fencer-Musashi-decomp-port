@@ -55,7 +55,7 @@ struct BfmForestWalk {
     BfmTowerField *tower;
     BfmForestGatewayTransition gateway;
     int tower_placed;
-    unsigned tower_tick, submit_slot;
+    unsigned tower_tick, submit_slot, tower_stroke;
     TowerSubmission submitted_tower[3];
     uint32_t (*held_forest)[320];
     unsigned last_forest_tick;
@@ -550,6 +550,25 @@ static int start_lift(BfmForestWalk *w)
     return select_pose(w, w->lift_data.motion[BFM_LIFT_RAISE].frames[0], w->walk.visible) ? 1 : -1;
 }
 
+/* Static room faces have already advanced the standing player. Clip that
+ * stride against any intact pylon at the same body height as a forest brace. */
+static int slide_tower_stride(BfmForestWalk *w, const int16_t previous[3])
+{
+    int16_t from[3] = {previous[0], previous[1] - 16, previous[2]};
+    int16_t to[3] = {w->cached[0], w->cached[1] - 16, w->cached[2]}, contact[3];
+    if (!bfm_tower_field_body_slide(w->tower, from, to, contact)) return 1;
+    BfmForestContact floor;
+    if (!bfm_forest_ground(bfm_tower_field_room(w->tower), contact[0], w->cached[1], contact[2], &floor))
+        return 0;
+    contact[1] = floor.height;
+    memcpy(w->cached, contact, sizeof contact);
+    memcpy(w->manual.ground_normal, floor.normal, sizeof floor.normal);
+    for (unsigned axis = 0; axis < 3; ++axis)
+        w->actor.position[axis] = ((uint32_t)(uint16_t)contact[axis] << 16) |
+                                  (w->actor.position[axis] & 0xffffu);
+    return 1;
+}
+
 /* Normal controller axes are in screen space. The mounted room handles
  * velocity and contact in world space. */
 static int tick_ground(BfmForestWalk *w, int x, int y, int enter_stance,
@@ -572,6 +591,8 @@ static int tick_ground(BfmForestWalk *w, int x, int y, int enter_stance,
                                         0, 0, &w->yaw, w->cached);
     }
     if (result <= BFM_FOREST_MANUAL_BOUNDARY)
+        return -1;
+    if (w->tower_placed && result == BFM_FOREST_MANUAL_MOVING && !slide_tower_stride(w, before))
         return -1;
     /* A submitted direction becomes a stride only after a ground step. */
     int advanced = result == BFM_FOREST_MANUAL_MOVING &&
@@ -661,6 +682,7 @@ static int tick_swing(BfmForestWalk *w, int x, int y, int attack_pressed,
         if (!w->swing.count &&
             (!bfm_forest_fusion_power_load(w->disc, w->field, &w->fusion_power) ||
              !bfm_forest_swing_load(w->disc, &w->swing))) return 0;
+        if (w->tower_placed && ++w->tower_stroke == 0) ++w->tower_stroke;
         w->swing_age = 0;
         w->actor.field_1a8 = 0;
         w->actor.strike_updates = 0;
@@ -686,7 +708,7 @@ static int tick_swing(BfmForestWalk *w, int x, int y, int attack_pressed,
      * Strength belongs to the subsequent active updates. */
     int16_t support[3];
     /* Blade rays use the body's updated basis even while its feet are still. */
-    if (bfm_forest_bank_body_normal(w->field, w->cached, w->cached, support)) {
+    if (!w->tower_placed && bfm_forest_bank_body_normal(w->field, w->cached, w->cached, support)) {
         settle_ground(w, support);
         update_root(w);
     }
@@ -701,8 +723,21 @@ static int tick_swing(BfmForestWalk *w, int x, int y, int attack_pressed,
     if (w->actor.field_1a8) {
         const BfmForestSwingFrame *next = bfm_forest_swing_frame(&w->swing, w->swing_age + 1);
         if (!next) return 0;
-        *count = bfm_forest_ground_strike_rays(w->field, &w->root, key->tip, next->tip,
-                                              strength, w->actor.strike_index + 1, &w->yaw, hits);
+        if (w->tower_placed) {
+            int16_t start[3], ends[BFM_FOREST_STRIKE_RAYS][3];
+            size_t rays = bfm_forest_blade_rays(&w->root, key->tip, next->tip, start, ends);
+            for (size_t ray = 0; ray < rays; ++ray) {
+                BfmForestHit *hit = &hits[*count];
+                if (bfm_tower_field_blade_contact(w->tower, w->tower_stroke, start, ends[ray],
+                                                  hit->position, hit->normal)) {
+                    hit->connected = 1;
+                    ++*count;
+                }
+            }
+        } else {
+            *count = bfm_forest_ground_strike_rays(w->field, &w->root, key->tip, next->tip,
+                                                  strength, w->actor.strike_index + 1, &w->yaw, hits);
+        }
         if (*count) w->swing_connected = 1;
     }
     /* The field display still shows the previous motion during the first two
@@ -1232,9 +1267,22 @@ static int gateway_walk(BfmForestWalk *w, const BfmForestGatewayFrame *frame)
     return update_pose(w);
 }
 
+static int tick_tower_player(BfmForestWalk *w, int x, int y, int square_edge)
+{
+    BfmForestDustEmission dust = BFM_FOREST_DUST_NONE;
+    if (w->actor.state == 5 || (w->actor.state <= 1 && square_edge)) {
+        BfmForestHit hits[BFM_FOREST_STRIKE_RAYS] = {0};
+        size_t count = 0;
+        if (!tick_swing(w, x, y, square_edge, &dust, hits, &count)) return -1;
+        w->hit_sound = count != 0;
+        return 1;
+    }
+    return tick_ground(w, x, y, 0, &dust);
+}
+
 /* Advance the selected room without interpreting a guest callback. The
  * outgoing transfer and the destination's own entrance are distinct records. */
-static int tick_gateway(BfmForestWalk *w, int x, int y)
+static int tick_gateway(BfmForestWalk *w, int x, int y, int square_edge)
 {
     BfmForestGatewayFrame prior = bfm_forest_gateway_transition_frame(&w->gateway);
     bfm_forest_gateway_transition_advance(&w->gateway, w->tower != NULL);
@@ -1261,7 +1309,10 @@ static int tick_gateway(BfmForestWalk *w, int x, int y)
         w->elapsed = 0;
         if (!update_pose(w)) return -1;
     }
-    if (prior.complete || (frame.live && frame.room == 0x3008)) {
+    if (prior.complete) {
+        int advanced = tick_tower_player(w, x, y, square_edge);
+        if (advanced != 1) return advanced;
+    } else if (frame.live && frame.room == 0x3008) {
         BfmForestDustEmission dust = BFM_FOREST_DUST_NONE;
         int moved = tick_ground(w, x, y, 0, &dust);
         if (moved != 1) return moved;
@@ -1324,7 +1375,7 @@ static int step_controller(BfmForestWalk *w, int x, int y, uint16_t pressed,
     w->swing_sound = 0;
     w->hit_sound = 0;
     w->control_polled = w->player_control;
-    if (w->gateway.active) return tick_gateway(w, read_x, read_y);
+    if (w->gateway.active) return tick_gateway(w, read_x, read_y, attack_pressed);
     if (w->player_control) {
         int16_t before[3];
         memcpy(before, w->cached, sizeof before);

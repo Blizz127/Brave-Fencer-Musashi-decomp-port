@@ -128,6 +128,10 @@ int bfm_forest_typed_ground_strike(BfmForestField *field, const BfmForestTransfo
                                   const int8_t tip[3], const int8_t next_tip[3],
                                   uint16_t strength, uint16_t attack_type, int16_t *yaw,
                                   int16_t effect_position[3], int16_t effect_normal[3]);
+/* Build the grounded slash's ordered world-space rays from adjacent motion keys. */
+size_t bfm_forest_blade_rays(const BfmForestTransform *root, const int8_t tip[3],
+                             const int8_t next_tip[3], int16_t start[3],
+                             int16_t ends[BFM_FOREST_STRIKE_RAYS][3]);
 /* Return the last accepted surface on each blade ray in issuance order. */
 size_t bfm_forest_ground_strike_rays(BfmForestField *field, const BfmForestTransform *player_root,
                                     const int8_t tip[3], const int8_t next_tip[3],

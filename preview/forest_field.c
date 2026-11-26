@@ -710,16 +710,13 @@ static int contact_target(BfmForestField *field, const ForestBladeTarget *target
     return 1;
 }
 
-static size_t scan_ground_strike(BfmForestField *field, const BfmForestTransform *player_root,
-                                const int8_t tip[3], const int8_t next_tip[3], int16_t *yaw,
-                                BfmForestHit hits[BFM_FOREST_STRIKE_RAYS],
-                                const uint16_t *strength, uint16_t attack_type)
+size_t bfm_forest_blade_rays(const BfmForestTransform *root, const int8_t tip[3],
+                             const int8_t next_tip[3], int16_t start[3],
+                             int16_t ends[BFM_FOREST_STRIKE_RAYS][3])
 {
-    if (!field || !player_root || !tip || !next_tip || !yaw || !hits || (!strength && field->first_shore_hit))
-        return 0;
     const int origin[3] = {0, -30, 0};
-    int16_t start[3], end[3], center[3];
-    if (!strike_world_point(player_root, origin, start)) return 0;
+    if (!root || !tip || !next_tip || !start || !ends || !strike_world_point(root, origin, start))
+        return 0;
     int points[3][3], squared = 0;
     for (unsigned axis = 0; axis < 3; ++axis) {
         int delta = (int)next_tip[axis] - tip[axis];
@@ -731,19 +728,34 @@ static size_t scan_ground_strike(BfmForestField *field, const BfmForestTransform
     /* The field adds two probes when its quantized distance reaches 65.
      * Across signed-byte endpoints the first qualifying squared length is 4288. */
     unsigned probes = squared >= 4288 ? 3 : 1;
+    size_t valid = 0;
+    for (unsigned i = 0; i < probes; ++i)
+        if (strike_world_point(root, points[i], ends[valid])) ++valid;
+    return valid;
+}
+
+static size_t scan_ground_strike(BfmForestField *field, const BfmForestTransform *player_root,
+                                const int8_t tip[3], const int8_t next_tip[3], int16_t *yaw,
+                                BfmForestHit hits[BFM_FOREST_STRIKE_RAYS],
+                                const uint16_t *strength, uint16_t attack_type)
+{
+    if (!field || !player_root || !tip || !next_tip || !yaw || !hits || (!strength && field->first_shore_hit))
+        return 0;
+    int16_t start[3], ends[BFM_FOREST_STRIKE_RAYS][3], center[3];
+    size_t probes = bfm_forest_blade_rays(player_root, tip, next_tip, start, ends);
     unsigned struck = 0;
     uint16_t incoming_yaw = (uint16_t)*yaw;
     size_t hit_count = 0;
     for (unsigned i = 0; i < probes; ++i) {
         BfmForestHit ray = {0};
-        if (!strike_world_point(player_root, points[i], end)) continue;
+        int16_t *end = ends[i];
         for (unsigned j = 0; j < FOREST_BLADE_TARGETS; ++j) {
             if (struck & (1u << j)) continue;
             int16_t position[3], normal[3];
             int hit = contact_target(field, &field->targets[j], start, end, incoming_yaw,
                                      strength, attack_type, center, position, normal);
             if (!hit) continue;
-            memcpy(end, position, sizeof end);
+            memcpy(end, position, sizeof position);
             if (hit == 4) {
                 if (ray.connected) memcpy(ray.position, position, sizeof position);
                 continue;
