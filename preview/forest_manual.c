@@ -10,6 +10,8 @@
 
 enum { WALK = 7, RUN = 8, Q16 = 65536, ACCELERATION = Q16 / 16 };
 
+enum { ON_FLOOR, LEFT_LEDGE, LEFT_FIRST_CREEK_BANK };
+
 /* Resolve a screen vector on the level ground. The camera can pitch, so
  * normalize its two projected axes separately before combining them. */
 int bfm_forest_manual_heading(const BfmForestCamera *camera, int x, int y, int16_t *yaw)
@@ -32,7 +34,8 @@ int bfm_forest_manual_heading(const BfmForestCamera *camera, int x, int y, int16
 /* Resolve the free Q16 position on the registered room floor. Only commit
  * the integrated actor and its integer position after a complete step. */
 static BfmForestTopStep step_on_floor(const BfmForestField *field,
-    const BfmForestContact *ground, ForestPlayerState *next, int16_t cached[3], int can_fall, int on_bridge)
+    const BfmForestContact *ground, ForestPlayerState *next, int16_t cached[3], int can_fall,
+    int on_bridge, int *left_creek)
 {
     BfmForestTopStep support = BFM_FOREST_TOP_GROUNDED;
     uint32_t start_pos[3];
@@ -51,6 +54,9 @@ static BfmForestTopStep step_on_floor(const BfmForestField *field,
             return BFM_FOREST_TOP_BLOCKED;
         if (support == BFM_FOREST_TOP_FREE)
             return support;
+    } else if (left_creek && bfm_forest_walks_off_creek_bank(field, cached, end)) {
+        *left_creek = 1;
+        support = BFM_FOREST_TOP_LEFT;
     } else if (!bfm_forest_corridor_step(field, ground, cached, end)) {
         return BFM_FOREST_TOP_BLOCKED;
     }
@@ -70,7 +76,7 @@ int bfm_forest_manual_coast(const BfmForestField *field, ForestPlayerState *acto
         return 0;
     ForestPlayerState next = *actor;
     if (!bfm_forest_level_velocity(&next, 0, yaw, 0) ||
-        step_on_floor(field, &ground, &next, cached, 0, 0) != BFM_FOREST_TOP_GROUNDED)
+        step_on_floor(field, &ground, &next, cached, 0, 0, NULL) != BFM_FOREST_TOP_GROUNDED)
         return 0;
     *actor = next;
     return 1;
@@ -145,12 +151,14 @@ static BfmForestManualResult ground_control(BfmForestManual *state,
     if (speed < -11 * Q16)
         speed = -11 * Q16;
     next.field_2c.word = speed;
-    BfmForestTopStep support = step_on_floor(field, &ground, &next, cached, state->last_descent > 0, state->on_bridge);
+    int left_creek = 0;
+    BfmForestTopStep support = step_on_floor(field, &ground, &next, cached, state->last_descent > 0,
+                                             state->on_bridge, fixed_pace ? NULL : &left_creek);
     if (support == BFM_FOREST_TOP_BLOCKED)
         return BFM_FOREST_MANUAL_BOUNDARY;
 
     if (support == BFM_FOREST_TOP_FREE) {
-        state->left_support = 1;
+        state->left_support = LEFT_LEDGE;
         return BFM_FOREST_MANUAL_FALL;
     }
     unsigned motion = speed < -(9 * Q16 + Q16 / 4) ? RUN : WALK;
@@ -159,7 +167,8 @@ static BfmForestManualResult ground_control(BfmForestManual *state,
     state->motion = motion;
     state->after_jump = 0;
     state->on_bridge = ground.bridge || (state->on_bridge && abs(ground.height - cached[1]) > 4);
-    state->left_support = support == BFM_FOREST_TOP_LEFT;
+    state->left_support = support == BFM_FOREST_TOP_LEFT ? LEFT_LEDGE : ON_FLOOR;
+    if (left_creek) state->left_support = LEFT_FIRST_CREEK_BANK;
     memcpy(state->ground_normal, ground.normal, sizeof state->ground_normal);
     *actor = next;
     *yaw = next_yaw;
@@ -208,14 +217,14 @@ int bfm_forest_fall_begin(BfmForestJump *jump, BfmForestManual *manual,
                           ForestPlayerState *actor)
 {
     if (!jump || jump->active || !manual || !manual->left_support || !actor ||
-        actor->state != 1 || manual->last_descent <= 0)
+        actor->state != 1 || (manual->last_descent <= 0 && manual->left_support != LEFT_FIRST_CREEK_BANK))
         return 0;
     *jump = (BfmForestJump){.active = 1, .descending = 1, .steering = 1,
                             .walk_off = 1};
     manual->on_bridge = 0;
-    manual->left_support = 0;
+    manual->left_support = ON_FLOOR;
     actor->state = 3;
-    actor->local_y.word = manual->last_descent;
+    actor->local_y.word = manual->last_descent > 0 ? manual->last_descent : 0;
     return 1;
 }
 

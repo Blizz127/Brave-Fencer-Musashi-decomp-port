@@ -2414,33 +2414,85 @@ int bfm_forest_dry_creek_bank(const BfmForestField *field, const int16_t foot[3]
 {
     if (!field || !foot || field->room != FOREST_ROOM || !field->far_bank_cells ||
         foot[1] != field->bank_height || foot[2] < field->bank_start_z ||
-        foot[2] > field->bank_end_z + 128 * (1 + (int)field->far_bank_cells) ||
-        (foot[2] > field->bank_end_z && foot[2] < field->bank_end_z + 128))
+        foot[2] > field->bank_end_z + 128 * (1 + (int)field->far_bank_cells))
         return 0;
     int16_t channel[3] = {foot[0], foot[1], (int16_t)(field->bank_end_z + 64)};
     BfmForestContact ground, water;
     return bfm_forest_ground(field, foot[0], foot[1], foot[2], &ground) &&
            !ground.bridge && !ground.flags && ground.slope == 0x2000 &&
-           !ground.normal[0] && !ground.normal[2] && ground.height == foot[1] &&
+           !ground.normal[0] && ground.normal[1] < 0 && !ground.normal[2] && ground.height == foot[1] &&
            bfm_forest_ground(field, channel[0], channel[1], channel[2], &water) &&
            first_creek_water(field, channel, &water);
 }
 
-static int crosses_creek_water(const BfmForestField *field, const int16_t from[3],
-                               const int16_t end[3], const BfmForestContact *ground)
+/* A level stride over the near edge spends its final ground update above
+ * the steep lip. The next player update begins an ordinary unsupported
+ * descent. Bind the starting dry foot, the actual downhill facet and
+ * the marked channel in the same column before releasing that support. */
+int bfm_forest_walks_off_creek_bank(const BfmForestField *field, const int16_t from[3],
+                                    const int16_t end[3])
 {
+    if (!field || !from || !end || end[1] != from[1] ||
+        end[2] <= from[2] || end[2] - from[2] > 16 || abs(end[0] - from[0]) > 16 ||
+        !creek_cell(field, end) || !same_grid_index(from[0], end[0]) ||
+        !bfm_forest_dry_creek_bank(field, from))
+        return 0;
+    BfmForestContact lip;
+    if (!bfm_forest_ground(field, end[0], from[1], end[2], &lip) || lip.bridge || lip.flags ||
+        lip.slope != 0x4000 || lip.normal[0] || lip.normal[1] >= 0 ||
+        lip.normal[2] != -lip.normal[1] || lip.height <= from[1])
+        return 0;
+    const FloorGrid *grid = &field->grid;
+    if (!support_plane(grid, contact_cell(grid, end), &lip, end)) return 0;
+    int16_t foot[3] = {end[0], end[1], end[2]};
+    return resolve_walls(grid, contact_cell(grid, from), from, foot, WALL_SCAN_BOUNDED, NULL) &&
+           !memcmp(foot, end, sizeof foot);
+}
+
+/* Classify only a descending sweep onto the selected bounded water face.
+ * Its floor probe reports two units above the actual plane. A foot inside
+ * that gap can finish the approach in the air, then enter on its next step. */
+static int creek_water_descent(const BfmForestField *field, const int16_t from[3],
+                               const int16_t end[3], const BfmForestContact *ground, int *entered)
+{
+    int plane_y = ground->height + 2;
+    if (end[1] <= from[1] || from[1] > plane_y || end[1] < ground->height ||
+        !same_grid_index(from[0], end[0]) || !same_grid_index(from[2], end[2]))
+        return 0;
+    BfmForestContact previous;
+    if (!bfm_forest_ground(field, from[0], field->bank_height, from[2], &previous) ||
+        (from[1] >= previous.height && !first_creek_water(field, from, &previous)))
+        return 0;
     const FloorGrid *grid = &field->grid;
     ContactCell cell = contact_cell(grid, end);
+    const FloorPlane *water = support_plane(grid, cell, ground, end);
+    if (!water) return 0;
+    int gap = end[1] <= plane_y;
+    int16_t probe[3] = {end[0], gap ? (int16_t)(plane_y + 1) : end[1], end[2]};
+    int64_t water_start = signed_distance(grid, *water, from);
+    int64_t water_travel = water_start - signed_distance(grid, *water, probe);
+    int16_t near[3] = {from[0], (int16_t)(from[1] + 2), from[2]};
+    int16_t far[3] = {end[0], (int16_t)(end[1] + 2), end[2]};
+    int reached = 0;
     for (unsigned i = 0; i < cell.count; ++i) {
         u16 token = cell.tokens[i];
         const FloorFace *face = contact_face(grid, token);
-        const FloorPoint *normal = &grid->verts[face->e[0].v];
-        if (face->flags == ground->flags && !normal->x && !normal->z &&
-            (s16)normal->y == ground->normal[1] &&
-            crossing_margin(grid, face, (token & 0x8000) ? 4 : 3, from, end) >= -EDGE_TOLERANCE)
-            return 1;
+        unsigned sides = (token & 0x8000) ? 4 : 3;
+        if ((s16)grid->verts[face->e[0].v].y >= 0) continue;
+        if (gap && &face->e[0] != water &&
+            crossing_margin(grid, face, sides, near, far) >= -EDGE_TOLERANCE)
+            return 0;
+        if (crossing_margin(grid, face, sides, from, probe) < -EDGE_TOLERANCE) continue;
+        if (&face->e[0] == water) {
+            reached = 1;
+        } else {
+            int64_t start = signed_distance(grid, face->e[0], from);
+            int64_t travel = start - signed_distance(grid, face->e[0], probe);
+            if (start * water_travel <= water_start * travel) return 0;
+        }
     }
-    return 0;
+    *entered = reached && !gap;
+    return reached;
 }
 
 /* The steep sides and water may be below a jump, but cannot land the player.
@@ -2499,19 +2551,17 @@ int bfm_forest_player_air_step(const BfmForestField *field, const int16_t from[3
         upper = (s16)field->bank_height;
     if (!bfm_forest_ground(field, end[0], upper, end[2], &ground))
         return 0;
-    if (!bfm_forest_jump_surface(&ground) && (!creek || !clears_creek(field, from, end, &ground))) {
-        if (!water || !first_creek_water(field, end, &ground)) return 0;
-        if (crosses_creek_water(field, from, end, &ground)) {
-            *water = 1;
+    int marked = water && first_creek_water(field, end, &ground);
+    if (!bfm_forest_jump_surface(&ground) &&
+        !((creek || marked) && clears_creek(field, from, end, &ground))) {
+        if (!marked || !creek_water_descent(field, from, end, &ground, water)) return 0;
+        if (*water) {
             end[1] = ground.height;
             memcpy(to, end, sizeof end);
             *contact = ground;
             *landed = 1;
             return 1;
         }
-        /* A short descent can end between the floor probe's two units
-         * of clearance and the actual plane; finish that step in the air. */
-        if (from[1] > ground.height + 2 || end[1] > ground.height + 2) return 0;
     }
     int hit = end[1] >= from[1] && end[1] > ground.height + 2;
     /* A wall slide may move the downward probe just inside a raised face's

@@ -216,6 +216,9 @@ int bfm_forest_thrown_probe(const BfmForestField *field, const int16_t from[3],
                             int16_t to[3], int follow_ground, int *grounded);
 /* A remembered recovery foot must lie on the actual level bank. */
 int bfm_forest_dry_creek_bank(const BfmForestField *field, const int16_t foot[3]);
+/* Resolve the level stride that first leaves the supported near bank. */
+int bfm_forest_walks_off_creek_bank(const BfmForestField *field, const int16_t from[3],
+                                    const int16_t end[3]);
 /* The hero can additionally enter the bounded first-creek water surface. */
 int bfm_forest_player_air_step(const BfmForestField *field, const int16_t from[3],
                                int16_t to[3], BfmForestContact *contact, int *landed, int *water);
