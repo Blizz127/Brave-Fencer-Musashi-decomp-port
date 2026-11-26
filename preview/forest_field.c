@@ -2122,6 +2122,34 @@ static int tower_walkable(const BfmForestContact *floor)
     return floor->slope == 0x2000 && (floor->flags == 0 || floor->flags == 3);
 }
 
+/* The broad standing probe and the walking sweep use different edge
+ * tolerances. Both must see a tread under a resolved foot. */
+static int tower_supports_foot(const BfmForestField *field, const int16_t foot[3])
+{
+    BfmForestContact support;
+    if (!bfm_forest_ground(field, foot[0], foot[1], foot[2], &support) ||
+        !tower_walkable(&support) || abs(support.height - foot[1]) > 4)
+        return 0;
+    const FloorGrid *grid = &field->grid;
+    ContactCell cell = contact_cell(grid, foot);
+    int y = foot[1];
+    if (y < INT16_MIN + 4 || y > INT16_MAX - 7)
+        return 0;
+    int16_t near[3] = {foot[0], (int16_t)(y - 4), foot[2]};
+    int16_t far[3] = {foot[0], (int16_t)(y + 7), foot[2]};
+    for (unsigned i = 0; i < cell.count; ++i) {
+        u16 token = cell.tokens[i];
+        const FloorFace *face = contact_face(grid, token);
+        const FloorPoint *n = &grid->verts[face->e[0].v];
+        if (face->flags != support.flags || (s16)n->y >= -3019)
+            continue;
+        int tolerance = (s16)n->y < -3584 ? 0x1800 : EDGE_TOLERANCE;
+        if (crossing_margin(grid, face, (token & 0x8000) ? 4 : 3, near, far) >= -tolerance)
+            return 1;
+    }
+    return 0;
+}
+
 BfmForestTopStep bfm_tower_ascent_floor_step(const BfmForestField *field,
     const BfmForestContact *previous, const int16_t from[3], int16_t to[3])
 {
@@ -2154,6 +2182,11 @@ BfmForestTopStep bfm_tower_ascent_floor_step(const BfmForestField *field,
         }
         if (i == cell.count) {
             if (!grounded) return BFM_FOREST_TOP_FREE;
+            /* A wall can push the resolved foot past the end of its tread.
+             * Keep the current footing if the next step would start on air
+             * or pick up another turn of the spiral below. */
+            if (!tower_supports_foot(field, far))
+                return BFM_FOREST_TOP_BLOCKED;
             memcpy(to, far, sizeof far);
             return BFM_FOREST_TOP_GROUNDED;
         }
