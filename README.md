@@ -20,6 +20,8 @@ Continue reads your own raw 128 KiB memory card. A formatted card with no Musash
 
 In daylight, Restaurant’s Macho stands uphill from Musashi’s arrival point. After the greeting, walk up the terrace and turn left toward him. Press A on the keyboard or the left face button on a controller (PlayStation Square or Xbox X) when you are close. Musashi steps forward and turns to face him. Advance the two pages with Space or controller A. When the camera returns to the hillside, you can move again. His answer on a later conversation depends on the current session. The memory card stays read-only.
 
+After talking to Macho, take the ramp down to the lower village. Walk up to the Mayor’s front door and face it. Press the attack button once to knock. If nobody answers, move closer to the center of the doorstep and try again. The Mayor asks you to find his lost dog. Choose the affirmative answer and advance the remaining lines for directions to Twinpeak Mountain. When he goes back inside, you can walk around again. The rescue itself is still in development.
+
 To build the preview, install CMake 3.16 or newer and the SDL2 development files (2.0.18 or newer). From the repository root, run
 
 ```sh
