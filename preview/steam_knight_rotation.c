@@ -4,6 +4,24 @@
 #include "../pc_port/forest_player_bytes.h"
 #include <string.h>
 
+int bfm_lumina_charge(unsigned *grip, uint8_t *gauge, int shoulder, int triangle)
+{
+    if (!shoulder) {
+        *gauge = 0;
+        *grip = 0;
+    } else if (*grip && triangle && *gauge == 128) {
+        *gauge = 0;
+        *grip = 0;
+        return 1;
+    } else if (*grip) {
+        *gauge = *gauge >= 125 ? 128 : (uint8_t)(*gauge + 3);
+    } else {
+        *grip = 1;
+        *gauge = 0;
+    }
+    return 0;
+}
+
 /* Both weapons' anchors precede each mounted body pose. */
 int bfm_lumina_rotation_load(const MusashiDiscMedia *disc, BfmLuminaRotation *motion)
 {

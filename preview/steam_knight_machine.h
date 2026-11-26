@@ -52,6 +52,10 @@ int bfm_steam_knight_machine_knee_pose(const BfmSteamKnightMachine *machine,
                                       unsigned *key, unsigned *hold_age, int *recovering);
 int bfm_steam_knight_machine_core_socket(const BfmSteamKnightMachine *machine,
                                          int waist, BfmForestTransform *world);
+/* Call step_light once before hit resolution on each active battle update,
+ * including the transition that follows a lethal core hit. */
+void bfm_steam_knight_machine_step_light(BfmSteamKnightMachine *machine);
+void bfm_steam_knight_machine_flash_core(BfmSteamKnightMachine *machine);
 /* Start the mounted outer shell's observed white response on actual damage. */
 void bfm_steam_knight_machine_flash_armor(BfmSteamKnightMachine *machine, unsigned joint);
 int bfm_steam_knight_machine_joint(const BfmSteamKnightMachine *machine, unsigned chassis_part,

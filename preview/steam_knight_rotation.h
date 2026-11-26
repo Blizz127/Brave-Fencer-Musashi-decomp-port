@@ -11,6 +11,9 @@ typedef struct {
     BfmLuminaRotationKey keys[BFM_ROTATION_KEYS];
     unsigned count, held;
 } BfmLuminaRotation;
+/* Use the live player's gauge. A full gauge and a new Triangle edge while
+ * already in the shoulder stance discharge it once. */
+int bfm_lumina_charge(unsigned *grip, uint8_t *gauge, int shoulder, int triangle);
 int bfm_lumina_rotation_load(const MusashiDiscMedia *disc, BfmLuminaRotation *motion);
 const BfmLuminaRotationKey *bfm_lumina_rotation_pose(const BfmLuminaRotation *motion,
     unsigned age, int16_t initial_heading, int16_t *heading);

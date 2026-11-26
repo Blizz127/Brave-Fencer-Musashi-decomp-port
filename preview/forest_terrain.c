@@ -560,6 +560,16 @@ typedef enum { FOREST_PLAYER_MODEL, FOREST_ROOM_MODEL } ForestModelRole;
 static const MusashiForestPlayerFace white_triangle = {.corners = 3};
 static const MusashiForestPlayerFace white_quad = {.corners = 4};
 
+static uint32_t increase_modulation(uint32_t rgb, unsigned extra)
+{
+    uint32_t lit = 0;
+    for (unsigned shift = 0; shift < 24; shift += 8) {
+        unsigned level = ((rgb >> shift) & 255) + extra;
+        lit |= (level < 255 ? level : 255) << shift;
+    }
+    return lit;
+}
+
 static int collect_model(BfmForestTerrain *terrain, const BfmForestCamera *camera,
                          const MusashiForestPlayerMesh *model, const BfmForestPose *pose,
                          const BfmForestTransform *root, uint32_t mask,
@@ -575,6 +585,7 @@ static int collect_model(BfmForestTerrain *terrain, const BfmForestCamera *camer
         if (!(mask & (UINT32_C(1) << i))) continue;
         const MusashiForestPlayerPart *part = musashi_forest_player_mesh_part(model,i);
         if (!part) return 0;
+        unsigned extra = musashi_forest_player_mesh_extra_light(model, i);
         size_t required = *count + part->face_count;
         if (required < *count || !reserve_faces(terrain, required)) return 0;
         BfmForestTransform world, eye;
@@ -615,6 +626,8 @@ static int collect_model(BfmForestTerrain *terrain, const BfmForestCamera *camer
                 out->lighting[k] = (face->mode & 1) ?
                     (unsigned)rgb[0] | (unsigned)rgb[1] << 8 | (unsigned)rgb[2] << 16 :
                     light_vertex(terrain, light, &part->normals[face->normal[k]], rgb);
+                if (extra && (face->mode & 4))
+                    out->lighting[k] = increase_modulation(out->lighting[k], extra);
             }
             if (role == FOREST_PLAYER_MODEL && i < 2)
                 out->depth = nearest/4 - 1;

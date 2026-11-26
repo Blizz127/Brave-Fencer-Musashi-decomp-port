@@ -30,6 +30,8 @@ typedef struct {
 } MachineClip;
 struct BfmSteamKnightMachine {
     MusashiForestPlayerMesh *mesh[ASSEMBLIES], *white_chassis, *under_armor;
+    MusashiForestPlayerMesh *lit_mesh[ASSEMBLIES], *lit_under_armor;
+    unsigned core_light;
     uint64_t shell_white_from, shell_white_until;
     MachineClip chassis[CLIPS], torso;
     BfmForestTransform root, display_root;
@@ -126,10 +128,24 @@ BfmSteamKnightMachine *bfm_steam_knight_machine_load(const uint8_t *scene, size_
             scene, bytes, origin, model[piece].table, &count);
         if (!machine->mesh[piece] || count != model[piece].parts) goto failed;
     }
+    /* Independently registered original views show the shoulders, torso,
+     * head, waist and these leg surfaces brighten. The wrist stays dark. */
+    const uint32_t lit_parts[] = {
+        (1u << 11) | (1u << 13) | (1u << 14) | (1u << 15) |
+        (1u << 16) | (1u << 20) | (1u << 21),
+        (1u << 0) | (1u << 3) | (1u << 4) | (1u << 5)
+    };
+    for (unsigned i = 0; i < ASSEMBLIES; ++i) {
+        machine->lit_mesh[i] = musashi_forest_player_mesh_lit_view(machine->mesh[i], lit_parts[i], 96);
+        if (!machine->lit_mesh[i]) goto failed;
+    }
     unsigned parts = 0;
     machine->under_armor = musashi_forest_player_mesh_from_table(
         scene, bytes, origin, UINT32_C(0x801bd9d4), &parts);
     if (!machine->under_armor || parts != 12) goto failed;
+    machine->lit_under_armor = musashi_forest_player_mesh_lit_view(
+        machine->under_armor, (1u << 8) | (1u << 10), 96);
+    if (!machine->lit_under_armor) goto failed;
     machine->white_chassis = musashi_forest_player_mesh_white_part_view(machine->mesh[CHASSIS], FIRST_HIT_JOINT);
     if (!machine->white_chassis) goto failed;
     for (unsigned i = 0; i < CLIPS; ++i)
@@ -147,10 +163,13 @@ void bfm_steam_knight_machine_free(BfmSteamKnightMachine *machine)
     if (!machine) return;
     for (unsigned i = 0; i < CLIPS; ++i) free(machine->chassis[i].pose);
     free(machine->torso.pose);
+    musashi_forest_player_mesh_free(machine->lit_under_armor);
     musashi_forest_player_mesh_free(machine->under_armor);
     musashi_forest_player_mesh_free(machine->white_chassis);
-    for (unsigned i = 0; i < ASSEMBLIES; ++i)
+    for (unsigned i = 0; i < ASSEMBLIES; ++i) {
+        musashi_forest_player_mesh_free(machine->lit_mesh[i]);
         musashi_forest_player_mesh_free(machine->mesh[i]);
+    }
     free(machine);
 }
 
@@ -477,6 +496,9 @@ size_t bfm_steam_knight_machine_actors(const BfmSteamKnightMachine *machine,
             .root = &machine->display_root, .visible_parts = (UINT32_C(1) << model[i].parts) - 1};
     if (machine->control_age >= machine->shell_white_from && machine->control_age < machine->shell_white_until)
         out[CHASSIS].mesh = machine->white_chassis;
+    int lit = machine->core_light && machine->core_light <= 7;
+    if (lit)
+        for (unsigned i = 0; i < ASSEMBLIES; ++i) out[i].mesh = machine->lit_mesh[i];
     if (machine->open_cover) out[CHASSIS].visible_parts &= ~UINT32_C(1);
     if (machine->broken_shells && capacity > ASSEMBLIES) {
         static const unsigned joints[] = {13, 14, 18, 19};
@@ -489,11 +511,21 @@ size_t bfm_steam_knight_machine_actors(const BfmSteamKnightMachine *machine,
             }
         }
         if (!slots) return ASSEMBLIES;
-        out[ASSEMBLIES] = (BfmForestActor){.mesh = machine->under_armor,
+        out[ASSEMBLIES] = (BfmForestActor){.mesh = lit ? machine->lit_under_armor : machine->under_armor,
             .pose = &machine->armor_pose, .root = &machine->display_root, .visible_parts = slots};
         return ASSEMBLIES + 1;
     }
     return ASSEMBLIES;
+}
+
+void bfm_steam_knight_machine_step_light(BfmSteamKnightMachine *machine)
+{
+    if (machine && machine->core_light) --machine->core_light;
+}
+
+void bfm_steam_knight_machine_flash_core(BfmSteamKnightMachine *machine)
+{
+    if (machine && machine->controlled) machine->core_light = 9;
 }
 
 void bfm_steam_knight_machine_flash_armor(BfmSteamKnightMachine *machine, unsigned joint)

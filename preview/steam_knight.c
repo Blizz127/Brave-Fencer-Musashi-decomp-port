@@ -167,6 +167,7 @@ static int core_contact(BfmSteamKnight *s, const BfmSteamKnightHeroStrike *strik
         s->weak_age = 0;
         return 1;
     }
+    bfm_steam_knight_machine_flash_core(s->machine);
     s->core_hp = (unsigned)hit.hp_after;
     s->battle_flags = (s->battle_flags & ~hit.clear_flags) | hit.set_flags;
     if (hit.response == BFM_STEAM_CORE_DEPLETED) {
@@ -221,12 +222,16 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
     ++e->age;
     ++e->stage_age;
     bfm_forest_voice_step(s->voice);
+    bfm_steam_knight_machine_step_light(s->machine);
     bfm_steam_knight_machine_present(s->machine, e->stage_age);
-    if (s->weak_stage == 3 && ++s->weak_age == 47) {
-        s->weak_stage = 2;
-        s->weak_age = 0;
-        s->battle_flags |= 2;
-        bfm_steam_knight_machine_open_cover(s->machine);
+    if (s->weak_stage == 3) {
+        ++s->weak_age;
+        if (s->weak_age == 17) bfm_steam_knight_machine_open_cover(s->machine);
+        if (s->weak_age == 47) {
+            s->weak_stage = 2;
+            s->weak_age = 0;
+            s->battle_flags |= 2;
+        }
     } else if (s->weak_stage == 2 && s->weak_age < 47) {
         ++s->weak_age;
     }
@@ -247,8 +252,15 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
     hall_camera(s, &camera);
     if (s->body_stage == 8)
         bfm_steam_carry_try_grab(&s->carry, s->hero, pressed);
-    BfmSteamKnightHeroStrike strike;
-    if (!bfm_steam_hero_tick(s->hero, &camera, x, y, pressed, held, &strike)) return -1;
+    BfmSteamKnightHeroStrike strike = {0};
+    BfmSteamFlameRay rays[BFM_ROTATION_RAYS];
+    size_t ray_count = 0;
+    BfmSteamHeroLumina lumina = bfm_steam_hero_lumina(s->hero, &s->rotation, &e->run->player,
+                                                       &camera, x, y, pressed, held, rays, &ray_count);
+    if (lumina == BFM_STEAM_LUMINA_ERROR) return -1;
+    if ((lumina == BFM_STEAM_LUMINA_PASS || lumina == BFM_STEAM_LUMINA_SLASH) &&
+        !bfm_steam_hero_tick(s->hero, &camera, x, y, pressed, held, &strike)) return -1;
+    if (!bfm_steam_weapons_tick(&s->weapons, ray_count ? &rays[ray_count - 1] : NULL)) return -1;
     if (previous_action == 13 && player->action == 14)
         bfm_forest_status_spend_bp(&e->run->player, 4);
     if (s->body_stage == 8 && !bfm_steam_carry_check_brace(&s->carry, s->hero, previous))
