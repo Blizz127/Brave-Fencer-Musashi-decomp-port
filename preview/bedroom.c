@@ -510,20 +510,20 @@ int bfm_bedroom_step_pad(BfmBedroom *room, int confirm_edge, int reveal_edge,
                 room->script.book = 0;
                 room->books_closing = 1;
             } else if (selection == BFM_BOOKS_SELECTED) {
-                unsigned book = bfm_library_books_selection(room->books);
-                room->script.book = book;
-                if ((book >> 8) == 1)
+                unsigned selection = bfm_library_books_selection(room->books);
+                unsigned book = selection >> 8;
+                unsigned topic = selection & 0xffu;
+                /* The disc reserves five text pointers per book, including
+                 * unused slots in shorter tables of contents. */
+                if (!book || !topic || topic > 5) return 0;
+                unsigned slot = (book - 1) * 5 + topic - 1;
+                const uint8_t *entry = data_range(room, 0x8019f144u + 4 * slot, 4);
+                if (!entry || !data_range(room, word(entry), 1)) return 0;
+                room->script.book = selection;
+                if (book == 1)
                     room->entry.state.flags[232 / 8] |= 1u << (232 % 8);
-                if (book == 0x101) {
-                    /* First pointer in the mounted five-topics-per-book catalogue. */
-                    const uint8_t *entry = data_range(room, 0x8019f144u, 4);
-                    if (!entry || !data_range(room, word(entry), 1)) return 0;
-                    room->chapter_text = word(entry);
-                    room->books_closing = 1;
-                } else {
-                    room->books_active = 0;
-                    room->message_closed = 1;
-                }
+                room->chapter_text = word(entry);
+                room->books_closing = 1;
             }
         }
         room->presented = (submitted+1)%3;
