@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { SECTOR = 2048, SCORE_COUNT = 3, MIDI_HEADER_BYTES = 22 };
+enum { SECTOR = 2048, PALACE_MEMBER = 2, FOREST_MEMBER = 78, MAX_TRACKS = 3, MIDI_HEADER_BYTES = 22 };
 
 static uint32_t little32(const uint8_t *p)
 {
@@ -27,32 +27,37 @@ static int read_sc01(const MusashiDiscMedia *disc, size_t offset, uint8_t *p, si
     return musashi_disc_media_read_root_range(disc, "SC01.CD", offset, p, bytes, &root_size);
 }
 
-static BfmSqvResult locate(const MusashiDiscMedia *disc, unsigned track, TrackRange *range)
+static BfmSqvResult locate(const MusashiDiscMedia *disc, unsigned member, unsigned track,
+                           unsigned tracks, TrackRange *range)
 {
-    uint8_t directory[32], wrapper[16], midi[MIDI_HEADER_BYTES];
+    uint8_t directory[8], entry[8], wrapper[16], midi[MIDI_HEADER_BYTES];
     size_t root_size;
     if (!musashi_disc_media_read_root_range(disc, "SC01.CD", 0, directory, sizeof(directory),
                                            &root_size)) return BFM_SQV_DISC_ERROR;
-    uint32_t count = little32(directory), sector = little32(directory + 24);
-    size_t member_bytes = little32(directory + 28);
-    if (count <= 2 || count > (root_size - 8) / 8 || sector > root_size / SECTOR)
+    uint32_t count = little32(directory);
+    if (count <= member || count > (root_size - 8) / 8) return BFM_SQV_INVALID;
+    if (!read_sc01(disc, 8 + (size_t)member * 8, entry, sizeof(entry))) return BFM_SQV_DISC_ERROR;
+    uint32_t sector = little32(entry);
+    size_t member_bytes = little32(entry + 4);
+    if (sector > root_size / SECTOR)
         return BFM_SQV_INVALID;
     size_t base = (size_t)sector * SECTOR;
     if (base < 8 + 8 * (size_t)count || member_bytes < sizeof(wrapper) ||
         member_bytes > root_size - base) return BFM_SQV_INVALID;
     if (!read_sc01(disc, base, wrapper, sizeof(wrapper))) return BFM_SQV_DISC_ERROR;
     if (memcmp(wrapper, ".sqv", 4)) return BFM_SQV_INVALID;
-    if (little32(wrapper + 12)) return BFM_SQV_UNSUPPORTED;
-
-    /* Two offsets measured from just after the signature separate the
-     * three embedded sequences. Each has a single compact event stream. */
-    size_t starts[SCORE_COUNT + 1] = {sizeof(wrapper), 0, 0, member_bytes};
-    for (unsigned i = 1; i < SCORE_COUNT; ++i) {
+    /* Offsets follow the signature. The palace has two offsets, the
+     * forest none; all unused words in either wrapper must be zero. */
+    for (unsigned i = tracks; i <= MAX_TRACKS; ++i)
+        if (little32(wrapper + 4 * i)) return BFM_SQV_UNSUPPORTED;
+    size_t starts[MAX_TRACKS + 1] = {sizeof(wrapper)};
+    starts[tracks] = member_bytes;
+    for (unsigned i = 1; i < tracks; ++i) {
         size_t relative = little32(wrapper + 4 * i);
         if (relative > member_bytes - 4) return BFM_SQV_INVALID;
         starts[i] = relative + 4;
     }
-    for (unsigned i = 0; i < SCORE_COUNT; ++i)
+    for (unsigned i = 0; i < tracks; ++i)
         if (starts[i] > starts[i + 1] || starts[i + 1] - starts[i] < sizeof(midi))
             return BFM_SQV_INVALID;
 
@@ -71,7 +76,7 @@ static BfmSqvResult locate(const MusashiDiscMedia *disc, unsigned track, TrackRa
     range->offset = base + body;
     range->bytes = starts[track + 1] - body;
     if (range->bytes > declared) range->bytes = declared;
-    if (track == SCORE_COUNT - 1) {
+    if (track == tracks - 1) {
         /* A sector-aligned VAB follows the final score in this member. A
          * malformed length must never feed its instrument data to the parser. */
         size_t distance = (SECTOR - body % SECTOR) % SECTOR;
@@ -130,10 +135,11 @@ static BfmSqvResult meta_event(Cursor *in, BfmSqvEvent *event)
     return BFM_SQV_OK;
 }
 
-static BfmSqvResult channel_event(Cursor *in, unsigned status, BfmSqvEvent *event)
+static BfmSqvResult channel_event(Cursor *in, unsigned status, unsigned member, BfmSqvEvent *event)
 {
     unsigned command = status >> 4;
-    if (command != 8 && command != 9 && command != 11 && command != 12)
+    if (command != 8 && command != 9 && command != 11 && command != 12 &&
+        !(member == FOREST_MEMBER && command == 14))
         return BFM_SQV_UNSUPPORTED;
     if (in->next == in->end || *in->next >= 128) return BFM_SQV_INVALID;
     event->channel = (uint8_t)(status & 15);
@@ -143,6 +149,9 @@ static BfmSqvResult channel_event(Cursor *in, unsigned status, BfmSqvEvent *even
         event->kind = BFM_SQV_NOTE_OFF;
     } else if (command == 12) {
         event->kind = BFM_SQV_PROGRAM;
+    } else if (command == 14) {
+        /* The mounted forest score encodes a single wheel byte. */
+        event->kind = BFM_SQV_PITCH_BEND;
     } else {
         if (in->next == in->end || *in->next >= 128) return BFM_SQV_INVALID;
         event->value = *in->next++;
@@ -152,7 +161,7 @@ static BfmSqvResult channel_event(Cursor *in, unsigned status, BfmSqvEvent *even
     return BFM_SQV_OK;
 }
 
-static BfmSqvResult parse(const uint8_t *data, size_t bytes, BfmSqvEvent *events,
+static BfmSqvResult parse(const uint8_t *data, size_t bytes, unsigned member, BfmSqvEvent *events,
                           size_t *count, uint32_t *duration)
 {
     Cursor in = {data, data + bytes};
@@ -174,7 +183,7 @@ static BfmSqvResult parse(const uint8_t *data, size_t bytes, BfmSqvEvent *events
             result = meta_event(&in, &event);
         } else {
             running = status;
-            result = channel_event(&in, status, &event);
+            result = channel_event(&in, status, member, &event);
         }
         if (result != BFM_SQV_OK) return result;
         if (events) events[index] = event;
@@ -188,13 +197,17 @@ static BfmSqvResult parse(const uint8_t *data, size_t bytes, BfmSqvEvent *events
     return BFM_SQV_INVALID;
 }
 
-BfmSqvResult bfm_sqv_track_load(const MusashiDiscMedia *disc, unsigned track, BfmSqvTrack *out)
+BfmSqvResult bfm_sqv_member_track_load(const MusashiDiscMedia *disc, unsigned member,
+                                      unsigned track, BfmSqvTrack *out)
 {
     if (!out) return BFM_SQV_INVALID;
     *out = (BfmSqvTrack){0};
-    if (!disc || track >= SCORE_COUNT) return BFM_SQV_INVALID;
+    if (!disc) return BFM_SQV_INVALID;
+    if (member != PALACE_MEMBER && member != FOREST_MEMBER) return BFM_SQV_UNSUPPORTED;
+    unsigned tracks = member == PALACE_MEMBER ? MAX_TRACKS : 1;
+    if (track >= tracks) return BFM_SQV_INVALID;
     TrackRange range;
-    BfmSqvResult result = locate(disc, track, &range);
+    BfmSqvResult result = locate(disc, member, track, tracks, &range);
     if (result != BFM_SQV_OK) return result;
     if (!range.bytes) return BFM_SQV_INVALID;
     uint8_t *data = malloc(range.bytes);
@@ -205,18 +218,23 @@ BfmSqvResult bfm_sqv_track_load(const MusashiDiscMedia *disc, unsigned track, Bf
     } else {
         /* Count and validate the immutable stream before allocating its
          * event list. Both passes stop at the same first end-of-track. */
-        result = parse(data, range.bytes, NULL, &score.event_count, &score.duration_ticks);
+        result = parse(data, range.bytes, member, NULL, &score.event_count, &score.duration_ticks);
         if (result == BFM_SQV_OK) {
             if (score.event_count <= SIZE_MAX / sizeof(*score.events))
                 score.events = malloc(score.event_count * sizeof(*score.events));
             if (!score.events) result = BFM_SQV_NO_MEMORY;
-            else result = parse(data, range.bytes, score.events, &score.event_count, &score.duration_ticks);
+            else result = parse(data, range.bytes, member, score.events, &score.event_count, &score.duration_ticks);
         }
     }
     free(data);
     if (result == BFM_SQV_OK) *out = score;
     else free(score.events);
     return result;
+}
+
+BfmSqvResult bfm_sqv_track_load(const MusashiDiscMedia *disc, unsigned track, BfmSqvTrack *out)
+{
+    return bfm_sqv_member_track_load(disc, PALACE_MEMBER, track, out);
 }
 
 void bfm_sqv_track_free(BfmSqvTrack *track)

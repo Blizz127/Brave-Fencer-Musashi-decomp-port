@@ -34,6 +34,8 @@ struct BfmForestWalk;
  * forest clock (zero). Ownership transfers to the caller exactly once. */
 struct BfmForestWalk *bfm_opening_take_forest(void *scene, const MusashiDiscMedia *disc,
                                              unsigned field, uint64_t *forest_field);
+/* The chapter clock supplies the incoming music origin during the final black interval. */
+int bfm_opening_forest_score_field(const void *scene, unsigned field, uint64_t *start_field);
 int bfm_opening_skip_member(const void *scene, unsigned *member);
 /* FRAME produces an image. On END, render the final opening field.
  * FOREST_PENDING has already painted the black end of the chapter card. */

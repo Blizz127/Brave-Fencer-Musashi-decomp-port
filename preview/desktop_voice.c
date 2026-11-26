@@ -2,6 +2,7 @@
 #include "desktop_voice.h"
 #include "palace_voice.h"
 #include "forest_voice.h"
+#include "forest_score.h"
 #include "palace_effects.h"
 #include "scene_views.h"
 #include <stdlib.h>
@@ -22,6 +23,9 @@ typedef struct {
 struct DesktopVoice {
     PalaceVoice *decoder;
     BfmPalaceEffects *effects;
+    BfmForestScore *forest_score;
+    Uint64 forest_score_start;
+    int forest_score_requested, forest_score_waiting;
     Uint64 opening_start;
     enum { COURT_IDLE, COURT_PLAYING, COURT_FINISHING } court;
     VoiceClip *pending;
@@ -82,6 +86,24 @@ static void SDLCALL render_voice(void *userdata, Uint8 *stream, int bytes)
     if (v->court != COURT_IDLE)
         bfm_palace_effects_mix(v->effects, SDL_GetTicks64() - v->opening_start,
                               (int16_t *)(void *)stream, frames);
+
+    if (v->forest_score_requested && v->forest_score) {
+        size_t lead = 0;
+        if (v->forest_score_waiting) {
+            Uint64 now = SDL_GetTicks64();
+            if (now < v->forest_score_start) {
+                Uint64 wait_ms = v->forest_score_start - now;
+                if (wait_ms >= ((Uint64)frames * 1000 + BFM_PALACE_VOICE_RATE - 1) /
+                               BFM_PALACE_VOICE_RATE) return;
+                lead = (size_t)((wait_ms * BFM_PALACE_VOICE_RATE + 999) / 1000);
+                if (lead >= frames) return;
+            }
+            v->forest_score_waiting = 0;
+        }
+        bfm_forest_score_mix(v->forest_score,
+                             (int16_t *)(void *)stream + lead * BFM_PALACE_VOICE_CHANNELS,
+                             frames - lead);
+    }
 }
 
 static void open_device(DesktopVoice *v)
@@ -138,8 +160,28 @@ void bfm_desktop_voice_stop(DesktopVoice *v)
     v->pending = NULL;
     v->court = COURT_IDLE;
     v->forest_generation = 0;
+    v->forest_score_requested = v->forest_score_waiting = 0;
     v->selected = v->message_ready = v->playing = v->reported = 0;
     bfm_palace_voice_stop(v->decoder);
+}
+
+void bfm_desktop_voice_forest_score(DesktopVoice *v, const MusashiDiscMedia *disc, Uint64 start)
+{
+    if (!v || !disc || v->forest_score_requested) return;
+    /* The card has faded and the prior court sound is silent. Prepare
+     * the mounted score with the device paused, ahead of its first note. */
+    bfm_desktop_voice_stop(v);
+    if (!v->forest_score)
+        v->forest_score = bfm_forest_score_load(disc, BFM_PALACE_VOICE_RATE);
+    v->forest_score_requested = 1;
+    if (!v->forest_score) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_AUDIO, "Could not read the mounted Giant Forest score.");
+        return;
+    }
+    bfm_forest_score_rewind(v->forest_score);
+    v->forest_score_start = start;
+    v->forest_score_waiting = 1;
+    if (v->device) SDL_PauseAudioDevice(v->device, 0);
 }
 
 void bfm_desktop_voice_event(DesktopVoice *v, const SDL_AudioDeviceEvent *e)
@@ -151,7 +193,9 @@ void bfm_desktop_voice_event(DesktopVoice *v, const SDL_AudioDeviceEvent *e)
         v->playing = 0;
     } else if (e->type == SDL_AUDIODEVICEADDED && !v->device) {
         open_device(v);
-        if (v->device && v->court == COURT_PLAYING && v->effects) {
+        if (v->device && v->forest_score_requested && v->forest_score) {
+            SDL_PauseAudioDevice(v->device, 0);
+        } else if (v->device && v->court == COURT_PLAYING && v->effects) {
             bfm_palace_effects_reset(v->effects);
             SDL_PauseAudioDevice(v->device, 0);
         }
@@ -303,6 +347,7 @@ void bfm_desktop_voice_free(DesktopVoice *v)
     if (!v) return;
     bfm_desktop_voice_stop(v);
     if (v->device) SDL_CloseAudioDevice(v->device);
+    bfm_forest_score_free(v->forest_score);
     bfm_palace_effects_free(v->effects);
     bfm_palace_voice_free(v->decoder);
     free(v);

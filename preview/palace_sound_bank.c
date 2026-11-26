@@ -75,15 +75,21 @@ fail:
 /* The embedded bank header and body are sector-aligned. The two words
  * just before the body give its sector count and bytes in the final sector. */
 static BfmPalaceBank *read_score_bank(const MusashiDiscMedia *disc, size_t base, size_t bytes,
-                                      const uint8_t wrapper[16])
+                                      unsigned member, const uint8_t wrapper[16])
 {
     if (bytes % SECTOR || le32(wrapper + 12)) return NULL;
-    size_t last = le32(wrapper + 8), middle = le32(wrapper + 4);
-    if (middle < 12 || last <= middle || last > bytes - 8) return NULL;
+    size_t middle = le32(wrapper + 4), last = le32(wrapper + 8);
+    size_t final_track = 16;
+    if (member == 2) {
+        if (middle < 12 || last <= middle || last > bytes - 8) return NULL;
+        final_track = 4 + last;
+    } else if (member != 78 || middle || last) {
+        return NULL;
+    }
     uint8_t signature[4];
-    if (!read_scene(disc, base + 4 + last, signature, sizeof(signature)) ||
+    if (!read_scene(disc, base + final_track, signature, sizeof(signature)) ||
         memcmp(signature, "MThd", 4)) return NULL;
-    size_t first_sector = (last + 4) / SECTOR + 1;
+    size_t first_sector = final_track / SECTOR + 1;
     for (size_t sector = first_sector; sector < bytes / SECTOR; ++sector) {
         size_t relative = sector * SECTOR;
         uint8_t info[32], trailer[4];
@@ -128,8 +134,8 @@ BfmPalaceBank *bfm_palace_sound_bank_load(const MusashiDiscMedia *disc, unsigned
     unsigned header_key = 0;
     while (left >= SECTOR) {
         if (!read_scene(disc, offset, block, sizeof(block))) return NULL;
-        if (!header_bytes && member == 2 && offset == sector * SECTOR && !memcmp(block, ".sqv", 4))
-            return read_score_bank(disc, offset, left, block);
+        if (offset == sector * SECTOR && !memcmp(block, ".sqv", 4))
+            return read_score_bank(disc, offset, left, member, block);
         if (memcmp(block, "PAC", 4)) return NULL;
         unsigned type = le32(block + 4), key = le32(block + 8);
         size_t bytes = le32(block + 12);
@@ -202,7 +208,8 @@ unsigned bfm_palace_sound_tones(const BfmPalaceBank *bank, unsigned program, uns
             .bank_gain = bank->header[24], .bank_pan = bank->header[25],
             .program_gain = selected[1], .program_pan = selected[4],
             .tone_gain = source[2], .tone_pan = source[3], .priority = source[0], .mode = source[1],
-            .adsr1 = le16(source + 16), .adsr2 = le16(source + 18)
+            .adsr1 = le16(source + 16), .adsr2 = le16(source + 18),
+            .bend_range = {source[12], source[13]}
         };
     }
     memcpy(tones, matches, count * sizeof(*tones));

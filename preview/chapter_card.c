@@ -41,6 +41,11 @@ static unsigned row_shade(unsigned elapsed, unsigned y)
     return wave > band ? wave - band : 0;
 }
 
+int bfm_chapter_card_cleared(unsigned elapsed, unsigned source_member)
+{
+    return elapsed >= (source_member ? 506u : 504u);
+}
+
 int bfm_chapter_card_draw(const BfmChapterCard *card, unsigned elapsed, unsigned source_member, uint32_t *pixels)
 {
     if (!card || !pixels) return -1;
@@ -48,7 +53,7 @@ int bfm_chapter_card_draw(const BfmChapterCard *card, unsigned elapsed, unsigned
     if (elapsed >= BFM_CHAPTER_FOREST_FIELD) return 0;
     unsigned card_field = elapsed;
     if (source_member == 0 && elapsed < 140) card_field += 4;
-    if (card_field < 108 || elapsed >= (source_member ? 506u : 504u)) return 1;
+    if (card_field < 108 || bfm_chapter_card_cleared(elapsed, source_member)) return 1;
     for (unsigned y = 0; y < CARD_H; ++y) {
         unsigned shade = row_shade(card_field, y);
         for (unsigned x = 0; x < CARD_W; ++x) {

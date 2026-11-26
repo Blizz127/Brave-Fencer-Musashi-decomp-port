@@ -42,7 +42,7 @@ static const struct { unsigned start, count; size_t offset; } court_shots[] = {
     {9590, STILL_POSES, 0xa6310},   /* Musashi asks to go home. */
     {10032, STILL_POSES, 0xa633c},  /* Shanky crosses the chamber. */
     {11304, STILL_POSES, 0xa6368},  /* Musashi faces the Scribe. */
-    {11800, STILL_POSES, 0xa6394},  /* The court comes back into view. */
+    {11798, STILL_POSES, 0xa6394},  /* The court comes back into view. */
     {11922, STILL_POSES, 0xa63c0},  /* The Steward sends Musashi to Spiral Tower. */
     {12334, FUSION_OFFER_POSES, 0xa63ec}, /* Butler Livers approaches with Fusion. */
     {12934, STILL_POSES, 0xa757c},  /* Musashi raises Fusion. */

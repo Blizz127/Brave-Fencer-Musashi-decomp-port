@@ -50,6 +50,7 @@ add_executable(musashi_native_boot
     forest_terrain.c
     forest_speech_actor.c
     disc_voice.c
+    forest_score.c
     forest_voice.c
     dialogue_contour.c
     forest_message_art.c

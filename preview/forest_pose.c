@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "forest_pose.h"
 #include "../pc_port/forest_player_archive.h"
+#include "../pc_port/forest_player_bytes.h"
 
 #include <math.h>
 
@@ -92,4 +93,124 @@ int bfm_forest_pose_decode(const uint8_t *bytes, size_t size, BfmForestPose *pos
     }
     *pose = decoded;
     return 1;
+}
+
+enum { RUN_SLOT = 8, JUMP_SLOT = 13, LAND_SLOT = 14, CLIP_WORDS = 32 };
+
+static int read_clip(const ForestPlayerArchive *archive, uint32_t table, unsigned slot,
+                     uint8_t *bytes, size_t size)
+{
+    uint8_t pointer[4];
+    if ((table & 3) || table > UINT32_MAX - slot * 4 ||
+        !forest_player_archive_read(archive, table + slot * 4, pointer, sizeof pointer))
+        return 0;
+    uint32_t program = u32le(pointer);
+    return !(program & 3) && forest_player_archive_read(archive, program, bytes, size);
+}
+
+static int jump_keys(const ForestPlayerArchive *archive, const uint8_t *clip, uint32_t model,
+                     enum BfmForestJumpPhase phase, BfmForestJumpPoses *out)
+{
+    if (u32le(clip) != 4 || u32le(clip + 4) != model || u32le(clip + 8) != 19)
+        return 0;
+    unsigned interval = 1;
+    unsigned falling_keys[CLIP_WORDS] = {0};
+    for (unsigned pc = 3; pc < CLIP_WORDS; ++pc) {
+        uint32_t command = u32le(clip + 4 * pc);
+        unsigned used = out->count[phase];
+        switch (command) {
+        case 0:
+            return phase == BFM_FOREST_JUMP_LANDING && used;
+        case 2: /* The rising pose waits here for the action to begin falling. */
+            if (phase != BFM_FOREST_JUMP_RISING || !used) return 0;
+            phase = BFM_FOREST_JUMP_FALLING;
+            break;
+        case 3:
+            if (++pc >= CLIP_WORDS) return 0;
+            interval = u32le(clip + 4 * pc);
+            if (!interval || interval > BFM_FOREST_JUMP_TICKS) return 0;
+            break;
+        case 6: { /* The tail repeats while the actor is still airborne. */
+            if (phase != BFM_FOREST_JUMP_FALLING || ++pc >= CLIP_WORDS) return 0;
+            uint32_t target = u32le(clip + 4 * pc);
+            if (target >= pc || !falling_keys[target]) return 0;
+            out->falling_loop = falling_keys[target] - 1;
+            return 1;
+        }
+        case 7: /* Takeoff marker. It occupies no animation tick. */
+            if (phase != BFM_FOREST_JUMP_RISING) return 0;
+            break;
+        default: {
+            uint8_t payload[256];
+            if ((command & 3) || command > UINT32_MAX - sizeof payload ||
+                !forest_player_archive_read(archive, command, payload, sizeof payload) ||
+                used > BFM_FOREST_JUMP_TICKS - interval)
+                return 0;
+            if (phase == BFM_FOREST_JUMP_FALLING) falling_keys[pc] = used + 1;
+            for (unsigned i = 0; i < interval; ++i)
+                out->frames[phase][used++] = command + 16;
+            out->count[phase] = used;
+            break;
+        }
+        }
+    }
+    return 0;
+}
+
+int bfm_forest_jump_poses_load(const MusashiDiscMedia *disc, uint32_t table,
+                               BfmForestJumpPoses *out)
+{
+    ForestPlayerArchive archive;
+    uint8_t run[12], clip[4 * CLIP_WORDS], parts[4 * (MUSASHI_FOREST_PLAYER_PARTS + 1)];
+    BfmForestJumpPoses poses = {0};
+    if (!out || !forest_player_archive_open(disc, &archive) ||
+        !read_clip(&archive, table, RUN_SLOT, run, sizeof run) ||
+        u32le(run) != 4 || u32le(run + 8) != 19)
+        return 0;
+    uint32_t model = u32le(run + 4);
+    if ((model & 3) || !forest_player_archive_read(&archive, model, parts, sizeof parts) ||
+        u32le(parts + 4 * MUSASHI_FOREST_PLAYER_PARTS))
+        return 0;
+    for (unsigned i = 0; i < MUSASHI_FOREST_PLAYER_PARTS; ++i) {
+        if ((u32le(parts + i * 4) >> 24) != 0x80) return 0;
+        poses.visible |= UINT32_C(1) << i;
+    }
+    /* Both clips restore the same equipped Fusion body as the running clip. */
+    poses.visible &= ~((UINT32_C(1) << 21) | (UINT32_C(1) << 24) | (UINT32_C(1) << 25));
+    if (!read_clip(&archive, table, JUMP_SLOT, clip, sizeof clip) ||
+        !jump_keys(&archive, clip, model, BFM_FOREST_JUMP_RISING, &poses) ||
+        !read_clip(&archive, table, LAND_SLOT, clip, sizeof clip) ||
+        !jump_keys(&archive, clip, model, BFM_FOREST_JUMP_LANDING, &poses))
+        return 0;
+    *out = poses;
+    return 1;
+}
+
+uint32_t bfm_forest_jump_pose_frame(const BfmForestJumpPoses *poses,
+                                    enum BfmForestJumpPhase phase, unsigned phase_tick)
+{
+    if (!poses || (unsigned)phase > BFM_FOREST_JUMP_LANDING) return 0;
+    unsigned count = poses->count[phase];
+    if (!count || count > BFM_FOREST_JUMP_TICKS) return 0;
+    /* The action changes the model two updates after the vertical velocity
+     * turns downward. The jump program stays on its suspended rise key
+     * during those updates, including after a short button press. */
+    if (phase == BFM_FOREST_JUMP_FALLING) {
+        if (phase_tick < 2) {
+            unsigned rise_count = poses->count[BFM_FOREST_JUMP_RISING];
+            if (!rise_count || rise_count > BFM_FOREST_JUMP_TICKS) return 0;
+            return poses->frames[BFM_FOREST_JUMP_RISING][rise_count - 1];
+        }
+        phase_tick -= 2;
+    }
+    if (phase_tick >= count) {
+        if (phase == BFM_FOREST_JUMP_FALLING) {
+            unsigned loop = poses->falling_loop;
+            if (loop >= count) return 0;
+            phase_tick = loop + (phase_tick - loop) % (count - loop);
+        } else {
+            phase_tick = count - 1;
+        }
+    }
+    return poses->frames[phase][phase_tick];
 }

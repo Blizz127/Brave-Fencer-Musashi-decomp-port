@@ -1475,7 +1475,7 @@ void bfm_stair_actors_prepare(BfmStairActors *a, unsigned field,
             int heading = signed_word(root + 6);
             /* In the close shot of Musashi facing Shanky, the near plane
              * clips Shanky's floor quad while part of his chain remains visible. */
-            int shadow_near = i == 4 && field >= 11304 && field < 11800 ? 128 : 0;
+            int shadow_near = i == 4 && field >= 11304 && field < 11798 ? 128 : 0;
             shoe_shadow(a, triple(root), heading, 3, view, translation, shadow_near);
             Mat yaw = rotation(1, heading), turned = multiply(view, yaw);
             Vec base = add(translation, transform(view, triple(root)));

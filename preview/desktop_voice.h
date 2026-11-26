@@ -20,6 +20,9 @@ unsigned bfm_desktop_voice_ready_field(const DesktopVoice *voice);
 /* Returns the events that occurred on this opening field. The message becomes
  * ready before the first voice samples reach SDL. */
 int bfm_desktop_voice_pump(DesktopVoice *voice, unsigned field, unsigned *bank, unsigned *cue);
+/* Arm the mounted incoming score at its opening-clock SDL time. Repeated
+ * frames and later dialogue generations retain the same music cursor. */
+void bfm_desktop_voice_forest_score(DesktopVoice *voice, const MusashiDiscMedia *disc, Uint64 start);
 struct ForestVoice;
 /* Supply the clocked field transport to SDL. Giant Forest provides its NTSC
  * field so complete lines can drain on a slow device. Zero selects immediate

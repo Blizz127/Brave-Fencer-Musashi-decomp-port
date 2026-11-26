@@ -233,9 +233,6 @@ static int start_forest(Player *p, unsigned field)
     uint64_t forest_field;
     p->forest = bfm_opening_take_forest(p->opening, p->disc, field, &forest_field);
     if (!p->forest) return 0;
-    /* A natural ending lets its court sound play through the card. Retire
-     * that output before the incoming room supplies its own generation. */
-    if (forest_field) bfm_desktop_voice_stop(p->voice);
     bfm_opening_free(p->opening);
     p->opening = NULL;
     p->forest_start = forest_field ? p->phase_start + (forest_field * 1001 + 59) / 60
@@ -253,7 +250,8 @@ static int forest_frame(Player *p)
     while (p->forest_updates < wanted) {
         int x = !!(p->held & PAD_RIGHT) - !!(p->held & PAD_LEFT);
         int y = !!(p->held & PAD_DOWN) - !!(p->held & PAD_UP);
-        running = bfm_forest_walk_tick_axes(p->forest, x, y, p->forest_confirm);
+        running = bfm_forest_walk_tick_controls(p->forest, x, y, p->forest_confirm,
+                                                !!(p->held & PAD_CROSS));
         p->forest_confirm = 0;
         if (running < 0) return -1;
         if (!running) break;
@@ -430,6 +428,10 @@ static int play(Player *p, char *error, size_t size) {
                 if (voice_events & BFM_VOICE_OUTPUT_STARTED) {
                     fprintf(stderr, "Palace voice %u/%u reached SDL output at field %u\n", bank, cue, fields);
                 }
+                uint64_t score_field;
+                if (bfm_opening_forest_score_field(p->opening, fields, &score_field))
+                    bfm_desktop_voice_forest_score(p->voice, p->disc,
+                                                   p->phase_start + (score_field * 1001 + 59) / 60);
                 frame = bfm_opening_frame(p->opening, fields, p->pixels, p->width, p->height);
                 if (frame == BFM_OPENING_FOREST_PENDING) {
                     if (!start_forest(p, fields)) {

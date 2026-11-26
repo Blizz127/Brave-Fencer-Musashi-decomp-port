@@ -56,6 +56,16 @@ int bfm_forest_clear_flat_step(const BfmForestField *field, const int16_t from[3
 int bfm_forest_doorway_step(const BfmForestField *field, const int16_t origin[3],
                             const int16_t from[3], int16_t to[3]);
 
+typedef enum {
+    BFM_FOREST_TOP_BLOCKED, BFM_FOREST_TOP_GROUNDED, BFM_FOREST_TOP_LEFT
+} BfmForestTopStep;
+
+/* Take a supported step on the raised obstacle. On leaving its far edge,
+ * return the final swept position above the landing floor to the fall owner.
+ * An unresolved contact leaves the proposed endpoint untouched. */
+BfmForestTopStep bfm_forest_raised_step(const BfmForestField *field,
+    const BfmForestContact *previous, const int16_t from[3], int16_t to[3]);
+
 /* Take a grounded step through the entrance and the adjoining slope.
  * The contact is the registered floor probe at the starting position. */
 int bfm_forest_corridor_step(const BfmForestField *field, const BfmForestContact *previous,
@@ -65,4 +75,7 @@ int bfm_forest_corridor_step(const BfmForestField *field, const BfmForestContact
  * Pass signed game-world units. No hit leaves contact untouched. */
 int bfm_forest_ground(const BfmForestField *field, int16_t x, int16_t y,
                       int16_t z, BfmForestContact *contact);
+/* Resolve a short airborne step against the mounted walls and landing surface. */
+int bfm_forest_air_step(const BfmForestField *field, const int16_t from[3],
+                        int16_t to[3], BfmForestContact *contact, int *landed);
 #endif

@@ -5,6 +5,7 @@
 #include "forest_opening_data.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum { WALK = 7, RUN = 8, Q16 = 65536, ACCELERATION = Q16 / 16 };
@@ -36,8 +37,12 @@ static int step_on_floor(const BfmForestField *field, const BfmForestContact *gr
     func_801473EC(next);
     int16_t end[3] = {(int16_t)(next->position[0] >> 16), cached[1],
                       (int16_t)(next->position[2] >> 16)};
-    if (!bfm_forest_corridor_step(field, ground, cached, end))
+    if (ground->flags == 0x2000) {
+        if (bfm_forest_raised_step(field, ground, cached, end) != BFM_FOREST_TOP_GROUNDED)
+            return 0;
+    } else if (!bfm_forest_corridor_step(field, ground, cached, end)) {
         return 0;
+    }
     for (unsigned axis = 0; axis < 3; ++axis)
         next->position[axis] = ((uint32_t)(uint16_t)end[axis] << 16) |
                                (next->position[axis] & 0xffff);
@@ -85,6 +90,7 @@ BfmForestManualResult bfm_forest_manual_tick(BfmForestManual *state,
         actor->state = 0;
         actor->phase = 1;
         state->moving = 0;
+        state->after_jump = 0;
         state->motion = state->elapsed = 0;
         return result;
     }
@@ -109,7 +115,8 @@ BfmForestManualResult bfm_forest_manual_tick(BfmForestManual *state,
 
     ForestPlayerState next = *actor;
     int32_t speed = next.field_2c.word;
-    if (speed > 0 || speed < -11 * Q16)
+    int32_t limit = state->after_jump ? 12 * Q16 : 11 * Q16;
+    if (speed > 0 || speed < -limit)
         return BFM_FOREST_MANUAL_ERROR;
     speed -= ACCELERATION;
     next.field_2c.word = speed;
@@ -126,8 +133,131 @@ BfmForestManualResult bfm_forest_manual_tick(BfmForestManual *state,
     unsigned motion = speed < -(9 * Q16 + Q16 / 4) ? RUN : WALK;
     state->elapsed = motion == state->motion ? state->elapsed + 1 : 0;
     state->motion = motion;
+    state->after_jump = 0;
     memcpy(state->ground_normal, ground.normal, sizeof state->ground_normal);
     *actor = next;
     *yaw = next_yaw;
     return BFM_FOREST_MANUAL_MOVING;
+}
+
+int bfm_forest_jump_begin(BfmForestJump *jump, const BfmForestField *field,
+                          ForestPlayerState *actor, const int16_t cached[3])
+{
+    if (!jump || jump->active || !actor || !cached || actor->state > 1)
+        return 0;
+    BfmForestContact ground;
+    int16_t probe[3] = {cached[0], cached[1], cached[2]};
+    int hit;
+    if (!bfm_forest_air_step(field, cached, probe, &ground, &hit) ||
+        abs(ground.height - cached[1]) > 4 || ground.slope != 0x2000 ||
+        (ground.flags && ground.flags != 0x2000))
+        return 0;
+    /* A moving jump keeps its running momentum; a standing jump takes
+     * its first directed step at nine units. */
+    int32_t speed = actor->state ? actor->field_2c.word : -(9 * Q16 - ACCELERATION);
+    if (speed > 0 || speed < -(11 * Q16 + 5 * Q16 / 8))
+        return 0;
+    *jump = (BfmForestJump){.active = 1, .ground = ground};
+    actor->field_24.word = 0;
+    actor->field_2c.word = speed;
+    actor->local_y.word = -18 * Q16;
+    actor->state = 2;
+    return 1;
+}
+
+BfmForestJumpResult bfm_forest_jump_tick(BfmForestJump *jump, const BfmForestField *field,
+    ForestPlayerState *actor, const BfmForestCamera *camera, int x, int y, int cross_held,
+    int16_t *yaw, int16_t cached[3])
+{
+    if (!jump || !jump->active || !field || !actor || !camera || !yaw || !cached ||
+        x < -1 || x > 1 || y < -1 || y > 1)
+        return BFM_FOREST_JUMP_BOUNDARY;
+    if (jump->landed) {
+        ++jump->elapsed;
+        ++jump->phase_elapsed;
+        if (x || y || ++jump->recovery >= 10) {
+            jump->active = 0;
+            actor->state = x || y;
+            actor->phase = 1;
+            if (actor->state) {
+                /* Ground locomotion starts from the whole, signed part of
+                 * the airborne forward velocity. Keep position fractions. */
+                actor->field_2c.halves.low = 0;
+            } else {
+                actor->field_2c.word = 0;
+            }
+            return BFM_FOREST_JUMP_FINISHED;
+        }
+        return BFM_FOREST_JUMP_LANDED;
+    }
+
+    BfmForestJump next_jump = *jump;
+    ForestPlayerState next = *actor;
+    int16_t next_yaw = *yaw;
+    if (x || y) {
+        if (!ground_heading(camera, x, y, &next_yaw))
+            return BFM_FOREST_JUMP_BOUNDARY;
+        next_jump.steering = 1;
+        next_jump.neutral_ticks = 0;
+    } else if (++next_jump.neutral_ticks > 3) {
+        next_jump.steering = 0;
+    }
+    const int32_t max_speed = 11 * Q16 + 5 * Q16 / 8;
+    int32_t speed = next.field_2c.word;
+    if (x || y) {
+        speed -= ACCELERATION;
+        if (speed < -max_speed) speed = -max_speed;
+    }
+    next.field_2c.word = next_jump.steering ? speed : 0;
+    next.local_y.word += !cross_held && next.local_y.word < 0 ? 21 * Q16 / 8 : 13 * Q16 / 8;
+    if (!bfm_forest_level_velocity(&next, 0, next_yaw, 0))
+        return BFM_FOREST_JUMP_BOUNDARY;
+    next.field_2c.word = speed;
+    func_801473EC(&next);
+    int16_t end[3];
+    for (unsigned a = 0; a < 3; ++a)
+        end[a] = (int16_t)(next.position[a] >> 16);
+    int landed;
+    if (!bfm_forest_air_step(field, cached, end, &next_jump.ground, &landed)) {
+        /* Keep falling in the last supported column when a lateral route
+         * leads into terrain that this movement path cannot resolve. */
+        end[0] = cached[0];
+        end[2] = cached[2];
+        if (!bfm_forest_air_step(field, cached, end, &next_jump.ground, &landed))
+            return BFM_FOREST_JUMP_BOUNDARY;
+        next.position[0] = actor->position[0];
+        next.position[2] = actor->position[2];
+        next.velocity[0] = next.velocity[2] = 0;
+    }
+    ++next_jump.phase_elapsed;
+    if (!next_jump.descending && next.local_y.word >= 0) {
+        next_jump.descending = 1;
+        next_jump.phase_elapsed = 0;
+    }
+    for (unsigned a = 0; a < 3; ++a)
+        next.position[a] = ((uint32_t)(uint16_t)end[a] << 16) | (next.position[a] & 0xffff);
+    if (landed) {
+        next.local_y.word = 0;
+        memset(next.velocity, 0, sizeof next.velocity);
+        next_jump.landed = 1;
+        next_jump.phase_elapsed = 0;
+    }
+    ++next_jump.elapsed;
+    *jump = next_jump;
+    *actor = next;
+    *yaw = next_yaw;
+    memcpy(cached, end, sizeof end);
+    return landed ? BFM_FOREST_JUMP_LANDED : BFM_FOREST_JUMP_AIRBORNE;
+}
+
+void bfm_forest_jump_resume(BfmForestManual *manual, const BfmForestJump *jump,
+                            const ForestPlayerState *actor)
+{
+    if (!manual || !jump || !actor || jump->active || !jump->landed)
+        return;
+    *manual = (BfmForestManual){0};
+    memcpy(manual->ground_normal, jump->ground.normal, sizeof manual->ground_normal);
+    /* The first subsequent step selects the locomotion clip at frame zero. */
+    if (actor->state == 1)
+        manual->moving = manual->after_jump = 1;
 }

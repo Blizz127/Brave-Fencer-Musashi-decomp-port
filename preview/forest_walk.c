@@ -34,11 +34,14 @@ struct BfmForestWalk {
     BfmForestPose pose;
     int8_t blade_anchors[2][3];
     Motion idle, walk, run;
+    BfmForestJumpPoses jump_poses;
+    BfmForestJump jump;
     BfmForestSpeechActor speaker;
     BfmForestManual manual;
     BfmForestStatus status;
     BfmForestHud *hud;
     int player_control, input_x, input_y;
+    int jump_pressed, jump_held, control_polled;
     int at_boundary, blocked_x, blocked_y;
     BfmForestMessage *message;
     BfmForestMessageArt *message_art;
@@ -195,10 +198,8 @@ static void update_root(BfmForestWalk *w)
     }
 }
 
-static int update_pose(BfmForestWalk *w)
+static int select_pose(BfmForestWalk *w, uint32_t frame, uint32_t visible)
 {
-    const Motion *m=w->motion==IDLE?&w->idle:(w->motion==WALK?&w->walk:&w->run);
-    uint32_t frame=m->frames[w->elapsed%m->count];
     if (frame != w->frame) {
         ForestPlayerArchive archive;
         if (frame < 16 || !bfm_forest_pose_load(w->disc, frame, &w->pose) ||
@@ -206,9 +207,15 @@ static int update_pose(BfmForestWalk *w)
             !forest_player_archive_read(&archive, frame - 16, (uint8_t *)w->blade_anchors,
                                         sizeof(w->blade_anchors))) return 0;
     }
-    w->frame=frame; w->visible=m->visible;
+    w->frame=frame; w->visible=visible;
     update_root(w);
     return 1;
+}
+
+static int update_pose(BfmForestWalk *w)
+{
+    const Motion *m=w->motion==IDLE?&w->idle:(w->motion==WALK?&w->walk:&w->run);
+    return select_pose(w, m->frames[w->elapsed % m->count], m->visible);
 }
 
 BfmForestWalk *bfm_forest_walk_open(const MusashiDiscMedia *disc,const RoomTransferDescriptor *entry)
@@ -298,9 +305,8 @@ static int tick_message(BfmForestWalk *w, int confirm_edge)
 
 /* Normal controller axes are in screen space. The mounted room handles
  * velocity and contact in world space. */
-static int tick_player(BfmForestWalk *w, int x, int y)
+static int tick_ground(BfmForestWalk *w, int x, int y, int enter_stance)
 {
-    bfm_forest_hud_tick(w->hud);
     if (w->at_boundary && (x != w->blocked_x || y != w->blocked_y))
         w->at_boundary = 0;
     BfmForestManualResult result = bfm_forest_manual_tick(&w->manual, w->field, &w->actor,
@@ -320,7 +326,8 @@ static int tick_player(BfmForestWalk *w, int x, int y)
         w->elapsed = w->manual.elapsed;
         if (!update_pose(w)) return -1;
     } else {
-        BfmForestStandingEvent event = BFM_FOREST_STANDING_CONTINUE;
+        BfmForestStandingEvent event = enter_stance ?
+            BFM_FOREST_STANDING_STOP : BFM_FOREST_STANDING_CONTINUE;
         if (result == BFM_FOREST_MANUAL_STOPPED || result == BFM_FOREST_MANUAL_RUN_STOPPED)
             event = result == BFM_FOREST_MANUAL_RUN_STOPPED && !w->at_boundary ?
                     BFM_FOREST_STANDING_RUN_STOP : BFM_FOREST_STANDING_STOP;
@@ -337,6 +344,47 @@ static int tick_player(BfmForestWalk *w, int x, int y)
         w->frame = w->speaker.frame;
         w->visible = w->speaker.visible;
         memcpy(w->blade_anchors, w->speaker.blade_anchors, sizeof w->blade_anchors);
+    }
+    return 1;
+}
+
+static int select_jump_pose(BfmForestWalk *w)
+{
+    enum BfmForestJumpPhase phase = BFM_FOREST_JUMP_RISING;
+    if (w->jump.landed) phase = BFM_FOREST_JUMP_LANDING;
+    else if (w->jump.descending) phase = BFM_FOREST_JUMP_FALLING;
+    uint32_t frame = bfm_forest_jump_pose_frame(&w->jump_poses, phase, w->jump.phase_elapsed);
+    return frame && select_pose(w, frame, w->jump_poses.visible);
+}
+
+static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jump_held)
+{
+    bfm_forest_hud_tick(w->hud);
+    if (!w->jump.active && jump_pressed &&
+        bfm_forest_jump_begin(&w->jump, w->field, &w->actor, w->cached)) {
+        if (!w->jump_poses.visible &&
+            !bfm_forest_jump_poses_load(w->disc, w->data.animation_table, &w->jump_poses))
+            return -1;
+        w->at_boundary = 0;
+        if (!select_jump_pose(w)) return -1;
+    } else if (w->jump.active) {
+        BfmForestJumpResult result = bfm_forest_jump_tick(&w->jump, w->field,
+            &w->actor, &w->camera, x, y, jump_held, &w->yaw, w->cached);
+        w->at_boundary = result == BFM_FOREST_JUMP_BOUNDARY;
+        if (w->at_boundary) {
+            w->blocked_x = x;
+            w->blocked_y = y;
+        } else {
+            if (result == BFM_FOREST_JUMP_FINISHED)
+                bfm_forest_jump_resume(&w->manual, &w->jump, &w->actor);
+            if (result == BFM_FOREST_JUMP_FINISHED && !w->manual.moving) {
+                if (tick_ground(w, 0, 0, 1) < 0) return -1;
+            } else {
+                if (!select_jump_pose(w)) return -1;
+            }
+        }
+    } else if (tick_ground(w, x, y, 0) < 0) {
+        return -1;
     }
     bfm_forest_voice_step(w->voice);
     ++w->tick;
@@ -368,12 +416,24 @@ int bfm_forest_walk_tick_input(BfmForestWalk *w, int confirm_edge)
 
 int bfm_forest_walk_tick_axes(BfmForestWalk *w, int x, int y, int confirm_edge)
 {
+    return bfm_forest_walk_tick_controls(w, x, y, confirm_edge, confirm_edge);
+}
+
+int bfm_forest_walk_tick_controls(BfmForestWalk *w, int x, int y,
+                                  int cross_pressed, int cross_held)
+{
     if(!w || x < -1 || x > 1 || y < -1 || y > 1) return -1;
     /* The actor uses the previous completed controller poll. */
     int read_x = w->input_x, read_y = w->input_y;
+    int jump_pressed = w->jump_pressed, jump_held = w->jump_held;
     w->input_x = x; w->input_y = y;
-    if (w->player_control) return tick_player(w, read_x, read_y);
-    if (w->tick >= LAST_WALK_TICK) return tick_message(w, confirm_edge);
+    /* The first poll returning control can carry the introduction's closing
+     * Cross edge. Directions are live there, but a jump needs a fresh press. */
+    w->jump_pressed = w->control_polled && cross_pressed;
+    w->jump_held = cross_held;
+    w->control_polled = w->player_control;
+    if (w->player_control) return tick_player(w, read_x, read_y, jump_pressed, jump_held);
+    if (w->tick >= LAST_WALK_TICK) return tick_message(w, cross_pressed);
     ++w->tick;
     if(w->tick==1) {++w->elapsed;}
     else if(w->tick==2) {w->elapsed=0; w->motion=WALK; w->actor.field_2c.word=w->data.initial_velocity;}

@@ -380,6 +380,20 @@ int bfm_opening_advance_court(void *scene, const MusashiDiscMedia *disc, unsigne
     return began;
 }
 
+int bfm_opening_forest_score_field(const void *scene, unsigned field, uint64_t *start_field)
+{
+    const OpeningView *view = scene;
+    if (!view || !view->chapter || !start_field || field < view->departure_field ||
+        !bfm_chapter_card_cleared(field - view->departure_field, view->departure_member))
+        return 0;
+    if (view->natural_departure && view->forest_stage != FOREST_READY) return 0;
+    /* The first forest note precedes the room's first update. The exterior
+     * departure starts its incoming audio two fields earlier than the court. */
+    unsigned lead = view->departure_member ? 6u : 8u;
+    *start_field = (uint64_t)view->departure_field + BFM_CHAPTER_FOREST_FIELD - lead;
+    return 1;
+}
+
 int bfm_opening_skip_member(const void *scene, unsigned *member)
 {
     const OpeningView *view = scene;

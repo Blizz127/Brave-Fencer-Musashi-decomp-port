@@ -14,6 +14,9 @@ void bfm_forest_walk_free(BfmForestWalk *walk);
 int bfm_forest_walk_tick(BfmForestWalk *walk);
 int bfm_forest_walk_tick_input(BfmForestWalk *walk, int confirm_edge);
 int bfm_forest_walk_tick_axes(BfmForestWalk *walk, int x, int y, int confirm_edge);
+/* Cross is an edge for dialogue and a button with a duration during a jump. */
+int bfm_forest_walk_tick_controls(BfmForestWalk *walk, int x, int y,
+                                  int cross_pressed, int cross_held);
 /* 0 during the door event, 1 under player control, 2 at the preview boundary. */
 int bfm_forest_walk_control(const BfmForestWalk *walk);
 struct ForestVoice;

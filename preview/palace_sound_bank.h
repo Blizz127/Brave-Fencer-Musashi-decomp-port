@@ -15,9 +15,12 @@ typedef struct {
     int tuning;
     unsigned bank_gain, bank_pan, program_gain, program_pan, tone_gain, tone_pan;
     unsigned priority, mode, adsr1, adsr2;
+    /* Mounted range bytes in stored order. Both agree on every forest tone. */
+    unsigned bend_range[2];
 } BfmPalaceTone;
 
-/* A scene can carry a paired effect bank or the bank following its score. */
+/* SC01 scenes carry paired effect banks. The palace (2) and Giant Forest
+ * (78) score members each carry their own instrument bank. */
 BfmPalaceBank *bfm_palace_sound_bank_load(const MusashiDiscMedia *disc, unsigned member);
 /* Sample numbers are one-based; the view is valid until the bank is freed. */
 int bfm_palace_sound_sample(const BfmPalaceBank *bank, unsigned index, BfmSpuSample *sample);

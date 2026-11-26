@@ -450,21 +450,23 @@ static int corridor_ground(const BfmForestContact *ground)
 
 /* Test the mounted polygon at the integer point where the motion segment
  * enters its plane. Face edge planes use the same Q12 tolerance. */
-static int crosses_face(const FloorGrid *grid, const FloorFace *face, unsigned sides,
-                        const int16_t from[3], const int16_t to[3])
+static int64_t crossing_margin(const FloorGrid *grid, const FloorFace *face, unsigned sides,
+                               const int16_t from[3], const int16_t to[3])
 {
     int64_t start = signed_distance(grid, face->e[0], from);
     int64_t end = signed_distance(grid, face->e[0], to);
     if (start < 0 || end >= 0)
-        return 0;
+        return INT64_MIN;
     int16_t hit[3];
     for (unsigned i = 0; i < 3; ++i)
         hit[i] = (int16_t)(from[i] + (to[i] - from[i]) * start / (start - end));
+    int64_t margin = INT64_MAX;
     for (unsigned j = 1; j <= sides; ++j) {
-        if (signed_distance(grid, face->e[j], hit) < -EDGE_TOLERANCE)
-            return 0;
+        int64_t distance = signed_distance(grid, face->e[j], hit);
+        if (distance < margin)
+            margin = distance;
     }
-    return 1;
+    return margin;
 }
 
 /* The normal is Q12. Round the projected penetration and the outward
@@ -504,7 +506,7 @@ static int slide_wall(const FloorGrid *grid, FloorPlane plane, int16_t end[3])
 /* A correction can carry the endpoint into a second wall. Revisit the
  * mounted faces in their stored order after each correction. */
 static int resolve_cell(const FloorGrid *grid, ContactCell cell, const int16_t from[3],
-                        int16_t end[3])
+                        int16_t end[3], int airborne)
 {
     if (!cell.count)
         return -1;
@@ -514,22 +516,25 @@ static int resolve_cell(const FloorGrid *grid, ContactCell cell, const int16_t f
         const FloorPoint *n = &grid->verts[face->e[0].v];
         if ((s16)n->y < 0 && !(face->flags & 0x300))
             continue;
-        if ((face->flags != 0x100 && face->flags != 0x2000) || n->y || (!n->x && !n->z))
-            return -1;
         unsigned sides = (token & 0x8000) ? 4 : 3;
-        if (crosses_face(grid, face, sides, from, end))
+        if ((face->flags != 0x100 && face->flags != 0x2000) || n->y || (!n->x && !n->z)) {
+            if (airborne && crossing_margin(grid, face, sides, from, end) < -EDGE_TOLERANCE)
+                continue;
+            return -1;
+        }
+        if (crossing_margin(grid, face, sides, from, end) >= -EDGE_TOLERANCE)
             return slide_wall(grid, face->e[0], end) ? 1 : -1;
     }
     return 0;
 }
 
 static int resolve_walls(const FloorGrid *grid, ContactCell start,
-                         const int16_t from[3], int16_t end[3])
+                         const int16_t from[3], int16_t end[3], int airborne)
 {
     for (unsigned pass = 0; pass < 6; ++pass) {
-        int hit = resolve_cell(grid, start, from, end);
+        int hit = resolve_cell(grid, start, from, end, airborne);
         if (hit == 0 && (!same_grid_index(from[0], end[0]) || !same_grid_index(from[2], end[2])))
-            hit = resolve_cell(grid, contact_cell(grid, end), from, end);
+            hit = resolve_cell(grid, contact_cell(grid, end), from, end, airborne);
         if (hit <= 0)
             return hit == 0;
     }
@@ -605,6 +610,95 @@ static int follow_corridor_floor(const FloorGrid *grid, ContactCell cell,
     return 1;
 }
 
+/* Both sides of the raised obstacle carry the rim's material. Only their
+ * measured, upward-facing inclines support this walking contact. */
+static int raised_normal(unsigned flags, int nx, int ny, int nz)
+{
+    return flags == 0x2000 && ny == -3825 && (abs(nx) == 280 || abs(nx) == 283) &&
+           abs(nz) == 1434 && (nx < 0) == (nz < 0);
+}
+
+/* Prefer a polygon containing the crossing over its neighbor whose edge
+ * tolerance overlaps the same point at the crest. */
+static const FloorPlane *raised_support(const FloorGrid *grid, ContactCell cell,
+                                        const int16_t near[3], const int16_t far[3])
+{
+    const FloorPlane *edge = NULL;
+    for (unsigned i = 0; i < cell.count; ++i) {
+        u16 token = cell.tokens[i];
+        const FloorFace *face = contact_face(grid, token);
+        const FloorPoint *v = &grid->verts[face->e[0].v];
+        if (!raised_normal(face->flags, (s16)v->x, (s16)v->y, (s16)v->z))
+            continue;
+        unsigned sides = (token & 0x8000) ? 4 : 3;
+        int64_t margin = crossing_margin(grid, face, sides, near, far);
+        if (margin >= 0)
+            return &face->e[0];
+        if (!edge && margin >= -EDGE_TOLERANCE)
+            edge = &face->e[0];
+    }
+    return edge;
+}
+
+BfmForestTopStep bfm_forest_raised_step(const BfmForestField *field,
+    const BfmForestContact *previous, const int16_t from[3], int16_t to[3])
+{
+    if (!field || !previous || !from || !to || from[1] != to[1] ||
+        abs(from[1] - previous->height) > 4 || previous->slope != 0x2000 ||
+        !raised_normal(previous->flags, previous->normal[0], previous->normal[1], previous->normal[2]))
+        return BFM_FOREST_TOP_BLOCKED;
+    int dx = to[0] - from[0], dz = to[2] - from[2];
+    if (abs(dx) > 16 || abs(dz) > 16 ||
+        (!same_grid_index(from[0], to[0]) && !same_grid_index(from[2], to[2])))
+        return BFM_FOREST_TOP_BLOCKED;
+    if (!dx && !dz)
+        return BFM_FOREST_TOP_GROUNDED;
+    const FloorGrid *grid = &field->grid;
+    ContactCell start = contact_cell(grid, from);
+    int16_t far[3] = {to[0], to[1], to[2]};
+    if (!resolve_walls(grid, start, from, far, 0))
+        return BFM_FOREST_TOP_BLOCKED;
+    int span = (int)sqrt((double)(dx * dx + dz * dz));
+    if (from[1] < INT16_MIN + 4 || far[1] > INT16_MAX - span - 1)
+        return BFM_FOREST_TOP_BLOCKED;
+    int16_t near[3] = {from[0], (int16_t)(from[1] - 4), from[2]};
+    far[1] += span + 1;
+    const FloorPlane *plane = raised_support(grid, start, near, far);
+    if (!plane)
+        plane = raised_support(grid, contact_cell(grid, to), near, far);
+    if (!plane)
+        return BFM_FOREST_TOP_BLOCKED;
+
+    /* The foot sweeps to the far point below the proposed step. Project onto
+     * the contacted surface. Resolve lateral penetration and clearance as
+     * separate integer steps, with two units above the rounded plane height. */
+    const FloorPoint *v = &grid->verts[plane->v];
+    int nx = (s16)v->x, ny = (s16)v->y, nz = (s16)v->z;
+    int64_t norm = nx * nx + ny * ny + nz * nz;
+    int64_t depth = -signed_distance(grid, *plane, far);
+    int64_t x = far[0] + nx * depth / norm + nx * 3 / 4096;
+    int64_t y = far[1] + grid_floor(2 * ny * depth + norm, 2 * norm) - 2;
+    int64_t z = far[2] + nz * depth / norm + nz * 3 / 4096;
+    if (x < INT16_MIN || x > INT16_MAX || y < INT16_MIN || y > INT16_MAX ||
+        z < INT16_MIN || z > INT16_MAX)
+        return BFM_FOREST_TOP_BLOCKED;
+    BfmForestContact ground;
+    if (!bfm_forest_ground(field, (int16_t)x, (int16_t)y, (int16_t)z, &ground))
+        return BFM_FOREST_TOP_BLOCKED;
+    BfmForestTopStep result;
+    if (raised_normal(ground.flags, ground.normal[0], ground.normal[1], ground.normal[2]) &&
+        abs(ground.height - (int)y) <= 4)
+        result = BFM_FOREST_TOP_GROUNDED;
+    else if (corridor_ground(&ground) && !ground.normal[2] && ground.height > y + 4)
+        result = BFM_FOREST_TOP_LEFT;
+    else
+        return BFM_FOREST_TOP_BLOCKED;
+    to[0] = (int16_t)x;
+    to[1] = (int16_t)y;
+    to[2] = (int16_t)z;
+    return result;
+}
+
 int bfm_forest_corridor_step(const BfmForestField *field, const BfmForestContact *previous,
                              const int16_t from[3], int16_t to[3])
 {
@@ -619,7 +713,7 @@ int bfm_forest_corridor_step(const BfmForestField *field, const BfmForestContact
     int16_t clipped[3] = {to[0], to[1], to[2]};
     BfmForestContact ground;
     if (!corridor_ground(previous) || abs(previous->height - from[1]) > 4 ||
-        !resolve_walls(grid, start, from, clipped) ||
+        !resolve_walls(grid, start, from, clipped, 0) ||
         !follow_corridor_floor(grid, start, previous, from, clipped) ||
         !bfm_forest_ground(field, clipped[0], clipped[1], clipped[2], &ground) ||
         !corridor_ground(&ground) || abs(ground.height - clipped[1]) > 4)
@@ -645,5 +739,47 @@ int bfm_forest_doorway_step(const BfmForestField *field, const int16_t origin[3]
         return 0;
     to[0] = end[0];
     to[2] = end[2];
+    return 1;
+}
+
+/* Sweep the actor base while it is above the entrance floor. The ordinary
+ * downward probe starts above the proposed contact so a thin raised surface
+ * is not lost after the feet pass through it. */
+int bfm_forest_air_step(const BfmForestField *field, const int16_t from[3],
+                        int16_t to[3], BfmForestContact *contact, int *landed)
+{
+    if (!field || !from || !to || !contact || !landed ||
+        abs(to[0] - from[0]) > 16 || abs(to[2] - from[2]) > 16 ||
+        abs(to[1] - from[1]) > 32)
+        return 0;
+    const FloorGrid *grid = &field->grid;
+    int16_t end[3] = {to[0], to[1], to[2]};
+    if (!resolve_walls(grid, contact_cell(grid, from), from, end, 1))
+        return 0;
+    BfmForestContact ground;
+    int16_t upper = end[1] < from[1] ? end[1] : from[1];
+    if (!bfm_forest_ground(field, end[0], upper, end[2], &ground) ||
+        ground.slope != 0x2000 || (ground.flags && ground.flags != 0x2000))
+        return 0;
+    int hit = end[1] >= from[1] && end[1] > ground.height + 2;
+    if (hit) {
+        int64_t nx = ground.normal[0], ny = ground.normal[1], nz = ground.normal[2];
+        if (nx || nz) {
+            const FloorPlane *plane = support_plane(grid, contact_cell(grid, end), &ground, end);
+            if (!plane)
+                return 0;
+            int64_t length = nx * nx + ny * ny + nz * nz;
+            int64_t distance = signed_distance(grid, *plane, end) + 2 * ny;
+            end[0] -= (int16_t)(nx * distance / length);
+            end[2] -= (int16_t)(nz * distance / length);
+            if (!bfm_forest_ground(field, end[0], upper, end[2], &ground))
+                return 0;
+        }
+        end[1] = ground.height;
+    }
+    for (unsigned i = 0; i < 3; ++i)
+        to[i] = end[i];
+    *contact = ground;
+    *landed = hit;
     return 1;
 }
