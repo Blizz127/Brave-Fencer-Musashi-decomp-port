@@ -12,6 +12,9 @@ BfmTowerSky *bfm_tower_sky_open(const uint8_t *scene, size_t scene_size,
                                 const uint16_t (*tiles)[1024]);
 BfmTowerSky *bfm_tower_summit_sky_open(const uint8_t *scene, size_t scene_size,
                                        const uint16_t (*tiles)[1024]);
+/* A fixed short backdrop occupies the upper rows of the original scanout. */
+BfmTowerSky *bfm_castle_drawbridge_sky_open(const uint8_t *scene, size_t scene_size,
+                                           const uint16_t (*tiles)[1024]);
 void bfm_tower_sky_free(BfmTowerSky *sky);
 
 /* Draw before field geometry, with the same submitted camera. The room

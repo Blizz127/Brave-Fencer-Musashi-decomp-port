@@ -181,6 +181,8 @@ add_executable(musashi_native_boot
     dialogue_contour.c
     forest_message_art.c
     forest_message.c
+    castle_drawbridge.c
+    castle_drawbridge_view.c
     forest_walk.c
     forest_gateway_transition.c
     forest_lift.c

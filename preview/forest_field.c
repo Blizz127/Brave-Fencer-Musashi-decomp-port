@@ -48,6 +48,8 @@ enum {
     TOWER_INTERIOR_MEMBER = 84,
     SUMMIT_ROOM = 0x300b,
     SUMMIT_MEMBER = 0,
+    DRAWBRIDGE_ROOM = 0x300d,
+    DRAWBRIDGE_MEMBER = 4,
     FOREST_ENTRANCES = 2,
     SCENE_LIMIT = 1 << 20,
     GRID_HEADER = 32
@@ -59,6 +61,7 @@ static const uint32_t forest_descriptor_slot = UINT32_C(0x80186ad0);
 static const uint32_t tower_descriptor_slot = UINT32_C(0x8018350c);
 static const uint32_t tower_interior_descriptor_slot = UINT32_C(0x80186800);
 static const uint32_t summit_descriptor_slot = UINT32_C(0x8018abb0);
+static const uint32_t drawbridge_descriptor_slot = UINT32_C(0x8017dc90);
 
 typedef struct {
     uint16_t position[3];
@@ -527,7 +530,8 @@ static int load_blade_targets(BfmForestField *field, const uint8_t *descriptor)
 
 BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t room)
 {
-    if (!disc || (room != FOREST_ROOM && room != TOWER_ROOM && room != TOWER_INTERIOR_ROOM && room != SUMMIT_ROOM))
+    if (!disc || (room != FOREST_ROOM && room != TOWER_ROOM && room != TOWER_INTERIOR_ROOM &&
+                  room != SUMMIT_ROOM && room != DRAWBRIDGE_ROOM))
         return NULL;
     unsigned member = room == TOWER_ROOM ? TOWER_MEMBER : FOREST_MEMBER;
     uint32_t descriptor_slot = room == TOWER_ROOM ? tower_descriptor_slot : forest_descriptor_slot;
@@ -536,6 +540,10 @@ BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t roo
         archive = "SC02.CD";
         member = SUMMIT_MEMBER;
         descriptor_slot = summit_descriptor_slot;
+    } else if (room == DRAWBRIDGE_ROOM) {
+        archive = "SC02.CD";
+        member = DRAWBRIDGE_MEMBER;
+        descriptor_slot = drawbridge_descriptor_slot;
     } else if (room == TOWER_INTERIOR_ROOM) {
         member = TOWER_INTERIOR_MEMBER;
         descriptor_slot = tower_interior_descriptor_slot;
@@ -558,7 +566,11 @@ BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t roo
     if (descriptor && load_entrances(field, scene, bytes, read32(descriptor + 0xc8)) &&
         load_grid(&field->grid, scene, bytes, read32(descriptor + 0x88))) {
         const uint8_t *mesh = scene_record(scene, bytes, read32(descriptor + 0x94), 8);
-        const uint8_t *end = scene_record(scene, bytes, read32(descriptor + 0x88), GRID_HEADER);
+        /* The drawbridge floor precedes its mesh. Its panorama map follows
+         * the mesh and bounds the final occupied terrain cell. */
+        const uint8_t *end = room == DRAWBRIDGE_ROOM
+            ? scene_record(scene, bytes, read32(descriptor + 0x30), 8)
+            : scene_record(scene, bytes, read32(descriptor + 0x88), GRID_HEADER);
         if (mesh && end && end > mesh)
             field->terrain = bfm_forest_terrain_load_archive(disc, archive, member, mesh,
                                                            (size_t)(end - mesh));
@@ -569,6 +581,7 @@ BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t roo
         bfm_forest_field_free(field);
         return NULL;
     }
+    if (room == DRAWBRIDGE_ROOM) return field;
     if (room == TOWER_INTERIOR_ROOM || room == SUMMIT_ROOM) {
         size_t outline = room == SUMMIT_ROOM ? 0x659e0 : 0x61630;
         if (bfm_castle_blade_load(&field->blade, scene, bytes, outline) &&

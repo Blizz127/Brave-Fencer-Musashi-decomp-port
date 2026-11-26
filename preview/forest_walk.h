@@ -33,6 +33,8 @@ int bfm_forest_walk_tick_controls(BfmForestWalk *walk, int x, int y,
 int bfm_forest_walk_control(const BfmForestWalk *walk);
 /* Room selected by the running scene, including during a transfer. */
 uint16_t bfm_forest_walk_room(const BfmForestWalk *walk);
+/* Take the entry offered by the completed castle crossing once. */
+int bfm_forest_walk_take_boss_request(BfmForestWalk *walk, RoomTransferDescriptor *destination);
 /* True on the update that requests the grounded Fusion sound. */
 int bfm_forest_walk_gunshot_sound(const BfmForestWalk *walk);
 int bfm_forest_walk_swing_sound(const BfmForestWalk *walk);

@@ -4,11 +4,13 @@
 #include <math.h>
 #include <stdlib.h>
 
+enum SkyLayout { TOWER, SUMMIT, FIXED };
+
 struct BfmTowerSky {
     const uint16_t (*tiles)[1024];
     const uint8_t *cells, *materials;
     unsigned columns, rows;
-    int summit;
+    enum SkyLayout placement;
 };
 
 static const uint8_t *room_range(const uint8_t *scene, size_t size,
@@ -20,7 +22,7 @@ static const uint8_t *room_range(const uint8_t *scene, size_t size,
 }
 
 static BfmTowerSky *open_sky(const uint8_t *scene, size_t size, const uint16_t (*tiles)[1024],
-                             uint32_t descriptor_slot, int summit)
+                             uint32_t descriptor_slot, enum SkyLayout placement)
 {
     if (!scene || !tiles) return NULL;
     const uint8_t *slot = room_range(scene, size, descriptor_slot, 4);
@@ -32,7 +34,7 @@ static BfmTowerSky *open_sky(const uint8_t *scene, size_t size, const uint16_t (
     if (!materials || !map) return NULL;
     unsigned columns = map[4], rows = map[5], count = u16le(materials + 4);
     if (map[6] != 16 || map[7] != 16 || materials[6] * materials[7] != count ||
-        columns * 16 < 320 || rows * 16 < 240 || !count ||
+        columns * 16 < 320 || !rows || (placement != FIXED && rows * 16 < 240) || !count ||
         !room_range(scene, size, sheet, 8 + 8u * count) ||
         !room_range(scene, size, layout, 8 + 2u * rows * columns)) return NULL;
     materials += 8;
@@ -49,20 +51,26 @@ static BfmTowerSky *open_sky(const uint8_t *scene, size_t size, const uint16_t (
             (clut >> 6) >= 512 || (clut & 63) * 16 + (1u << bits) > 1024) return NULL;
     }
     BfmTowerSky *sky = malloc(sizeof *sky);
-    if (sky) *sky = (BfmTowerSky){tiles, map, materials, columns, rows, summit};
+    if (sky) *sky = (BfmTowerSky){tiles, map, materials, columns, rows, placement};
     return sky;
 }
 
 BfmTowerSky *bfm_tower_sky_open(const uint8_t *scene, size_t size,
                                 const uint16_t (*tiles)[1024])
 {
-    return open_sky(scene, size, tiles, UINT32_C(0x8018350c), 0);
+    return open_sky(scene, size, tiles, UINT32_C(0x8018350c), TOWER);
 }
 
 BfmTowerSky *bfm_tower_summit_sky_open(const uint8_t *scene, size_t size,
                                        const uint16_t (*tiles)[1024])
 {
-    return open_sky(scene, size, tiles, UINT32_C(0x8018abb0), 1);
+    return open_sky(scene, size, tiles, UINT32_C(0x8018abb0), SUMMIT);
+}
+
+BfmTowerSky *bfm_castle_drawbridge_sky_open(const uint8_t *scene, size_t size,
+                                           const uint16_t (*tiles)[1024])
+{
+    return open_sky(scene, size, tiles, UINT32_C(0x8017dc90), FIXED);
 }
 
 void bfm_tower_sky_free(BfmTowerSky *sky)
@@ -70,9 +78,11 @@ void bfm_tower_sky_free(BfmTowerSky *sky)
     free(sky);
 }
 
-static uint32_t field_color(uint16_t word)
+static uint32_t field_color(uint16_t word, enum SkyLayout placement)
 {
     unsigned r = word & 31, g = (word >> 5) & 31, b = (word >> 10) & 31;
+    if (placement == FIXED)
+        return UINT32_C(0xff000000) | (r * 255 / 31) << 16 | (g * 255 / 31) << 8 | b * 255 / 31;
     return UINT32_C(0xff000000) | (r * 8 + r / 4) << 16 |
                                   (g * 8 + g / 4) << 8 | (b * 8 + b / 4);
 }
@@ -89,7 +99,9 @@ int bfm_tower_sky_draw(const BfmTowerSky *sky, const BfmForestCamera *camera,
     int pitch = (int)lround(atan2((double)forward[1], level) * turns);
     int width = (int)sky->columns * 16, height = (int)sky->rows * 16;
     int left, top;
-    if (sky->summit) {
+    if (sky->placement == FIXED) {
+        left = top = 0;
+    } else if (sky->placement == SUMMIT) {
         left = (80 + (heading & 4095) * width / 4096) % width;
         top = 160 + pitch * 360 / 1024;
     } else {
@@ -98,9 +110,9 @@ int bfm_tower_sky_draw(const BfmTowerSky *sky, const BfmForestCamera *camera,
     }
     if (left < 0) left += width;
     if (top < 0) top = 0;
-    if (top > height - 240) top = height - 240;
+    if (sky->placement != FIXED && top > height - 240) top = height - 240;
     for (unsigned y = 0; y < 240; ++y) {
-        if (y < 10 || y >= 230) {
+        if (y < 10 || y >= 230 || y + (unsigned)top >= (unsigned)height) {
             for (unsigned x = 0; x < 320; ++x) pixels[y][x] = UINT32_C(0xff000000);
             continue;
         }
@@ -121,7 +133,7 @@ int bfm_tower_sky_draw(const BfmTowerSky *sky, const BfmForestCamera *camera,
             for (unsigned i = 0; i < n; ++i) {
                 unsigned bit = (cell[0] + inside + i) * bits;
                 unsigned index = (texture[bit / 16] >> (bit % 16)) & mask;
-                pixels[y][x + i] = field_color(palette[index]);
+                pixels[y][x + i] = field_color(palette[index], sky->placement);
             }
             map_x = (map_x + n) % (unsigned)width;
             x += n;

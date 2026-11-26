@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "forest_walk.h"
+#include "castle_drawbridge.h"
 #include "forest_gateway_transition.h"
 #include "tower_field.h"
 #include "tower_ascent_door.h"
@@ -69,6 +70,7 @@ struct BfmForestWalk {
     BfmTowerSummit *summit;
     BfmTowerEscape escape;
     BfmTowerEscapeCamera escape_camera;
+    BfmCastleDrawbridge *drawbridge;
     int summit_placed, summit_free;
     BfmTowerInterior *inner;
     const RoomTransferDescriptor *inner_exit;
@@ -383,6 +385,7 @@ void bfm_forest_walk_inherit_clock(BfmForestWalk *w, uint16_t first_tick)
 void bfm_forest_walk_free(BfmForestWalk *w)
 {
     if (w) {
+        bfm_castle_drawbridge_free(w->drawbridge);
         bfm_tower_summit_free(w->summit);
         bfm_tower_interior_note_close(&w->inner_note);
         bfm_tower_interior_free(w->inner);
@@ -1263,6 +1266,7 @@ int bfm_forest_walk_swing_sound(const BfmForestWalk *w)
 
 uint16_t bfm_forest_walk_room(const BfmForestWalk *w)
 {
+    if (w && w->drawbridge) return bfm_castle_drawbridge_room(w->drawbridge);
     if (w && w->summit) return 0x300b;
     if (w && w->inner) return 0x300a;
     return w ? bfm_forest_gateway_transition_frame(&w->gateway).room : 0;
@@ -1276,6 +1280,7 @@ int bfm_forest_walk_take_castle_request(BfmForestWalk *w, RoomTransferDescriptor
 
 int bfm_forest_walk_control(const BfmForestWalk *w)
 {
+    if (w && w->drawbridge) return 0;
     if (w && w->summit_transfer.phase != BFM_SUMMIT_TRANSFER_IDLE) {
         if (w->escape.phase) return w->escape.phase == BFM_ESCAPE_UPPER || w->escape.phase == BFM_ESCAPE_LOWER;
         if (!w->summit_free || bfm_tower_summit_pickup(w->summit) || bfm_tower_summit_active_lesson(w->summit)) return 0;
@@ -2022,10 +2027,57 @@ static int step_controller(BfmForestWalk *w, int x, int y, uint16_t pressed,
            bfm_forest_tick_shore_actor_with_run(w->field, w->cached, w->gameplay) ? 1 : -1;
 }
 
+/* The castle script owns this run and jump. Carry the same actor, equipment
+ * and gameplay stream through the room's own entrance and exit. */
+static int tick_drawbridge(BfmForestWalk *w)
+{
+    int stepped = bfm_castle_drawbridge_tick(w->drawbridge);
+    if (stepped <= 0) return stepped;
+    ++w->tick;
+    int16_t position[3], heading;
+    unsigned pose_tick;
+    enum BfmDrawbridgeMotion motion;
+    if (!bfm_castle_drawbridge_actor(w->drawbridge, position, &heading, &motion, &pose_tick))
+        return 1;
+    restore_whole_position(w, position);
+    w->yaw = heading;
+    w->actor.state = motion == BFM_DRAWBRIDGE_JUMP ? 2 : motion == BFM_DRAWBRIDGE_RUN;
+    w->actor.phase = 1;
+    w->support_y = w->support_z = 0;
+    const uint32_t weapon_parts = UINT32_C(0x3f) << 21;
+    uint32_t equipped = w->visible & weapon_parts;
+    if (motion == BFM_DRAWBRIDGE_JUMP) {
+        if (!w->jump_poses.visible &&
+            !bfm_forest_jump_poses_load(w->disc, w->data.animation_table, &w->jump_poses))
+            return -1;
+        enum BfmForestJumpPhase phase = bfm_castle_drawbridge_descending(w->drawbridge)
+            ? BFM_FOREST_JUMP_FALLING : BFM_FOREST_JUMP_RISING;
+        uint32_t frame = bfm_forest_jump_pose_frame(&w->jump_poses, phase, pose_tick);
+        if (!frame || !select_pose(w, frame, w->jump_poses.visible)) return -1;
+    } else {
+        w->motion = motion == BFM_DRAWBRIDGE_RUN ? RUN : IDLE;
+        w->elapsed = pose_tick;
+        if (!update_pose(w)) return -1;
+    }
+    w->visible = (w->visible & ~weapon_parts) | equipped;
+    return 1;
+}
+
+int bfm_forest_walk_take_boss_request(BfmForestWalk *w, RoomTransferDescriptor *destination)
+{
+    return w && bfm_castle_drawbridge_take_boss_request(w->drawbridge, destination);
+}
+
 int bfm_forest_walk_tick_controller(BfmForestWalk *w, int x, int y, uint16_t pressed,
                                     uint16_t held, int stick_direction)
 {
+    if (w && w->drawbridge) return tick_drawbridge(w);
     int result = step_controller(w, x, y, pressed, held, stick_direction);
+    RoomTransferDescriptor destination;
+    if (result >= 0 && bfm_forest_walk_take_castle_request(w, &destination)) {
+        w->drawbridge = bfm_castle_drawbridge_open(w->disc, &destination, w->gameplay);
+        return w->drawbridge ? 1 : -1;
+    }
     if (result == 1 && w->summit_transfer.phase == BFM_SUMMIT_TRANSFER_IDLE) {
         const RoomTransferDescriptor *exit = bfm_forest_walk_inner_exit(w);
         if (exit && !bfm_tower_summit_transfer_begin(&w->summit_transfer, exit)) return -1;
@@ -2056,6 +2108,17 @@ int bfm_forest_walk_draw(BfmForestWalk *w,uint32_t pixels[240][320])
     if(!w || !pixels) return 0;
     for(unsigned y=0;y<240;y++) for(unsigned x=0;x<320;x++) pixels[y][x]=UINT32_C(0xff000000);
     if(!w->tick) return 1;
+    if (w->drawbridge) {
+        unsigned shade = bfm_castle_drawbridge_shade(w->drawbridge);
+        if (shade >= 31) return 1;
+        if (bfm_castle_drawbridge_uses_departure(w->drawbridge)) {
+            if (!bfm_tower_summit_draw(w->summit, &w->camera, &w->pose, &w->root,
+                                       w->visible, w->tick & 1u, NULL, pixels)) return 0;
+        } else if (!bfm_castle_drawbridge_draw(w->drawbridge, &w->pose, &w->root,
+                                               w->visible, pixels)) return 0;
+        if (shade) field_palette(pixels, shade);
+        return 1;
+    }
     if (w->summit_transfer.phase != BFM_SUMMIT_TRANSFER_IDLE) {
         BfmTowerSummitFrame frame = bfm_tower_summit_transfer_frame(&w->summit_transfer);
         if (frame.shade >= 255) return 1;

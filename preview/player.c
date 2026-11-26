@@ -367,7 +367,9 @@ static int forest_frame(Player *p)
     int control = bfm_forest_walk_control(p->forest);
     uint16_t room = bfm_forest_walk_room(p->forest);
     if (control != p->control_message || room != p->display_room) {
-        if (room == 0x300b) {
+        if (room == 0x300d) {
+            SDL_SetWindowTitle(p->window, "Brave Fencer Musashi - Allucaneet Castle drawbridge");
+        } else if (room == 0x300b) {
             const char *title = control == 0 ? "Brave Fencer Musashi - Arriving at the Spiral Tower summit" :
                                 control == 2 ? "Brave Fencer Musashi - Spiral Tower summit preview boundary" :
                                                "Brave Fencer Musashi - Spiral Tower summit";
@@ -616,10 +618,14 @@ static int play(Player *p, char *error, size_t size) {
                 }
                 if (!p->forest) bfm_desktop_voice_finish(p->voice);
                 p->opening_finished = 1;
-                SDL_SetWindowTitle(p->window, p->forest ? "Brave Fencer Musashi - Giant Forest preview" :
-                                                      "Brave Fencer Musashi - End of opening preview");
+                int castle_gate = p->forest && bfm_forest_walk_room(p->forest) == 0x300d;
+                SDL_SetWindowTitle(p->window, castle_gate ? "Brave Fencer Musashi - Allucaneet Castle gate" :
+                                              p->forest ? "Brave Fencer Musashi - Giant Forest preview" :
+                                                          "Brave Fencer Musashi - End of opening preview");
                 fputs("End of the implemented opening scene. Press Start to return.\n", stderr);
-                if (p->forest)
+                if (castle_gate)
+                    status_line(p, "Castle gate reached. Start returns.");
+                else if (p->forest)
                     status_line(p, "Forest dialogue complete. Start returns.");
                 else
                     status_line(p, "End of preview. Press Start to return.");
