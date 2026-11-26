@@ -290,13 +290,18 @@ BfmSteamHeroLumina bfm_steam_hero_lumina(BfmSteamKnightHeroMotion *h,
             return BFM_STEAM_LUMINA_SLASH;
         }
         if (!spin && !h->grip) {
-            if (charging) h->actor.state = h->ground.moving ? 1 : 0;
-            return BFM_STEAM_LUMINA_PASS;
+            if (!charging) return BFM_STEAM_LUMINA_PASS;
+            rest(h);
+            h->sample.action = 0;
+            return BFM_STEAM_LUMINA_FINISHED;
         }
         if (!spin) {
             if (charging) h->actor.state = h->ground.moving ? 1 : 0;
-            BfmForestManualResult ground = bfm_forest_manual_tick(&h->ground, h->surface,
-                &h->actor, camera, x, y, &h->sample.heading, h->sample.feet);
+            /* Entering the stance consumes one update. Movement begins on
+             * the following update, even if the stick was already held. */
+            BfmForestManualResult ground = bfm_forest_stance_step(&h->ground, h->surface,
+                &h->actor, camera, charging ? x : 0, charging ? y : 0,
+                &h->sample.heading, h->sample.feet);
             if (ground == BFM_FOREST_MANUAL_ERROR) return BFM_STEAM_LUMINA_ERROR;
             if (ground == BFM_FOREST_MANUAL_FALL) {
                 h->grip = *gauge = 0;

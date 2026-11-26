@@ -66,6 +66,11 @@ BfmForestManualResult bfm_forest_manual_tick(BfmForestManual *state,
     const BfmForestField *field, ForestPlayerState *actor, const BfmForestCamera *camera,
     int screen_x, int screen_y, int16_t *yaw, int16_t cached[3]);
 
+/* A held charge moves at a fixed ground pace. The first active stick update
+ * can move immediately, including after holding the stance at rest. */
+BfmForestManualResult bfm_forest_stance_step(BfmForestManual *state,
+    const BfmForestField *field, ForestPlayerState *actor, const BfmForestCamera *camera,
+    int screen_x, int screen_y, int16_t *yaw, int16_t cached[3]);
 
 /* Integrate the current standing motion's local velocity on the room floor. */
 int bfm_forest_manual_coast(const BfmForestField *field, ForestPlayerState *actor,

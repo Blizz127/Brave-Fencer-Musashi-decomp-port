@@ -76,9 +76,9 @@ int bfm_forest_manual_coast(const BfmForestField *field, ForestPlayerState *acto
     return 1;
 }
 
-BfmForestManualResult bfm_forest_manual_tick(BfmForestManual *state,
+static BfmForestManualResult ground_control(BfmForestManual *state,
     const BfmForestField *field, ForestPlayerState *actor, const BfmForestCamera *camera,
-    int screen_x, int screen_y, int16_t *yaw, int16_t cached[3])
+    int screen_x, int screen_y, int16_t *yaw, int16_t cached[3], int32_t fixed_pace)
 {
     if (!state || !field || !actor || !camera || !yaw || !cached ||
         screen_x < -1 || screen_x > 1 || screen_y < -1 || screen_y > 1)
@@ -109,7 +109,7 @@ BfmForestManualResult bfm_forest_manual_tick(BfmForestManual *state,
     int16_t next_yaw;
     if (!bfm_forest_manual_heading(camera, screen_x, screen_y, &next_yaw))
         return BFM_FOREST_MANUAL_ERROR;
-    if (!state->moving) {
+    if (!state->moving && !fixed_pace) {
         int32_t start = state->entry_velocity;
         if (!start) {
             BfmForestOpeningData data;
@@ -129,11 +129,14 @@ BfmForestManualResult bfm_forest_manual_tick(BfmForestManual *state,
     }
 
     ForestPlayerState next = *actor;
-    int32_t speed = next.field_2c.word;
-    int32_t limit = state->after_jump ? 12 * Q16 : 11 * Q16;
-    if (speed > 0 || speed < -limit)
-        return BFM_FOREST_MANUAL_ERROR;
-    speed -= ACCELERATION;
+    int32_t speed = fixed_pace;
+    if (!fixed_pace) {
+        int32_t limit = state->after_jump ? 12 * Q16 : 11 * Q16;
+        speed = next.field_2c.word;
+        if (speed > 0 || speed < -limit)
+            return BFM_FOREST_MANUAL_ERROR;
+        speed -= ACCELERATION;
+    }
     next.field_2c.word = speed;
     if (!bfm_forest_level_velocity(&next, 0, next_yaw, 0))
         return BFM_FOREST_MANUAL_ERROR;
@@ -152,6 +155,7 @@ BfmForestManualResult bfm_forest_manual_tick(BfmForestManual *state,
     }
     unsigned motion = speed < -(9 * Q16 + Q16 / 4) ? RUN : WALK;
     state->elapsed = motion == state->motion ? state->elapsed + 1 : 0;
+    state->moving = 1;
     state->motion = motion;
     state->after_jump = 0;
     state->on_bridge = ground.bridge || (state->on_bridge && abs(ground.height - cached[1]) > 4);
@@ -160,6 +164,20 @@ BfmForestManualResult bfm_forest_manual_tick(BfmForestManual *state,
     *actor = next;
     *yaw = next_yaw;
     return BFM_FOREST_MANUAL_MOVING;
+}
+
+BfmForestManualResult bfm_forest_manual_tick(BfmForestManual *state,
+    const BfmForestField *field, ForestPlayerState *actor, const BfmForestCamera *camera,
+    int screen_x, int screen_y, int16_t *yaw, int16_t cached[3])
+{
+    return ground_control(state, field, actor, camera, screen_x, screen_y, yaw, cached, 0);
+}
+
+BfmForestManualResult bfm_forest_stance_step(BfmForestManual *state,
+    const BfmForestField *field, ForestPlayerState *actor, const BfmForestCamera *camera,
+    int screen_x, int screen_y, int16_t *yaw, int16_t cached[3])
+{
+    return ground_control(state, field, actor, camera, screen_x, screen_y, yaw, cached, -4 * Q16);
 }
 
 int bfm_forest_jump_begin(BfmForestJump *jump, const BfmForestField *field,
