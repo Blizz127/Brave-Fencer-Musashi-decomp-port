@@ -359,7 +359,7 @@ static int play(Player *p, char *error, size_t size) {
                 if (previous == BFM_SAVE_CONFIRM && p->saves.page == BFM_SAVE_BOUNDARY) {
                     p->bedroom = bfm_bedroom_open(p->disc, &p->saves.records[p->saves.selected]);
                     if (p->bedroom) {
-                        bfm_bedroom_bind_story_flags(p->bedroom, p->gameplay.story_flags);
+                        bfm_bedroom_bind_run(p->bedroom, &p->gameplay);
                         p->saves.page = BFM_SAVE_LOADED;
                     }
                 } else if (previous == BFM_SAVE_LOADED && p->saves.page == BFM_SAVE_PICK) {
@@ -389,6 +389,9 @@ static int play(Player *p, char *error, size_t size) {
                         }
                         if (result == BFM_BEDROOM_VOICE_STOPPED) bfm_desktop_voice_room_skip(p->voice);
                         bfm_desktop_voice_room_score(p->voice, bfm_bedroom_score(p->bedroom));
+                        int slider_event;
+                        struct BfmCableSound *slider=bfm_bedroom_slider(p->bedroom,&slider_event);
+                        bfm_desktop_voice_slider(p->voice,slider,slider_event);
                         unsigned command;
                         struct BfmBedroomEffects *effects = bfm_bedroom_effect(p->bedroom, &command);
                         bfm_desktop_voice_room_effect(p->voice, effects, command);
@@ -511,7 +514,7 @@ static int play(Player *p, char *error, size_t size) {
         } else if (bedroom) {
             frame = bfm_bedroom_draw(p->bedroom, (uint32_t (*)[320])p->pixels);
             if (frame && bfm_bedroom_endpoint(p->bedroom))
-                status_line(p, "Library preview complete. Start to return.");
+                status_line(p, bfm_bedroom_end_message(p->bedroom));
             if (!frame) frame = -1;
         } else if (files) {
             bfm_save_menu_draw(p->save_art, &p->saves, fields, (uint32_t (*)[320])p->pixels);

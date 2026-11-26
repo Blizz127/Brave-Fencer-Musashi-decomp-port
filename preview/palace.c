@@ -760,10 +760,10 @@ int bfm_bedroom_field_camera(BfmBedroomField *field, const uint8_t *scene,
                                    signed16(p+12), immediate, 12);
 }
 
-int bfm_bedroom_field_orbit(BfmBedroomField *field, const int target[3], int yaw,
+static int position_orbit(BfmBedroomField *field, const int target[3], int yaw,
                             int distance, int pitch, int immediate, unsigned divisor)
 {
-    if (!field || !target || distance <= 0 || distance > INT16_MAX ||
+    if (!field || !target || !distance || distance < -INT16_MAX || distance > INT16_MAX ||
         yaw < INT16_MIN || yaw > INT16_MAX || pitch < INT16_MIN || pitch > INT16_MAX) return 0;
     int sx, cx, sy, cy;
     field_rotation(pitch, &sx, &cx);
@@ -781,6 +781,17 @@ int bfm_bedroom_field_orbit(BfmBedroomField *field, const int target[3], int yaw
     if (coordinates[0] == coordinates[3] && coordinates[2] == coordinates[5]) return 0;
     bfm_bedroom_field_viewpoint(field, coordinates, coordinates+3, immediate, divisor);
     return 1;
+}
+
+int bfm_bedroom_field_orbit(BfmBedroomField *field, const int target[3], int yaw,
+                            int distance, int pitch, int immediate, unsigned divisor)
+{
+    return distance > 0 && position_orbit(field, target, yaw, distance, pitch, immediate, divisor);
+}
+
+int bfm_bedroom_field_cable_view(BfmBedroomField *field, const int target[3], int yaw, int pitch)
+{
+    return position_orbit(field, target, yaw, -2000, -pitch, 1, 1);
 }
 
 void bfm_bedroom_field_viewpoint(BfmBedroomField *field, const int eye[3], const int target[3],

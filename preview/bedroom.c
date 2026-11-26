@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "bedroom.h"
+#include "castle_cable.h"
+#include "cable_sound.h"
 #include "library_books.h"
 #include "bedroom_award.h"
 #include "bedroom_effects.h"
@@ -36,6 +38,10 @@ struct BfmBedroom {
     size_t scene_bytes, main_bytes;
     int library, command_room, gesture;
     unsigned command_delay, selected_command;
+    BfmCastleCable *cable;
+    BfmCableSound *slider_sound;
+    int slider_event;
+    unsigned village_trip, cable_tick;
     BfmForestBlade blade;
     unsigned transfer_wait, transition, arrival, entry_wait;
     BfmLibraryBooks *books;
@@ -45,6 +51,7 @@ struct BfmBedroom {
     uint16_t tiles[512][1024];
     BfmBedroomEntry entry;
     uint8_t *story_flags;
+    BfmGameplayRun local_run, *run;
     BfmBedroomScript script;
     BfmBedroomField *field;
     BfmBedroomMotion *motion;
@@ -58,7 +65,7 @@ struct BfmBedroom {
     BfmForestMessageArt *message_art;
     ForestVoice *voice;
     const MusashiDiscMedia *disc;
-    BfmForestScore *scores[3], *prepared_score, *current_score;
+    BfmForestScore *scores[4], *prepared_score, *current_score;
     unsigned score_count, effect_request;
     BfmBedroomEffects *effects;
     uint32_t room_sound_group;
@@ -101,6 +108,13 @@ void bfm_bedroom_bind_story_flags(BfmBedroom *room, uint8_t flags[64])
     room->story_flags = flags;
 }
 
+void bfm_bedroom_bind_run(BfmBedroom *room, BfmGameplayRun *run)
+{
+    if (!room || !run) return;
+    bfm_bedroom_bind_story_flags(room, run->story_flags);
+    room->run = run;
+}
+
 void bfm_bedroom_free(BfmBedroom *room)
 {
     if (!room) return;
@@ -108,6 +122,8 @@ void bfm_bedroom_free(BfmBedroom *room)
     bfm_forest_message_free(room->message);
     bfm_forest_message_art_free(room->message_art);
     bfm_forest_voice_free(room->voice);
+    bfm_castle_cable_free(room->cable);
+    bfm_cable_sound_free(room->slider_sound);
     bfm_forest_hud_free(room->hud);
     bfm_bedroom_effects_free(room->effects);
     free(room->books_background);
@@ -131,6 +147,7 @@ BfmBedroom *bfm_bedroom_open(const MusashiDiscMedia *disc, const BfmSaveRecord *
     room->disc = disc;
     room->entry = entry;
     room->story_flags = room->entry.state.flags;
+    room->run = &room->local_run;
     room->waking = 1;
     room->scene = malloc(BFM_FIELD_SCENE_CAPACITY);
     if (!room->scene) goto failed;
@@ -543,15 +560,63 @@ static int finish_castle_command(BfmBedroom *room)
         clock[0] = clock[1] = 0;
         clock[2] = 0x1c;
         clock[3] = 2;
+        room->village_trip=1;
+        for (unsigned i=0;i<3;++i)
+            if (i!=room->presented)
+                memcpy(room->frames[i],room->frames[room->presented],sizeof room->frames[i]);
     }
     return 1;
+}
+
+/* Durations of the two field-loader passes on the earned US room path, in
+ * 30 Hz room updates from the accepted Village command. */
+enum { COURT_WIPE = 34, STATION_START = 168, LAST_STATION_UPDATE = 263, STATION_WIPE = 269, VILLAGE_PENDING = 359 };
+
+static int cable_trip_step(BfmBedroom *room)
+{
+    unsigned tick = ++room->cable_tick;
+    if (tick == STATION_START) {
+        room->cable=bfm_castle_cable_open(room->disc,&room->entry,room->main,room->main_bytes,room->tiles);
+        room->slider_sound=bfm_cable_sound_load(room->disc);
+        if (!room->cable || !room->slider_sound) return 0;
+    }
+    /* The station score becomes audible during black, about 150 ms before
+     * the first slider note on the recorded US soundtrack. */
+    if (tick == STATION_START-3 &&
+        (!apply(room,BFM_BED_SOUND_CHANGE,0x32) || !apply(room,BFM_BED_SOUND_READY,0))) return 0;
+    if (tick >= STATION_START && tick <= LAST_STATION_UPDATE) {
+        if (!bfm_castle_cable_step(room->cable,room->story_flags,room->run,room->entry.state.destination,
+                                  room->frames[room->presented])) return 0;
+    }
+    if (tick <= COURT_WIPE || (tick >= STATION_START && tick <= LAST_STATION_UPDATE+2))
+        room->presented=(room->presented+1)%3;
+    if (tick == STATION_START+1) room->slider_event=1;
+    if (tick == STATION_START+77) room->slider_event=-1;
+    if (tick == VILLAGE_PENDING) room->village_trip=2;
+    ++room->update;
+    return BFM_BEDROOM_ADVANCED;
 }
 
 int bfm_bedroom_step_pad(BfmBedroom *room, int confirm_edge, int reveal_edge,
                          int direction, int held, int accept_edge, int back_edge)
 {
     room->effect_request = 0;
+    room->slider_event = 0;
     int result = BFM_BEDROOM_ADVANCED;
+    if (room->village_trip==2) return result;
+    if (room->village_trip && room->cable_tick>=COURT_WIPE) return cable_trip_step(room);
+    if (room->village_trip) {
+        ++room->cable_tick;
+        /* The courtyard exit keeps its ordinary player and HUD updates
+         * active while Musashi walks to the mounted foreground waypoint. */
+        if (room->cable_tick==1) {
+            bfm_castle_hud_command_closed(room->hud);
+            const uint8_t *point=data_range(room,0x80182e00u,8);
+            if (!point || !bfm_bedroom_travel_walk(room->travel,(int16_t)half(point),
+                                                   (int16_t)half(point+4),0)) return 0;
+        }
+        if (room->cable_tick==12) room->current_score=NULL;
+    }
     if (room->books_active) {
         /* The constructor and setup precede the first interactive submission.
          * The field scanout queue presents the frozen room and modal frames. */
@@ -595,7 +660,7 @@ int bfm_bedroom_step_pad(BfmBedroom *room, int confirm_edge, int reveal_edge,
         room->presented = (submitted+1)%3;
         return result;
     }
-    if (room->message_closed) {
+    if (room->message_closed && !room->village_trip) {
         if (room->drain < 2) {
             room->presented = (room->presented + 1) % 3;
             ++room->drain;
@@ -778,6 +843,12 @@ int bfm_bedroom_step_pad(BfmBedroom *room, int confirm_edge, int reveal_edge,
     return result;
 }
 
+BfmCableSound *bfm_bedroom_slider(const BfmBedroom *room, int *event)
+{
+    *event=room->slider_event;
+    return room->slider_sound;
+}
+
 BfmBedroomEffects *bfm_bedroom_effect(const BfmBedroom *room, unsigned *command)
 {
     *command = room->effect_request;
@@ -808,6 +879,27 @@ int bfm_bedroom_step(BfmBedroom *room)
 int bfm_bedroom_draw(BfmBedroom *room, uint32_t pixels[240][320])
 {
     memcpy(pixels, room->frames[room->presented], sizeof room->frames[0]);
+    if (room->village_trip) {
+        unsigned tick=room->cable_tick;
+        int entering=tick>=STATION_START && tick<STATION_START+19;
+        unsigned wipe=tick>=STATION_WIPE ? STATION_WIPE : COURT_WIPE;
+        if (entering || (tick>=wipe && (tick<STATION_START || tick>=STATION_WIPE))) {
+            for (unsigned y=0;y<240;++y) {
+                unsigned band=(y<120 ? y : 239-y)/8;
+                int loss=entering ? 37-2*(int)(tick-STATION_START) : (int)((tick-wipe)/2)-(int)band;
+                if (loss<=0) continue;
+                for (unsigned x=0;x<320;++x) {
+                    uint32_t pix=pixels[y][x], dark=0xff000000u;
+                    for (unsigned shift=0;shift<=16;shift+=8) {
+                        int component=(int)((pix>>shift)&255)/8-loss;
+                        if (component>0) dark|=(unsigned)(component*255/31)<<shift;
+                    }
+                    pixels[y][x]=dark;
+                }
+            }
+        }
+        return 1;
+    }
     unsigned wipe_start = room->library ? 43 : 41;
     if (room->transition >= wipe_start || (room->arrival && room->arrival < 23)) {
         int entering = room->arrival != 0;
@@ -838,9 +930,14 @@ int bfm_bedroom_draw(BfmBedroom *room, uint32_t pixels[240][320])
     return 1;
 }
 
+const char *bfm_bedroom_end_message(const BfmBedroom *room)
+{
+    return room->village_trip ? "Cable ride complete. Start to return." : "Library preview complete. Start to return.";
+}
+
 int bfm_bedroom_endpoint(const BfmBedroom *room)
 {
-    return room->message_closed && room->drain == 2;
+    return room->village_trip ? room->village_trip==2 : room->message_closed && room->drain==2;
 }
 
 struct ForestVoice *bfm_bedroom_voice(BfmBedroom *room, unsigned *generation)

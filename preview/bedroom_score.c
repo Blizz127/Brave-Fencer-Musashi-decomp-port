@@ -23,8 +23,8 @@ int bfm_bedroom_resident_data(const MusashiDiscMedia *disc, uint32_t address, ui
     return musashi_disc_media_read_root_range(disc, "SLUS_007.26", 2048u + (address-base), out, count, &size);
 }
 
-/* This room uses the resident castle bank. Resolve both its archive member
- * and the selected track from the mounted US score tables. */
+/* Resolve the room selector's archive member, track and gain from the
+ * mounted US score tables. */
 BfmForestScore *bfm_bedroom_score_load(const MusashiDiscMedia *disc, unsigned selector)
 {
     uint8_t request[6], command[16], header[8];
@@ -37,7 +37,8 @@ BfmForestScore *bfm_bedroom_score_load(const MusashiDiscMedia *disc, unsigned se
         unsigned count = word(header);
         if (!count || count > size / 8) return NULL;
         if (file < count) {
-            if (!((i == 1 && file == 75) || (i == 3 && file == 68)) || id < 0x100 || id >= 0x200 ||
+            int station = i == 3 && file == 67 && selector == 0x32;
+            if (!(station || (i == 1 && file == 75) || (i == 3 && file == 68)) || id < 0x100 || id >= 0x200 ||
                 !bfm_bedroom_resident_data(disc,0x80068b5cu+16*(id-0x100),command,sizeof command) ||
                 half(command)!=4 || half(command+2)>127) return NULL;
             if (i == 1) return bfm_library_score_load(disc, 37800, half(command+6), half(command+2));

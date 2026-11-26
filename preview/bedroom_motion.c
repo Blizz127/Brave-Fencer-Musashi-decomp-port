@@ -112,8 +112,13 @@ static int advance(BfmBedroomMotion *m, Channel *channel, int body)
             if (!body) return 0;
             m->frame.show_weapon = 0;
             break;
+        case 18: /* Draw Lumina for the cable-riding motion. */
+            if (!body) return 0;
+            m->frame.show_lumina = 1;
+            break;
         case 19: /* Sheathe Lumina independently of Fusion. */
             if (!body) return 0;
+            m->frame.show_lumina = 0;
             break;
         default:
             if (body) {
@@ -233,6 +238,10 @@ static int update(BfmBedroomMotion *m, BfmBedroomAction action)
         if (!advance(m, &m->body, 1)) return 0;
         m->frame.draw_current = 1;
         m->activity = action == BFM_BEDROOM_RECEIVE ? QUIET : COLLECTING;
+        break;
+    case BFM_BEDROOM_CABLE:
+        start(&m->body, 0x80182168u);
+        m->activity = QUIET;
         break;
     case BFM_BEDROOM_FAREWELL:
     case BFM_BEDROOM_NEGATIVE_REPLY:

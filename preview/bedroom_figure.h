@@ -15,6 +15,7 @@ typedef struct {
     int shadow_position[3], shadow_normal[3], shadow_visible;
     uint32_t visible_parts, face_word;
     const BfmForestBlade *blade;
+    const int8_t *lumina_guard, *lumina_blade;
     unsigned blade_tick, green_blade;
 } BfmBedroomBody;
 

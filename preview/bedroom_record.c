@@ -117,14 +117,15 @@ int bfm_castle_room_entry(const MusashiDiscMedia *disc, const uint8_t *transfer,
      * library shares its file numbering with the mounted global directory. */
     if (!disc || !transfer || !entry) return 0;
     uint32_t target = word(transfer);
-    if (target != 0x3002u && target != 0x00043000u) return 0;
-    unsigned resource = target == 0x3002u ? 57 : 53;
+    if (target != 0x3002u && target != 0x00043000u && target != 0x3004u) return 0;
+    unsigned expected_member = target == 0x3004u ? 74 : target == 0x3002u ? 8 : 4;
+    unsigned resource = 49 + expected_member;
     uint8_t row[8], count[4];
     size_t total, start, length;
     if (!musashi_disc_media_read_root_range(disc, "MAIN.CD", 0, count, sizeof count, &total) ||
         word(count) > resource) return 0;
     unsigned member = resource - word(count);
-    if (member != (target == 0x3002u ? 8u : 4u) ||
+    if (member != expected_member ||
         !descriptor(disc, "SC01.CD", member, &start, &length) ||
         !musashi_disc_media_read_root_range(disc, "LIST.CD", 16+8*resource,
                                            row, sizeof row, &total) ||

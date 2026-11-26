@@ -1,0 +1,202 @@
+/* SPDX-License-Identifier: MIT */
+#include "cable_sparks.h"
+#include "forest_pose.h"
+
+#include <limits.h>
+#include <stdlib.h>
+
+typedef struct {
+    unsigned birth;
+    int origin[3], velocity[2][3];
+} SparkBurst;
+
+struct BfmCableSparks {
+    int axes[4][3][2];
+    unsigned movement;
+    SparkBurst bursts[2];
+};
+
+static int floor_q12(int64_t value)
+{
+    return (int)(value / 4096 - (value % 4096 < 0));
+}
+
+static unsigned angle(const uint8_t *p)
+{
+    return (p[0] | (unsigned)p[1] << 8) & 4095u;
+}
+
+BfmCableSparks *bfm_cable_sparks_open(const uint8_t *orientations, size_t size)
+{
+    if (!orientations || size < 16) return NULL;
+    BfmCableSparks *sparks = calloc(1, sizeof *sparks);
+    if (!sparks) return NULL;
+    const int16_t zero[3] = {0};
+    for (unsigned i = 0; i < 4; ++i) {
+        BfmForestTransform pitch, roll;
+        bfm_forest_actor_root(angle(orientations + 4*i), zero, &pitch);
+        bfm_forest_actor_root(angle(orientations + 4*i + 2), zero, &roll);
+        int sx = pitch.rotation[0][2], cx = pitch.rotation[0][0];
+        int sz = roll.rotation[0][2], cz = roll.rotation[0][0];
+        /* The fan tilts around X, then rolls around Z inside the cable's
+         * half-turn heading. Only the local X and Z axes carry geometry. */
+        int (*axis)[2] = sparks->axes[i];
+        axis[0][0] = -cz;
+        axis[1][0] = sz;
+        axis[0][1] = -floor_q12(sz * sx);
+        axis[1][1] = -floor_q12(cz * sx);
+        axis[2][1] = -cx;
+    }
+    return sparks;
+}
+
+void bfm_cable_sparks_free(BfmCableSparks *sparks)
+{
+    free(sparks);
+}
+
+void bfm_cable_sparks_step(BfmCableSparks *sparks, unsigned movement,
+                           const int16_t position[3], BfmGameplayRun *run)
+{
+    if (!sparks || !position || !run || movement <= sparks->movement) return;
+    sparks->movement = movement;
+    if (movement % 4) return;
+    SparkBurst *burst = &sparks->bursts[(movement / 4) % 2];
+    burst->birth = movement;
+    burst->origin[0] = position[0];
+    burst->origin[1] = position[1] - 68;
+    burst->origin[2] = position[2] + 8;
+    for (unsigned i = 0; i < 2; ++i) {
+        uint16_t random = bfm_gameplay_random(run);
+        BfmForestTransform direction;
+        const int16_t zero[3] = {0};
+        unsigned pitch = 8u * (random & 127u);
+        unsigned yaw = 3072u + 8u * ((random >> 8) & 127u);
+        bfm_forest_actor_pitch_yaw(pitch, yaw, zero, &direction);
+        for (unsigned k = 0; k < 3; ++k) {
+            int axis = direction.rotation[k][2];
+            if (k != 1) axis = -axis;
+            burst->velocity[i][k] = floor_q12(36 * axis);
+        }
+    }
+}
+
+static int project_point(const BfmBedroomView *view, const int world[3],
+                         BfmForestRasterVertex *vertex, int *depth)
+{
+    int16_t xyz[3];
+    for (unsigned k = 0; k < 3; ++k) {
+        if (world[k] < INT16_MIN || world[k] > INT16_MAX) return 0;
+        xyz[k] = (int16_t)world[k];
+    }
+    int screen[3];
+    if (!bfm_bedroom_project(view, xyz, screen) || screen[2] <= view->focal/2) return 0;
+    vertex->x = screen[0];
+    vertex->y = screen[1];
+    *depth = screen[2];
+    return 1;
+}
+
+static int project_ray(const SparkBurst *burst, int axes[3][2], unsigned age,
+                       const BfmBedroomView *view, BfmCableSparkFace *out)
+{
+    static const int points[3][2] = {{0,2}, {-3,36}, {3,40}};
+    BfmCableSparkFace face = {.count = 3};
+    int depth;
+    for (unsigned i = 0; i < 3; ++i) {
+        int world[3];
+        for (unsigned k = 0; k < 3; ++k) {
+            int offset = axes[k][0]*points[i][0] + axes[k][1]*points[i][1];
+            world[k] = burst->origin[k] + floor_q12((int64_t)offset * (2+age) / 2);
+        }
+        if (!project_point(view, world, &face.vertices[i], &depth)) return 0;
+        face.vertices[i].rgb = i ? 0x40c0ffu : 0x104040u;
+    }
+    face.depth = depth / 4;
+    *out = face;
+    return 1;
+}
+
+static int project_trail(const SparkBurst *burst, unsigned index, unsigned age,
+                         const BfmBedroomView *view, BfmCableSparkFace *out)
+{
+    int from[3], to[3];
+    for (unsigned k = 0; k < 3; ++k) {
+        from[k] = to[k] = burst->origin[k];
+        unsigned fraction = 0;
+        for (unsigned i = 1; i < age; ++i) {
+            from[k] = to[k];
+            /* The previous integral coordinate occupies the fractional half
+             * of the particle's velocity during its next Q16 integration. */
+            fraction += (uint16_t)from[k];
+            to[k] += burst->velocity[index][k] + (int)(fraction >> 16);
+            fraction &= 65535u;
+        }
+    }
+    BfmCableSparkFace face = {.count = 2};
+    int depth;
+    if (!project_point(view, from, &face.vertices[0], &depth) ||
+        !project_point(view, to, &face.vertices[1], &depth)) return 0;
+    face.vertices[0].rgb = 0x000008;
+    face.vertices[1].rgb = 0x8080c0;
+    face.depth = depth / 4;
+    *out = face;
+    return 1;
+}
+
+unsigned bfm_cable_sparks_project(BfmCableSparks *sparks, const BfmBedroomView *view,
+                                  BfmCableSparkFace out[8])
+{
+    if (!sparks || !view || !out || view->focal <= 0) return 0;
+    unsigned count = 0;
+    for (unsigned b = 0; b < 2; ++b) {
+        const SparkBurst *burst = &sparks->bursts[b];
+        if (!burst->birth) continue;
+        unsigned age = sparks->movement - burst->birth;
+        if (age < 3) {
+            for (unsigned i = 0; i < 4; ++i)
+                count += project_ray(burst, sparks->axes[i], age, view, &out[count]);
+        }
+        if (age > 0 && age <= 5) {
+            for (unsigned i = 0; i < 2; ++i)
+                count += project_trail(burst, i, age, view, &out[count]);
+        }
+    }
+    return count;
+}
+
+static void draw_line(const BfmForestRaster *surface, const BfmForestRasterVertex *line)
+{
+    const int dx = line[1].x - line[0].x, dy = line[1].y - line[0].y;
+    if (abs(dx) > 1023 || abs(dy) > 511) return;
+    int steps = abs(dx) > abs(dy) ? abs(dx) : abs(dy);
+    int divisor = steps ? steps : 1;
+    for (int i = 0; i <= steps; ++i) {
+        int x = line[0].x + floor_q12((int64_t)i*dx*4096/divisor + 2048);
+        int y = line[0].y + floor_q12((int64_t)i*dy*4096/divisor + 2048);
+        if (x < 0 || x >= 320 || y < 0 || y >= 240 || y < surface->top || y > surface->bottom)
+            continue;
+        uint32_t pixel = surface->pixels[y][x], color = 0xff000000u;
+        for (unsigned k = 0; k < 3; ++k) {
+            int start = (line[0].rgb >> (8*k)) & 255;
+            int end = (line[1].rgb >> (8*k)) & 255;
+            unsigned ink = (unsigned)(start + (end-start)*i/divisor) >> 3;
+            unsigned shift = 16-8*k;
+            unsigned value = ((pixel >> (shift+3)) & 31u) + ink;
+            if (value > 31) value = 31;
+            color |= (value*8u + value/4u) << shift;
+        }
+        surface->pixels[y][x] = color;
+    }
+}
+
+void bfm_cable_sparks_draw(const BfmForestRaster *surface, const BfmCableSparkFace *face)
+{
+    if (!surface || !surface->pixels || !face) return;
+    if (face->count == 2) {
+        draw_line(surface, face->vertices);
+    } else if (face->count == 3) {
+        const BfmForestRasterMaterial material = {.page = 0x12a, .count = 3, .translucent = 1};
+        bfm_forest_raster_face(surface, &material, face->vertices);
+    }
+}

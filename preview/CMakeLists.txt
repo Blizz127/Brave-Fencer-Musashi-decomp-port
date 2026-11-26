@@ -19,6 +19,9 @@ add_executable(musashi_native_boot
     save_view.c
     bedroom.c
     library_books.c
+    cable_sound.c
+    cable_sparks.c
+    castle_cable.c
     bedroom_score.c
     bedroom_award.c
     bedroom_effects.c

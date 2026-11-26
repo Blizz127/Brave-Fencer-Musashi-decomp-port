@@ -23,6 +23,10 @@ typedef struct {
 
 /* The caller keeps the unpacked SC01 room member mounted for this lifetime. */
 BfmBedroomTravel *bfm_bedroom_travel_open(const uint8_t *scene, size_t bytes, uint32_t room_address, unsigned entrance);
+/* Cast from root->xyz onto the mounted room floor. A valid miss succeeds
+ * with shadow_visible cleared. Only the shadow fields are updated. */
+int bfm_bedroom_travel_air_shadow(const uint8_t *scene, size_t bytes,
+                                  uint32_t room_address, BfmBedroomRoot *root);
 void bfm_bedroom_travel_free(BfmBedroomTravel *travel);
 const BfmBedroomRoot *bfm_bedroom_travel_root(const BfmBedroomTravel *travel);
 void bfm_bedroom_travel_look(BfmBedroomTravel *travel, int yaw);

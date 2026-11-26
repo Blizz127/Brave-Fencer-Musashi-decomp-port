@@ -26,6 +26,7 @@ int bfm_bedroom_field_camera(BfmBedroomField *field, const uint8_t *scene,
                              const int actor_origin[3], int immediate);
 int bfm_bedroom_field_orbit(BfmBedroomField *field, const int target[3], int yaw,
                             int distance, int pitch, int immediate, unsigned divisor);
+int bfm_bedroom_field_cable_view(BfmBedroomField *field, const int target[3], int yaw, int pitch);
 void bfm_bedroom_field_viewpoint(BfmBedroomField *field, const int eye[3], const int target[3],
                                  int immediate, unsigned divisor);
 void bfm_bedroom_field_step(BfmBedroomField *field);

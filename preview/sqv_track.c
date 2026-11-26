@@ -204,11 +204,11 @@ BfmSqvResult bfm_sqv_archive_track_load(const MusashiDiscMedia *disc, const char
     *out = (BfmSqvTrack){0};
     if (!disc) return BFM_SQV_INVALID;
     if (!archive) return BFM_SQV_INVALID;
-    int castle = !strcmp(archive, "SC03.CD") && member == 68;
-    int library = !strcmp(archive, "SC01.CD") && member == 75;
-    if (!castle && !library && (strcmp(archive, "SC01.CD") || (member != PALACE_MEMBER && member != FOREST_MEMBER)))
-        return BFM_SQV_UNSUPPORTED;
-    unsigned tracks = castle || library || member == PALACE_MEMBER ? MAX_TRACKS : 1;
+    int sc01 = !strcmp(archive, "SC01.CD"), sc03 = !strcmp(archive, "SC03.CD");
+    int single = (sc01 && member == FOREST_MEMBER) || (sc03 && member == 67);
+    int triple = (sc01 && (member == PALACE_MEMBER || member == 75)) || (sc03 && member == 68);
+    if (!single && !triple) return BFM_SQV_UNSUPPORTED;
+    unsigned tracks = single ? 1 : MAX_TRACKS;
     if (track >= tracks) return BFM_SQV_INVALID;
     TrackRange range;
     BfmSqvResult result = locate(disc, archive, member, track, tracks, &range);

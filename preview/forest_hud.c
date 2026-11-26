@@ -144,6 +144,11 @@ void bfm_castle_hud_command(BfmForestHud *hud)
 {
     if (hud) hud->modal = 1;
 }
+void bfm_castle_hud_command_closed(BfmForestHud *hud)
+{
+    if (hud) hud->modal = 0;
+}
+
 void bfm_forest_hud_tick(BfmForestHud *hud)
 {
     if (hud && hud->remaining) {

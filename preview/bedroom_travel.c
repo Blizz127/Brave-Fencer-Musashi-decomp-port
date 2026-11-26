@@ -85,6 +85,12 @@ static int read_floor(Floor *f, const uint8_t *p, size_t size)
         (f->triangles - f->indices) % 2 == 0 && (f->quads - f->triangles) % 18 == 0;
 }
 
+static int room_floor(Floor *floor, const uint8_t *scene, size_t bytes, const uint8_t *room)
+{
+    const uint8_t *grid = mounted(scene, bytes, u32(room + 0x88), 32);
+    return grid && read_floor(floor, grid, bytes - (size_t)(grid - scene));
+}
+
 static int read_planes(const Floor *f, unsigned id, Plane p[5], unsigned *flags)
 {
     size_t begin = f->triangles, limit = f->quads;
@@ -135,19 +141,18 @@ static int cell_faces(const Floor *f, const int16_t start[3], const uint8_t **id
 
 /* The actor's shadow projects vertically, including while its feet are
  * airborne. Faces are stored bottom to top for this projection. */
-static int project_shadow(BfmBedroomTravel *t)
+static int project_shadow(const Floor *floor, BfmBedroomRoot *r)
 {
-    BfmBedroomRoot *r = &t->root;
     r->shadow_visible = 0;
     const uint8_t *ids;
     unsigned count;
-    int valid = cell_faces(&t->floor, r->xyz, &ids, &count);
+    int valid = cell_faces(floor, r->xyz, &ids, &count);
     if (valid != 1) return valid == 0;
     int ray[3] = {r->xyz[0], r->xyz[1] - 20, r->xyz[2]};
     while (count) {
         Plane planes[5];
         unsigned flags;
-        int n = read_planes(&t->floor, u16(ids + 2*(--count)), planes, &flags);
+        int n = read_planes(floor, u16(ids + 2*(--count)), planes, &flags);
         if (!n) return 0;
         int up = -planes[0].n[1];
         if (up <= 0 || (flags & 0x300u)) continue;
@@ -166,6 +171,17 @@ static int project_shadow(BfmBedroomTravel *t)
         break;
     }
     return 1;
+}
+
+int bfm_bedroom_travel_air_shadow(const uint8_t *scene, size_t bytes,
+                                  uint32_t room_address, BfmBedroomRoot *root)
+{
+    if (!root) return 0;
+    root->shadow_visible = 0;
+    if (!scene) return 0;
+    const uint8_t *room = mounted(scene, bytes, room_address, 0x8c);
+    Floor floor;
+    return room && room_floor(&floor, scene, bytes, room) && project_shadow(&floor, root);
 }
 
 /* Follow sloping floor using a downward foot probe. In the air the player
@@ -228,8 +244,7 @@ BfmBedroomTravel *bfm_bedroom_travel_open(const uint8_t *scene, size_t bytes, ui
     if (!room) return NULL;
     if (entrance > 255) return NULL;
     const uint8_t *list = mounted(scene, bytes, u32(room + 0xc8), 4*(entrance+1));
-    const uint8_t *grid = mounted(scene, bytes, u32(room + 0x88), 32);
-    if (!list || !grid) return NULL;
+    if (!list) return NULL;
     const uint8_t *entry = mounted(scene, bytes, u32(list+4*entrance), 24);
     if (!entry) return NULL;
     BfmBedroomTravel *t = calloc(1, sizeof *t);
@@ -241,9 +256,9 @@ BfmBedroomTravel *bfm_bedroom_travel_open(const uint8_t *scene, size_t bytes, ui
         t->position[j] = (int64_t)spawn[j] * Q;
     }
     t->root.yaw = u16(entry + 22) & 4095;
-    if (!read_floor(&t->floor, grid, bytes - (size_t)(grid-scene)) ||
+    if (!room_floor(&t->floor, scene, bytes, room) ||
         contact(&t->floor, t->root.xyz, spawn, 0, foot, t->root.normal) != 1 ||
-        !project_shadow(t)) {
+        !project_shadow(&t->floor, &t->root)) {
         free(t);
         return NULL;
     }
@@ -367,7 +382,7 @@ static int walk_step(BfmBedroomTravel *t, const int32_t eye[3], const int32_t ta
         if (t->entry_action || t->retreat) t->state = FINISH;
         else t->root.busy = 0;
         t->root.locomotion_edge = BFM_TRAVEL_STAND;
-        return project_shadow(t);
+        return project_shadow(&t->floor, &t->root);
     }
     if (!eye || !target) return 0;
     int camera = (direction((int64_t)target[0]-eye[0], (int64_t)target[2]-eye[2]) + 2048) & 4095;
@@ -432,7 +447,7 @@ static int walk_step(BfmBedroomTravel *t, const int32_t eye[3], const int32_t ta
         t->state = FINISH;
         t->root.locomotion_edge = BFM_TRAVEL_STAND;
     }
-    return project_shadow(t);
+    return project_shadow(&t->floor, &t->root);
 }
 
 int bfm_bedroom_travel_step(BfmBedroomTravel *t,

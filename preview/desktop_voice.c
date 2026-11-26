@@ -4,6 +4,7 @@
 #include "forest_voice.h"
 #include "forest_score.h"
 #include "bedroom_effects.h"
+#include "cable_sound.h"
 #include "palace_effects.h"
 #include "scene_views.h"
 #include <stdlib.h>
@@ -26,6 +27,7 @@ struct DesktopVoice {
     const ForestVoice *active_source;
     BfmBedroomEffects *room_effects, *forest_swing;
     BfmPalaceEffects *effects;
+    BfmCableSound *slider;
     BfmForestScore *forest_score, *room_score, *fading_score;
     Uint64 forest_score_start;
     int forest_score_requested, forest_score_waiting;
@@ -129,6 +131,7 @@ static void SDLCALL render_voice(void *userdata, Uint8 *stream, int bytes)
     if (v->fading_score && bfm_forest_score_mix(v->fading_score, (int16_t *)(void *)stream, frames) < frames)
         v->fading_score = NULL;
     if (v->room_score) bfm_forest_score_mix(v->room_score, (int16_t *)(void *)stream, frames);
+    if (v->slider) bfm_cable_sound_mix(v->slider,(int16_t *)(void *)stream,frames);
     bfm_bedroom_effects_mix(v->room_effects, (int16_t *)(void *)stream, frames);
     if (v->court != COURT_IDLE)
         bfm_palace_effects_mix(v->effects, SDL_GetTicks64() - v->opening_start,
@@ -220,6 +223,7 @@ static void stop_voice(DesktopVoice *v, int leaving_room)
     if (leaving_room) {
         v->room_score = v->fading_score = NULL;
         v->room_effects = NULL;
+        v->slider = NULL;
         bfm_bedroom_effects_free(v->forest_swing);
         v->forest_swing = NULL;
     }
@@ -228,7 +232,7 @@ static void stop_voice(DesktopVoice *v, int leaving_room)
     v->active_source = NULL;
     v->forest_score_requested = v->forest_score_waiting = 0;
     v->selected = v->message_ready = v->playing = v->reported = 0;
-    int room_audio = v->room_score || v->fading_score || v->room_effects;
+    int room_audio = v->slider || v->room_score || v->fading_score || v->room_effects;
     if (v->device) {
         SDL_UnlockAudioDevice(v->device);
         if (!room_audio) SDL_PauseAudioDevice(v->device, 1);
@@ -244,6 +248,19 @@ void bfm_desktop_voice_room_skip(DesktopVoice *v)
 void bfm_desktop_voice_stop(DesktopVoice *v)
 {
     stop_voice(v, 1);
+}
+
+void bfm_desktop_voice_slider(DesktopVoice *v, BfmCableSound *slider, int event)
+{
+    if (!v || !event || !slider) return;
+    if (v->device) SDL_LockAudioDevice(v->device);
+    v->slider=slider;
+    if (event>0) bfm_cable_sound_start(slider);
+    else bfm_cable_sound_release(slider);
+    if (v->device) {
+        SDL_UnlockAudioDevice(v->device);
+        SDL_PauseAudioDevice(v->device,0);
+    }
 }
 
 void bfm_desktop_voice_room_effect(DesktopVoice *v, BfmBedroomEffects *effects, unsigned command)
@@ -315,7 +332,7 @@ void bfm_desktop_voice_event(DesktopVoice *v, const SDL_AudioDeviceEvent *e)
         v->playing = 0;
     } else if (e->type == SDL_AUDIODEVICEADDED && !v->device) {
         open_device(v);
-        int room_audio = v->room_effects || v->room_score || v->fading_score;
+        int room_audio = v->slider || v->room_effects || v->room_score || v->fading_score;
         if (v->device && (room_audio || (v->forest_score_requested && v->forest_score))) {
             SDL_PauseAudioDevice(v->device, 0);
         } else if (v->device && v->court == COURT_PLAYING && v->effects) {

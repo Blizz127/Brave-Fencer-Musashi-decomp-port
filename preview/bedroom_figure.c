@@ -194,7 +194,7 @@ BfmBedroomFigure *bfm_bedroom_figure_load(const MusashiDiscMedia *disc,
     if (!read_shadow(&figure->shadow,shadow)) goto fail;
     figure->mesh = musashi_forest_player_mesh_load(disc);
     if (!figure->mesh) goto fail;
-    size_t capacity = 1 + 8; /* Ground shadow and two four-quad sword halos. */
+    size_t capacity = 1 + 8 + 10; /* Ground shadow, Fusion halo, and Lumina halo. */
     for (unsigned i = 0; i < MUSASHI_FOREST_PLAYER_PARTS; ++i) {
         const MusashiForestPlayerPart *part = musashi_forest_player_mesh_part(figure->mesh,i);
         if (part->face_count > SIZE_MAX / sizeof(FigureFace) - capacity) goto fail;
@@ -337,15 +337,36 @@ static void collect_shadow(BfmBedroomFigure *figure, const BfmBedroomView *view,
     face->order = figure->count++;
 }
 
+static void lumina_quad(const BfmBedroomBody *body, unsigned face, int16_t xyz[4][3], uint32_t rgb[4])
+{
+    int guard=face<4, seam=face>=8;
+    unsigned start=guard ? 2*face : seam ? 10+2*(face-8) : (face<6 ? 2*(face-4) : 5+2*(face-6));
+    const int8_t *outline=guard ? body->lumina_guard : body->lumina_blade;
+    unsigned pulse=body->blade_tick&3u;
+    unsigned level=128+32*(pulse<=2 ? pulse : 1);
+    for (unsigned k=0;k<4;++k) {
+        int center=seam ? k<2 : k==1;
+        xyz[k][0]=xyz[k][1]=xyz[k][2]=0;
+        rgb[k]=center ? level | ((level/4)<<8) | ((level/4)<<16) : 0;
+        if (center) {
+            if (!guard) xyz[k][2]=seam ? (k ? 32 : -32) : (face<6 ? -32 : 32);
+        } else {
+            unsigned i=start+(seam ? k-2 : k ? k-1 : 0);
+            xyz[k][0]=outline[2*i];
+            xyz[k][guard ? 1 : 2]=outline[2*i+1];
+        }
+    }
+}
+
 /* The leading six bytes of the current body pose describe the held blade
  * axis in actor coordinates. The two mounted outlines face the camera. */
 static void collect_blade(BfmBedroomFigure *figure, const BfmBedroomView *view,
                           const BfmBedroomBody *body, const Transform *root,
-                          const Transform *eye)
+                          const Transform *eye, int lumina)
 {
     int8_t anchors[2][3];
     BfmForestTransform player, halo;
-    memcpy(anchors, body->pose, sizeof anchors);
+    memcpy(anchors, body->pose+(lumina ? 8 : 0), sizeof anchors);
     for (unsigned i = 0; i < 3; ++i) {
         for (unsigned j = 0; j < 3; ++j) player.rotation[i][j] = (int16_t)root->r[i][j];
         player.translation[i] = root->t[i];
@@ -360,17 +381,18 @@ static void collect_blade(BfmBedroomFigure *figure, const BfmBedroomView *view,
     BfmBedroomView camera = {.focal = view->focal};
     memcpy(camera.axes, posed.r, sizeof camera.axes);
     memcpy(camera.translation, posed.t, sizeof camera.translation);
-    for (unsigned i = 0; i < 8; ++i) {
+    for (unsigned i = 0; i < (lumina ? 10u : 8u); ++i) {
         uint32_t colors[4];
         int16_t xyz[4][3];
-        if (!bfm_forest_blade_quad(body->blade, i, body->blade_tick, xyz, colors)) return;
+        if (lumina) lumina_quad(body,i,xyz,colors);
+        else if (!bfm_forest_blade_quad(body->blade, i, body->blade_tick, xyz, colors)) return;
         FigureFace *face = &figure->faces[figure->count];
         int screen[3];
         unsigned k = 0;
         for (; k < 4; ++k) {
             if (!bfm_bedroom_project(&camera, xyz[k], screen)) break;
             uint32_t color = colors[k];
-            if (body->green_blade) {
+            if (body->green_blade && !lumina) {
                 unsigned blue = color >> 16;
                 color = ((blue / 2) << 16) | (blue << 8) | (i < 4 ? blue / 4 : blue);
             }
@@ -447,7 +469,8 @@ int bfm_bedroom_figure_prepare(BfmBedroomFigure *figure, const BfmBedroomView *v
         memcpy(camera.translation, posed.t, sizeof(camera.translation));
         collect_part(figure,&camera,&world,musashi_forest_player_mesh_part(figure->mesh,i),i < 2);
     }
-    if (body->blade) collect_blade(figure, view, body, &root, &eye);
+    if (body->blade) collect_blade(figure, view, body, &root, &eye, 0);
+    if (body->lumina_guard && body->lumina_blade) collect_blade(figure, view, body, &root, &eye, 1);
     qsort(figure->faces,figure->count,sizeof(*figure->faces),back_to_front);
     return 1;
 }
