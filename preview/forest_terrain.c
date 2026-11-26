@@ -264,19 +264,25 @@ int bfm_forest_terrain_replace_mesh(BfmForestTerrain *terrain, const uint8_t *me
     return 1;
 }
 
-BfmForestTerrain *bfm_forest_terrain_load_member(const MusashiDiscMedia *disc, unsigned member,
+BfmForestTerrain *bfm_forest_terrain_load_archive(const MusashiDiscMedia *disc, const char *archive, unsigned member,
                                           const uint8_t *mesh, size_t bytes)
 {
-    if (!disc || !mesh)
+    if (!disc || !archive || !mesh)
         return NULL;
     BfmForestTerrain *terrain = calloc(1, sizeof(*terrain));
     if (terrain && (!bfm_forest_terrain_replace_mesh(terrain, mesh, bytes) ||
                     !bfm_scene_read_tiles(disc, "MAIN.CD", 10, terrain->tiles) ||
-                    !bfm_scene_read_tiles(disc, "SC01.CD", member, terrain->tiles))) {
+                    !bfm_scene_read_tiles(disc, archive, member, terrain->tiles))) {
         bfm_forest_terrain_free(terrain);
         return NULL;
     }
     return terrain;
+}
+
+BfmForestTerrain *bfm_forest_terrain_load_member(const MusashiDiscMedia *disc, unsigned member,
+                                          const uint8_t *mesh, size_t bytes)
+{
+    return bfm_forest_terrain_load_archive(disc, "SC01.CD", member, mesh, bytes);
 }
 
 BfmForestTerrain *bfm_forest_terrain_load(const MusashiDiscMedia *disc,

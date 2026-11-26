@@ -356,6 +356,9 @@ static int forest_frame(Player *p)
         p->forest_pressed = 0;
         if (running < 0) return -1;
         if (bfm_forest_walk_swing_sound(p->forest)) bfm_desktop_voice_forest_swing(p->voice);
+        unsigned bell_command, bell_argument;
+        struct BfmTowerBellSound *bell = bfm_forest_walk_bell_sound(p->forest, &bell_command, &bell_argument);
+        if (bell) bfm_desktop_voice_tower_bell(p->voice, bell, bell_command, bell_argument);
         if (bfm_forest_walk_gunshot_sound(p->forest)) bfm_desktop_voice_forest_gunshot(p->voice);
         if (bfm_forest_walk_hit_sound(p->forest)) bfm_desktop_voice_forest_hit(p->voice);
         if (!running) break;
@@ -364,7 +367,12 @@ static int forest_frame(Player *p)
     int control = bfm_forest_walk_control(p->forest);
     uint16_t room = bfm_forest_walk_room(p->forest);
     if (control != p->control_message || room != p->display_room) {
-        if (room == 0x300a) {
+        if (room == 0x300b) {
+            const char *title = control == 0 ? "Brave Fencer Musashi - Arriving at the Spiral Tower summit" :
+                                control == 2 ? "Brave Fencer Musashi - Spiral Tower summit preview boundary" :
+                                               "Brave Fencer Musashi - Spiral Tower summit";
+            SDL_SetWindowTitle(p->window, title);
+        } else if (room == 0x300a) {
             const char *title = control == 0 ? "Brave Fencer Musashi - Entering Spiral Tower interior" :
                                 control == 2 ? "Brave Fencer Musashi - Spiral Tower interior preview boundary" :
                                                "Brave Fencer Musashi - Spiral Tower interior";

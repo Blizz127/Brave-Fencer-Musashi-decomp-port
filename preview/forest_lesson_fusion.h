@@ -18,7 +18,9 @@ int bfm_forest_field_fusion_effects(BfmForestField *field, const MusashiDiscMedi
     const BfmFusionFlight *flight, const BfmForestTether *tether, int was_attached,
     int absorption_edge, const int16_t player[3], BfmGameplayRun *run);
 void bfm_forest_field_advance_gunshots(BfmForestField *field, BfmForestBullets *bullets,
-    const int32_t eye[3], BfmGameplayRun *run);
+    const int32_t eye[3], BfmGameplayRun *run, BfmGunshotContact contact, void *context);
+size_t bfm_forest_field_project_gunshots(const BfmForestField *field, const BfmForestCamera *camera,
+                                         BfmForestDustCard *cards, size_t capacity);
 int bfm_forest_field_gunshot_art(BfmForestField *field, const BfmForestAward *award,
     const BfmForestTransform *root, const int32_t eye[3], BfmGameplayRun *run, int fired);
 int bfm_forest_lesson_blade_away(const BfmForestLessonFusion *fusion);

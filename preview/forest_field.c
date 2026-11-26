@@ -46,6 +46,8 @@ enum {
     TOWER_MEMBER = 80,
     TOWER_INTERIOR_ROOM = 0x300a,
     TOWER_INTERIOR_MEMBER = 84,
+    SUMMIT_ROOM = 0x300b,
+    SUMMIT_MEMBER = 0,
     FOREST_ENTRANCES = 2,
     SCENE_LIMIT = 1 << 20,
     GRID_HEADER = 32
@@ -56,6 +58,7 @@ static const uint32_t scene_base = UINT32_C(0x80128158);
 static const uint32_t forest_descriptor_slot = UINT32_C(0x80186ad0);
 static const uint32_t tower_descriptor_slot = UINT32_C(0x8018350c);
 static const uint32_t tower_interior_descriptor_slot = UINT32_C(0x80186800);
+static const uint32_t summit_descriptor_slot = UINT32_C(0x8018abb0);
 
 typedef struct {
     uint16_t position[3];
@@ -247,7 +250,9 @@ static int load_entrances(BfmForestField *field, const uint8_t *scene, size_t si
         return 0;
     for (unsigned i = 0; i < FOREST_ENTRANCES; ++i) {
         const uint8_t *record = scene_record(scene, size, read32(table + i * 4), 0x18);
-        if (!record || read32(record) != field->room + i)
+        /* The summit's second record leads to the escape, beyond room 300C. */
+        unsigned destination = i && field->room == SUMMIT_ROOM ? 0x300d : field->room + i;
+        if (!record || read32(record) != destination)
             return 0;
         for (unsigned axis = 0; axis < 3; ++axis)
             field->entrances[i].position[axis] = read16(record + 0x10 + axis * 2);
@@ -521,16 +526,21 @@ static int load_blade_targets(BfmForestField *field, const uint8_t *descriptor)
 
 BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t room)
 {
-    if (!disc || (room != FOREST_ROOM && room != TOWER_ROOM && room != TOWER_INTERIOR_ROOM))
+    if (!disc || (room != FOREST_ROOM && room != TOWER_ROOM && room != TOWER_INTERIOR_ROOM && room != SUMMIT_ROOM))
         return NULL;
     unsigned member = room == TOWER_ROOM ? TOWER_MEMBER : FOREST_MEMBER;
     uint32_t descriptor_slot = room == TOWER_ROOM ? tower_descriptor_slot : forest_descriptor_slot;
-    if (room == TOWER_INTERIOR_ROOM) {
+    const char *archive = "SC01.CD";
+    if (room == SUMMIT_ROOM) {
+        archive = "SC02.CD";
+        member = SUMMIT_MEMBER;
+        descriptor_slot = summit_descriptor_slot;
+    } else if (room == TOWER_INTERIOR_ROOM) {
         member = TOWER_INTERIOR_MEMBER;
         descriptor_slot = tower_interior_descriptor_slot;
     }
     size_t bytes;
-    uint8_t *scene = bfm_scene_unpack_pac0(disc, "SC01.CD", member,
+    uint8_t *scene = bfm_scene_unpack_pac0(disc, archive, member,
                                            SCENE_LIMIT, SCENE_LIMIT, &bytes);
     if (!scene)
         return NULL;
@@ -549,7 +559,8 @@ BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t roo
         const uint8_t *mesh = scene_record(scene, bytes, read32(descriptor + 0x94), 8);
         const uint8_t *end = scene_record(scene, bytes, read32(descriptor + 0x88), GRID_HEADER);
         if (mesh && end && end > mesh)
-            field->terrain = bfm_forest_terrain_load_member(disc, member, mesh, (size_t)(end - mesh));
+            field->terrain = bfm_forest_terrain_load_archive(disc, archive, member, mesh,
+                                                           (size_t)(end - mesh));
         if (field->terrain && bfm_forest_terrain_set_lighting(field->terrain, descriptor, 0x98))
             field->player = musashi_forest_player_mesh_load(disc);
     }
@@ -557,8 +568,10 @@ BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t roo
         bfm_forest_field_free(field);
         return NULL;
     }
-    if (room == TOWER_INTERIOR_ROOM) {
-        if (bfm_castle_blade_load(&field->blade, scene, bytes, 0x61630))
+    if (room == TOWER_INTERIOR_ROOM || room == SUMMIT_ROOM) {
+        size_t outline = room == SUMMIT_ROOM ? 0x659e0 : 0x61630;
+        if (bfm_castle_blade_load(&field->blade, scene, bytes, outline) &&
+            (room == SUMMIT_ROOM || bfm_forest_dust_load(&field->dust, disc)))
             return field;
         bfm_forest_field_free(field);
         return NULL;
@@ -920,12 +933,9 @@ int bfm_forest_submit_guard_and_impacts_with_run(BfmForestField *field,
     }
     frame->skill_count = bfm_forest_tether_trails_project(&field->tether_trails, camera,
                                                           frame->skill_cards, BFM_TETHER_CARDS);
-    frame->skill_count += bfm_forest_muzzle_project(&field->muzzle, camera,
-        frame->skill_cards + frame->skill_count, BFM_FOREST_MUZZLE_CARDS);
-    frame->skill_count += bfm_forest_bullet_art_project(&field->flare, camera,
-        frame->skill_cards + frame->skill_count, BFM_GUNSHOT_FAN_CARDS);
-    frame->skill_count += bfm_forest_shot_effects_project(&field->shot_effects, &field->dust, camera,
-        frame->skill_cards + frame->skill_count, BFM_FOREST_SHOT_EFFECT_CARDS);
+    frame->skill_count += bfm_forest_field_project_gunshots(field, camera,
+        frame->skill_cards + frame->skill_count,
+        sizeof frame->skill_cards / sizeof frame->skill_cards[0] - frame->skill_count);
     frame->fusion_actor.visible_parts = 0;
     if (field->fusion_actor) {
         frame->fusion_root = *field->fusion_actor->root;
@@ -935,6 +945,15 @@ int bfm_forest_submit_guard_and_impacts_with_run(BfmForestField *field,
     }
     field->next_frame = (field->next_frame + 1) % 3;
     return 1;
+}
+
+size_t bfm_forest_field_project_gunshots(const BfmForestField *field, const BfmForestCamera *camera,
+                                         BfmForestDustCard *cards, size_t capacity)
+{
+    size_t count = bfm_forest_muzzle_project(&field->muzzle, camera, cards, capacity);
+    count += bfm_forest_bullet_art_project(&field->flare, camera, cards + count, capacity - count);
+    return count + bfm_forest_shot_effects_project(&field->shot_effects, &field->dust,
+                                                    camera, cards + count, capacity - count);
 }
 
 int bfm_forest_field_gunshot_art(BfmForestField *field, const BfmForestAward *award,
@@ -959,12 +978,12 @@ static unsigned trail_scatter(void *run)
 }
 
 void bfm_forest_field_advance_gunshots(BfmForestField *field, BfmForestBullets *bullets,
-    const int32_t eye[3], BfmGameplayRun *run)
+    const int32_t eye[3], BfmGameplayRun *run, BfmGunshotContact contact, void *context)
 {
     BfmBulletEvent events[BFM_FOREST_BULLETS];
     bfm_forest_shot_effects_tick(&field->shot_effects, eye, trail_scatter, run);
     unsigned ability = run->player.record[0x49] & 0x7fu;
-    size_t count = bfm_forest_bullets_tick(bullets, ability, bfm_forest_bridge_impact, field, events);
+    size_t count = bfm_forest_bullets_tick(bullets, ability, contact, context, events);
     for (size_t i = 0; i < count; ++i) {
         const BfmBulletEvent *event = &events[i];
         if (event->kind == BFM_BULLET_ACTOR_HIT)
@@ -2122,38 +2141,10 @@ static int tower_walkable(const BfmForestContact *floor)
     return floor->slope == 0x2000 && (floor->flags == 0 || floor->flags == 3);
 }
 
-/* The broad standing probe and the walking sweep use different edge
- * tolerances. Both must see a tread under a resolved foot. */
-static int tower_supports_foot(const BfmForestField *field, const int16_t foot[3])
-{
-    BfmForestContact support;
-    if (!bfm_forest_ground(field, foot[0], foot[1], foot[2], &support) ||
-        !tower_walkable(&support) || abs(support.height - foot[1]) > 4)
-        return 0;
-    const FloorGrid *grid = &field->grid;
-    ContactCell cell = contact_cell(grid, foot);
-    int y = foot[1];
-    if (y < INT16_MIN + 4 || y > INT16_MAX - 7)
-        return 0;
-    int16_t near[3] = {foot[0], (int16_t)(y - 4), foot[2]};
-    int16_t far[3] = {foot[0], (int16_t)(y + 7), foot[2]};
-    for (unsigned i = 0; i < cell.count; ++i) {
-        u16 token = cell.tokens[i];
-        const FloorFace *face = contact_face(grid, token);
-        const FloorPoint *n = &grid->verts[face->e[0].v];
-        if (face->flags != support.flags || (s16)n->y >= -3019)
-            continue;
-        int tolerance = (s16)n->y < -3584 ? 0x1800 : EDGE_TOLERANCE;
-        if (crossing_margin(grid, face, (token & 0x8000) ? 4 : 3, near, far) >= -tolerance)
-            return 1;
-    }
-    return 0;
-}
-
-BfmForestTopStep bfm_tower_ascent_floor_step(const BfmForestField *field,
+static BfmForestTopStep tower_foot_sweep(const BfmForestField *field,
     const BfmForestContact *previous, const int16_t from[3], int16_t to[3])
 {
-    if (!field || !field->tower_floor_raised || !previous || !from || !to ||
+    if (!previous || !from || !to ||
         !tower_walkable(previous) || abs(previous->height - from[1]) > 4 ||
         from[1] != to[1] || abs(to[0] - from[0]) > 16 || abs(to[2] - from[2]) > 16)
         return BFM_FOREST_TOP_BLOCKED;
@@ -2182,16 +2173,55 @@ BfmForestTopStep bfm_tower_ascent_floor_step(const BfmForestField *field,
         }
         if (i == cell.count) {
             if (!grounded) return BFM_FOREST_TOP_FREE;
-            /* A wall can push the resolved foot past the end of its tread.
-             * Keep the current footing if the next step would start on air
-             * or pick up another turn of the spiral below. */
-            if (!tower_supports_foot(field, far))
-                return BFM_FOREST_TOP_BLOCKED;
             memcpy(to, far, sizeof far);
             return BFM_FOREST_TOP_GROUNDED;
         }
     }
     return BFM_FOREST_TOP_BLOCKED;
+}
+
+/* The broad standing probe and the walking sweep use different edge
+ * tolerances. Both must see a tread under a resolved foot. */
+static int tower_supports_foot(const BfmForestField *field, const int16_t foot[3])
+{
+    BfmForestContact support;
+    if (!bfm_forest_ground(field, foot[0], foot[1], foot[2], &support) ||
+        !tower_walkable(&support) || abs(support.height - foot[1]) > 4)
+        return 0;
+    const FloorGrid *grid = &field->grid;
+    ContactCell cell = contact_cell(grid, foot);
+    int y = foot[1];
+    if (y < INT16_MIN + 4 || y > INT16_MAX - 7)
+        return 0;
+    int16_t near[3] = {foot[0], (int16_t)(y - 4), foot[2]};
+    int16_t far[3] = {foot[0], (int16_t)(y + 7), foot[2]};
+    for (unsigned i = 0; i < cell.count; ++i) {
+        u16 token = cell.tokens[i];
+        const FloorFace *face = contact_face(grid, token);
+        const FloorPoint *n = &grid->verts[face->e[0].v];
+        if (face->flags != support.flags || (s16)n->y >= -3019)
+            continue;
+        int tolerance = (s16)n->y < -3584 ? 0x1800 : EDGE_TOLERANCE;
+        if (crossing_margin(grid, face, (token & 0x8000) ? 4 : 3, near, far) >= -tolerance)
+            return 1;
+    }
+    return 0;
+}
+
+
+BfmForestTopStep bfm_tower_ascent_floor_step(const BfmForestField *field,
+    const BfmForestContact *previous, const int16_t from[3], int16_t to[3])
+{
+    if (!field || !field->tower_floor_raised) return BFM_FOREST_TOP_BLOCKED;
+    if (!to) return BFM_FOREST_TOP_BLOCKED;
+    int16_t foot[3];
+    memcpy(foot, to, sizeof foot);
+    BfmForestTopStep result = tower_foot_sweep(field, previous, from, foot);
+    if (result == BFM_FOREST_TOP_GROUNDED) {
+        if (!tower_supports_foot(field, foot)) return BFM_FOREST_TOP_BLOCKED;
+        memcpy(to, foot, sizeof foot);
+    }
+    return result;
 }
 
 /* On the upper dry trail, one step can cross several triangles with
@@ -2205,6 +2235,18 @@ int bfm_forest_corridor_step(const BfmForestField *field, const BfmForestContact
         return 0;
     if (field->tower_floor_raised)
         return bfm_tower_ascent_floor_step(field, previous, from, to) == BFM_FOREST_TOP_GROUNDED;
+    if (field->room == TOWER_INTERIOR_ROOM) {
+        /* Inside the tower, successive turns overlap in X/Z. The foot sweeps
+         * the nearby tread and projects all three coordinates along its normal.
+         * A vertical floor lookup alone misses lateral travel on the incline.
+         * The level summit landing continues onto its marked exit selector. */
+        BfmForestContact ahead;
+        if (previous->normal[0] || previous->normal[2] || previous->flags == 3 ||
+            (bfm_forest_ground(field, to[0], from[1], to[2], &ahead) &&
+             (ahead.normal[0] || ahead.normal[2] || ahead.flags == 3) &&
+             abs(ahead.height - from[1]) <= 4))
+            return tower_foot_sweep(field, previous, from, to) == BFM_FOREST_TOP_GROUNDED;
+    }
     /* The far bank's ordinary flats and grades use successive terrain
      * sweeps for advancing actors. The second probe can find the next
      * incline while the first is still on the flat. */

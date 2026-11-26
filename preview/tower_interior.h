@@ -4,6 +4,9 @@
 
 #include "forest_field.h"
 #include "room_descriptor.h"
+#include "tower_interior_bell.h"
+#include "tower_bell_sound.h"
+#include "tower_summit_transfer.h"
 
 typedef struct BfmTowerInterior BfmTowerInterior;
 
@@ -22,8 +25,21 @@ int bfm_tower_interior_camera(const BfmTowerInterior *interior, const int16_t pl
                               BfmForestCamera *camera, int32_t eye[3]);
 /* First update registers the four hanging lights with the running game. */
 void bfm_tower_interior_tick(BfmTowerInterior *interior, BfmGameplayRun *run);
+/* Airborne movement preserves the last progress on the helix until landing. */
+void bfm_tower_interior_grounded_sound(BfmTowerInterior *interior, const int16_t feet[3]);
+int bfm_tower_interior_gunshot_contact(void *context, const int16_t from[3],
+                                      const int16_t to[3], int16_t hit[3], int16_t normal[3]);
+int bfm_tower_interior_response(const BfmTowerInterior *interior, BfmTowerBellResponse *response);
+const RoomTransferDescriptor *bfm_tower_interior_exit(const BfmTowerInterior *interior,
+                                                      const int16_t feet[3]);
+BfmTowerBellSound *bfm_tower_interior_sound(const BfmTowerInterior *interior,
+                                            unsigned *command, unsigned *argument);
 int bfm_tower_interior_draw(const BfmTowerInterior *interior, const BfmForestCamera *camera,
                             const BfmForestPose *pose, const BfmForestTransform *root,
                             uint32_t visible_parts, unsigned buffer, const BfmForestBladeFrame *blade,
                             uint32_t pixels[240][320]);
+int bfm_tower_interior_draw_lift(const BfmTowerInterior *interior, const BfmForestCamera *camera,
+                            const BfmForestPose *pose, const BfmForestTransform *root,
+                            uint32_t visible_parts, unsigned buffer, const BfmForestBladeFrame *blade,
+                            const BfmTowerSummitFrame *lift, uint32_t pixels[240][320]);
 #endif

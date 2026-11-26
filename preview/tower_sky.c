@@ -8,6 +8,7 @@ struct BfmTowerSky {
     const uint16_t (*tiles)[1024];
     const uint8_t *cells, *materials;
     unsigned columns, rows;
+    int summit;
 };
 
 static const uint8_t *room_range(const uint8_t *scene, size_t size,
@@ -18,11 +19,11 @@ static const uint8_t *room_range(const uint8_t *scene, size_t size,
     return scene + (address - base);
 }
 
-BfmTowerSky *bfm_tower_sky_open(const uint8_t *scene, size_t size,
-                                const uint16_t (*tiles)[1024])
+static BfmTowerSky *open_sky(const uint8_t *scene, size_t size, const uint16_t (*tiles)[1024],
+                             uint32_t descriptor_slot, int summit)
 {
     if (!scene || !tiles) return NULL;
-    const uint8_t *slot = room_range(scene, size, UINT32_C(0x8018350c), 4);
+    const uint8_t *slot = room_range(scene, size, descriptor_slot, 4);
     const uint8_t *room = slot ? room_range(scene, size, u32le(slot), 0x34) : NULL;
     if (!room) return NULL;
     uint32_t sheet = u32le(room + 0x28), layout = u32le(room + 0x30);
@@ -30,7 +31,7 @@ BfmTowerSky *bfm_tower_sky_open(const uint8_t *scene, size_t size,
     const uint8_t *map = room_range(scene, size, layout, 8);
     if (!materials || !map) return NULL;
     unsigned columns = map[4], rows = map[5], count = u16le(materials + 4);
-    if (map[6] != 16 || map[7] != 16 || materials[6] != 16 || materials[7] != 16 ||
+    if (map[6] != 16 || map[7] != 16 || materials[6] * materials[7] != count ||
         columns * 16 < 320 || rows * 16 < 240 || !count ||
         !room_range(scene, size, sheet, 8 + 8u * count) ||
         !room_range(scene, size, layout, 8 + 2u * rows * columns)) return NULL;
@@ -41,13 +42,27 @@ BfmTowerSky *bfm_tower_sky_open(const uint8_t *scene, size_t size,
     for (unsigned i = 0; i < count; ++i) {
         const uint8_t *tile = materials + 8 * i;
         unsigned clut = u16le(tile + 2), page = u16le(tile + 6);
-        if (((page >> 7) & 3) != 1 || tile[0] > 240 || tile[1] > 240 ||
-            (page & 15) * 64 + (tile[0] + 15u) / 2 >= 1024 ||
-            (clut >> 6) >= 512 || (clut & 63) * 16 + 255 >= 1024) return NULL;
+        unsigned depth = (page >> 7) & 3;
+        if (depth > 1 || tile[0] > 240 || tile[1] > 240) return NULL;
+        unsigned bits = 4u << depth;
+        if ((page & 15) * 64 + (tile[0] + 15u) * bits / 16 >= 1024 ||
+            (clut >> 6) >= 512 || (clut & 63) * 16 + (1u << bits) > 1024) return NULL;
     }
     BfmTowerSky *sky = malloc(sizeof *sky);
-    if (sky) *sky = (BfmTowerSky){tiles, map, materials, columns, rows};
+    if (sky) *sky = (BfmTowerSky){tiles, map, materials, columns, rows, summit};
     return sky;
+}
+
+BfmTowerSky *bfm_tower_sky_open(const uint8_t *scene, size_t size,
+                                const uint16_t (*tiles)[1024])
+{
+    return open_sky(scene, size, tiles, UINT32_C(0x8018350c), 0);
+}
+
+BfmTowerSky *bfm_tower_summit_sky_open(const uint8_t *scene, size_t size,
+                                       const uint16_t (*tiles)[1024])
+{
+    return open_sky(scene, size, tiles, UINT32_C(0x8018abb0), 1);
 }
 
 void bfm_tower_sky_free(BfmTowerSky *sky)
@@ -73,9 +88,15 @@ int bfm_tower_sky_draw(const BfmTowerSky *sky, const BfmForestCamera *camera,
     int heading = (int)lround(atan2((double)forward[0], (double)forward[2]) * turns);
     int pitch = (int)lround(atan2((double)forward[1], level) * turns);
     int width = (int)sky->columns * 16, height = (int)sky->rows * 16;
-    int left = (width / 2 + heading * width / 4096) % width;
+    int left, top;
+    if (sky->summit) {
+        left = (80 + (heading & 4095) * width / 4096) % width;
+        top = 160 + abs(pitch) * 360 / 1024;
+    } else {
+        left = (width / 2 + heading * width / 4096) % width;
+        top = 200 + pitch * 300 / 1024;
+    }
     if (left < 0) left += width;
-    int top = 200 + pitch * 300 / 1024;
     if (top < 0) top = 0;
     if (top > height - 240) top = height - 240;
     for (unsigned y = 0; y < 240; ++y) {
@@ -90,14 +111,17 @@ int bfm_tower_sky_draw(const BfmTowerSky *sky, const BfmForestCamera *camera,
             unsigned material = u16le(row + (map_x / 16) * 2);
             const uint8_t *cell = sky->materials + material * 8;
             unsigned clut = u16le(cell + 2), page = u16le(cell + 6);
+            unsigned bits = 4u << ((page >> 7) & 1);
+            unsigned mask = (1u << bits) - 1;
             const uint16_t *palette = sky->tiles[clut >> 6] + (clut & 63) * 16;
             const uint16_t *texture = sky->tiles[(page >> 4 & 1) * 256 + cell[1] + map_y % 16]
                                       + (page & 15) * 64;
             unsigned inside = map_x % 16, n = 16 - inside;
             if (n > 320 - x) n = 320 - x;
             for (unsigned i = 0; i < n; ++i) {
-                unsigned u = cell[0] + inside + i, pair = texture[u / 2];
-                pixels[y][x + i] = field_color(palette[(pair >> ((u & 1) * 8)) & 255]);
+                unsigned bit = (cell[0] + inside + i) * bits;
+                unsigned index = (texture[bit / 16] >> (bit % 16)) & mask;
+                pixels[y][x + i] = field_color(palette[index]);
             }
             map_x = (map_x + n) % (unsigned)width;
             x += n;

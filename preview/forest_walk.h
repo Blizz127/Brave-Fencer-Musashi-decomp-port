@@ -37,6 +37,11 @@ uint16_t bfm_forest_walk_room(const BfmForestWalk *walk);
 int bfm_forest_walk_gunshot_sound(const BfmForestWalk *walk);
 int bfm_forest_walk_swing_sound(const BfmForestWalk *walk);
 int bfm_forest_walk_hit_sound(const BfmForestWalk *walk);
+/* Set once by a grounded contact with the earned summit door. */
+const RoomTransferDescriptor *bfm_forest_walk_inner_exit(const BfmForestWalk *walk);
+struct BfmTowerBellSound;
+struct BfmTowerBellSound *bfm_forest_walk_bell_sound(const BfmForestWalk *walk,
+                                                     unsigned *command, unsigned *argument);
 struct ForestVoice;
 struct ForestVoice *bfm_forest_walk_voice(BfmForestWalk *walk, unsigned *generation);
 int bfm_forest_walk_draw(BfmForestWalk *walk, uint32_t pixels[240][320]);

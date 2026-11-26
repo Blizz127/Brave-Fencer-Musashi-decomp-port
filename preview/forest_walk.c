@@ -5,6 +5,10 @@
 #include "tower_ascent_door.h"
 #include "tower_interior.h"
 #include "tower_interior_note.h"
+#include "tower_summit.h"
+#include "tower_summit_transfer.h"
+#include "tower_summit_departure.h"
+#include "forest_shore_motion.h"
 #include "tower_ascent_floor.h"
 #include "tower_note.h"
 #include "tower_note_pose.h"
@@ -60,7 +64,11 @@ struct BfmForestWalk {
     BfmForestField *field;
     BfmTowerField *tower;
     BfmTowerAscentDoor summit_door;
+    BfmTowerSummitTransfer summit_transfer;
+    BfmTowerSummit *summit;
+    int summit_placed, summit_free;
     BfmTowerInterior *inner;
+    const RoomTransferDescriptor *inner_exit;
     BfmTowerInteriorNote inner_note;
     unsigned inner_age, inner_shot;
     int inner_free, inner_entry_foot;
@@ -372,6 +380,7 @@ void bfm_forest_walk_inherit_clock(BfmForestWalk *w, uint16_t first_tick)
 void bfm_forest_walk_free(BfmForestWalk *w)
 {
     if (w) {
+        bfm_tower_summit_free(w->summit);
         bfm_tower_interior_note_close(&w->inner_note);
         bfm_tower_interior_free(w->inner);
         bfm_forest_message_free(w->tower_note);
@@ -597,7 +606,8 @@ static int tick_ground(BfmForestWalk *w, int x, int y, int enter_stance,
     memcpy(before, w->cached, sizeof before);
     int previous_x = before[0], previous_z = before[2];
     BfmForestField *room = w->tower_placed ? bfm_tower_field_room(w->tower) : w->field;
-    if (w->inner_free) room = bfm_tower_interior_room(w->inner);
+    if (w->summit_free) room = bfm_tower_summit_room(w->summit);
+    else if (w->inner_free) room = bfm_tower_interior_room(w->inner);
     BfmForestManualResult result = bfm_forest_manual_tick(&w->manual, room, &w->actor,
         &w->camera, w->at_boundary ? 0 : x, w->at_boundary ? 0 : y, &w->yaw, w->cached);
     if (result == BFM_FOREST_MANUAL_FALL) return 0;
@@ -700,7 +710,7 @@ static int tick_swing(BfmForestWalk *w, int x, int y, int attack_pressed,
         if (!w->swing.count &&
             (!bfm_forest_fusion_power_load(w->disc, w->field, &w->fusion_power) ||
              !bfm_forest_swing_load(w->disc, &w->swing))) return 0;
-        if (w->tower_placed && ++w->tower_stroke == 0) ++w->tower_stroke;
+        if (w->tower_placed && !w->inner_free && ++w->tower_stroke == 0) ++w->tower_stroke;
         w->swing_age = 0;
         w->actor.field_1a8 = 0;
         w->actor.strike_updates = 0;
@@ -738,7 +748,7 @@ static int tick_swing(BfmForestWalk *w, int x, int y, int attack_pressed,
                                     bfm_gameplay_story_flag(w->gameplay, 0x81),
                                     bfm_gameplay_random(w->gameplay), &strength)) return 0;
     if (w->actor.field_1a8) ++w->actor.strike_updates;
-    if (w->actor.field_1a8) {
+    if (w->actor.field_1a8 && !w->inner_free) {
         const BfmForestSwingFrame *next = bfm_forest_swing_frame(&w->swing, w->swing_age + 1);
         if (!next) return 0;
         if (w->tower_placed) {
@@ -834,7 +844,8 @@ static int bridge_control(BfmForestWalk *w, BfmForestRetreatPad *pad)
     if (prior < 2 && w->lesson.stage >= BFM_LESSON_DISCOVERY_TALK) prior = 1;
     if (prior < 2 && bfm_forest_status_values(&w->gameplay->player).ability == 8) prior = 2;
     w->bridge_phase = bfm_forest_field_bridge_step(w->field, prior);
-    bfm_forest_field_advance_gunshots(w->field, &w->bullets, w->eye, w->gameplay);
+    bfm_forest_field_advance_gunshots(w->field, &w->bullets, w->eye, w->gameplay,
+                                      bfm_forest_bridge_impact, w->field);
     if (prior == 2 && w->bridge_phase == 3) {
         bfm_forest_bridge_retreat_contact(&w->retreat, prior, 1);
         *pad = (BfmForestRetreatPad){0};
@@ -946,6 +957,94 @@ static int tick_hurt(BfmForestWalk *w, BfmForestDustEmission *dust)
     }
 }
 
+static int tick_gunshot_action(BfmForestWalk *w, GunshotInput circle, int interrupted,
+                               int *x, int *y, BfmForestGunshotEvent *shot)
+{
+    if (!interrupted && circle.edge && !w->gun.cost &&
+        bfm_forest_status_values(&w->gameplay->player).ability == 8 &&
+        (!bfm_forest_prepare_equipped_gunshot(&w->fusion.award, w->disc, &w->gameplay->player) ||
+         !bfm_forest_gunshot_load(&w->gun, w->field, &w->fusion.award, w->data.animation_table)))
+        return 0;
+    *shot = bfm_forest_gunshot_tick(&w->gun, &w->gameplay->player,
+                                   circle.edge, circle.held, interrupted);
+    if (w->actor.state == 23) w->actor.state = 0;
+    if (*shot != BFM_GUNSHOT_GROUND) {
+        w->yaw = bfm_forest_gunshot_aim(&w->gun, &w->camera, *x, *y, circle.stick, w->yaw);
+        *x = *y = 0;
+        w->actor.field_2c.word = 0;
+        w->actor.velocity[0] = w->actor.velocity[2] = 0;
+        w->manual = (BfmForestManual){.entry_velocity = w->inner_free ? w->data.initial_velocity : 0};
+    }
+    return 1;
+}
+
+static int submit_gunshot_action(BfmForestWalk *w, BfmForestGunshotEvent shot)
+{
+    if (shot != BFM_GUNSHOT_GROUND) {
+        w->actor.state = 23;
+        if (!select_pose(w, w->gun.pose, w->visible & ~((UINT32_C(1) << 24) | (UINT32_C(1) << 25))))
+            return 0;
+        if (shot == BFM_GUNSHOT_FIRED) {
+            if (!bfm_forest_bullet_launch(&w->bullets, &w->root, 0, w->yaw, 0)) return 0;
+            w->gunshot_fired = 1;
+        }
+    }
+    return 1;
+}
+
+static int step_jump(BfmForestWalk *w, const BfmForestField *room, int launched, int continuing_stride,
+                     int x, int y, int jump_held, BfmForestDustEmission *dust)
+{
+    if (w->jump.active && w->jump.walk_off && !w->stride_poses.visible &&
+        !bfm_forest_walkoff_poses_load(w->disc, w->data.animation_table, &w->stride_poses))
+        return 0;
+    if (launched) {
+        w->braced = 0;
+        w->stride_jump = continuing_stride;
+        if (w->stride_jump) {
+            if (!w->stride_poses.visible &&
+                !bfm_forest_walkoff_poses_load(w->disc, w->data.animation_table, &w->stride_poses))
+                return 0;
+        } else if (!w->jump_poses.visible &&
+                   !bfm_forest_jump_poses_load(w->disc, w->data.animation_table, &w->jump_poses)) {
+            return 0;
+        }
+        w->at_boundary = 0;
+        *dust = BFM_FOREST_DUST_TRAIL;
+        if (!select_jump_pose(w)) return 0;
+    } else if (w->jump.active) {
+        int previously_landed = w->jump.landed;
+        BfmForestJumpResult result = bfm_forest_jump_tick(&w->jump, room,
+            &w->actor, &w->camera, x, y, jump_held, &w->yaw, w->cached);
+        w->at_boundary = result == BFM_FOREST_JUMP_BOUNDARY;
+        if (w->at_boundary) {
+            w->blocked_x = x;
+            w->blocked_y = y;
+        } else {
+            if (result == BFM_FOREST_JUMP_LANDED && !previously_landed && !w->jump.walk_off)
+                *dust = BFM_FOREST_DUST_BRAKE;
+            if (result == BFM_FOREST_JUMP_FINISHED && !w->jump.walk_off && (x || y))
+                *dust = BFM_FOREST_DUST_TRAIL;
+            if (result == BFM_FOREST_JUMP_FINISHED) {
+                bfm_forest_jump_resume(&w->manual, &w->jump, &w->actor);
+                if (w->inner_free) w->manual.entry_velocity = w->data.initial_velocity;
+            }
+            if (result == BFM_FOREST_JUMP_FINISHED && !w->manual.moving) {
+                if (tick_ground(w, 0, 0, 1, dust) < 0) return 0;
+            } else if (result == BFM_FOREST_JUMP_FINISHED && w->stride_jump && !w->jump.walk_off) {
+                /* Ground control installs the walking entry pose. The next
+                 * ground step selects the clip for its speed. */
+                w->motion = WALK;
+                w->elapsed = 0;
+                if (!update_pose(w)) return 0;
+            } else {
+                if (!select_jump_pose(w)) return 0;
+            }
+        }
+    }
+    return 1;
+}
+
 static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jump_held,
                        int attack_pressed, int square_held, int triangle_pressed, int shoulder,
                        GunshotInput circle, int confirm_edge, int reveal_edge)
@@ -1016,21 +1115,9 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
         if (away) attack_pressed = 0;
         int interrupted = owned || w->retreat_control || w->jump.active || jump_pressed ||
             (w->actor.state > 1 && w->actor.state != 23);
-        if (!interrupted && circle.edge && !w->gun.cost &&
-            bfm_forest_status_values(&w->gameplay->player).ability == 8 &&
-            (!bfm_forest_prepare_equipped_gunshot(&w->fusion.award, w->disc, &w->gameplay->player) ||
-             !bfm_forest_gunshot_load(&w->gun, w->field, &w->fusion.award, w->data.animation_table)))
-            return -1;
-        BfmForestGunshotEvent shot = bfm_forest_gunshot_tick(&w->gun, &w->gameplay->player,
-                                                             circle.edge, circle.held, interrupted);
-        if (w->actor.state == 23) w->actor.state = 0;
-        if (shot != BFM_GUNSHOT_GROUND) {
-            w->yaw = bfm_forest_gunshot_aim(&w->gun, &w->camera, x, y, circle.stick, w->yaw);
-            x = y = attack_pressed = 0;
-            w->actor.field_2c.word = 0;
-            w->actor.velocity[0] = w->actor.velocity[2] = 0;
-            memset(&w->manual, 0, sizeof w->manual);
-        }
+        BfmForestGunshotEvent shot;
+        if (!tick_gunshot_action(w, circle, interrupted, &x, &y, &shot)) return -1;
+        if (shot != BFM_GUNSHOT_GROUND) attack_pressed = 0;
         int continuing_stride = (x || y) && x == w->stride_x && y == w->stride_y;
         w->stride_x = w->stride_y = 0;
         bfm_forest_fall_begin(&w->jump, &w->manual, &w->actor);
@@ -1054,9 +1141,6 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
             if (grounded < 0) return -1;
             if (!grounded && !bfm_forest_fall_begin(&w->jump, &w->manual, &w->actor)) return -1;
         }
-        if (w->jump.active && w->jump.walk_off && !w->stride_poses.visible &&
-            !bfm_forest_walkoff_poses_load(w->disc, w->data.animation_table, &w->stride_poses))
-            return -1;
         if (pushing) {
             if (!tick_boulder_push(w, x, y, square_held)) return -1;
         } else if (lifting) {
@@ -1065,57 +1149,10 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
             w->braced = 0;
             if (!tick_swing(w, x, y, attack_pressed, &dust, hits, &hit_count)) return -1;
             if (w->actor.state == 5) sweep_pose = w->swing.frames[w->swing_age].pose;
-        } else if (launched) {
-            w->braced = 0;
-            w->stride_jump = continuing_stride;
-            if (w->stride_jump) {
-                if (!w->stride_poses.visible &&
-                    !bfm_forest_walkoff_poses_load(w->disc, w->data.animation_table, &w->stride_poses))
-                    return -1;
-            } else if (!w->jump_poses.visible &&
-                       !bfm_forest_jump_poses_load(w->disc, w->data.animation_table, &w->jump_poses)) {
-                return -1;
-            }
-            w->at_boundary = 0;
-            dust = BFM_FOREST_DUST_TRAIL;
-            if (!select_jump_pose(w)) return -1;
-        } else if (w->jump.active) {
-            int previously_landed = w->jump.landed;
-            BfmForestJumpResult result = bfm_forest_jump_tick(&w->jump, w->field,
-                &w->actor, &w->camera, x, y, jump_held, &w->yaw, w->cached);
-            w->at_boundary = result == BFM_FOREST_JUMP_BOUNDARY;
-            if (w->at_boundary) {
-                w->blocked_x = x;
-                w->blocked_y = y;
-            } else {
-                if (result == BFM_FOREST_JUMP_LANDED && !previously_landed && !w->jump.walk_off)
-                    dust = BFM_FOREST_DUST_BRAKE;
-                if (result == BFM_FOREST_JUMP_FINISHED && !w->jump.walk_off && (x || y))
-                    dust = BFM_FOREST_DUST_TRAIL;
-                if (result == BFM_FOREST_JUMP_FINISHED)
-                    bfm_forest_jump_resume(&w->manual, &w->jump, &w->actor);
-                if (result == BFM_FOREST_JUMP_FINISHED && !w->manual.moving) {
-                    if (tick_ground(w, 0, 0, 1, &dust) < 0) return -1;
-                } else if (result == BFM_FOREST_JUMP_FINISHED && w->stride_jump && !w->jump.walk_off) {
-                    /* Ground control installs the walking entry pose. The next
-                     * ground step selects the clip for its speed. */
-                    w->motion = WALK;
-                    w->elapsed = 0;
-                    if (!update_pose(w)) return -1;
-                } else {
-                    if (!select_jump_pose(w)) return -1;
-                }
-            }
+        } else if (!step_jump(w, w->field, launched, continuing_stride, x, y, jump_held, &dust)) {
+            return -1;
         }
-        if (shot != BFM_GUNSHOT_GROUND) {
-            w->actor.state = 23;
-            if (!select_pose(w, w->gun.pose, w->visible & ~((UINT32_C(1) << 24) | (UINT32_C(1) << 25))))
-                return -1;
-            if (shot == BFM_GUNSHOT_FIRED) {
-                if (!bfm_forest_bullet_launch(&w->bullets, &w->root, 0, w->yaw, 0)) return -1;
-                w->gunshot_fired = 1;
-            }
-        }
+        if (!submit_gunshot_action(w, shot)) return -1;
         if (casting == BFM_CAST_STANCE || casting == BFM_CAST_THROW || casting == BFM_CAST_LAUNCH) {
             w->actor.state = casting == BFM_CAST_STANCE ? 17 : 21;
             if (!select_pose(w, cast->pose, cast->visible)) return -1;
@@ -1200,6 +1237,17 @@ int bfm_forest_walk_hit_sound(const BfmForestWalk *w)
     return w && w->hit_sound;
 }
 
+const RoomTransferDescriptor *bfm_forest_walk_inner_exit(const BfmForestWalk *w)
+{
+    return w ? w->inner_exit : NULL;
+}
+
+BfmTowerBellSound *bfm_forest_walk_bell_sound(const BfmForestWalk *w,
+                                              unsigned *command, unsigned *argument)
+{
+    return w ? bfm_tower_interior_sound(w->inner, command, argument) : NULL;
+}
+
 int bfm_forest_walk_gunshot_sound(const BfmForestWalk *w)
 {
     return w && w->gunshot_fired;
@@ -1212,13 +1260,20 @@ int bfm_forest_walk_swing_sound(const BfmForestWalk *w)
 
 uint16_t bfm_forest_walk_room(const BfmForestWalk *w)
 {
+    if (w && w->summit) return 0x300b;
     if (w && w->inner) return 0x300a;
     return w ? bfm_forest_gateway_transition_frame(&w->gateway).room : 0;
 }
 
 int bfm_forest_walk_control(const BfmForestWalk *w)
 {
-    if (w && w->inner_age) return w->inner_free ? (w->at_boundary ? 2 : 1) : 0;
+    if (w && w->summit_transfer.phase != BFM_SUMMIT_TRANSFER_IDLE)
+        return w->summit_free ? (w->at_boundary ? 2 : 1) : 0;
+    if (w && w->inner_age) {
+        BfmTowerBellResponse reaction;
+        if (!w->inner_free || (bfm_tower_interior_response(w->inner, &reaction) && reaction.locked)) return 0;
+        return w->at_boundary ? 2 : 1;
+    }
     if (w && w->gateway.active) {
         BfmForestGatewayFrame frame = bfm_forest_gateway_transition_frame(&w->gateway);
         if (!frame.live || (frame.room == 0x3009 && (!frame.complete || w->tower_note ||
@@ -1347,25 +1402,77 @@ static int step_tower_note(BfmForestWalk *w, int confirm, int reveal)
  * placement and the authored camera sequence independently. */
 enum { INNER_SELECT=31, INNER_WIPE=44, INNER_BLACK=125, INNER_PLACE=150, INNER_CAMERA=198, INNER_LIT=215 };
 
-static int inner_play(BfmForestWalk *w, int x, int y, int confirm, int reveal)
+static int step_inner_player(BfmForestWalk *w, BfmForestField *room, int x, int y,
+                             int square_edge, int jump_pressed, int jump_held, GunshotInput circle)
+{
+    /* The entrance holds the player above the floor while reading. The
+     * first directional step settles the feet on the room's surface. */
+    if (w->inner_entry_foot && w->manual.moving && (x || y)) {
+        BfmForestContact floor;
+        if (!bfm_forest_ground(room, w->cached[0], w->cached[1], w->cached[2], &floor) ||
+            abs(floor.height - w->cached[1]) > 16) return -1;
+        w->cached[1] = floor.height;
+        w->actor.position[1] = (uint32_t)(uint16_t)floor.height << 16;
+        w->inner_entry_foot = 0;
+    }
+    BfmForestGunshotEvent shot;
+    int interrupted = w->jump.active || jump_pressed || square_edge || (w->actor.state > 1 && w->actor.state != 23);
+    if (!tick_gunshot_action(w, circle, interrupted, &x, &y, &shot)) return -1;
+    int continuing_stride = (x || y) && x == w->stride_x && y == w->stride_y;
+    w->stride_x = w->stride_y = 0;
+    bfm_forest_fall_begin(&w->jump, &w->manual, &w->actor);
+    BfmForestDustEmission dust = BFM_FOREST_DUST_NONE;
+    if (w->actor.state == 5 ||
+        (!w->jump.active && !jump_pressed && square_edge && w->actor.state <= 1)) {
+        BfmForestHit hits[BFM_FOREST_STRIKE_RAYS] = {0};
+        size_t hit_count = 0;
+        return tick_swing(w, x, y, square_edge, &dust, hits, &hit_count) ? 1 : -1;
+    }
+    int launched = !w->jump.active && jump_pressed &&
+                   bfm_forest_jump_begin(&w->jump, room, &w->actor, w->cached);
+    if (!w->jump.active) {
+        int moved = tick_ground(w, x, y, 0, &dust);
+        if (moved < 0 || (!moved && !bfm_forest_fall_begin(&w->jump, &w->manual, &w->actor)))
+            return -1;
+    }
+    if (!step_jump(w, room, launched, continuing_stride, x, y, jump_held, &dust) ||
+        !submit_gunshot_action(w, shot)) return -1;
+    return 1;
+}
+
+static int inner_play(BfmForestWalk *w, int x, int y, int square_edge, int jump_pressed, int jump_held,
+                        GunshotInput circle, int confirm, int reveal)
 {
     BfmForestField *room = bfm_tower_interior_room(w->inner);
     unsigned count = bfm_tower_interior_intro_updates(w->inner);
     bfm_tower_interior_tick(w->inner, w->gameplay);
     if (w->inner_free) {
-        /* The entrance holds the player above the floor while reading. The
-         * first directional step settles the feet on the room's surface. */
-        if (w->inner_entry_foot && w->manual.moving && (x || y)) {
-            BfmForestContact floor;
-            if (!bfm_forest_ground(room, w->cached[0], w->cached[1], w->cached[2], &floor) ||
-                abs(floor.height - w->cached[1]) > 16) return -1;
-            w->cached[1] = floor.height;
-            w->actor.position[1] = (uint32_t)(uint16_t)floor.height << 16;
-            w->inner_entry_foot = 0;
+        bfm_forest_field_advance_gunshots(room, &w->bullets, w->eye, w->gameplay,
+                                          bfm_tower_interior_gunshot_contact, w->inner);
+        BfmTowerBellResponse reaction = {0};
+        int reacting = bfm_tower_interior_response(w->inner, &reaction);
+        if (reacting && reaction.age == 1) bfm_bedroom_hud_hide(w->hud);
+        if (reacting && reaction.door_open) bfm_forest_hud_show(w->hud);
+        bfm_forest_hud_tick(w->hud);
+        if (reacting && reaction.locked) {
+            if (!reaction.age) {
+                bfm_forest_gunshot_tick(&w->gun, &w->gameplay->player, 0, 0, 1);
+                w->actor.state = 0;
+                w->actor.phase = 1;
+                w->motion = IDLE;
+                w->elapsed = 0;
+                w->manual = (BfmForestManual){.entry_velocity = w->data.initial_velocity};
+            } else {
+                ++w->elapsed;
+            }
+            if (!update_pose(w)) return -1;
+        } else if (step_inner_player(w, room, x, y, square_edge, jump_pressed, jump_held, circle) < 0) {
+            return -1;
         }
-        BfmForestDustEmission dust = BFM_FOREST_DUST_NONE;
-        int moved = tick_ground(w, x, y, 0, &dust);
-        if (moved != 1) return moved;
+        if (!w->inner_exit && !w->jump.active && w->actor.state <= 1)
+            w->inner_exit = bfm_tower_interior_exit(w->inner, w->cached);
+        if (!bfm_forest_field_gunshot_art(room, &w->fusion.award, &w->root, w->eye,
+                                         w->gameplay, w->gunshot_fired)) return -1;
     } else {
         if (!w->inner_shot &&
             !bfm_tower_interior_note_begin(&w->inner_note, room, w->disc, w->visible, &w->pose))
@@ -1388,6 +1495,8 @@ static int inner_play(BfmForestWalk *w, int x, int y, int confirm, int reveal)
             if (!update_pose(w)) return -1;
         }
     }
+    if (w->actor.state != 2 && !w->jump.active)
+        bfm_tower_interior_grounded_sound(w->inner, w->cached);
     if (!bfm_tower_interior_camera(w->inner, w->cached, w->inner_shot, w->inner_free,
                                    &w->camera, w->eye)) return -1;
     if (w->inner_shot <= count) ++w->inner_shot;
@@ -1395,7 +1504,8 @@ static int inner_play(BfmForestWalk *w, int x, int y, int confirm, int reveal)
     return 1;
 }
 
-static int step_inner_entry(BfmForestWalk *w, int x, int y, int confirm, int reveal)
+static int step_inner_entry(BfmForestWalk *w, int x, int y, int square_edge, int jump_pressed, int jump_held,
+                        GunshotInput circle, int confirm, int reveal)
 {
     if (w->inner_age < INNER_LIT) ++w->inner_age;
     if (w->inner_age == INNER_SELECT) {
@@ -1417,8 +1527,120 @@ static int step_inner_entry(BfmForestWalk *w, int x, int y, int confirm, int rev
         if (!update_pose(w)) return -1;
     }
     if (w->inner_age >= INNER_CAMERA) {
-        int result = inner_play(w, x, y, confirm, reveal);
+        int result = inner_play(w, x, y, square_edge, jump_pressed, jump_held, circle, confirm, reveal);
         if (result != 1) return result;
+    }
+    ++w->tick;
+    return 1;
+}
+
+static int step_summit_departure(BfmForestWalk *w, const BfmTowerSummitFrame *frame)
+{
+    BfmForestField *room = bfm_tower_interior_room(w->inner);
+    if (w->summit) return 1;
+    bfm_tower_interior_tick(w->inner, w->gameplay);
+    if (frame->outgoing_walk) {
+        if (bfm_tower_summit_transfer_at_lift(w->cached[0], w->cached[1], w->cached[2])) {
+            BfmForestContact floor;
+            if (!bfm_forest_ground(room, frame->goal_x, frame->goal_y, frame->goal_z, &floor)) return 0;
+            int16_t at[3] = {(int16_t)frame->goal_x, floor.height, (int16_t)frame->goal_z};
+            restore_whole_position(w, at);
+            w->actor.state = 0;
+            w->actor.phase = 1;
+            w->actor.field_2c.word = 0;
+            memset(w->actor.velocity, 0, sizeof w->actor.velocity);
+            bfm_tower_summit_transfer_reach_lift(&w->summit_transfer, w->yaw);
+            w->motion = IDLE;
+            w->elapsed = 0;
+        } else {
+            /* The room supplies a full stick toward the board. Keep the
+             * grounded actor's incoming speed when its exit walk starts. */
+            w->yaw = (int16_t)bfm_forest_shore_bearing(w->cached[0] - frame->goal_x,
+                                                      w->cached[2] - frame->goal_z);
+            w->actor.state = w->actor.phase = 1;
+            if (w->motion != RUN) {
+                w->motion = RUN;
+                w->elapsed = 0;
+            } else {
+                ++w->elapsed;
+                int32_t speed = w->actor.field_2c.word;
+                if (!speed) speed = w->data.initial_velocity;
+                if (speed < -11 * 65536) speed = -11 * 65536;
+                w->actor.field_2c.word = speed - 4096;
+                if (!bfm_forest_manual_coast(room, &w->actor, w->yaw, w->cached)) return 0;
+            }
+        }
+    } else {
+        w->actor.state = 0;
+        w->actor.phase = 1;
+        w->elapsed = w->motion == IDLE ? w->elapsed + 1 : 0;
+        w->motion = IDLE;
+        if (frame->phase == BFM_SUMMIT_TRANSFER_ALIGN || frame->phase == BFM_SUMMIT_TRANSFER_LIFT)
+            w->yaw = (int16_t)frame->actor_facing;
+    }
+    if (!update_pose(w)) return 0;
+    if (frame->wide_camera)
+        return bfm_tower_summit_departure_camera(&w->camera, w->eye);
+    return bfm_tower_interior_camera(w->inner, w->cached, w->inner_shot, 1,
+                                     &w->camera, w->eye);
+}
+
+static int place_on_summit(BfmForestWalk *w)
+{
+    w->actor = (ForestPlayerState){0};
+    if (!bfm_tower_summit_place(w->summit, &w->actor, &w->yaw, w->cached)) return 0;
+    w->manual = (BfmForestManual){.entry_velocity = w->data.initial_velocity};
+    w->jump = (BfmForestJump){0};
+    w->at_boundary = w->support_y = w->support_z = 0;
+    w->motion = IDLE;
+    w->elapsed = 0;
+    if (!update_pose(w) || !bfm_tower_summit_begin(w->summit, w->visible, &w->pose)) return 0;
+    w->summit_placed = 1;
+    return bfm_tower_summit_camera(w->cached, &w->camera, w->eye);
+}
+
+static int summit_play(BfmForestWalk *w, int x, int y, int ready, int confirm, int reveal)
+{
+    if (w->summit_free) {
+        BfmForestDustEmission dust = BFM_FOREST_DUST_NONE;
+        int moved = tick_ground(w, x, y, 0, &dust);
+        if (moved != 1) return moved;
+    } else {
+        bfm_forest_voice_step(w->voice);
+        int result = bfm_tower_summit_tick_arrival(w->summit, w->voice, &w->voice_generation,
+                                                   ready, confirm, reveal, &w->pose);
+        if (result == BFM_SUMMIT_ARRIVAL_ERROR) return -1;
+        if (result == BFM_SUMMIT_ARRIVAL_RELEASED) {
+            w->summit_free = 1;
+            w->motion = IDLE;
+            w->elapsed = 0;
+            w->frame = 0;
+            if (!update_pose(w)) return -1;
+        } else {
+            const BfmTowerSummitArrival *arrival = bfm_tower_summit_arriving(w->summit);
+            w->frame = arrival->actor.frame;
+            w->visible = arrival->parts;
+            memcpy(w->blade_anchors, arrival->actor.blade_anchors, sizeof w->blade_anchors);
+        }
+    }
+    bfm_forest_hud_submit_points(w->hud, &w->gameplay->player);
+    return bfm_tower_summit_camera(w->cached, &w->camera, w->eye) ? 1 : -1;
+}
+
+static int step_summit_transfer(BfmForestWalk *w, int x, int y, int confirm, int reveal)
+{
+    bfm_tower_summit_transfer_advance(&w->summit_transfer, w->summit != NULL);
+    BfmTowerSummitFrame frame = bfm_tower_summit_transfer_frame(&w->summit_transfer);
+    if (frame.select_destination && !w->summit) {
+        w->summit = bfm_tower_summit_open(w->disc, &w->summit_transfer.destination);
+        if (!w->summit) return -1;
+    }
+    if (frame.place_destination && !w->summit_placed && !place_on_summit(w)) return -1;
+    if (w->summit_placed) {
+        int result = summit_play(w, x, y, frame.entrance_ready, confirm, reveal);
+        if (result != 1) return result;
+    } else if (!step_summit_departure(w, &frame)) {
+        return -1;
     }
     ++w->tick;
     return 1;
@@ -1426,9 +1648,10 @@ static int step_inner_entry(BfmForestWalk *w, int x, int y, int confirm, int rev
 
 /* Advance the selected room without interpreting a guest callback. The
  * outgoing transfer and the destination's own entrance are distinct records. */
-static int tick_gateway(BfmForestWalk *w, int x, int y, int square_edge, int confirm, int reveal)
+static int tick_gateway(BfmForestWalk *w, int x, int y, int square_edge, int jump_pressed,
+                        int jump_held, GunshotInput circle, int confirm, int reveal)
 {
-    if (w->inner_age) return step_inner_entry(w, x, y, confirm, reveal);
+    if (w->inner_age) return step_inner_entry(w, x, y, square_edge, jump_pressed, jump_held, circle, confirm, reveal);
     BfmForestGatewayFrame prior = bfm_forest_gateway_transition_frame(&w->gateway);
     bfm_forest_gateway_transition_advance(&w->gateway, w->tower != NULL);
     BfmForestGatewayFrame frame = bfm_forest_gateway_transition_frame(&w->gateway);
@@ -1451,6 +1674,9 @@ static int tick_gateway(BfmForestWalk *w, int x, int y, int square_edge, int con
          * player status stay with the application-owned gameplay record. */
         w->actor = (ForestPlayerState){0};
         if (!bfm_tower_field_place(w->tower, &w->actor, &w->yaw, w->cached)) return -1;
+        /* Projectiles belong to the room that registered them. */
+        w->bullets = (BfmForestBullets){0};
+        bfm_forest_gunshot_tick(&w->gun, &w->gameplay->player, 0, 0, 1);
         w->entrance_yaw = w->yaw;
         w->tower_placed = 1;
         w->at_boundary = w->support_y = w->support_z = 0;
@@ -1539,7 +1765,10 @@ static int step_controller(BfmForestWalk *w, int x, int y, uint16_t pressed,
     w->swing_sound = 0;
     w->hit_sound = 0;
     w->control_polled = w->player_control;
-    if (w->gateway.active) return tick_gateway(w, read_x, read_y, attack_pressed,
+    if (w->summit_transfer.phase != BFM_SUMMIT_TRANSFER_IDLE)
+        return step_summit_transfer(w, read_x, read_y, cross_pressed,
+                                    (pressed & BFM_FOREST_TRIANGLE) != 0);
+    if (w->gateway.active) return tick_gateway(w, read_x, read_y, attack_pressed, jump_pressed, jump_held, circle,
                                               cross_pressed, (pressed & BFM_FOREST_TRIANGLE) != 0);
     if (w->player_control) {
         int16_t before[3];
@@ -1590,6 +1819,10 @@ int bfm_forest_walk_tick_controller(BfmForestWalk *w, int x, int y, uint16_t pre
                                     uint16_t held, int stick_direction)
 {
     int result = step_controller(w, x, y, pressed, held, stick_direction);
+    if (result == 1 && w->summit_transfer.phase == BFM_SUMMIT_TRANSFER_IDLE) {
+        const RoomTransferDescriptor *exit = bfm_forest_walk_inner_exit(w);
+        if (exit && !bfm_tower_summit_transfer_begin(&w->summit_transfer, exit)) return -1;
+    }
     if (result > 0 && !w->tower_placed) bfm_forest_submit_atmosphere(w->field, &w->camera, w->eye);
     return result;
 }
@@ -1616,6 +1849,26 @@ int bfm_forest_walk_draw(BfmForestWalk *w,uint32_t pixels[240][320])
     if(!w || !pixels) return 0;
     for(unsigned y=0;y<240;y++) for(unsigned x=0;x<320;x++) pixels[y][x]=UINT32_C(0xff000000);
     if(!w->tick) return 1;
+    if (w->summit_transfer.phase != BFM_SUMMIT_TRANSFER_IDLE) {
+        BfmTowerSummitFrame frame = bfm_tower_summit_transfer_frame(&w->summit_transfer);
+        if (frame.shade >= 255) return 1;
+        BfmForestBladeFrame blade = {.tick = w->tick};
+        BfmForestTransform blade_root = w->root;
+        if (frame.wide_camera) bfm_tower_summit_departure_hero(frame.beam_age, &blade_root);
+        int has_blade = (w->visible & (UINT32_C(1) << 22)) &&
+            bfm_forest_blade_transform(w->blade_anchors, &blade_root, w->eye, &blade.world);
+        if (frame.show_destination) {
+            if (!w->summit_placed || !bfm_tower_summit_draw(w->summit, &w->camera, &w->pose,
+                    &w->root, w->visible, w->tick & 1u, has_blade ? &blade : NULL, pixels)) return 0;
+        } else {
+            if (!bfm_tower_interior_draw_lift(w->inner, &w->camera, &w->pose, &w->root,
+                    w->visible, w->tick & 1u, has_blade ? &blade : NULL, &frame, pixels)) return 0;
+        }
+        if (frame.shade) field_palette(pixels, frame.shade >> 3);
+        if (w->summit_free || (!frame.show_destination && frame.show_hud))
+            bfm_forest_hud_draw(w->hud, &w->gameplay->player, pixels);
+        return 1;
+    }
     if (w->inner_age >= INNER_BLACK) {
         if (w->inner_age < INNER_CAMERA) return 1;
         BfmForestBladeFrame blade = {.tick = w->tick};

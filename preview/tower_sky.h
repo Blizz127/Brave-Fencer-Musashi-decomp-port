@@ -10,6 +10,8 @@ typedef struct BfmTowerSky BfmTowerSky;
 /* Borrow the unpacked room and its uploaded video memory until free. */
 BfmTowerSky *bfm_tower_sky_open(const uint8_t *scene, size_t scene_size,
                                 const uint16_t (*tiles)[1024]);
+BfmTowerSky *bfm_tower_summit_sky_open(const uint8_t *scene, size_t scene_size,
+                                       const uint16_t (*tiles)[1024]);
 void bfm_tower_sky_free(BfmTowerSky *sky);
 
 /* Draw before field geometry, with the same submitted camera. The room

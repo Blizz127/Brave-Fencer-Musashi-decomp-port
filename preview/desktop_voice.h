@@ -29,6 +29,9 @@ void bfm_desktop_voice_forest_swing(DesktopVoice *voice);
 void bfm_desktop_voice_forest_hit(DesktopVoice *voice);
 /* Invoke on the earned skill's firing marker once the shot spends BP. */
 void bfm_desktop_voice_forest_gunshot(DesktopVoice *voice);
+struct BfmTowerBellSound;
+void bfm_desktop_voice_tower_bell(DesktopVoice *voice, struct BfmTowerBellSound *bell,
+                                  unsigned command, unsigned argument);
 struct BfmVillageImpactSound;
 void bfm_desktop_voice_landing(DesktopVoice *voice, struct BfmVillageImpactSound *sound);
 struct BfmCableSound;
