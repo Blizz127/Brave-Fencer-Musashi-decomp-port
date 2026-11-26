@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "forest_field.h"
 #include "room_walk_grid.h"
+#include "tower_ascent_floor.h"
 #include "forest_entry.h"
 #include "forest_bridge.h"
 #include "forest_upper_trunks.h"
@@ -119,6 +120,7 @@ typedef struct {
 struct BfmForestField {
     uint16_t room;
     FloorGrid grid;
+    int tower_floor_raised;
     ForestGateway gateway;
     BfmForestBridge bridge;
     BfmForestUpperTrunks *upper_trunks;
@@ -286,9 +288,9 @@ int bfm_forest_opening_data(const BfmForestField *field, BfmForestOpeningData *o
 }
 
 static int load_grid(FloorGrid *grid, const uint8_t *scene, size_t size,
-                     const uint8_t *descriptor)
+                     uint32_t address)
 {
-    const uint8_t *record = scene_record(scene, size, read32(descriptor + 0x88), GRID_HEADER);
+    const uint8_t *record = scene_record(scene, size, address, GRID_HEADER);
     if (!record)
         return 0;
     size_t extent = size - (size_t)(record - scene);
@@ -366,11 +368,28 @@ static void free_grid(FloorGrid *grid)
     free(grid->faces22);
 }
 
+int bfm_tower_ascent_floor_activate(BfmForestField *field)
+{
+    if (!field || field->room != TOWER_ROOM) return 0;
+    if (field->tower_floor_raised) return 1;
+    const uint8_t *slot = scene_record(field->scene, field->scene_size, tower_descriptor_slot, 4);
+    const uint8_t *room = slot ? scene_record(field->scene, field->scene_size, read32(slot), 0x90) : NULL;
+    FloorGrid raised = {0};
+    if (!room || !load_grid(&raised, field->scene, field->scene_size, read32(room + 0x8c))) {
+        free_grid(&raised);
+        return 0;
+    }
+    free_grid(&field->grid);
+    field->grid = raised;
+    field->tower_floor_raised = 1;
+    return 1;
+}
+
 BfmRoomWalkGrid *bfm_room_walk_grid_open(const uint8_t *scene, size_t bytes, uint32_t room)
 {
     const uint8_t *descriptor = scene ? scene_record(scene, bytes, room, 0x8c) : NULL;
     BfmRoomWalkGrid *walk = descriptor ? calloc(1, sizeof *walk) : NULL;
-    if (walk && !load_grid(&walk->grid, scene, bytes, descriptor)) {
+    if (walk && !load_grid(&walk->grid, scene, bytes, read32(descriptor + 0x88))) {
         bfm_room_walk_grid_free(walk);
         return NULL;
     }
@@ -512,7 +531,7 @@ BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t roo
     const uint8_t *slot = scene_record(scene, bytes, descriptor_slot, 4);
     const uint8_t *descriptor = slot ? scene_record(scene, bytes, read32(slot), 0xcc) : NULL;
     if (descriptor && load_entrances(field, scene, bytes, read32(descriptor + 0xc8)) &&
-        load_grid(&field->grid, scene, bytes, descriptor)) {
+        load_grid(&field->grid, scene, bytes, read32(descriptor + 0x88))) {
         const uint8_t *mesh = scene_record(scene, bytes, read32(descriptor + 0x94), 8);
         const uint8_t *end = scene_record(scene, bytes, read32(descriptor + 0x88), GRID_HEADER);
         if (mesh && end && end > mesh)
@@ -1717,7 +1736,7 @@ static int follow_corridor_floor(const FloorGrid *grid, ContactCell cell,
 /* Remove the whole-unit penetration, then move far enough along the
  * mounted face normal to clear the support. Each coordinate rounds its
  * displacement toward zero, including the small lateral correction. */
-static int project_shore_floor(const FloorGrid *grid, const FloorPlane *plane, int depth,
+static int project_contact_plane(const FloorGrid *grid, const FloorPlane *plane, int depth,
                                int16_t end[3])
 {
     const FloorPoint *n = &grid->verts[plane->v];
@@ -1787,7 +1806,7 @@ static BfmForestShoreFloor shore_floor_step(const BfmForestField *field,
     BfmForestShoreFloor approach = shore_floor_kind(grid, first, walker != SHORE_PLAYER);
     int16_t projected[3] = {to[0], to[1], to[2]};
     if ((approach != BFM_SHORE_FLOOR_FLAT && approach != BFM_SHORE_FLOOR_GRADE) ||
-        !project_shore_floor(grid, first, depth, projected))
+        !project_contact_plane(grid, first, depth, projected))
         return BFM_SHORE_FLOOR_UNKNOWN;
     if (walker == SHORE_PLAYER) {
         /* The primary sweep can leave a flat and enter a side grade in
@@ -1796,7 +1815,7 @@ static BfmForestShoreFloor shore_floor_step(const BfmForestField *field,
         while ((next = shore_floor_crossing(grid, near, projected, 1, &next_face))) {
             BfmForestShoreFloor surface = shore_floor_kind(grid, next, 0);
             if ((surface != BFM_SHORE_FLOOR_FLAT && surface != BFM_SHORE_FLOOR_GRADE) ||
-                !project_shore_floor(grid, next, 0, projected))
+                !project_contact_plane(grid, next, 0, projected))
                 return BFM_SHORE_FLOOR_UNKNOWN;
         }
     }
@@ -1813,7 +1832,7 @@ static BfmForestShoreFloor shore_floor_step(const BfmForestField *field,
         return footing;
 
     int16_t first_x = projected[0], first_y = projected[1], first_z = projected[2];
-    if (!project_shore_floor(grid, second, 6, projected)) return BFM_SHORE_FLOOR_UNKNOWN;
+    if (!project_contact_plane(grid, second, 6, projected)) return BFM_SHORE_FLOOR_UNKNOWN;
     to[0] = first_x;
     /* The runner keeps the primary height when the short probe below the
      * foot already touches another face. The patrol follows that probe. */
@@ -2069,6 +2088,52 @@ int bfm_forest_jump_surface(const BfmForestContact *ground)
                       (ground->slope == 0x2000 && ground->flags == 0x2000));
 }
 
+/* The flat doorway landing has a material tag distinct from the helical
+ * treads. Both carry the player's feet; the door actor handles entry. */
+static int tower_walkable(const BfmForestContact *floor)
+{
+    return floor->slope == 0x2000 && (floor->flags == 0 || floor->flags == 3);
+}
+
+BfmForestTopStep bfm_tower_ascent_floor_step(const BfmForestField *field,
+    const BfmForestContact *previous, const int16_t from[3], int16_t to[3])
+{
+    if (!field || !field->tower_floor_raised || !previous || !from || !to ||
+        !tower_walkable(previous) || abs(previous->height - from[1]) > 4 ||
+        from[1] != to[1] || abs(to[0] - from[0]) > 16 || abs(to[2] - from[2]) > 16)
+        return BFM_FOREST_TOP_BLOCKED;
+    int depth = floor_sweep_span(from, to) + 1;
+    if (from[1] < INT16_MIN + 4 || to[1] > INT16_MAX - depth) return BFM_FOREST_TOP_BLOCKED;
+    int16_t near[3] = {from[0], (int16_t)(from[1] - 4), from[2]};
+    int16_t far[3] = {to[0], (int16_t)(to[1] + depth), to[2]};
+    const FloorGrid *grid = &field->grid;
+    ContactCell cell = contact_cell(grid, near);
+    int grounded = 0;
+    /* Ramps meet vertical faces at their seams. Resolve faces in the mounted
+     * order and retest the corrected segment before deciding it left a tread. */
+    for (unsigned pass = 0; pass < 6; ++pass) {
+        unsigned i;
+        for (i = 0; i < cell.count; ++i) {
+            u16 token = cell.tokens[i];
+            const FloorFace *face = contact_face(grid, token);
+            const FloorPoint *n = &grid->verts[face->e[0].v];
+            int tolerance = (s16)n->y < -3584 ? 0x1800 : EDGE_TOLERANCE;
+            if ((face->flags & 0x200) ||
+                crossing_margin(grid, face, (token & 0x8000) ? 4 : 3, near, far) < -tolerance)
+                continue;
+            if (!project_contact_plane(grid, &face->e[0], 0, far)) return BFM_FOREST_TOP_BLOCKED;
+            if ((s16)n->y < -3019) grounded = 1;
+            break;
+        }
+        if (i == cell.count) {
+            if (!grounded) return BFM_FOREST_TOP_FREE;
+            memcpy(to, far, sizeof far);
+            return BFM_FOREST_TOP_GROUNDED;
+        }
+    }
+    return BFM_FOREST_TOP_BLOCKED;
+}
+
 /* On the upper dry trail, one step can cross several triangles with
  * different normals. The room grid picks the bounded surface under the
  * proposed foot. The step must still clear walls and stay within the
@@ -2078,6 +2143,8 @@ int bfm_forest_corridor_step(const BfmForestField *field, const BfmForestContact
 {
     if (!field || !previous || !from || !to)
         return 0;
+    if (field->tower_floor_raised)
+        return bfm_tower_ascent_floor_step(field, previous, from, to) == BFM_FOREST_TOP_GROUNDED;
     /* The far bank's ordinary flats and grades use successive terrain
      * sweeps for advancing actors. The second probe can find the next
      * incline while the first is still on the flat. */
