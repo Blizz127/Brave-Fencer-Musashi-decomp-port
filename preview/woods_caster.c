@@ -42,6 +42,8 @@ typedef struct {
 } Caster;
 
 struct BfmWoodsCaster {
+    const uint8_t *scene;
+    size_t bytes;
     Caster actor[BFM_WOODS_CASTERS];
     Clip motion[CLIPS];
     BfmForestGuardBox body;
@@ -111,6 +113,8 @@ BfmWoodsCaster *bfm_woods_caster_load(const uint8_t *scene, size_t bytes)
     if (!shape || u32le(shape)) return NULL;
     BfmWoodsCaster *casters = calloc(1,sizeof(*casters));
     if (!casters) return NULL;
+    casters->scene = scene;
+    casters->bytes = bytes;
     for (unsigned k = 0; k < 3; ++k) {
         casters->body.low[k] = s16le(shape+4+k*4);
         casters->body.high[k] = s16le(shape+6+k*4);
@@ -357,7 +361,12 @@ int bfm_woods_caster_add(const BfmWoodsCaster *casters, BfmBedroomFigure *figure
         const Clip *clip = &casters->motion[actor->clip];
         uint32_t pose = u32le(clip->rows+actor->key*8) & ~UINT32_C(0x01000000);
         int position[3] = {actor->xyz[0],actor->xyz[1],actor->xyz[2]};
-        if (!bfm_bedroom_visitor_add_scaled(casters->model,figure,view,i,position,actor->yaw,pose,width,height))
+        BfmBedroomRoot ground = {0};
+        /* The shadow child projects from Y-20 to Y+748 independently of the body. */
+        memcpy(ground.xyz,actor->xyz,sizeof(ground.xyz));
+        if (!bfm_bedroom_travel_air_shadow(casters->scene,casters->bytes,woods_room,&ground)) return 0;
+        if (!bfm_bedroom_visitor_add_scaled(casters->model,figure,view,i,position,actor->yaw,
+                                           pose,width,height,&ground))
             return 0;
     }
     return 1;
