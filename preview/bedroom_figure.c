@@ -638,19 +638,38 @@ int bfm_bedroom_visitor_add(const BfmBedroomVisitor *visitor, BfmBedroomFigure *
                            const BfmBedroomView *view, unsigned index,
                            const int position[3], int heading, uint32_t pose_address)
 {
+    return bfm_bedroom_visitor_add_scaled(visitor, figure, view, index, position, heading,
+                                         pose_address, 4096, 4096);
+}
+
+int bfm_bedroom_visitor_add_scaled(const BfmBedroomVisitor *visitor, BfmBedroomFigure *figure,
+                           const BfmBedroomView *view, unsigned index,
+                           const int position[3], int heading, uint32_t pose_address,
+                           unsigned horizontal_q12, unsigned vertical_q12)
+{
+    if (horizontal_q12 > 4096 || vertical_q12 < 4096 || vertical_q12 > 12288) return 0;
     if (!visitor || !figure || !view || !position || index >= 2 || !visitor->model[index] || figure->next ||
         (figure->visitors_added & (1u << index)) ||
-        !figure->surface.pixels || pose_address < visitor_scene_origin ||
-        (pose_address & 3) || view->focal <= 0 || view->focal > 65535) return 0;
-    size_t offset = pose_address-visitor_scene_origin;
-    if (offset > visitor->bytes || visitor->parts[index] > (visitor->bytes-offset)/8) return 0;
+        !figure->surface.pixels || view->focal <= 0 || view->focal > 65535) return 0;
+    unsigned parts = horizontal_q12 ? visitor->parts[index] : 0;
+    size_t offset = 0;
+    if (parts) {
+        if (pose_address < visitor_scene_origin || (pose_address & 3)) return 0;
+        offset = pose_address - visitor_scene_origin;
+        if (offset > visitor->bytes || parts > (visitor->bytes - offset)/8) return 0;
+    }
     for (unsigned k = 0; k < 3; ++k)
         if (position[k] < INT16_MIN || position[k] > INT16_MAX) return 0;
-    if (!reserve_faces(figure, visitor->faces[index] + 1)) return 0;
+    if (!reserve_faces(figure, (parts ? visitor->faces[index] : 0) + 1)) return 0;
     int sine, cosine;
     angle((unsigned)heading,&sine,&cosine);
     Transform root, eye;
     rotation(0,4096,sine,cosine,0,4096,root.r);
+    for (unsigned row = 0; row < 3; ++row) {
+        root.r[row][0] = floor_q12((int64_t)root.r[row][0] * horizontal_q12);
+        root.r[row][1] = floor_q12((int64_t)root.r[row][1] * vertical_q12);
+        root.r[row][2] = floor_q12((int64_t)root.r[row][2] * horizontal_q12);
+    }
     memcpy(root.t,position,sizeof(root.t));
     memcpy(eye.r,view->axes,sizeof(eye.r));
     memcpy(eye.t,view->translation,sizeof(eye.t));
@@ -666,7 +685,7 @@ int bfm_bedroom_visitor_add(const BfmBedroomVisitor *visitor, BfmBedroomFigure *
     collect_shadow(figure,view,&eye,&caster,&visitor->shadow,12288,ink);
     figure->visitors_added |= 1u << index;
     const uint8_t *pose = visitor->scene + offset;
-    for (unsigned i = 0; i < visitor->parts[index]; ++i, pose += 8) {
+    for (unsigned i = 0; i < parts; ++i, pose += 8) {
         int sx, cx, sy, cy, sz, cz;
         Transform local;
         angle(read16(pose+6),&sx,&cx);

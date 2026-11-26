@@ -15,4 +15,11 @@ void bfm_bedroom_visitor_free(BfmBedroomVisitor *visitor);
 int bfm_bedroom_visitor_add(const BfmBedroomVisitor *visitor, BfmBedroomFigure *figure,
                            const BfmBedroomView *view, unsigned index,
                            const int position[3], int heading, uint32_t pose_address);
+/* Scale local X/Z together and Y independently around the standing root.
+ * The floor shadow keeps its normal size. A zero horizontal scale submits
+ * only that shadow, without requiring a body pose. */
+int bfm_bedroom_visitor_add_scaled(const BfmBedroomVisitor *visitor, BfmBedroomFigure *figure,
+                           const BfmBedroomView *view, unsigned index,
+                           const int position[3], int heading, uint32_t pose_address,
+                           unsigned horizontal_q12, unsigned vertical_q12);
 #endif
