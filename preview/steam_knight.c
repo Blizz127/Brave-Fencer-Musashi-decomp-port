@@ -48,7 +48,8 @@ struct BfmSteamKnight {
         BfmSteamStreetChoice selected;
         BfmSteamKnightJump jump;
         BfmSteamKnightLanding landing;
-        unsigned neutral_age, jump_age;
+        unsigned neutral_age, jump_age, shot_age;
+        int32_t shot_root[3];
         int marker;
     } street;
     BfmSteamKnightFinale finale;
@@ -281,6 +282,13 @@ static int street_begin_jump(BfmSteamKnight *s, int rebound)
     return street_jump_frame(s);
 }
 
+static int street_shot_frame(BfmSteamKnight *s)
+{
+    int marked = s->street.selected.action == BFM_STREET_MARKED_SHOT;
+    return bfm_steam_knight_machine_street_shot(s->machine, marked, s->street.shot_age++, -1,
+                                                s->street.shot_root, 0);
+}
+
 static int street_choose(BfmSteamKnight *s)
 {
     BfmSteamStreetChoice *choice = &s->street.selected;
@@ -299,6 +307,8 @@ static int street_choose(BfmSteamKnight *s)
     if (choice->action == BFM_STREET_SHOT || choice->action == BFM_STREET_MARKED_SHOT) {
         s->body_stage = 3;
         s->battle_flags &= ~0x1000u;
+        s->street.shot_age = 0;
+        return bfm_steam_knight_machine_root_q12(s->machine, s->street.shot_root) && street_shot_frame(s);
     } else {
         s->body_stage = 1;
     }
@@ -322,13 +332,13 @@ static int street_tick(BfmSteamKnight *s)
             bfm_steam_street_depth_crossed(&s->street.route, &s->battle_flags);
         return street_choose(s);
     }
+    if (s->body_stage == 3) return street_shot_frame(s);
     unsigned grounded_at = s->street.jump.rebound ? 95 : 90;
     unsigned finished = grounded_at + (unsigned)s->street.jump.release_after_landing + 8;
     if (s->street.jump_age < finished) return street_jump_frame(s);
     if (!s->street.jump.rebound) return street_begin_jump(s, 1);
     return street_choose(s);
 }
-
 
 static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t held)
 {
@@ -349,7 +359,7 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
     } else if (s->weak_stage == 2 && s->weak_age < 47) {
         ++s->weak_age;
     }
-    if (s->round == 2 && (s->body_stage == 1 || s->body_stage == 2 || s->body_stage == 6)) {
+    if (s->round == 2 && (s->body_stage == 1 || s->body_stage == 2 || s->body_stage == 3 || s->body_stage == 6)) {
         if (!street_tick(s)) return -1;
     } else if (s->body_stage == 1)
         bfm_steam_knight_machine_track_hero(s->machine, bfm_steam_hero_sample(s->hero)->feet);

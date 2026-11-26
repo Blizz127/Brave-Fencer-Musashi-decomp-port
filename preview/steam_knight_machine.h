@@ -23,7 +23,7 @@ typedef enum {
     BFM_STEAM_MACHINE_DORMANT, BFM_STEAM_MACHINE_NEUTRAL, BFM_STEAM_MACHINE_WALKING,
     BFM_STEAM_MACHINE_KNEELING, BFM_STEAM_MACHINE_GETTING_UP,
     BFM_STEAM_MACHINE_STRIKING, BFM_STEAM_MACHINE_SMASHING, BFM_STEAM_MACHINE_TRANSFERRING,
-    BFM_STEAM_MACHINE_JUMPING, BFM_STEAM_MACHINE_STREET_WALKING
+    BFM_STEAM_MACHINE_JUMPING, BFM_STEAM_MACHINE_STREET_WALKING, BFM_STEAM_MACHINE_STREET_SHOT
 } BfmSteamKnightStance;
 BfmSteamKnightStance bfm_steam_knight_machine_stance(const BfmSteamKnightMachine *machine);
 int bfm_steam_knight_machine_world_root(const BfmSteamKnightMachine *machine, int16_t position[3]);
@@ -65,6 +65,10 @@ int bfm_steam_knight_machine_street_jump(BfmSteamKnightMachine *machine,
 int bfm_steam_knight_machine_street_walk(BfmSteamKnightMachine *machine, unsigned active_age,
                                         const int32_t position_q12[3], unsigned yaw);
 int bfm_steam_knight_machine_street_stand(BfmSteamKnightMachine *machine);
+/* A negative recovery age holds until the encounter releases its linked shot.
+ * Ages 0..15 then submit the recovery. The following update returns zero. */
+int bfm_steam_knight_machine_street_shot(BfmSteamKnightMachine *machine, int marker_selected,
+    unsigned active_age, int recovery_age, const int32_t position_q12[3], unsigned yaw);
 /* Sample the physical knee key before the display delay. hold_age starts
  * at zero when the terminal key is first selected. */
 int bfm_steam_knight_machine_knee_pose(const BfmSteamKnightMachine *machine,

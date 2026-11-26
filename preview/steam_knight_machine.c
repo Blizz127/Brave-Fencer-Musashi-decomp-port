@@ -52,6 +52,8 @@ struct BfmSteamKnightMachine {
     const BfmForestPose *jump_now, *jump_shown, *previous_jump_pose;
     int32_t x4, z4, action_x4, action_z4;
     int root_remainder[3];
+    unsigned shot_windup, shot_release;
+    int shot_recovering;
     int spawn_y, active, revealed, controlled;
 };
 
@@ -218,6 +220,12 @@ static const BfmForestPose *action_pose(const BfmSteamKnightMachine *machine, un
         unsigned key = age - 34;
         return &machine->chassis[REARM].pose[key < 24 ? key : 23];
     }
+    if (machine->action == BFM_STEAM_MACHINE_STREET_SHOT) {
+        if (machine->shot_recovering && age >= machine->shot_release)
+            return sample(&machine->chassis[RISE], age - machine->shot_release);
+        if (age < machine->shot_windup) return sample(&machine->chassis[FIRST_ACTION], age);
+        return sample(&machine->chassis[LOWER], age - machine->shot_windup);
+    }
     if (machine->action == BFM_STEAM_MACHINE_STREET_WALKING)
         return &clip->pose[age % clip->count];
     if (machine->action == BFM_STEAM_MACHINE_NEUTRAL && machine->round == 2)
@@ -297,7 +305,8 @@ static void selected_chassis(BfmSteamKnightMachine *machine, unsigned shown)
         machine->root.translation[2] = machine->display_root.translation[2] = machine->z4 >> 2;
     }
     int driven = machine->action == BFM_STEAM_MACHINE_TRANSFERRING ||
-                 machine->action == BFM_STEAM_MACHINE_STREET_WALKING;
+                 machine->action == BFM_STEAM_MACHINE_STREET_WALKING ||
+                 machine->action == BFM_STEAM_MACHINE_STREET_SHOT;
     if (driven) age = machine->phase_age;
     unsigned duration = machine->action == BFM_STEAM_MACHINE_WALKING ? 48 : machine->selected->count;
     if (machine->action == BFM_STEAM_MACHINE_STRIKING) duration = 142;
@@ -763,8 +772,7 @@ int bfm_steam_knight_machine_street_jump(BfmSteamKnightMachine *machine,
     return 1;
 }
 
-int bfm_steam_knight_machine_street_walk(BfmSteamKnightMachine *machine, unsigned active_age,
-                                        const int32_t position[3], unsigned yaw)
+static int street_position(BfmSteamKnightMachine *machine, const int32_t position[3], unsigned yaw)
 {
     if (!machine || !machine->controlled || machine->round != 2 || !position || yaw >= 4096)
         return 0;
@@ -774,12 +782,6 @@ int bfm_steam_knight_machine_street_walk(BfmSteamKnightMachine *machine, unsigne
         if (integer < INT16_MIN || integer > INT16_MAX) return 0;
         at[i] = (int16_t)integer;
     }
-    if (machine->action != BFM_STEAM_MACHINE_STREET_WALKING || active_age < machine->phase_age) {
-        select_clip(machine, STEP_FORWARD, 0);
-        machine->action = BFM_STEAM_MACHINE_STREET_WALKING;
-        machine->walk_after_strike = machine->patrol_after_recovery = 0;
-    }
-    machine->phase_age = active_age;
     bfm_steam_knight_machine_set_world_root(machine, at);
     machine->x4 = position[0] >> 10;
     machine->z4 = position[2] >> 10;
@@ -790,6 +792,41 @@ int bfm_steam_knight_machine_street_walk(BfmSteamKnightMachine *machine, unsigne
     machine->yaw = yaw;
     bfm_forest_actor_root(yaw, at, &machine->root);
     machine->display_root = machine->root;
+    return 1;
+}
+
+int bfm_steam_knight_machine_street_walk(BfmSteamKnightMachine *machine, unsigned active_age,
+                                        const int32_t position[3], unsigned yaw)
+{
+    if (!street_position(machine, position, yaw)) return 0;
+    if (machine->action != BFM_STEAM_MACHINE_STREET_WALKING || active_age < machine->phase_age) {
+        select_clip(machine, STEP_FORWARD, 0);
+        machine->action = BFM_STEAM_MACHINE_STREET_WALKING;
+        machine->walk_after_strike = machine->patrol_after_recovery = 0;
+    }
+    machine->phase_age = active_age;
+    bfm_steam_knight_machine_present(machine, machine->control_age);
+    return 1;
+}
+
+int bfm_steam_knight_machine_street_shot(BfmSteamKnightMachine *machine, int marker_selected,
+    unsigned active_age, int recovery_age, const int32_t position[3], unsigned yaw)
+{
+    unsigned windup = marker_selected ? 15 : 31;
+    if (recovery_age < -1 || recovery_age >= 16) return 0;
+    if (recovery_age >= 0 && ((unsigned)recovery_age > active_age ||
+        active_age - (unsigned)recovery_age < windup + 8)) return 0;
+    if (!street_position(machine, position, yaw)) return 0;
+    if (machine->action != BFM_STEAM_MACHINE_STREET_SHOT || active_age < machine->phase_age ||
+        machine->shot_windup != windup) {
+        select_clip(machine, FIRST_ACTION, 0);
+        machine->action = BFM_STEAM_MACHINE_STREET_SHOT;
+        machine->walk_after_strike = machine->patrol_after_recovery = 0;
+    }
+    machine->phase_age = active_age;
+    machine->shot_windup = windup;
+    machine->shot_recovering = recovery_age >= 0;
+    if (machine->shot_recovering) machine->shot_release = active_age - (unsigned)recovery_age;
     bfm_steam_knight_machine_present(machine, machine->control_age);
     return 1;
 }
