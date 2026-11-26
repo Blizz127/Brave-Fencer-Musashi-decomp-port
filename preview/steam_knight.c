@@ -316,7 +316,10 @@ static int final_scene_tick(BfmSteamKnight *s)
     if (previous != BFM_STEAM_FINAL_HERO_TOSS && s->finale.hero_motion == BFM_STEAM_FINAL_HERO_TOSS)
         bfm_forest_status_spend_bp(&s->event.run->player, 4);
     if (result == BFM_STEAM_FINALE_ENTERED_AFTERMATH &&
-        !bfm_gameplay_advance_figures(s->event.run)) return -1;
+        !bfm_gameplay_advance_figures(s->event.run)) {
+        s->finale.failed = 1;
+        return -1;
+    }
     bfm_steam_knight_boss_hud_tick(&s->boss_hud, s->finale.display_hp);
     if (result == BFM_STEAM_FINALE_RETIRED) s->chapter_pending = 1;
     return s->finale.retired ? 0 : 1;
