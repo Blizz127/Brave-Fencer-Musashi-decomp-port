@@ -2425,6 +2425,30 @@ int bfm_forest_dry_creek_bank(const BfmForestField *field, const int16_t foot[3]
            first_creek_water(field, channel, &water);
 }
 
+/* A level stride over the near edge spends its final ground update above
+ * the steep lip. The next player update begins an ordinary unsupported
+ * descent. Bind the starting dry foot, the actual downhill facet and
+ * the marked channel in the same column before releasing that support. */
+int bfm_forest_walks_off_creek_bank(const BfmForestField *field, const int16_t from[3],
+                                    const int16_t end[3])
+{
+    if (!field || !from || !end || end[1] != from[1] ||
+        end[2] <= from[2] || end[2] - from[2] > 16 || abs(end[0] - from[0]) > 16 ||
+        !creek_cell(field, end) || !same_grid_index(from[0], end[0]) ||
+        !bfm_forest_dry_creek_bank(field, from))
+        return 0;
+    BfmForestContact lip;
+    if (!bfm_forest_ground(field, end[0], from[1], end[2], &lip) || lip.bridge || lip.flags ||
+        lip.slope != 0x4000 || lip.normal[0] || lip.normal[1] >= 0 ||
+        lip.normal[2] != -lip.normal[1] || lip.height <= from[1])
+        return 0;
+    const FloorGrid *grid = &field->grid;
+    if (!support_plane(grid, contact_cell(grid, end), &lip, end)) return 0;
+    int16_t foot[3] = {end[0], end[1], end[2]};
+    return resolve_walls(grid, contact_cell(grid, from), from, foot, WALL_SCAN_BOUNDED, NULL) &&
+           !memcmp(foot, end, sizeof foot);
+}
+
 /* Classify only a descending sweep onto the selected bounded water face.
  * Its floor probe reports two units above the actual plane. A foot inside
  * that gap can finish the approach in the air, then enter on its next step. */

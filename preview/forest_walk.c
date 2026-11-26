@@ -1203,7 +1203,7 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
     uint32_t sweep_pose = 0;
     BfmForestLessonStage before = w->lesson.stage;
     int incoming_yaw = w->yaw, square_edge = attack_pressed;
-    if (!w->water_age && ((!w->jump.active && w->actor.state <= 1) || w->jump.landed)) {
+    if (!w->water_age && ((!w->jump.active && w->actor.state <= 1) || (w->jump.active && w->jump.landed))) {
         if (bfm_forest_dry_creek_bank(w->field, w->cached)) {
             memcpy(w->dry_bank, w->cached, sizeof w->dry_bank);
             w->has_dry_bank = 1;
