@@ -127,6 +127,12 @@
       "file": "extracted/overlays/sc03/0012.pac0.bin",
       "base": 2148696408,
       "sha256": "44c1ed65f552cdb746e6b851263e845b2dddf31ad827cb5da433944af0e81552"
+    },
+    "sc01_0080": {
+      "kind": "blob",
+      "file": "extracted/overlays/sc01/0080.pac0.bin",
+      "base": 2148696408,
+      "sha256": "f6f40cf3969946e448aa8fbc32977b53c96167f33a3d1818198e074547f49727"
     }
   },
   "matches": [
@@ -8012,6 +8018,45 @@
       "origin": "Owner clean-room reconstruction from the US SC01 member 77. Enters the ground sword action and dispatches its current phase.",
       "source_sha256": "b98fee293cff25624058a95735b2f933627df5f0c304e9bb559710fda8658632",
       "span_sha256": "6cb15fbe27ad5978a8f58a8cc76c4f8243ba543c2b43001bb4f34f90d2d288d4"
+    },
+    {
+      "name": "func_8017DBF4",
+      "region": "sc01_0080",
+      "vram": 2149047284,
+      "size": 132,
+      "source": "src/overlays/sc01_0080/8017dbf4.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Clean-room C from the US Spiral Tower courtyard overlay. Exposes the floor plate and restores its stored coordinates.",
+      "source_sha256": "487e8bf193908878d1bfbc5227b26d1d8b343c9416e964de8a69bfa44950d935",
+      "span_sha256": "9b9ec95ae2297fd25ea63b6bf41afe7ca48725c86a1e6a52616c79ae6950130d"
+    },
+    {
+      "name": "func_8017DC78",
+      "region": "sc01_0080",
+      "vram": 2149047416,
+      "size": 128,
+      "source": "src/overlays/sc01_0080/8017dc78.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Clean-room C from the US Spiral Tower courtyard overlay. Starts the timed depression when Musashi steps on the exposed plate.",
+      "source_sha256": "817685ab239e34e3a79197a4211393e0e671f7a58d624fc23cd6789c8e38fd64",
+      "span_sha256": "eb3ec69fbf67736c5721d7ba315232133a85bae33e84f652cfe1083a21be15d2"
+    },
+    {
+      "name": "func_8017E1FC",
+      "region": "sc01_0080",
+      "vram": 2149048828,
+      "size": 204,
+      "source": "src/overlays/sc01_0080/8017e1fc.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Clean-room C from the US Spiral Tower courtyard overlay. Updates the pressed plate, awards its room credit once and advances the room after the fourth plate.",
+      "source_sha256": "d254e6785f9fd50d3b0806a66551dd2230d796c1a6ace26c388163882e7af869",
+      "span_sha256": "f79445258afc04c0d2607a1c9884f6d42adf155b9566e46c18942dcd3df1b575"
     }
   ]
 }
