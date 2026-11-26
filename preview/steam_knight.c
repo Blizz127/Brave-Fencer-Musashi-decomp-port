@@ -54,7 +54,7 @@ struct BfmSteamKnight {
         BfmSteamKnightLanding landing;
         unsigned neutral_age, jump_age, shot_age;
         int32_t shot_root[3];
-        int marker, phase;
+        int marker, phase, roll_marker;
         unsigned jumps_left, y_fraction;
         int16_t jump_start[3];
         int centering, hidden;
@@ -219,6 +219,11 @@ static int core_contact(BfmSteamKnight *s, const BfmSteamKnightHeroStrike *strik
     s->battle_flags = (s->battle_flags & ~hit.clear_flags) | hit.set_flags;
     if (hit.response == BFM_STEAM_CORE_DEPLETED) {
         if (!bfm_steam_carry_knockdown(&s->carry, s->machine, s->round)) return 0;
+        s->street.roll_marker = -1;
+        int marker = s->street.marker;
+        if (s->round == 2 && (s->battle_flags & 0x800u) &&
+            marker < BFM_STREET_MARKERS && s->street.route.marker_tags[marker] == 5)
+            s->street.roll_marker = marker;
         s->body_stage = 10;
         s->transfer_age = 0;
     }
@@ -241,6 +246,17 @@ static int transfer_tick(BfmSteamKnight *s)
         unsigned edges;
         int was_held = s->carry.held;
         if (!bfm_steam_carry_tick(&s->carry, s->hero, s->machine, &edges)) return 0;
+        if (s->round == 2 && s->body_stage == 10) {
+            int phase = bfm_steam_street_roll_phase(&s->street.route, s->street.roll_marker,
+                                                    s->battle_flags, s->carry.path.body[0]);
+            if (phase) {
+                if (s->street.roll_marker != s->street.marker || phase != 29 ||
+                    !bfm_steam_knight_field_break_house(s->field, 4)) return 0;
+                s->street.phase = phase;
+                ++s->street.marker;
+                s->street.roll_marker = -1;
+            }
+        }
         if (was_held && s->carry.thrown) {
             uint32_t rank = u32le(s->event.run->player.record + 0x6c);
             if (rank >= sizeof s->power.body / sizeof s->power.body[0]) return 0;

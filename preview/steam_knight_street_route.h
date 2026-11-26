@@ -13,7 +13,7 @@ typedef enum {
     BFM_STREET_WALK_CROSSED_DEPTH
 } BfmSteamKnightStreetStep;
 
-enum { BFM_STREET_ROWS = 32, BFM_STREET_MARKERS = 3 };
+enum { BFM_STREET_ROWS = 32, BFM_STREET_MARKERS = 4 };
 typedef struct {
     int16_t x, z, phase;
 } BfmSteamStreetMarker;
@@ -46,6 +46,10 @@ void bfm_steam_street_depth_crossed(BfmSteamKnightStreetRoute *route, uint32_t *
 int bfm_steam_street_jump_target(const BfmSteamKnightStreetRoute *route, int marker,
     unsigned jumps_left, uint32_t flags, const int16_t action_start[3],
     const int16_t body[3], const int16_t hero[3], int16_t xz[2]);
+/* The defeated chassis consumes the armed western house row when its current
+ * signed X first passes that plane. Zero means no scene change. */
+int bfm_steam_street_roll_phase(const BfmSteamKnightStreetRoute *route, int marker,
+                               uint32_t flags, int16_t x);
 /* Age zero displays the first pose at the inherited fractional actor root. */
 int bfm_steam_street_walk_begin(BfmSteamKnightStreetWalk *walk, const int32_t root_q12[3],
                                 uint32_t body_flags);

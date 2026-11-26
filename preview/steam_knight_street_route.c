@@ -20,8 +20,9 @@ int bfm_steam_street_route_load(BfmSteamKnightStreetRoute *out,
 {
     const uint8_t *slot = row(scene, bytes, UINT32_C(0x801959e8), 4);
     const uint8_t *depth = row(scene, bytes, UINT32_C(0x80195acc), 2);
-    const uint8_t *markers = row(scene, bytes, UINT32_C(0x80195af4), 8 * BFM_STREET_MARKERS);
-    if (!out || !slot || !depth || !markers) return 0;
+    const uint8_t *markers = row(scene, bytes, UINT32_C(0x80195af4), 8 * (BFM_STREET_MARKERS + 1));
+    if (!out || !slot || !depth || !markers || (int16_t)half(markers + 8 * BFM_STREET_MARKERS + 4) != -1)
+        return 0;
     uint32_t table = half(slot) | (uint32_t)half(slot + 2) << 16;
     if ((table & 3u) || table > UINT32_MAX - 4u * BFM_STREET_ROWS) return 0;
     BfmSteamKnightStreetRoute route = {0};
@@ -124,6 +125,15 @@ void bfm_steam_street_depth_crossed(BfmSteamKnightStreetRoute *r, uint32_t *flag
 static int lateral(int delta)
 {
     return delta < -42 ? -84 : delta > 42 ? 84 : 0;
+}
+
+int bfm_steam_street_roll_phase(const BfmSteamKnightStreetRoute *route, int marker,
+                               uint32_t flags, int16_t x)
+{
+    if (!route || marker < 0 || marker >= BFM_STREET_MARKERS ||
+        (flags & 0xc08u) != 0x800u || route->marker_tags[marker] != 5) return 0;
+    const BfmSteamStreetMarker *row = &route->markers[marker];
+    return x < row->x ? row->phase : 0;
 }
 
 int bfm_steam_street_jump_target(const BfmSteamKnightStreetRoute *route, int marker,
