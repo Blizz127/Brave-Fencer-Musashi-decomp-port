@@ -6,6 +6,9 @@ add_executable(musashi_native_boot
     player.c
     desktop_voice.c
     palace_effects.c
+    palace_score.c
+    spu_envelope.c
+    sqv_track.c
     palace_sound_bank.c
     palace_rise.c
     palace_flash.c

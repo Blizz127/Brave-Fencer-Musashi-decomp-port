@@ -2,6 +2,7 @@
 #include "palace_effects.h"
 #include "palace_flash.h"
 #include "palace_rise.h"
+#include "palace_score.h"
 #include "palace_sound_bank.h"
 #include "palace_voice.h"
 #include <stdlib.h>
@@ -13,7 +14,8 @@ typedef struct {
     int started;
 } Instrument;
 
-enum { RISE, FLASH, AFTER_FLASH, NOTES };
+enum { RISE, FLASH, AFTER_FLASH, SCORE, NOTES };
+enum { SCORE_FIELD = 4630, END_OF_SCORE_PREVIEW = 5430 };
 struct BfmPalaceEffects {
     Instrument notes[NOTES];
 };
@@ -57,6 +59,16 @@ BfmPalaceEffects *bfm_palace_effects_load(const MusashiDiscMedia *disc)
         }
     }
     bfm_palace_sound_bank_free(bank);
+    if (effects) {
+        /* The second flash starts a new score. Keep the dry stereo mix
+         * through the same final field as the neutral court scene. */
+        Instrument *score = &effects->notes[SCORE];
+        score->field = SCORE_FIELD;
+        size_t frames = (uint64_t)(END_OF_SCORE_PREVIEW - SCORE_FIELD) *
+                        BFM_PALACE_VOICE_RATE * 1001 / 60000;
+        if (bfm_palace_score_render(disc, BFM_PALACE_VOICE_RATE, frames, &score->pcm))
+            score->frames = frames;
+    }
     return effects;
 }
 
@@ -106,13 +118,20 @@ void bfm_palace_effects_mix(BfmPalaceEffects *effects, uint64_t opening_ms,
     }
     for (size_t i = first; i < frames; ++i) {
         int mono = 0;
-        for (unsigned n = 0; n < NOTES; ++n) {
+        for (unsigned n = RISE; n <= AFTER_FLASH; ++n) {
             Instrument *v = &effects->notes[n];
             if (i >= start[n] && v->position < v->frames)
                 mono += v->pcm[v->position++];
         }
-        stereo[2 * i] = clipped(stereo[2 * i] + mono);
-        stereo[2 * i + 1] = clipped(stereo[2 * i + 1] + mono);
+        int left = stereo[2 * i] + mono, right = stereo[2 * i + 1] + mono;
+        Instrument *score = &effects->notes[SCORE];
+        if (i >= start[SCORE] && score->position < score->frames) {
+            left += score->pcm[2 * score->position];
+            right += score->pcm[2 * score->position + 1];
+            ++score->position;
+        }
+        stereo[2 * i] = clipped(left);
+        stereo[2 * i + 1] = clipped(right);
     }
 }
 
