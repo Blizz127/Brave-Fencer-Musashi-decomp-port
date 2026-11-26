@@ -236,6 +236,16 @@ void bfm_steam_event_captor_pose(const BfmSteamKnightEvent *e, unsigned *clip, u
 {
     *clip = 0;
     *age = e->age;
+    if (e->stage == BFM_STEAM_SILENCE) {
+        if (e->stage_age <= 30) {
+            *clip = 5;
+            *age = e->stage_age;
+        } else if (e->message_age < 50) {
+            *clip = 4;
+            *age = e->message_age;
+        }
+        return;
+    }
     if (!e->message) return;
     /* The fist rises briefly during the introduction. The later bargain
      * has a longer, separate speaking gesture. Both return to standing. */

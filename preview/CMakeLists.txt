@@ -188,9 +188,12 @@ add_executable(musashi_native_boot
     steam_knight_effects.c
     steam_knight_entry_light.c
     steam_knight_cast.c
+    steam_knight_machine.c
+    steam_knight_boss_hud.c
     steam_knight_rotation.c
     steam_knight_flames.c
     steam_knight_field.c
+    steam_knight_roof_cells.c
     forest_walk.c
     forest_gateway_transition.c
     forest_lift.c

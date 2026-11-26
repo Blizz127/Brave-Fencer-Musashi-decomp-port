@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 #include "steam_knight_field.h"
 #include "scene_payload.h"
+#include "steam_knight_roof_cells.h"
+#include "tower_sky.h"
 #include "../pc_port/forest_player_bytes.h"
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +15,7 @@ struct BfmSteamKnightField {
     uint8_t *scene;
     size_t bytes;
     BfmForestTerrain *terrain;
+    BfmTowerSky *sky;
     MusashiForestPlayerMesh *hero;
     RoomTransferDescriptor entrance;
 };
@@ -75,10 +78,40 @@ failed:
     return NULL;
 }
 
+int bfm_steam_knight_field_open_roof(BfmSteamKnightField *field)
+{
+    if (!field) return 0;
+    if (field->sky) return 1;
+    const uint8_t *slot = scene_range(field, descriptor_slot, 4);
+    const uint8_t *room = slot ? scene_range(field, u32le(slot), 0x98) : NULL;
+    const uint8_t *mesh = room ? scene_range(field, u32le(room + 0x94), 8) : NULL;
+    /* The first sparse group contains four replacement sectors followed by
+     * their local material packets. The next resource starts at its end. */
+    enum { ROOF_SIZE = 5160 };
+    const uint8_t *replacement = scene_range(field, UINT32_C(0x801d91d4), ROOF_SIZE);
+    if (!mesh || !replacement) return 0;
+    size_t length = mesh_size(mesh, field->bytes - (size_t)(mesh - field->scene));
+    size_t new_length = 0;
+    uint8_t *changed = bfm_steam_knight_roof_mesh(mesh, length, replacement, ROOF_SIZE,
+                                                  &new_length);
+    if (!changed) return 0;
+    BfmTowerSky *sky = bfm_steam_knight_sky_open(field->scene, field->bytes,
+                                                 bfm_forest_terrain_tiles(field->terrain));
+    int ready = sky && bfm_forest_terrain_replace_mesh(field->terrain, changed, new_length);
+    free(changed);
+    if (!ready) {
+        bfm_tower_sky_free(sky);
+        return 0;
+    }
+    field->sky = sky;
+    return 1;
+}
+
 void bfm_steam_knight_field_free(BfmSteamKnightField *field)
 {
     if (!field) return;
     musashi_forest_player_mesh_free(field->hero);
+    bfm_tower_sky_free(field->sky);
     bfm_forest_terrain_free(field->terrain);
     free(field->scene);
     free(field);
@@ -186,6 +219,39 @@ void bfm_steam_knight_postfire_camera(BfmForestCamera *camera)
     camera_at(camera, (const int16_t[3]){-424, -2151, -3531});
 }
 
+void bfm_steam_knight_hall_camera(BfmForestCamera *camera)
+{
+    if (!camera) return;
+    /* A view along the carpet toward the far door. */
+    *camera = (BfmForestCamera) {
+        .rotation = {{4096, 5, -6}, {-6, 4029, -736}, {5, 736, 4029}},
+        .projection = 549
+    };
+    camera_at(camera, (const int16_t[3]){-124, -2394, -4751});
+}
+
+void bfm_steam_knight_roof_camera(BfmForestCamera *camera)
+{
+    if (!camera) return;
+    /* Musashi looks up at the approaching machine. */
+    *camera = (BfmForestCamera) {
+        .rotation = {{4096, 4, -7}, {0, 3565, 2017}, {8, -2017, 3565}},
+        .projection = 553
+    };
+    camera_at(camera, (const int16_t[3]){-124, -1960, -4198});
+}
+
+void bfm_steam_knight_machine_camera(BfmForestCamera *camera)
+{
+    if (!camera) return;
+    /* The machine stands between Musashi and the far door. */
+    *camera = (BfmForestCamera) {
+        .rotation = {{4096, 1, 12}, {-3, 4035, 706}, {-12, -706, 4035}},
+        .projection = 557
+    };
+    camera_at(camera, (const int16_t[3]){-113, -2062, -4271});
+}
+
 int bfm_steam_knight_field_draw(BfmSteamKnightField *field, const BfmForestCamera *camera,
     const BfmForestPose *pose, const BfmForestTransform *root, uint32_t visible_parts,
     const BfmForestBlade *blade, const BfmForestBladeFrame *blade_frame, unsigned buffer,
@@ -193,7 +259,11 @@ int bfm_steam_knight_field_draw(BfmSteamKnightField *field, const BfmForestCamer
     const BfmForestDustCard *cards, size_t card_count, uint32_t pixels[240][320])
 {
     if (!field || !camera || !pixels || (!!pose != !!root)) return 0;
-    memset(pixels, 0, 320 * 240 * sizeof(uint32_t));
+    if (field->sky) {
+        if (!bfm_tower_sky_draw(field->sky, camera, pixels)) return 0;
+    } else {
+        memset(pixels, 0, 320 * 240 * sizeof(uint32_t));
+    }
     return bfm_forest_terrain_draw_entrance_with_effects(field->terrain, camera,
         pose ? field->hero : NULL, pose, root, visible_parts, blade, buffer, blade_frame,
         actors, actor_count, cards, card_count, pixels);

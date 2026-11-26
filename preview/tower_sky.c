@@ -73,6 +73,12 @@ BfmTowerSky *bfm_castle_drawbridge_sky_open(const uint8_t *scene, size_t size,
     return open_sky(scene, size, tiles, UINT32_C(0x8017dc90), FIXED);
 }
 
+BfmTowerSky *bfm_steam_knight_sky_open(const uint8_t *scene, size_t size,
+                                       const uint16_t (*tiles)[1024])
+{
+    return open_sky(scene, size, tiles, UINT32_C(0x80190894), FIXED);
+}
+
 void bfm_tower_sky_free(BfmTowerSky *sky)
 {
     free(sky);

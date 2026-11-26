@@ -5,6 +5,8 @@
 #include "steam_knight_rotation.h"
 #include "steam_knight_effects.h"
 #include "steam_knight_entry_light.h"
+#include "steam_knight_machine.h"
+#include "steam_knight_boss_hud.h"
 #include "forest_hud.h"
 #include "forest_message_art.h"
 #include <stdlib.h>
@@ -17,6 +19,9 @@ struct BfmSteamKnight {
     ForestVoice *voice;
     BfmForestHud *hud;
     BfmSteamKnightHostages *hostages;
+    BfmSteamKnightMachine *machine;
+    BfmSteamKnightBossHud boss_hud;
+    unsigned core_hp, core_max;
     BfmLuminaRotation rotation;
     BfmSteamWeaponEffects weapons;
     BfmSteamKnightFlames flames;
@@ -41,9 +46,12 @@ BfmSteamKnight *bfm_steam_knight_open(const MusashiDiscMedia *disc,
     const uint16_t (*tiles)[1024] = bfm_forest_terrain_tiles(bfm_steam_knight_field_terrain(s->field));
     s->art = bfm_castle_message_art_load(disc, scene, size, tiles, 0x68e58);
     s->hostages = bfm_steam_knight_hostages_load(disc, size);
+    s->machine = bfm_steam_knight_machine_load(scene, size);
+    s->core_max = s->core_hp = 192;
     s->hud = bfm_steam_knight_hud_load(disc, scene, size, bfm_steam_knight_field_terrain(s->field));
     s->voice = bfm_forest_voice_load(disc);
-    if (!s->art || !s->hostages || !s->hud || !bfm_lumina_rotation_load(disc, &s->rotation) ||
+    if (!s->art || !s->hostages || !s->machine || !s->hud ||
+        !bfm_steam_knight_boss_hud_load(&s->boss_hud, disc, scene, size) || !bfm_lumina_rotation_load(disc, &s->rotation) ||
         !bfm_steam_weapons_load(&s->weapons, scene, size) ||
         !bfm_steam_knight_flames_load(&s->flames, scene, size) ||
         !bfm_steam_event_begin(&s->event, scene, size, entry, run, s->voice)) goto fail;
@@ -57,6 +65,7 @@ void bfm_steam_knight_free(BfmSteamKnight *s)
 {
     if (!s) return;
     bfm_steam_event_clear(&s->event);
+    bfm_steam_knight_machine_free(s->machine);
     bfm_steam_knight_hostages_free(s->hostages);
     bfm_forest_hud_free(s->hud);
     bfm_forest_voice_free(s->voice);
@@ -79,6 +88,13 @@ int bfm_steam_knight_tick(BfmSteamKnight *s, uint16_t pressed, uint16_t held)
     }
     int advanced = bfm_steam_event_tick(e, pressed, held, bfm_steam_knight_flames_remaining(&s->flames));
     if (advanced <= 0) return advanced;
+    if (e->stage >= BFM_STEAM_BREACH && e->stage < BFM_STEAM_DUEL) {
+        if (e->stage == BFM_STEAM_BREACH && e->stage_age == 8 &&
+            !bfm_steam_knight_field_open_roof(s->field)) return -1;
+        bfm_steam_knight_machine_present(s->machine, e->landing_age);
+    } else if (e->stage == BFM_STEAM_DUEL) {
+        bfm_steam_knight_machine_handover(s->machine);
+    }
     if (!s->ring_started && bfm_steam_event_ring_started(e)) {
         int16_t center[3] = {e->position[0], e->position[1], (int16_t)(e->position[2] - 20)};
         bfm_steam_knight_flames_start(&s->flames, center);
@@ -119,7 +135,9 @@ int bfm_steam_knight_hero(const BfmSteamKnight *s, int16_t feet[3], int16_t *hea
     memcpy(feet, s->event.position, sizeof s->event.position);
     *heading = s->event.heading;
     *running = s->event.stage == BFM_STEAM_ENTER_HALL ||
-               (s->event.stage == BFM_STEAM_APPROACH && !s->event.wait);
+               (s->event.stage == BFM_STEAM_APPROACH && !s->event.wait) ||
+               (s->event.stage == BFM_STEAM_CHASE && s->event.stage_age >= 3 && feet[2] < -3840) ||
+               (s->event.stage == BFM_STEAM_CHALLENGE && feet[2] < -3456);
     if (s->event.stage == BFM_STEAM_ROTATING)
         bfm_lumina_rotation_pose(&s->rotation, s->event.stage_age, s->event.heading, heading);
     *motion_tick = s->event.stage_age;
@@ -138,11 +156,8 @@ uint32_t bfm_steam_knight_body(const BfmSteamKnight *s)
     return key ? key->body : 0;
 }
 
-int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
-    const BfmForestTransform *root, uint32_t visible, const int8_t fusion[2][3],
-    const int8_t lumina[2][3], uint32_t pixels[240][320])
+static void hall_camera(const BfmSteamKnight *s, BfmForestCamera *camera)
 {
-    if (!s || !pixels) return 0;
     static void (*const views[])(BfmForestCamera *) = {
         [BFM_STEAM_ENTRY_CAMERA] = bfm_steam_knight_entrance_camera,
         [BFM_STEAM_CAPTOR_CAMERA] = bfm_steam_knight_hostage_camera,
@@ -151,10 +166,22 @@ int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
         [BFM_STEAM_FIRE_CAMERA] = bfm_steam_knight_fire_reverse_camera,
         [BFM_STEAM_PRINCESS_CAMERA] = bfm_steam_knight_princess_close_camera,
         [BFM_STEAM_TUTORIAL_CAMERA] = bfm_steam_knight_charge_camera,
-        [BFM_STEAM_REPLY_CAMERA] = bfm_steam_knight_postfire_camera
+        [BFM_STEAM_REPLY_CAMERA] = bfm_steam_knight_postfire_camera,
+        [BFM_STEAM_CARPET_CAMERA] = bfm_steam_knight_hall_camera,
+        [BFM_STEAM_ROOF_CAMERA] = bfm_steam_knight_roof_camera,
+        [BFM_STEAM_MACHINE_CAMERA] = bfm_steam_knight_machine_camera,
+        [BFM_STEAM_DUEL_CAMERA] = bfm_steam_knight_machine_camera
     };
+    views[s->event.shot](camera);
+}
+
+int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
+    const BfmForestTransform *root, uint32_t visible, const int8_t fusion[2][3],
+    const int8_t lumina[2][3], uint32_t pixels[240][320])
+{
+    if (!s || !pixels) return 0;
     BfmForestCamera camera;
-    views[s->event.shot](&camera);
+    hall_camera(s, &camera);
     BfmForestActor actors[2];
     BfmForestPose actor_poses[2];
     BfmForestTransform actor_roots[2];
@@ -164,18 +191,34 @@ int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
     if (approach < 0) approach = 0;
     if (approach > 192) approach = 192;
     int16_t z = (int16_t)(-3968 + approach * 256 / 192);
-    const int16_t floor_positions[][3] = {{-80,-2050,z}, {-192,-2050,z}};
-    for (unsigned i = 0; i < 2; ++i) {
+    int16_t floor_positions[][3] = {{-80,-2050,z}, {-192,-2050,z}};
+    if (s->event.stage == BFM_STEAM_SILENCE && s->event.stage_age >= 21) {
+        unsigned recoil = s->event.stage_age - 21;
+        floor_positions[1][2] -= (int16_t)(recoil >= 8 ? 32 : 4 * recoil);
+    } else if (s->event.stage > BFM_STEAM_SILENCE) {
+        floor_positions[1][2] -= 32;
+    }
+    size_t actor_count = bfm_steam_event_show_captors(&s->event) ? 2 : 0;
+    for (size_t i = 0; i < actor_count; ++i) {
         bfm_forest_actor_root(0, floor_positions[i], &actor_roots[i]);
         unsigned clip = 0, age = s->event.age;
         if (i == BFM_STEAM_ROOTRICK)
             bfm_steam_event_captor_pose(&s->event, &clip, &age);
-        else if (s->event.shot == BFM_STEAM_PRINCESS_CAMERA)
+        else if (s->event.stage == BFM_STEAM_HOSTAGE_PRAISE) {
             clip = 1;
+            age = s->event.stage_age;
+        } else if (s->event.stage == BFM_STEAM_SILENCE && s->event.stage_age >= 21) {
+            clip = 2;
+            age = s->event.stage_age - 21;
+        } else if (s->event.shot == BFM_STEAM_PRINCESS_CAMERA) {
+            clip = 1;
+        }
         if (!bfm_steam_knight_hostage_actor(s->hostages, i, clip, age,
                                              &actor_roots[i], &actor_poses[i], &actors[i]))
             return 0;
     }
+    if (!actor_count)
+        actor_count = bfm_steam_knight_machine_actors(s->machine, actors, 2);
     BfmForestDustCard cards[BFM_STEAM_ENTRY_LIGHT_CARDS + BFM_STEAM_FLAMES + BFM_STEAM_WEAPON_CARDS];
     size_t count = s->event.shot == BFM_STEAM_ENTRY_CAMERA
                  ? bfm_steam_entry_light(&camera, s->event.age, cards) : 0;
@@ -187,9 +230,13 @@ int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
     for (size_t i = 0; i < count; ++i) cards[i].slot = (unsigned)i;
     if (!bfm_steam_knight_field_draw(s->field, &camera, pose, root, visible,
             has_blade ? &s->weapons.fusion : NULL, has_blade ? &blade : NULL, s->event.age & 1,
-            actors, 2, cards, count, pixels)) return 0;
+            actors, actor_count, cards, count, pixels)) return 0;
     if (s->hud_shown && bfm_steam_event_hud(&s->event))
         bfm_forest_hud_draw(s->hud, &s->event.run->player, pixels);
+    const uint16_t (*tiles)[1024] = bfm_forest_terrain_tiles(bfm_steam_knight_field_terrain(s->field));
+    if (bfm_steam_event_title(&s->event)) bfm_steam_knight_boss_title(tiles, pixels);
+    if (s->event.stage == BFM_STEAM_DUEL)
+        bfm_steam_knight_boss_status(&s->boss_hud, tiles, s->core_hp, s->event.stage_age, pixels);
     if (s->event.message) {
         const BfmForestMessageFrame *frame = bfm_forest_message_frame(s->event.message);
         bfm_bedroom_message_art_draw_side(s->art, frame, 160, 0, pixels);

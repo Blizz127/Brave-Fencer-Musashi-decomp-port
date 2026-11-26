@@ -18,6 +18,11 @@ void bfm_steam_knight_captor_close_camera(BfmForestCamera *camera);
 void bfm_steam_knight_fire_reverse_camera(BfmForestCamera *camera);
 void bfm_steam_knight_princess_close_camera(BfmForestCamera *camera);
 void bfm_steam_knight_postfire_camera(BfmForestCamera *camera);
+void bfm_steam_knight_hall_camera(BfmForestCamera *camera);
+void bfm_steam_knight_roof_camera(BfmForestCamera *camera);
+void bfm_steam_knight_machine_camera(BfmForestCamera *camera);
+/* Open the roof and expose the mounted room backdrop. The change is idempotent. */
+int bfm_steam_knight_field_open_roof(BfmSteamKnightField *field);
 /* Omit both hero arguments for a shot that hides Musashi. */
 int bfm_steam_knight_field_draw(BfmSteamKnightField *field, const BfmForestCamera *camera,
     const BfmForestPose *pose, const BfmForestTransform *root, uint32_t visible_parts,
