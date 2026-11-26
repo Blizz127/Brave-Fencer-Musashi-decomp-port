@@ -51,6 +51,7 @@ struct BfmSteamKnightMachine {
     unsigned neutral_since, round, round_stage, phase_age, yaw, y_fraction;
     const BfmForestPose *jump_now, *jump_shown, *previous_jump_pose;
     int32_t x4, z4, action_x4, action_z4;
+    int root_remainder[3];
     int spawn_y, active, revealed, controlled;
 };
 
@@ -217,6 +218,8 @@ static const BfmForestPose *action_pose(const BfmSteamKnightMachine *machine, un
         unsigned key = age - 34;
         return &machine->chassis[REARM].pose[key < 24 ? key : 23];
     }
+    if (machine->action == BFM_STEAM_MACHINE_STREET_WALKING)
+        return &clip->pose[age % clip->count];
     if (machine->action == BFM_STEAM_MACHINE_NEUTRAL && machine->round == 2)
         return &machine->chassis[NEUTRAL].pose[age % 16];
     if (machine->action == BFM_STEAM_MACHINE_STRIKING) {
@@ -293,13 +296,15 @@ static void selected_chassis(BfmSteamKnightMachine *machine, unsigned shown)
         machine->root.translation[0] = machine->display_root.translation[0] = machine->x4 >> 2;
         machine->root.translation[2] = machine->display_root.translation[2] = machine->z4 >> 2;
     }
-    if (machine->action == BFM_STEAM_MACHINE_TRANSFERRING) age = machine->phase_age;
+    int driven = machine->action == BFM_STEAM_MACHINE_TRANSFERRING ||
+                 machine->action == BFM_STEAM_MACHINE_STREET_WALKING;
+    if (driven) age = machine->phase_age;
     unsigned duration = machine->action == BFM_STEAM_MACHINE_WALKING ? 48 : machine->selected->count;
     if (machine->action == BFM_STEAM_MACHINE_STRIKING) duration = 142;
     if (machine->action == BFM_STEAM_MACHINE_SMASHING) duration = 180;
     if (machine->action != BFM_STEAM_MACHINE_KNEELING &&
         machine->action != BFM_STEAM_MACHINE_NEUTRAL &&
-        machine->action != BFM_STEAM_MACHINE_TRANSFERRING && age >= duration) {
+        !driven && age >= duration) {
         machine->walk_after_strike = machine->action == BFM_STEAM_MACHINE_STRIKING && machine->new_break_in_strike;
         int recovered = machine->action == BFM_STEAM_MACHINE_GETTING_UP;
         unsigned remaining = age - duration;
@@ -413,6 +418,7 @@ int bfm_steam_knight_machine_set_world_root(BfmSteamKnightMachine *machine, cons
     if (!machine || !machine->controlled || !position) return 0;
     machine->action_x4 += 4 * position[0] - machine->x4;
     machine->action_z4 += 4 * position[2] - machine->z4;
+    for (unsigned i = 0; i < 3; ++i) machine->root_remainder[i] = 0;
     machine->y_fraction = 0;
     machine->x4 = 4 * position[0];
     machine->z4 = 4 * position[2];
@@ -575,9 +581,9 @@ int bfm_steam_knight_machine_joint(const BfmSteamKnightMachine *machine, unsigne
 int bfm_steam_knight_machine_root_q12(const BfmSteamKnightMachine *machine, int32_t position[3])
 {
     if (!machine || !machine->active || !position) return 0;
-    position[0] = machine->x4 * 1024;
-    position[1] = machine->root.translation[1] * 4096 + (int)machine->y_fraction * 512;
-    position[2] = machine->z4 * 1024;
+    position[0] = machine->x4 * 1024 + machine->root_remainder[0];
+    position[1] = machine->root.translation[1] * 4096 + (int)machine->y_fraction * 512 + machine->root_remainder[1];
+    position[2] = machine->z4 * 1024 + machine->root_remainder[2];
     return 1;
 }
 
@@ -613,7 +619,8 @@ int bfm_steam_knight_machine_reset_round(BfmSteamKnightMachine *machine, unsigne
     if (!round) {
         int16_t at[3];
         bfm_steam_knight_machine_world_root(machine, at);
-        machine->open_cover = machine->yaw = machine->y_fraction = 0;
+        bfm_steam_knight_machine_set_world_root(machine, at);
+        machine->open_cover = machine->yaw = 0;
         bfm_forest_actor_root(0, at, &machine->root);
         machine->display_root = machine->root;
     }
@@ -753,6 +760,50 @@ int bfm_steam_knight_machine_street_jump(BfmSteamKnightMachine *machine,
     bfm_steam_knight_machine_present(machine, machine->control_age);
     landing->core_extension = now.extension;
     landing->touched_ground = now.landed;
+    return 1;
+}
+
+int bfm_steam_knight_machine_street_walk(BfmSteamKnightMachine *machine, unsigned active_age,
+                                        const int32_t position[3], unsigned yaw)
+{
+    if (!machine || !machine->controlled || machine->round != 2 || !position || yaw >= 4096)
+        return 0;
+    int16_t at[3];
+    for (unsigned i = 0; i < 3; ++i) {
+        int32_t integer = position[i] >> 12;
+        if (integer < INT16_MIN || integer > INT16_MAX) return 0;
+        at[i] = (int16_t)integer;
+    }
+    if (machine->action != BFM_STEAM_MACHINE_STREET_WALKING || active_age < machine->phase_age) {
+        select_clip(machine, STEP_FORWARD, 0);
+        machine->action = BFM_STEAM_MACHINE_STREET_WALKING;
+        machine->walk_after_strike = machine->patrol_after_recovery = 0;
+    }
+    machine->phase_age = active_age;
+    bfm_steam_knight_machine_set_world_root(machine, at);
+    machine->x4 = position[0] >> 10;
+    machine->z4 = position[2] >> 10;
+    machine->y_fraction = ((unsigned)position[1] >> 9) & 7;
+    machine->root_remainder[0] = (unsigned)position[0] & 1023;
+    machine->root_remainder[1] = (unsigned)position[1] & 511;
+    machine->root_remainder[2] = (unsigned)position[2] & 1023;
+    machine->yaw = yaw;
+    bfm_forest_actor_root(yaw, at, &machine->root);
+    machine->display_root = machine->root;
+    bfm_steam_knight_machine_present(machine, machine->control_age);
+    return 1;
+}
+
+int bfm_steam_knight_machine_street_stand(BfmSteamKnightMachine *machine)
+{
+    if (!machine || !machine->controlled || machine->round != 2) return 0;
+    if (machine->action != BFM_STEAM_MACHINE_NEUTRAL) {
+        select_clip(machine, NEUTRAL, 0);
+        machine->action = BFM_STEAM_MACHINE_NEUTRAL;
+        machine->neutral_since = machine->control_age;
+        machine->walk_after_strike = machine->patrol_after_recovery = 0;
+        bfm_steam_knight_machine_present(machine, machine->control_age);
+    }
     return 1;
 }
 

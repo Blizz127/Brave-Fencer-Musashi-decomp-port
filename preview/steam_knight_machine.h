@@ -23,7 +23,7 @@ typedef enum {
     BFM_STEAM_MACHINE_DORMANT, BFM_STEAM_MACHINE_NEUTRAL, BFM_STEAM_MACHINE_WALKING,
     BFM_STEAM_MACHINE_KNEELING, BFM_STEAM_MACHINE_GETTING_UP,
     BFM_STEAM_MACHINE_STRIKING, BFM_STEAM_MACHINE_SMASHING, BFM_STEAM_MACHINE_TRANSFERRING,
-    BFM_STEAM_MACHINE_JUMPING
+    BFM_STEAM_MACHINE_JUMPING, BFM_STEAM_MACHINE_STREET_WALKING
 } BfmSteamKnightStance;
 BfmSteamKnightStance bfm_steam_knight_machine_stance(const BfmSteamKnightMachine *machine);
 int bfm_steam_knight_machine_world_root(const BfmSteamKnightMachine *machine, int16_t position[3]);
@@ -60,6 +60,11 @@ typedef struct {
 /* Submit the live street jump. A completed landing recovery returns zero. */
 int bfm_steam_knight_machine_street_jump(BfmSteamKnightMachine *machine,
     const BfmSteamKnightJump *jump, unsigned active_age, BfmSteamKnightLanding *landing);
+/* Submit the street gait or explicitly enter its standing state. The
+ * encounter owns displacement, direction, and the next action. */
+int bfm_steam_knight_machine_street_walk(BfmSteamKnightMachine *machine, unsigned active_age,
+                                        const int32_t position_q12[3], unsigned yaw);
+int bfm_steam_knight_machine_street_stand(BfmSteamKnightMachine *machine);
 /* Sample the physical knee key before the display delay. hold_age starts
  * at zero when the terminal key is first selected. */
 int bfm_steam_knight_machine_knee_pose(const BfmSteamKnightMachine *machine,

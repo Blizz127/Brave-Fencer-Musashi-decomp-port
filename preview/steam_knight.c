@@ -16,7 +16,7 @@
 #include "forest_hud.h"
 #include "forest_damage_digits.h"
 #include "forest_message_art.h"
-#include "../pc_port/forest_player_bytes.h"
+#include "steam_knight_street_route.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -43,9 +43,13 @@ struct BfmSteamKnight {
     BfmSteamKnightCoreBoxes core_boxes;
     BfmSteamKnightCarry carry;
     struct {
+        BfmSteamKnightStreetRoute route;
+        BfmSteamKnightStreetWalk walk;
+        BfmSteamStreetChoice selected;
         BfmSteamKnightJump jump;
         BfmSteamKnightLanding landing;
         unsigned neutral_age, jump_age;
+        int marker;
     } street;
     BfmSteamKnightFinale finale;
     unsigned final_pickup_phase, launch_action;
@@ -90,6 +94,7 @@ BfmSteamKnight *bfm_steam_knight_open(const MusashiDiscMedia *disc,
     s->voice = bfm_forest_voice_load(disc);
     if (!s->art || !s->hostages || !s->machine || !s->hud ||
         !bfm_steam_knight_armor_load(&s->armor, scene, size) ||
+        !bfm_steam_street_route_load(&s->street.route, scene, size) ||
         !bfm_steam_knight_core_boxes_load(&s->core_boxes, scene, size) ||
         !bfm_steam_carry_load(&s->carry, disc, scene, size) ||
         !bfm_steam_knight_armor_load_power(disc, scene, size, &s->power) ||
@@ -208,6 +213,7 @@ static int transfer_tick(BfmSteamKnight *s)
         if (s->transfer_age >= duration) {
             if (!bfm_steam_knight_machine_reset_round(s->machine, s->round)) return 0;
             s->body_stage = 1;
+            if (s->round == 2) s->battle_flags = (s->battle_flags & ~4u) | 1u;
             return s->round == 2 || bfm_steam_knight_armor_rearm(&s->armor, s->round, 1);
         }
     } else {
@@ -244,42 +250,85 @@ static int transfer_tick(BfmSteamKnight *s)
             s->transfer_age = 0;
             s->core_hp = s->core_max;
             s->battle_flags &= 2;
+            if (s->round == 2) s->battle_flags |= 0x3004;
         }
     }
     return bfm_steam_knight_machine_round_pose(s->machine, s->body_stage,
                                                s->round, s->transfer_age++);
 }
 
-/* The street's first action is selected after a full neutral clip. Its
- * program belongs to the mounted room, alongside the first two arena programs. */
-static int street_opening(BfmSteamKnight *s)
+static int street_jump_frame(BfmSteamKnight *s)
 {
-    if (s->body_stage == 1) {
-        if (++s->street.neutral_age < 16) return 1;
-        size_t bytes;
-        const uint8_t *scene = bfm_steam_knight_field_scene(s->field, &bytes);
-        const uint32_t base = UINT32_C(0x80128158);
-        size_t slot = UINT32_C(0x801959e8) - base;
-        if (slot > bytes || bytes - slot < 4) return 0;
-        uint32_t address = u32le(scene + slot);
-        if (address < base || address - base > bytes || bytes - (address - base) < 4) return 0;
-        const uint8_t *entry = scene + (address - base);
-        if (u16le(entry) != 0 || (u16le(entry + 2) & 255) != 6) return 0;
-        if ((s->battle_flags & 0x200) || (s->core_hp <= 128 && !(s->battle_flags & 0x800))) return 1;
-        BfmSteamKnightJump *jump = &s->street.jump;
-        if (!bfm_steam_knight_machine_world_root(s->machine, jump->start)) return 0;
-        jump->destination[0] = jump->start[0];
-        jump->destination[1] = jump->start[2] - 84;
-        jump->fraction_eighths = 4;
-        jump->exposed = 1;
-        jump->release_after_landing = -1;
-        s->street.jump_age = 0;
-        s->body_stage = 6;
-    }
-    if (s->body_stage != 6) return 1;
     return bfm_steam_knight_machine_street_jump(s->machine, &s->street.jump,
                                                 s->street.jump_age++, &s->street.landing);
 }
+
+static int street_begin_jump(BfmSteamKnight *s, int rebound)
+{
+    BfmSteamKnightJump *jump = &s->street.jump;
+    int16_t origin[3];
+    if (!bfm_steam_knight_machine_world_root(s->machine, origin)) return 0;
+    /* The opening lunge lands one stride away. Its closed rebound returns
+     * to the takeoff point inherited from the second gate. */
+    int16_t x = rebound ? jump->start[0] : origin[0];
+    int16_t z = rebound ? jump->start[2] : origin[2] - 84;
+    *jump = (BfmSteamKnightJump){.destination = {x, z}, .fraction_eighths = rebound ? 2 : 4,
+        .rebound = rebound, .exposed = !rebound, .release_after_landing = rebound ? 23 : 31};
+    memcpy(jump->start, origin, sizeof origin);
+    s->body_stage = 6;
+    s->battle_flags &= ~1u;
+    s->street.jump_age = 0;
+    return street_jump_frame(s);
+}
+
+static int street_choose(BfmSteamKnight *s)
+{
+    BfmSteamStreetChoice *choice = &s->street.selected;
+    if (!bfm_steam_street_route_choose(&s->street.route, s->battle_flags, (int)s->core_hp,
+                                       s->street.marker, choice)) return 0;
+    if (choice->action == BFM_STREET_JUMP) return street_begin_jump(s, 0);
+    if (choice->action == BFM_STREET_FORWARD) {
+        int32_t root[3];
+        if (!bfm_steam_knight_machine_root_q12(s->machine, root) ||
+            !bfm_steam_street_walk_begin(&s->street.walk, root, s->battle_flags)) return 0;
+        s->body_stage = 2;
+        s->battle_flags |= 0x1001;
+        return bfm_steam_knight_machine_street_walk(s->machine, 0, root, 0);
+    }
+    s->street.neutral_age = 0;
+    if (choice->action == BFM_STREET_SHOT || choice->action == BFM_STREET_MARKED_SHOT) {
+        s->body_stage = 3;
+        s->battle_flags &= ~0x1000u;
+    } else {
+        s->body_stage = 1;
+    }
+    return bfm_steam_knight_machine_street_stand(s->machine);
+}
+
+static int street_tick(BfmSteamKnight *s)
+{
+    if (s->body_stage == 1) {
+        bfm_steam_street_delay_tick(&s->street.route);
+        unsigned cycle = s->battle_flags & 0x2000 ? 16 : 32;
+        return ++s->street.neutral_age < cycle || street_choose(s);
+    }
+    if (s->body_stage == 2) {
+        BfmSteamKnightStreetWalk *walk = &s->street.walk;
+        BfmSteamKnightStreetStep step = bfm_steam_street_walk_tick(walk, s->street.route.depth_limit);
+        if (step == BFM_STREET_WALK_INVALID ||
+            !bfm_steam_knight_machine_street_walk(s->machine, walk->age, walk->root_q12, 0)) return 0;
+        if (step == BFM_STREET_WALK_MOVING) return 1;
+        if (step == BFM_STREET_WALK_CROSSED_DEPTH)
+            bfm_steam_street_depth_crossed(&s->street.route, &s->battle_flags);
+        return street_choose(s);
+    }
+    unsigned grounded_at = s->street.jump.rebound ? 95 : 90;
+    unsigned finished = grounded_at + (unsigned)s->street.jump.release_after_landing + 8;
+    if (s->street.jump_age < finished) return street_jump_frame(s);
+    if (!s->street.jump.rebound) return street_begin_jump(s, 1);
+    return street_choose(s);
+}
+
 
 static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t held)
 {
@@ -300,8 +349,8 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
     } else if (s->weak_stage == 2 && s->weak_age < 47) {
         ++s->weak_age;
     }
-    if (s->round == 2 && (s->body_stage == 1 || s->body_stage == 6)) {
-        if (!street_opening(s)) return -1;
+    if (s->round == 2 && (s->body_stage == 1 || s->body_stage == 2 || s->body_stage == 6)) {
+        if (!street_tick(s)) return -1;
     } else if (s->body_stage == 1)
         bfm_steam_knight_machine_track_hero(s->machine, bfm_steam_hero_sample(s->hero)->feet);
     if (s->recovery_left && !--s->recovery_left) s->body_stage = 1;
