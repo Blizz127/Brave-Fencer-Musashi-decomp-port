@@ -45,6 +45,11 @@ MusashiForestPlayerMesh *musashi_forest_player_mesh_from_table(
  * neutral input RGB (128,128,128) for subsequent lighting. */
 const MusashiForestPlayerPart *musashi_forest_player_mesh_part(
     const MusashiForestPlayerMesh *mesh, unsigned index);
+/* Borrow this mesh's geometry and replace one part's draw material with opaque
+ * white. The source must outlive the view; release either with mesh_free. */
+MusashiForestPlayerMesh *musashi_forest_player_mesh_white_part_view(
+    const MusashiForestPlayerMesh *mesh, unsigned part);
+uint32_t musashi_forest_player_mesh_white_parts(const MusashiForestPlayerMesh *mesh);
 void musashi_forest_player_mesh_free(MusashiForestPlayerMesh *mesh);
 
 #ifdef __cplusplus

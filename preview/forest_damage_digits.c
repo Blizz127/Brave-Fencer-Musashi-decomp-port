@@ -10,7 +10,13 @@ int bfm_forest_damage_digits_start(BfmForestDamageDigits *digits, const BfmFores
 {
     if (!digits || !contact) return 0;
     const uint8_t *palette = bfm_forest_room_bytes(field, UINT32_C(0x80189c80), 1);
-    if (!palette) return 0;
+    return bfm_forest_damage_digits_start_data(digits, palette, contact, amount);
+}
+
+int bfm_forest_damage_digits_start_data(BfmForestDamageDigits *digits, const uint8_t *palette,
+                                        const int16_t contact[3], uint16_t amount)
+{
+    if (!digits || !palette || !contact) return 0;
     *digits = (BfmForestDamageDigits){
         .contact = {contact[0], contact[1], contact[2]}, .amount = amount, .palette = *palette
     };

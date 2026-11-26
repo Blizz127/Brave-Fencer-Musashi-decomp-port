@@ -17,6 +17,8 @@ size_t bfm_steam_knight_machine_actors(const BfmSteamKnightMachine *machine,
 /* The encounter selects an action once its live control has issued it. */
 int bfm_steam_knight_machine_set_chassis_clip(BfmSteamKnightMachine *machine,
                                              unsigned clip, unsigned elapsed);
+/* Start the mounted outer shell's observed white response on actual damage. */
+void bfm_steam_knight_machine_flash_armor(BfmSteamKnightMachine *machine, unsigned joint);
 int bfm_steam_knight_machine_joint(const BfmSteamKnightMachine *machine, unsigned chassis_part,
                                   BfmForestTransform *world, const MusashiForestPlayerPart **mesh_part);
 #endif

@@ -10,6 +10,7 @@
 #include "steam_knight_hero_motion.h"
 #include "steam_knight_boss_hud.h"
 #include "forest_hud.h"
+#include "forest_damage_digits.h"
 #include "forest_message_art.h"
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +28,11 @@ struct BfmSteamKnight {
     BfmSteamKnightArmor armor;
     BfmForestFusionPower power;
     BfmSteamKnightArmorHit hit;
+    struct {
+        BfmForestDamageDigits digits;
+        unsigned delay;
+    } numbers[BFM_STEAM_ARMOR_PLATES];
+    const uint8_t *damage_palette;
     int swing_sound, hit_sound;
     BfmSteamKnightBossHud boss_hud;
     unsigned core_hp, core_max;
@@ -55,6 +61,9 @@ BfmSteamKnight *bfm_steam_knight_open(const MusashiDiscMedia *disc,
     const uint16_t (*tiles)[1024] = bfm_forest_terrain_tiles(bfm_steam_knight_field_terrain(s->field));
     s->art = bfm_castle_message_art_load(disc, scene, size, tiles, 0x68e58);
     s->hostages = bfm_steam_knight_hostages_load(disc, size);
+    const size_t damage_palette = 0x80193a44u - 0x80128158u;
+    if (damage_palette + 2 > size) goto fail;
+    s->damage_palette = scene + damage_palette;
     s->machine = bfm_steam_knight_machine_load(scene, size);
     s->core_max = s->core_hp = 192;
     s->hud = bfm_steam_knight_hud_load(disc, scene, size, bfm_steam_knight_field_terrain(s->field));
@@ -95,6 +104,10 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
     ++e->stage_age;
     bfm_forest_voice_step(s->voice);
     bfm_steam_knight_machine_present(s->machine, e->stage_age);
+    for (size_t i = 0; i < BFM_STEAM_ARMOR_PLATES; ++i) {
+        if (s->numbers[i].delay) --s->numbers[i].delay;
+        else if (s->numbers[i].digits.amount) bfm_forest_damage_digits_advance(&s->numbers[i].digits);
+    }
     BfmForestCamera camera;
     hall_camera(s, &camera);
     BfmSteamKnightHeroStrike strike;
@@ -108,8 +121,18 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
         if (!bfm_forest_fusion_strength(&s->power, &e->run->player, strike.power_class,
                 bfm_gameplay_story_flag(e->run, 0x81), bfm_gameplay_random(e->run), &amount)) return -1;
         if (strike.count && bfm_steam_knight_armor_strike(&s->armor, s->machine,
-                strike.from, strike.ends, strike.count, strike.type, amount, &s->hit))
+                strike.from, strike.ends, strike.count, strike.type, amount, &s->hit)) {
             s->hit_sound = 1;
+            if (s->hit.before > s->hit.after)
+                bfm_steam_knight_machine_flash_armor(s->machine, s->hit.joint);
+            for (size_t i = 0; i < BFM_STEAM_ARMOR_PLATES; ++i) {
+                if (s->numbers[i].digits.amount) continue;
+                if (!bfm_forest_damage_digits_start_data(&s->numbers[i].digits, s->damage_palette,
+                                                         s->hit.point, amount)) return -1;
+                s->numbers[i].delay = 2;
+                break;
+            }
+        }
     }
     return 1;
 }
@@ -242,7 +265,10 @@ static void hall_camera(const BfmSteamKnight *s, BfmForestCamera *camera)
         [BFM_STEAM_MACHINE_CAMERA] = bfm_steam_knight_machine_camera,
         [BFM_STEAM_DUEL_CAMERA] = bfm_steam_knight_duel_camera
     };
-    if (s->event.stage == BFM_STEAM_DUEL && !s->event.stage_age)
+    if (bfm_steam_event_title(&s->event)) {
+        unsigned ground_age = s->event.landing_age > 24 ? s->event.landing_age - 24 : 0;
+        bfm_steam_knight_title_camera(camera, ground_age * 2);
+    } else if (s->event.stage == BFM_STEAM_DUEL && !s->event.stage_age)
         bfm_steam_knight_machine_camera(camera);
     else
         views[s->event.shot](camera);
@@ -294,7 +320,8 @@ int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
     }
     if (!actor_count)
         actor_count = bfm_steam_knight_machine_actors(s->machine, actors, 2);
-    BfmForestDustCard cards[BFM_STEAM_ENTRY_LIGHT_CARDS + BFM_STEAM_FLAMES + BFM_STEAM_WEAPON_CARDS];
+    BfmForestDustCard cards[BFM_STEAM_ENTRY_LIGHT_CARDS + BFM_STEAM_FLAMES + BFM_STEAM_WEAPON_CARDS
+                            + BFM_STEAM_ARMOR_PLATES * BFM_FOREST_DAMAGE_DIGIT_CARDS];
     size_t count = s->event.shot == BFM_STEAM_ENTRY_CAMERA
                  ? bfm_steam_entry_light(&camera, s->event.age, cards) : 0;
     count += bfm_steam_knight_flames_project(&s->flames, &camera, cards + count);
@@ -302,6 +329,8 @@ int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
     int has_blade;
     count += bfm_steam_weapons_project(&s->weapons, &camera, root, visible, fusion, lumina,
                                        s->event.age, &blade, &has_blade, cards + count);
+    for (size_t i = 0; i < BFM_STEAM_ARMOR_PLATES; ++i)
+        count += bfm_forest_damage_digits_project(&s->numbers[i].digits, &camera, cards + count);
     for (size_t i = 0; i < count; ++i) cards[i].slot = (unsigned)i;
     if (!bfm_steam_knight_field_draw(s->field, &camera, pose, root, visible,
             has_blade ? &s->weapons.fusion : NULL, has_blade ? &blade : NULL, s->event.age & 1,

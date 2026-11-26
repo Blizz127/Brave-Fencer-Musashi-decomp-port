@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "steam_knight_field.h"
 #include "scene_payload.h"
+#include "forest_pose.h"
 #include "steam_knight_roof_cells.h"
 #include "tower_sky.h"
 #include "../pc_port/forest_player_bytes.h"
@@ -250,6 +251,27 @@ void bfm_steam_knight_machine_camera(BfmForestCamera *camera)
         .projection = 557
     };
     camera_at(camera, (const int16_t[3]){-113, -2062, -4271});
+}
+
+/* The title circles the grounded machine once the landing smoke clears.
+ * The display updates its angle every two fields. */
+void bfm_steam_knight_title_camera(BfmForestCamera *camera, unsigned fields_since_landing)
+{
+    if (!camera) return;
+    unsigned yaw = 919u - 5u * (fields_since_landing / 2u);
+    BfmForestTransform pose;
+    bfm_forest_actor_pitch_yaw(113, yaw, (const int16_t[3]){0, 0, 0}, &pose);
+    for (unsigned i = 0; i < 3; ++i)
+        for (unsigned j = 0; j < 3; ++j)
+            camera->rotation[i][j] = pose.rotation[j][i];
+    const int radius = 530;
+    int16_t eye[3] = {
+        (int16_t)(-128 + radius * camera->rotation[0][2] / 4096),
+        -2114,
+        (int16_t)(-2944 - radius * camera->rotation[0][0] / 4096)
+    };
+    camera->projection = 300;
+    camera_at(camera, eye);
 }
 
 int bfm_steam_knight_field_draw(BfmSteamKnightField *field, const BfmForestCamera *camera,

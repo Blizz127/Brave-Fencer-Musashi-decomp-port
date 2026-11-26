@@ -17,6 +17,7 @@ static const uint32_t payload_origin = UINT32_C(0x800cedf8);
 
 struct MusashiForestPlayerMesh {
     unsigned count;
+    uint32_t white_parts;
     MusashiForestPlayerPart parts[MUSASHI_FOREST_PLAYER_PARTS];
     MusashiForestPlayerVector *vectors;
     MusashiForestPlayerFace *faces;
@@ -223,6 +224,23 @@ const MusashiForestPlayerPart *musashi_forest_player_mesh_part(
     const MusashiForestPlayerMesh *mesh, unsigned index) {
     if (!mesh || index >= mesh->count) return NULL;
     return mesh->parts+index;
+}
+
+MusashiForestPlayerMesh *musashi_forest_player_mesh_white_part_view(
+    const MusashiForestPlayerMesh *mesh, unsigned part)
+{
+    if (!mesh || part >= mesh->count) return NULL;
+    MusashiForestPlayerMesh *view = calloc(1, sizeof *view);
+    if (!view) return NULL;
+    view->count = mesh->count;
+    memcpy(view->parts, mesh->parts, mesh->count * sizeof view->parts[0]);
+    view->white_parts = UINT32_C(1) << part;
+    return view;
+}
+
+uint32_t musashi_forest_player_mesh_white_parts(const MusashiForestPlayerMesh *mesh)
+{
+    return mesh ? mesh->white_parts : 0;
 }
 
 void musashi_forest_player_mesh_free(MusashiForestPlayerMesh *mesh) {

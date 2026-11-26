@@ -16,6 +16,9 @@ typedef struct {
  * Construction has no visible geometry. */
 int bfm_forest_damage_digits_start(BfmForestDamageDigits *digits, const BfmForestField *field,
                                    const int16_t contact[3], uint16_t amount);
+/* The normal damage palette selector from the mounted room. */
+int bfm_forest_damage_digits_start_data(BfmForestDamageDigits *digits, const uint8_t *palette,
+                                        const int16_t contact[3], uint16_t amount);
 /* First incoming rifle hit. The field effect dispatcher supplies its one
  * random result and the unshifted hero root. Signed amounts use up to three
  * numeral cards and a minus sign. */

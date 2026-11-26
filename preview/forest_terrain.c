@@ -557,11 +557,15 @@ static int collect_blade(BfmForestTerrain *terrain, const BfmForestCamera *camer
 
 typedef enum { FOREST_PLAYER_MODEL, FOREST_ROOM_MODEL } ForestModelRole;
 
+static const MusashiForestPlayerFace white_triangle = {.corners = 3};
+static const MusashiForestPlayerFace white_quad = {.corners = 4};
+
 static int collect_model(BfmForestTerrain *terrain, const BfmForestCamera *camera,
                          const MusashiForestPlayerMesh *model, const BfmForestPose *pose,
                          const BfmForestTransform *root, uint32_t mask,
                          ForestModelRole role, size_t *count)
 {
+    uint32_t white_parts = musashi_forest_player_mesh_white_parts(model);
     BfmForestTransform view, model_view;
     memcpy(view.rotation, camera->rotation, sizeof(view.rotation));
     memcpy(view.translation, camera->translation, sizeof(view.translation));
@@ -617,7 +621,12 @@ static int collect_model(BfmForestTerrain *terrain, const BfmForestCamera *camer
             else
                 out->depth = (sum * (face->corners == 3 ? 341 : 256))/4096;
             out->ordinal = (unsigned)(terrain->mesh.count + *count);
-            out->model_face = face;
+            if (white_parts & (UINT32_C(1) << i)) {
+                out->lighting[0] = UINT32_C(0xffffff);
+                out->model_face = face->corners == 3 ? &white_triangle : &white_quad;
+            } else {
+                out->model_face = face;
+            }
             ++*count;
         }
     }

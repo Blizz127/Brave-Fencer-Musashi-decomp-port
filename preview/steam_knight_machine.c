@@ -5,6 +5,7 @@
 
 enum { CHASSIS, TORSO, ASSEMBLIES, MAX_KEYS = 16 };
 enum { NEUTRAL, FIRST_ACTION, LOWER, RISE, CLIPS };
+enum { FIRST_HIT_JOINT = 18, FIRST_WHITE_UPDATE = 2, OBSERVED_WHITE_UPDATES = 6 };
 static const uint32_t origin = UINT32_C(0x80128158);
 static const struct { uint32_t table; unsigned parts; } model[] = {
     {0x801b82f4, 22}, {0x801bb8dc, 10}
@@ -18,7 +19,8 @@ typedef struct {
     unsigned count, terminal;
 } MachineClip;
 struct BfmSteamKnightMachine {
-    MusashiForestPlayerMesh *mesh[ASSEMBLIES];
+    MusashiForestPlayerMesh *mesh[ASSEMBLIES], *white_chassis;
+    uint64_t shell_white_from, shell_white_until;
     MachineClip chassis[CLIPS], torso;
     BfmForestTransform root, display_root;
     const BfmForestPose *display[ASSEMBLIES], *chassis_pose;
@@ -100,6 +102,8 @@ BfmSteamKnightMachine *bfm_steam_knight_machine_load(const uint8_t *scene, size_
             scene, bytes, origin, model[piece].table, &count);
         if (!machine->mesh[piece] || count != model[piece].parts) goto failed;
     }
+    machine->white_chassis = musashi_forest_player_mesh_white_part_view(machine->mesh[CHASSIS], FIRST_HIT_JOINT);
+    if (!machine->white_chassis) goto failed;
     for (unsigned i = 0; i < CLIPS; ++i)
         if (!load_clip(&machine->chassis[i], scene, bytes, CHASSIS,
                        chassis_program[i].table, chassis_program[i].keys)) goto failed;
@@ -113,6 +117,7 @@ failed:
 void bfm_steam_knight_machine_free(BfmSteamKnightMachine *machine)
 {
     if (!machine) return;
+    musashi_forest_player_mesh_free(machine->white_chassis);
     for (unsigned i = 0; i < ASSEMBLIES; ++i)
         musashi_forest_player_mesh_free(machine->mesh[i]);
     free(machine);
@@ -218,7 +223,16 @@ size_t bfm_steam_knight_machine_actors(const BfmSteamKnightMachine *machine,
     for (unsigned i = 0; i < ASSEMBLIES; ++i)
         out[i] = (BfmForestActor){.mesh = machine->mesh[i], .pose = machine->display[i],
             .root = &machine->display_root, .visible_parts = (UINT32_C(1) << model[i].parts) - 1};
+    if (machine->control_age >= machine->shell_white_from && machine->control_age < machine->shell_white_until)
+        out[CHASSIS].mesh = machine->white_chassis;
     return ASSEMBLIES;
+}
+
+void bfm_steam_knight_machine_flash_armor(BfmSteamKnightMachine *machine, unsigned joint)
+{
+    if (!machine || !machine->controlled || joint != FIRST_HIT_JOINT) return;
+    machine->shell_white_from = (uint64_t)machine->control_age + FIRST_WHITE_UPDATE;
+    machine->shell_white_until = machine->shell_white_from + OBSERVED_WHITE_UPDATES;
 }
 
 int bfm_steam_knight_machine_joint(const BfmSteamKnightMachine *machine, unsigned chassis_part,
