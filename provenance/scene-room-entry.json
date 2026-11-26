@@ -14,6 +14,12 @@
       "base": 2148696408,
       "sha256": "9682107587bbf42655db9b8c8f53bc0fd388234ad5678632341c3874cf79f772"
     },
+    "sc01_0008": {
+      "kind": "blob",
+      "file": "extracted/overlays/sc01/0008.pac0.bin",
+      "base": 2148696408,
+      "sha256": "123e15e850254e511b5690ca63b99032ee76a1e607116b0bb6e5af6245a5e552"
+    },
     "main_0010": {
       "kind": "blob",
       "file": "extracted/overlays/main/0010.bin",
@@ -807,6 +813,19 @@
       "origin": "Independent reconstruction from US SC01 member 6. Tests whether the completed answer differs from the first library option.",
       "source_sha256": "9d0ac02f73a07b302b2b52a1b9186428bd1d852ad2b94df98ac5824e42d4f5f4",
       "span_sha256": "089e679ca789442b6e5487c00fd0c3e0701bfd45814598aefdfefeb2b90c10e2"
+    },
+    {
+      "name": "func_8017F6C8",
+      "region": "sc01_0008",
+      "vram": 2149054152,
+      "size": 124,
+      "source": "src/overlays/sc01_0008/8017f6c8.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independent reconstruction from US SC01 member 8. Saves the Scribe menu selection in the actor and registers the selected chapter text for the reading window. A zero selection ends reading.",
+      "source_sha256": "83415d2850d7fc7cbc26a5d80ee2e990bf76835e3300eb52d3b5a8cc367b102d",
+      "span_sha256": "56293e852f4ad52d17e419d1369160d1a9ba22110e05946e1e756ce3b407c51b"
     }
   ]
 }
