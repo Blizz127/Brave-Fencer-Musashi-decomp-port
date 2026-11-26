@@ -36,6 +36,7 @@ add_executable(musashi_native_boot
     village_clock.c
     village_talk_camera.c
     village_cable.c
+    southern_woods.c
     village_field.c
     village_gate.c
     village_greeting.c

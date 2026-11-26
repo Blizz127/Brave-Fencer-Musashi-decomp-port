@@ -43,6 +43,12 @@ int bfm_village_field_load_lower(BfmVillageField *field, const MusashiDiscMedia 
     return load_field(field, disc, scene, size, room, 0x8018f338u);
 }
 
+int bfm_village_field_load_woods(BfmVillageField *field, const MusashiDiscMedia *disc,
+                                 const uint8_t *scene, size_t size)
+{
+    return load_field(field, disc, scene, size, 0x8018ea38u, 0x8018963cu);
+}
+
 int bfm_village_field_prepare(BfmVillageField *field, const BfmVillageCamera *camera,
                               const BfmBedroomRoot *root, const BfmBedroomPose *pose,
                               const uint8_t flags[64], unsigned field_age,

@@ -12,6 +12,7 @@
 #include "village_gate.h"
 #include "village_residents.h"
 #include "village_sky.h"
+#include "southern_woods.h"
 #include "village_talk_camera.h"
 #include <limits.h>
 #include <stdlib.h>
@@ -25,6 +26,8 @@ struct BfmVillageArrival {
     size_t main_bytes;
     BfmBedroomEntry *entry;
     BfmVillageLower *lower;
+    BfmSouthernWoods *woods;
+    int entering_woods;
     unsigned transfer_tick, scene_tick;
     int ascending;
     uint16_t (*tiles)[1024];
@@ -59,6 +62,7 @@ static void clear_upper(BfmVillageArrival *a)
 void bfm_village_arrival_free(BfmVillageArrival *a)
 {
     if (!a) return;
+    bfm_southern_woods_free(a->woods);
     bfm_village_lower_free(a->lower);
     clear_upper(a);
     free(a);
@@ -142,6 +146,7 @@ BfmVillageArrival *bfm_village_resume_inn(const MusashiDiscMedia *disc, BfmBedro
 
 const BfmVillagePlayer *bfm_village_arrival_player(const BfmVillageArrival *a)
 {
+    if (a->woods) return bfm_southern_woods_player(a->woods);
     return a->lower ? bfm_village_lower_player(a->lower) : bfm_village_motion_player(a->motion);
 }
 
@@ -175,6 +180,7 @@ const uint8_t *bfm_village_arrival_inn_transfer(const BfmVillageArrival *arrival
 
 unsigned bfm_village_arrival_reveal_tick(const BfmVillageArrival *a)
 {
+    if (a->entering_woods) return 195;
     return a->ascending ? 138 : 145;
 }
 
@@ -226,16 +232,31 @@ int bfm_village_arrival_step_input(BfmVillageArrival *a, BfmGameplayRun *run,
     if (a->transfer_tick) {
         /* The outgoing field freezes at its exit contact. The incoming mesh is
          * ready before the crossfade makes its first scanout visible. */
-        if (++a->transfer_tick == reveal) {
-            if (a->ascending) {
+        ++a->transfer_tick;
+        /* The cleft changes the logical room while the last village frame
+         * is still on screen. Its woods field appears later in the wipe. */
+        if (a->entering_woods && a->transfer_tick == 30 &&
+            !bfm_castle_room_entry(a->disc,bfm_village_motion_transfer(a->motion),a->entry))
+            return 0;
+        if (a->transfer_tick == reveal) {
+            if (a->entering_woods) {
+                a->woods = bfm_southern_woods_open(a->disc, a->entry,
+                    bfm_village_motion_transfer(a->motion), a->main, a->main_bytes, a->tiles);
+                if (!a->woods) return 0;
+            } else if (a->ascending) {
                 if (!climb_to_upper(a)) return 0;
             } else {
                 a->lower = bfm_village_lower_open(a->disc, a->entry, a->motion, a->tiles);
                 if (!a->lower) return 0;
             }
         }
-        if (a->transfer_tick < reveal + 16) return 1;
+        if (a->transfer_tick < reveal + (a->entering_woods ? 2 : 16)) return 1;
         if (a->transfer_tick >= reveal + 21) a->transfer_tick = 0;
+    }
+    if (a->woods) {
+        if (bfm_southern_woods_player(a->woods)->controlled)
+            bfm_village_clock_step(a->record, 0);
+        return bfm_southern_woods_step(a->woods, x, y);
     }
     if (a->lower) {
         if (!bfm_village_lower_step(a->lower, x, y, talk_edge, opened)) return 0;
@@ -267,6 +288,7 @@ int bfm_village_arrival_step_input(BfmVillageArrival *a, BfmGameplayRun *run,
     if (p->events & BFM_VILLAGE_TRANSFER) {
         a->ascending = 0;
         a->transfer_tick = 1;
+        a->entering_woods = p->destination == 0x3025;
     }
     if (p->controlled && !a->transfer_tick && !bfm_village_residents_talking(a->residents))
         bfm_village_clock_step(a->record, 0);
@@ -332,6 +354,7 @@ static void draw_actors(void *context, int depth)
 int bfm_village_arrival_draw(BfmVillageArrival *a, const uint8_t flags[64],
                              const BfmForestMessageFrame *window, uint32_t pixels[240][320])
 {
+    if (a->woods) return bfm_southern_woods_draw(a->woods, flags, pixels);
     if (a->lower) return bfm_village_lower_draw(a->lower, a->scene_tick, flags, window, pixels);
     const BfmVillagePlayer *p = bfm_village_motion_player(a->motion);
     BfmVillageCamera drawing = a->presented_camera;

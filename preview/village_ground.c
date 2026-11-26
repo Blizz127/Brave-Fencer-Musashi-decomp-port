@@ -26,6 +26,7 @@ typedef struct {
 struct BfmVillageGround {
     Slice tables[TABLE_COUNT];
     int origin_x, origin_z, width, depth;
+    unsigned exit_material;
 };
 
 static unsigned read16(const uint8_t *p)
@@ -60,6 +61,8 @@ BfmVillageGround *bfm_village_ground_open(const uint8_t *scene, size_t bytes, ui
         view.tables[i] = (Slice){grid + offset, end - offset};
         end = offset;
     }
+    if (room == UINT32_C(0x8018c794)) view.exit_material = 0x106;
+    if (room == UINT32_C(0x80192b18)) view.exit_material = 0x105;
     view.origin_x = read16(grid);
     view.origin_z = read16(grid + 2);
     view.width = read16(grid + 4);
@@ -169,7 +172,8 @@ static int floors(const BfmVillageGround *g, const int start[3], int end[3],
     for (size_t i = 0; i < list.bytes; i += 2) {
         Face face;
         if (!read_face(g, read16(list.data + i), &face)) return -1;
-        if (face.planes[0].normal[1] >= -1024 || (face.material & 0x300) ||
+        if (face.planes[0].normal[1] >= -1024 ||
+            ((face.material & 0x300) && face.material != g->exit_material) ||
             !crosses(&face, start, end)) continue;
         *support = face;
         if (!project(face.planes, end)) return -1;
