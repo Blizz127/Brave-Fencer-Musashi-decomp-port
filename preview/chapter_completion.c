@@ -135,7 +135,7 @@ BfmBedroom *bfm_chapter_completion_take_bedroom(BfmChapterCompletion *state,
     BfmBedroom *room = bfm_bedroom_open(disc, &state->earned);
     if (room) {
         bfm_bedroom_bind_run(room, state->run);
-        page(state, BFM_CHAPTER_FINISHED);
+        page(state, BFM_CHAPTER_COMPLETION_FINISHED);
     }
     return room;
 }
