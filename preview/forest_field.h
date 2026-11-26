@@ -219,6 +219,14 @@ int bfm_forest_dry_creek_bank(const BfmForestField *field, const int16_t foot[3]
 /* Resolve the level stride that first leaves the supported near bank. */
 int bfm_forest_walks_off_creek_bank(const BfmForestField *field, const int16_t from[3],
                                     const int16_t end[3]);
+/* A shallow entry projects the dry stride onto the first near grade (2).
+ * A deeper stride walks off level support (1). Other paths return zero. */
+int bfm_forest_creek_bank_stride(const BfmForestField *field, const int16_t from[3], int16_t end[3]);
+/* Acquire only the downward, bounded near-grade contact of a failed air sweep. */
+int bfm_forest_creek_slope_contact(const BfmForestField *field, const int16_t from[3], int16_t end[3]);
+/* Continue a supported slide (1), or leave its finite toe for air (2).
+ * Return 2 and rejected queries preserve the offered endpoint. */
+int bfm_forest_creek_slope_step(const BfmForestField *field, const int16_t from[3], int16_t end[3]);
 /* The hero can additionally enter the bounded first-creek water surface. */
 int bfm_forest_player_air_step(const BfmForestField *field, const int16_t from[3],
                                int16_t to[3], BfmForestContact *contact, int *landed, int *water);

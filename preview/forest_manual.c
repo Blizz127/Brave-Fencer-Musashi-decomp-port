@@ -10,7 +10,7 @@
 
 enum { WALK = 7, RUN = 8, Q16 = 65536, ACCELERATION = Q16 / 16 };
 
-enum { ON_FLOOR, LEFT_LEDGE, LEFT_FIRST_CREEK_BANK };
+enum { ON_FLOOR, LEFT_LEDGE, LEFT_FIRST_CREEK_BANK, ON_FIRST_CREEK_SLOPE };
 
 /* Resolve a screen vector on the level ground. The camera can pitch, so
  * normalize its two projected axes separately before combining them. */
@@ -54,11 +54,14 @@ static BfmForestTopStep step_on_floor(const BfmForestField *field,
             return BFM_FOREST_TOP_BLOCKED;
         if (support == BFM_FOREST_TOP_FREE)
             return support;
-    } else if (left_creek && bfm_forest_walks_off_creek_bank(field, cached, end)) {
-        *left_creek = 1;
-        support = BFM_FOREST_TOP_LEFT;
-    } else if (!bfm_forest_corridor_step(field, ground, cached, end)) {
-        return BFM_FOREST_TOP_BLOCKED;
+    } else {
+        int creek = left_creek ? bfm_forest_creek_bank_stride(field, cached, end) : 0;
+        if (creek) {
+            *left_creek = creek == 2 ? ON_FIRST_CREEK_SLOPE : LEFT_FIRST_CREEK_BANK;
+            support = BFM_FOREST_TOP_LEFT;
+        } else if (!bfm_forest_corridor_step(field, ground, cached, end)) {
+            return BFM_FOREST_TOP_BLOCKED;
+        }
     }
     for (unsigned axis = 0; axis < 3; ++axis)
         next->position[axis] = ((uint32_t)(uint16_t)end[axis] << 16) |
@@ -168,7 +171,11 @@ static BfmForestManualResult ground_control(BfmForestManual *state,
     state->after_jump = 0;
     state->on_bridge = ground.bridge || (state->on_bridge && abs(ground.height - cached[1]) > 4);
     state->left_support = support == BFM_FOREST_TOP_LEFT ? LEFT_LEDGE : ON_FLOOR;
-    if (left_creek) state->left_support = LEFT_FIRST_CREEK_BANK;
+    if (left_creek) state->left_support = left_creek;
+    if (left_creek == ON_FIRST_CREEK_SLOPE) {
+        next.kind = next.state = 4;
+        next.action = next.phase = 1;
+    }
     memcpy(state->ground_normal, ground.normal, sizeof state->ground_normal);
     *actor = next;
     *yaw = next_yaw;
@@ -216,8 +223,13 @@ int bfm_forest_jump_begin(BfmForestJump *jump, const BfmForestField *field,
 int bfm_forest_fall_begin(BfmForestJump *jump, BfmForestManual *manual,
                           ForestPlayerState *actor)
 {
-    if (!jump || jump->active || !manual || !manual->left_support || !actor ||
-        actor->state != 1 || (manual->last_descent <= 0 && manual->left_support != LEFT_FIRST_CREEK_BANK))
+    if (!jump || jump->active || !manual || !manual->left_support || !actor) return 0;
+    if (manual->left_support == ON_FIRST_CREEK_SLOPE && actor->state == 4) {
+        *jump = (BfmForestJump){.active = 1, .descending = 1, .walk_off = 1, .creek_slide = 1};
+        manual->left_support = ON_FLOOR;
+        return 1;
+    }
+    if (actor->state != 1 || (manual->last_descent <= 0 && manual->left_support != LEFT_FIRST_CREEK_BANK))
         return 0;
     *jump = (BfmForestJump){.active = 1, .descending = 1, .steering = 1,
                             .walk_off = 1};
@@ -228,6 +240,70 @@ int bfm_forest_fall_begin(BfmForestJump *jump, BfmForestManual *manual,
     return 1;
 }
 
+/* The opening near bank is a one-in-one grade. While the feet are on it
+ * the observed slide descends eight units per update. Directional input
+ * adds a quarter-unit of local acceleration, and neutral retains the
+ * lateral drift while the downhill surface still carries the player. */
+static int creek_slide_step(BfmForestJump *jump, const BfmForestField *field,
+    ForestPlayerState *actor, const BfmForestCamera *camera, int x, int y,
+    int16_t *yaw, int16_t cached[3])
+{
+    ForestPlayerState next = *actor;
+    BfmForestContact floor;
+    if (bfm_forest_ground(field, cached[0], cached[1] - 4, cached[2], &floor) &&
+        !floor.flags && !floor.bridge && !floor.normal[0] && floor.normal[2] > 0 &&
+        floor.normal[2] == -floor.normal[1])
+        jump->ground = floor;
+    if (jump->ground.normal[2] <= 0) return 0;
+    int32_t downhill = 4 * Q16 * jump->ground.normal[2] / 4096;
+    int32_t steer[2] = {jump->slide_steer[0], jump->slide_steer[1]};
+    int16_t heading = *yaw;
+    if (x || y) {
+        if (!bfm_forest_manual_heading(camera, x, y, &heading)) return 0;
+        next.field_24.word = next.local_y.word = 0;
+        next.field_2c.word = -Q16 / 4;
+        if (!bfm_forest_level_velocity(&next, 0, heading, 0)) return 0;
+        steer[0] += (int32_t)next.velocity[0];
+        steer[1] += (int32_t)next.velocity[2];
+    }
+    int32_t travel[3] = {steer[0], 8 * Q16, 8 * Q16 + steer[1]};
+    int16_t foot[3];
+    for (unsigned i = 0; i < 3; ++i) {
+        next.position[i] += (uint32_t)travel[i];
+        foot[i] = (int16_t)(next.position[i] >> 16);
+    }
+    int support = bfm_forest_creek_slope_step(field, cached, foot);
+    if (!support) return 0;
+    if (support == 2) {
+        /* Leaving the incline carries a smaller horizontal component into
+         * free flight. Its first update keeps the eight-unit descent. */
+        jump->creek_slide = 0;
+        jump->steering = 1;
+        jump->neutral_ticks = 0;
+        actor->kind = actor->state = 3;
+        actor->action = actor->phase = 1;
+        actor->field_24.word = 0;
+        actor->field_2c.word = -downhill;
+        actor->local_y.word = 8 * Q16 - 13 * Q16 / 8;
+        *yaw = 2048;
+        return 2;
+    }
+    for (unsigned i = 0; i < 3; ++i)
+        next.position[i] = ((uint32_t)(uint16_t)foot[i] << 16) | (next.position[i] & 0xffff);
+    next.velocity[0] = (uint32_t)steer[0];
+    next.velocity[1] = 8 * Q16;
+    next.velocity[2] = (uint32_t)(downhill + steer[1]);
+    next.kind = next.state = 4;
+    next.action = next.phase = 1;
+    jump->slide_steer[0] = steer[0];
+    jump->slide_steer[1] = steer[1];
+    ++jump->elapsed;
+    *actor = next;
+    *yaw = heading;
+    memcpy(cached, foot, sizeof foot);
+    return 1;
+}
+
 BfmForestJumpResult bfm_forest_player_jump_tick(BfmForestJump *jump, const BfmForestField *field,
     ForestPlayerState *actor, const BfmForestCamera *camera, int x, int y, int cross_held,
     int16_t *yaw, int16_t cached[3], int has_dry_bank)
@@ -235,6 +311,11 @@ BfmForestJumpResult bfm_forest_player_jump_tick(BfmForestJump *jump, const BfmFo
     if (!jump || !jump->active || !field || !actor || !camera || !yaw || !cached ||
         x < -1 || x > 1 || y < -1 || y > 1)
         return BFM_FOREST_JUMP_BOUNDARY;
+    if (jump->creek_slide) {
+        int moved = creek_slide_step(jump, field, actor, camera, x, y, yaw, cached);
+        if (!moved) return BFM_FOREST_JUMP_BOUNDARY;
+        if (moved == 1) return BFM_FOREST_JUMP_AIRBORNE;
+    }
     if (jump->landed) {
         ++jump->elapsed;
         ++jump->phase_elapsed;
@@ -291,18 +372,28 @@ BfmForestJumpResult bfm_forest_player_jump_tick(BfmForestJump *jump, const BfmFo
     int16_t end[3];
     for (unsigned a = 0; a < 3; ++a)
         end[a] = (int16_t)(next.position[a] >> 16);
-    int landed, water = 0;
+    int landed = 0, water = 0, slide = 0;
     int *water_contact = has_dry_bank ? &water : NULL;
     if (!bfm_forest_player_air_step(field, cached, end, &next_jump.ground, &landed, water_contact)) {
-        /* Keep falling in the last supported column when a lateral route
-         * leads into terrain that this movement path cannot resolve. */
-        end[0] = cached[0];
-        end[2] = cached[2];
-        if (!bfm_forest_player_air_step(field, cached, end, &next_jump.ground, &landed, water_contact))
-            return BFM_FOREST_JUMP_BOUNDARY;
-        next.position[0] = actor->position[0];
-        next.position[2] = actor->position[2];
-        next.velocity[0] = next.velocity[2] = 0;
+        slide = has_dry_bank && bfm_forest_creek_slope_contact(field, cached, end);
+        if (!slide) {
+            /* Keep falling in the last supported column when a lateral route
+             * leads into terrain that this movement path cannot resolve. */
+            end[0] = cached[0];
+            end[2] = cached[2];
+            if (!bfm_forest_player_air_step(field, cached, end, &next_jump.ground, &landed, water_contact)) {
+                slide = has_dry_bank && bfm_forest_creek_slope_contact(field, cached, end);
+                if (!slide) return BFM_FOREST_JUMP_BOUNDARY;
+            }
+            next.position[0] = actor->position[0];
+            next.position[2] = actor->position[2];
+            next.velocity[0] = next.velocity[2] = 0;
+        }
+    }
+    if (slide) {
+        next_jump.creek_slide = next_jump.walk_off = 1;
+        next.kind = next.state = 4;
+        next.action = next.phase = 1;
     }
     if (leaving_rim)
         next.local_y.word = retained_descent;
