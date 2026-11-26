@@ -1103,6 +1103,8 @@ static int recover_from_creek(BfmForestWalk *w)
         return update_pose(w);
     }
     w->actor.kind = w->actor.state = 25;
+    if (w->water_age == 1)
+        bfm_forest_begin_water_effect(w->field, w->cached, w->eye, w->gameplay);
     if (w->water_age <= CREEK_SINK_UPDATES) {
         w->actor.position[1] += (4u << 16) + (w->water_age << 14);
         w->cached[1] = (int16_t)(w->actor.position[1] >> 16);

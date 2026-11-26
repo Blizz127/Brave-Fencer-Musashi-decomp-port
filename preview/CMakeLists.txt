@@ -94,6 +94,7 @@ add_executable(musashi_native_boot
     forest_glows.c
     forest_glow_halo.c
     forest_dust.c
+    forest_water_effect.c
     forest_fall.c
     forest_fall_projection.c
     forest_bridge_floor.c
