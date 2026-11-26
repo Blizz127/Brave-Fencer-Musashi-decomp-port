@@ -368,6 +368,12 @@ static int forest_frame(Player *p)
         case BFM_RETRY_AUDIO_RESTORE_ROOM:
             if (bfm_forest_walk_room(p->forest) == 0x3008)
                 bfm_desktop_voice_forest_score(p->voice, p->disc, SDL_GetTicks64());
+            else if (bfm_forest_walk_room(p->forest) == 0x300b)
+                bfm_desktop_voice_tower_retry_music(p->voice, p->disc,
+                                                    bfm_forest_walk_retry_music_track(p->forest));
+            break;
+        case BFM_RETRY_AUDIO_STOP_OPTICAL:
+            bfm_desktop_voice_end_tower_music(p->voice);
             break;
         case BFM_RETRY_AUDIO_NONE:
             break;

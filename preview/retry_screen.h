@@ -9,7 +9,8 @@
 
 typedef struct BfmRetryScreen BfmRetryScreen;
 typedef enum {
-    BFM_RETRY_AUDIO_NONE, BFM_RETRY_AUDIO_FADE_FIELD, BFM_RETRY_AUDIO_START, BFM_RETRY_AUDIO_FADE_OUT, BFM_RETRY_AUDIO_RESTORE_ROOM
+    BFM_RETRY_AUDIO_NONE, BFM_RETRY_AUDIO_FADE_FIELD, BFM_RETRY_AUDIO_START, BFM_RETRY_AUDIO_FADE_OUT, BFM_RETRY_AUDIO_RESTORE_ROOM,
+    BFM_RETRY_AUDIO_STOP_OPTICAL
 } BfmRetryAudioEvent;
 
 /* The active field, disc and shared playthrough outlive this presentation. */

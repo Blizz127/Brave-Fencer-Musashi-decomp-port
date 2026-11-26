@@ -125,6 +125,16 @@ int bfm_castle_drawbridge_actor(const BfmCastleDrawbridge *b, int16_t feet[3],
     return 1;
 }
 
+BfmDrawbridgeMusic bfm_castle_drawbridge_music(const BfmCastleDrawbridge *b)
+{
+    if (!b) return BFM_DRAWBRIDGE_MUSIC_NONE;
+    /* The departing room counts ten down through zero before issuing its
+     * fade. Selecting the new room cancels any remaining optical audio. */
+    if (b->age == 11) return BFM_DRAWBRIDGE_MUSIC_FADE;
+    if (b->age == SELECT_CASTLE) return BFM_DRAWBRIDGE_MUSIC_STOP;
+    return BFM_DRAWBRIDGE_MUSIC_NONE;
+}
+
 int bfm_castle_drawbridge_uses_departure(const BfmCastleDrawbridge *b)
 {
     return b && b->age < SELECT_CASTLE;

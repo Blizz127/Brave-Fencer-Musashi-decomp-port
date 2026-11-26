@@ -176,6 +176,7 @@ add_executable(musashi_native_boot
     forest_terrain.c
     forest_speech_actor.c
     disc_voice.c
+    tower_disc_music.c
     forest_score.c
     forest_voice.c
     dialogue_contour.c

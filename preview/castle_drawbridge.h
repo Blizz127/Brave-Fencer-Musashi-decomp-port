@@ -24,6 +24,10 @@ unsigned bfm_castle_drawbridge_room(const BfmCastleDrawbridge *bridge);
 int bfm_castle_drawbridge_descending(const BfmCastleDrawbridge *bridge);
 int bfm_castle_drawbridge_actor(const BfmCastleDrawbridge *bridge, int16_t feet[3],
     int16_t *heading, enum BfmDrawbridgeMotion *motion, unsigned *motion_tick);
+typedef enum {
+    BFM_DRAWBRIDGE_MUSIC_NONE, BFM_DRAWBRIDGE_MUSIC_FADE, BFM_DRAWBRIDGE_MUSIC_STOP
+} BfmDrawbridgeMusic;
+BfmDrawbridgeMusic bfm_castle_drawbridge_music(const BfmCastleDrawbridge *bridge);
 /* The preceding room still owns its visible departure frame during this fade. */
 int bfm_castle_drawbridge_uses_departure(const BfmCastleDrawbridge *bridge);
 unsigned bfm_castle_drawbridge_shade(const BfmCastleDrawbridge *bridge);

@@ -69,6 +69,7 @@ struct BfmForestWalk {
     BfmRetryScreen *retry;
     int fatal_hit;
     unsigned reentry_age;
+    unsigned retry_music_track;
     BfmTowerField *tower;
     BfmTowerAscentDoor summit_door;
     BfmTowerSummitTransfer summit_transfer;
@@ -1319,10 +1320,20 @@ int bfm_forest_walk_defeated(const BfmForestWalk *w)
     return w && (w->retry || w->reentry_age);
 }
 
+unsigned bfm_forest_walk_retry_music_track(const BfmForestWalk *w)
+{
+    return w ? w->retry_music_track : 0;
+}
+
 BfmRetryAudioEvent bfm_forest_walk_retry_audio(const BfmForestWalk *w)
 {
     if (!w) return BFM_RETRY_AUDIO_NONE;
     if (w->retry) return bfm_retry_screen_audio_event(w->retry);
+    if (w->retry_music_track && w->drawbridge) {
+        BfmDrawbridgeMusic event = bfm_castle_drawbridge_music(w->drawbridge);
+        if (event == BFM_DRAWBRIDGE_MUSIC_FADE) return BFM_RETRY_AUDIO_FADE_FIELD;
+        if (event == BFM_DRAWBRIDGE_MUSIC_STOP) return BFM_RETRY_AUDIO_STOP_OPTICAL;
+    }
     if (w->reentry_age == (w->summit ? 1u : 104u))
         return BFM_RETRY_AUDIO_RESTORE_ROOM;
     return BFM_RETRY_AUDIO_NONE;
@@ -2215,6 +2226,9 @@ static int resume_chapter(BfmForestWalk *w)
     bfm_forest_hud_free(w->hud);
     w->hud = hud;
     w->reentry_age = 1;
+    /* The lower checkpoint changes the selected CD track only when its
+     * entrance is actually loaded. */
+    w->retry_music_track = w->escape.checkpoint;
     restore_whole_position(w, w->escape.position);
     w->yaw = w->escape.yaw;
     w->actor.state = (uint8_t)w->escape.action;

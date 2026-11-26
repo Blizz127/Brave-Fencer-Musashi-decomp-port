@@ -36,6 +36,9 @@ typedef enum {
  * can be accepted with the output device disconnected. */
 int bfm_desktop_voice_defeat_score(DesktopVoice *voice, const MusashiDiscMedia *disc,
                                    BfmDefeatScoreEvent event);
+/* Resume the mounted optical music at summit retry entrance 2 or 3. */
+void bfm_desktop_voice_end_tower_music(DesktopVoice *voice);
+int bfm_desktop_voice_tower_retry_music(DesktopVoice *voice, const MusashiDiscMedia *disc, unsigned entrance);
 struct BfmTowerBellSound;
 void bfm_desktop_voice_tower_bell(DesktopVoice *voice, struct BfmTowerBellSound *bell,
                                   unsigned command, unsigned argument);

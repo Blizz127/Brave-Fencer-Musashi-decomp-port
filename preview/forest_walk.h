@@ -33,6 +33,7 @@ int bfm_forest_walk_tick_controls(BfmForestWalk *walk, int x, int y,
 /* 0 during the door event, 1 under player control, 2 at the preview boundary. */
 int bfm_forest_walk_control(const BfmForestWalk *walk);
 int bfm_forest_walk_defeated(const BfmForestWalk *walk);
+unsigned bfm_forest_walk_retry_music_track(const BfmForestWalk *walk);
 BfmRetryAudioEvent bfm_forest_walk_retry_audio(const BfmForestWalk *walk);
 /* Room selected by the running scene, including during a transfer. */
 uint16_t bfm_forest_walk_room(const BfmForestWalk *walk);
