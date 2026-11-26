@@ -15,7 +15,7 @@ void bfm_tower_field_free(BfmTowerField *tower);
 BfmForestField *bfm_tower_field_room(BfmTowerField *tower);
 int bfm_tower_field_place(BfmTowerField *tower, ForestPlayerState *player,
                           int16_t *model_yaw, int16_t cached[3]);
-void bfm_tower_field_tick(BfmTowerField *tower, const int16_t player[3], BfmGameplayRun *gameplay);
+void bfm_tower_field_tick(BfmTowerField *tower, const int16_t player[3], int facing, BfmGameplayRun *gameplay);
 /* Each physical swing supplies a fresh nonzero stroke ID for all its rays.
  * A success clips the segment to the mounted column and returns a Q12 normal. */
 int bfm_tower_field_blade_contact(BfmTowerField *tower, unsigned stroke_id,
@@ -26,6 +26,11 @@ int bfm_tower_field_body_slide(const BfmTowerField *tower, const int16_t from[3]
 /* Acknowledge when the player dismisses the presenter's final page. */
 int bfm_tower_field_plate_note(const BfmTowerField *tower);
 void bfm_tower_field_close_plate_note(BfmTowerField *tower);
+/* The reveal advances through drain, lift, summit, then returned control. */
+unsigned bfm_tower_field_rise_phase(const BfmTowerField *tower);
+/* Raised becomes true after the full lift and its closing camera hold. */
+int bfm_tower_field_raised(const BfmTowerField *tower);
+int bfm_tower_field_revealing(const BfmTowerField *tower);
 int bfm_tower_field_plate_pressing(const BfmTowerField *tower);
 unsigned bfm_tower_field_plate_count(const BfmTowerField *tower);
 int bfm_tower_field_camera(const BfmTowerField *tower, const int16_t player[3],

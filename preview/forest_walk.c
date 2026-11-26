@@ -1208,7 +1208,7 @@ int bfm_forest_walk_control(const BfmForestWalk *w)
     if (w && w->gateway.active) {
         BfmForestGatewayFrame frame = bfm_forest_gateway_transition_frame(&w->gateway);
         if (!frame.live || (frame.room == 0x3009 && (!frame.complete || w->tower_note ||
-                                    bfm_tower_field_plate_pressing(w->tower)))) return 0;
+                                    (bfm_tower_field_plate_pressing(w->tower) || bfm_tower_field_revealing(w->tower))))) return 0;
     }
     if (!w || !w->player_control || w->retreat_control || bfm_forest_lesson_owns_player(&w->lesson) ||
         (w->fusion.award.phase > BFM_AWARD_IDLE && w->fusion.award.phase < BFM_AWARD_COMPLETE))
@@ -1365,7 +1365,7 @@ static int tick_gateway(BfmForestWalk *w, int x, int y, int square_edge, int con
         if (!step_tower_note(w, confirm, reveal)) return -1;
     } else if (prior.complete && bfm_tower_field_plate_note(w->tower)) {
         if (!open_tower_note(w, BFM_TOWER_PLATE_NOTE)) return -1;
-    } else if (prior.complete && !bfm_tower_field_plate_pressing(w->tower)) {
+    } else if (prior.complete && !bfm_tower_field_plate_pressing(w->tower) && !bfm_tower_field_revealing(w->tower)) {
         int advanced = tick_tower_player(w, x, y, square_edge);
         if (advanced != 1) return advanced;
     } else if (frame.live && frame.room == 0x3008) {
@@ -1384,7 +1384,7 @@ static int tick_gateway(BfmForestWalk *w, int x, int y, int square_edge, int con
     }
     if (w->tower_placed) {
         if (frame.mode >= 8) {
-            bfm_tower_field_tick(w->tower, w->cached, w->gameplay);
+            bfm_tower_field_tick(w->tower, w->cached, w->yaw, w->gameplay);
             if (!bfm_tower_field_camera(w->tower, w->cached, &w->camera, w->eye)) return -1;
             TowerSubmission *submit = &w->submitted_tower[w->submit_slot];
             *submit = (TowerSubmission){.pose = w->pose, .camera = w->camera,

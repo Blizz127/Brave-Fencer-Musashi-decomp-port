@@ -1,9 +1,11 @@
 /* SPDX-License-Identifier: MIT */
 #include "tower_figures.h"
+#include "tower_rise.h"
 #include "../pc_port/forest_player_bytes.h"
 #include <stdlib.h>
+#include <string.h>
 
-enum { CENTER_PARTS = 4, COLUMN_PARTS = 7, COLUMN_SHAPE = 4, OPEN_PLATE, USED_PLATE, SHAPES };
+enum { CENTER_PARTS = 4, COLUMN_PARTS = 7, COLUMN_SHAPE = 4, OPEN_PLATE, USED_PLATE, RISEN_TOWER, SHAPES };
 static const uint32_t scene_origin = UINT32_C(0x80128158);
 
 typedef struct {
@@ -199,6 +201,8 @@ BfmTowerFigures *bfm_tower_figures_open(const uint8_t *scene, size_t size)
             !room_pose(frame, COLUMN_PARTS, &figures->damaged_pose[hp])) goto failed;
         figures->loose_joint[hp] = pieces[hp];
     }
+    if (!load_shape(figures, RISEN_TOWER, scene, size, UINT32_C(0x801ac738), UINT32_C(0x80189cec), 1))
+        goto failed;
     const uint32_t plates[] = { UINT32_C(0x801891ac), UINT32_C(0x80189450) };
     for (unsigned i = 0; i < 2; ++i) {
         unsigned shape = OPEN_PLATE + i, count = 0;
@@ -243,16 +247,23 @@ void bfm_tower_figures_free(BfmTowerFigures *figures)
 }
 
 size_t bfm_tower_figures_actors(BfmTowerFigures *figures, unsigned age,
-                                const BfmTowerPylonFrame posts[BFM_TOWER_POSTS],
+                                const BfmTowerPylonFrame posts[BFM_TOWER_POSTS], unsigned rise_age, unsigned face_yaw,
                                 BfmForestActor *out, size_t capacity)
 {
     if (!figures || !posts || !out || capacity < BFM_TOWER_FIGURE_ACTORS) return 0;
-    /* The body installs the statue and its base; both inherit its 448-unit
-     * lift on their next update. The base uses the same integral model Y. */
-    figures->root[1].translation[1] = figures->center[1] - (age ? 448 : 0);
-    figures->root[2].translation[1] = figures->center[1] - (age ? 448 : 1);
+    int center_y = figures->center[1];
+    int height = rise_age ? bfm_tower_body_height(rise_age) : 0;
+    int lift = rise_age ? 2655 : 448;
+    unsigned draining = rise_age > BFM_TOWER_POOL_DRAINS ? rise_age - BFM_TOWER_POOL_DRAINS : 0;
+    bfm_forest_actor_root(face_yaw, figures->center, &figures->root[1]);
+    figures->root[0].translation[1] = center_y + height;
+    figures->root[1].translation[1] = center_y + height - (age ? lift : 0);
+    figures->root[2].translation[1] = center_y + height - (age ? lift : 1);
+    figures->root[3].translation[1] = center_y + 8*(int)(draining > 96 ? 96 : draining);
     for (unsigned i = 0; i < CENTER_PARTS; ++i) {
-        out[i] = (BfmForestActor){figures->mesh[i], &figures->pose[i], &figures->root[i], 1u, NULL};
+        unsigned shape = !i && rise_age ? RISEN_TOWER : i;
+        unsigned visible = i == 3 && draining >= 96 ? 0u : 1u;
+        out[i] = (BfmForestActor){figures->mesh[shape], &figures->pose[shape], &figures->root[i], visible, NULL};
     }
     for (unsigned i = 0; i < BFM_TOWER_POSTS; ++i) {
         const BfmTowerPylonFrame *post = &posts[i];
@@ -285,13 +296,61 @@ size_t bfm_tower_figures_actors(BfmTowerFigures *figures, unsigned age,
     return BFM_TOWER_FIGURE_ACTORS;
 }
 
+/* The pool emits three slightly rotated, twelve-sided blue rings together.
+ * Each pulse expands for 47 updates. Its plane follows the draining surface. */
+static size_t pool_wave(const BfmForestCamera *camera, int y, unsigned elapsed,
+                        unsigned rotation, BfmForestDustCard *out)
+{
+    int radius = 320 + (int)elapsed*10;
+    int16_t rim[BFM_TOWER_WAVE_SIDES + 1][2][3];
+    const int16_t origin[3] = {0};
+    for (unsigned i = 0; i < BFM_TOWER_WAVE_SIDES; ++i) {
+        BfmForestTransform turn;
+        bfm_forest_actor_root(rotation + i*4096/BFM_TOWER_WAVE_SIDES, origin, &turn);
+        for (unsigned side = 0; side < 2; ++side) {
+            int r = side ? radius : 4*radius/5;
+            rim[i][side][0] = (int16_t)floor_ratio(r*turn.rotation[0][2], 4096);
+            rim[i][side][1] = (int16_t)y;
+            rim[i][side][2] = (int16_t)floor_ratio(r*turn.rotation[2][2], 4096);
+        }
+    }
+    memcpy(rim[BFM_TOWER_WAVE_SIDES], rim[0], sizeof rim[0]);
+    size_t count = 0;
+    for (unsigned i = 0; i < BFM_TOWER_WAVE_SIDES; ++i) {
+        int16_t patch[4][3];
+        memcpy(patch, rim[i], sizeof patch);
+        BfmForestDustCard card = {0};
+        if (!bfm_forest_project_effect_quad(camera, patch, &card)) continue;
+        card.material = (BfmForestRasterMaterial){.count=4, .page=32, .translucent=1};
+        card.vertices[0].rgb = card.vertices[2].rgb = 0x301010;
+        out[count++] = card;
+    }
+    return count;
+}
+
+static size_t pool_waves(unsigned age, const BfmForestCamera *camera, BfmForestDustCard *out)
+{
+    if (age < 3 || age > BFM_TOWER_POOL_DRAINS + 17 + 46) return 0;
+    unsigned draining = age > BFM_TOWER_POOL_DRAINS ? age - BFM_TOWER_POOL_DRAINS : 0;
+    int y = -336 + 8*(int)draining;
+    size_t count = 0;
+    for (unsigned born = 3; born <= age; born += 17) {
+        unsigned elapsed = age-born;
+        if (elapsed <= 46)
+            for (unsigned variant = 0; variant < 3; ++variant)
+                count += pool_wave(camera, y, elapsed, 341*variant/3, out+count);
+        if (born >= BFM_TOWER_POOL_DRAINS) break;
+    }
+    return count;
+}
+
 size_t bfm_tower_figures_cards(const BfmTowerFigures *figures, unsigned age,
-                               const BfmTowerPylonFrame posts[BFM_TOWER_POSTS], unsigned field_parity,
+                               const BfmTowerPylonFrame posts[BFM_TOWER_POSTS], unsigned field_parity, unsigned rise_age,
                                const BfmForestCamera *camera, BfmForestDustCard *out, size_t capacity)
 {
     if (!figures || !age || !posts || !camera || !camera->projection || !out ||
         capacity < BFM_TOWER_FIGURE_CARDS) return 0;
-    size_t count = 0;
+    size_t count = pool_waves(rise_age, camera, out);
     unsigned lit_nodes = bfm_tower_lit_nodes(posts);
     for (unsigned i = 0; i < 4; ++i)
         if ((lit_nodes & (1u << i)) && bulb(&figures->glow, figures->glow.roots[i],

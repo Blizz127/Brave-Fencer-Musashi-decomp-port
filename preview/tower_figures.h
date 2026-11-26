@@ -6,7 +6,9 @@
 #include "tower_pylons.h"
 #include "tower_press_effect.h"
 
-enum { BFM_TOWER_FIGURE_ACTORS = 8, BFM_TOWER_FIGURE_CARDS = 28 + BFM_TOWER_POSTS * BFM_TOWER_PRESS_CARDS };
+enum { BFM_TOWER_FIGURE_ACTORS = 8, BFM_TOWER_WAVE_SIDES = 12,
+       BFM_TOWER_WAVE_CARDS = 3 * 3 * BFM_TOWER_WAVE_SIDES,
+       BFM_TOWER_FIGURE_CARDS = 28 + BFM_TOWER_POSTS * BFM_TOWER_PRESS_CARDS + BFM_TOWER_WAVE_CARDS };
 typedef struct BfmTowerFigures BfmTowerFigures;
 
 /* The unpacked SC01 room contains the exterior body, its three children,
@@ -16,10 +18,10 @@ void bfm_tower_figures_free(BfmTowerFigures *figures);
 /* Age zero is the field update that installs these actors. Returned actor
  * objects borrow the figures until the next call or destruction. */
 size_t bfm_tower_figures_actors(BfmTowerFigures *figures, unsigned age,
-                                const BfmTowerPylonFrame posts[BFM_TOWER_POSTS],
+                                const BfmTowerPylonFrame posts[BFM_TOWER_POSTS], unsigned rise_age, unsigned face_yaw,
                                 BfmForestActor *out, size_t capacity);
 /* The textured core advances with its actor. The halo follows the field clock. */
 size_t bfm_tower_figures_cards(const BfmTowerFigures *figures, unsigned age,
-                               const BfmTowerPylonFrame posts[BFM_TOWER_POSTS], unsigned field_parity,
+                               const BfmTowerPylonFrame posts[BFM_TOWER_POSTS], unsigned field_parity, unsigned rise_age,
                                const BfmForestCamera *camera, BfmForestDustCard *out, size_t capacity);
 #endif

@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "tower_field.h"
+#include "tower_rise.h"
+#include "forest_shore_motion.h"
 #include "tower_camera.h"
 #include "tower_pylons.h"
 #include "tower_figures.h"
@@ -15,7 +17,7 @@ struct BfmTowerField {
     BfmTowerFigures *figures;
     BfmTowerSky *sky;
     BfmTowerCircuit *circuit;
-    unsigned entrance;
+    unsigned entrance, rise_age, submitted_rise[3], face_yaw[3];
 };
 
 void bfm_tower_field_free(BfmTowerField *tower)
@@ -66,12 +68,24 @@ int bfm_tower_field_place(BfmTowerField *tower, ForestPlayerState *player,
     return tower && bfm_forest_place_player(tower->field, tower->entrance, player, model_yaw, cached);
 }
 
-void bfm_tower_field_tick(BfmTowerField *tower, const int16_t player[3], BfmGameplayRun *gameplay)
+void bfm_tower_field_tick(BfmTowerField *tower, const int16_t player[3], int facing, BfmGameplayRun *gameplay)
 {
     if (!tower || !player || !gameplay) return;
+    /* The central body updates before the four plate actors. */
+    if (tower->pylons.credits == BFM_TOWER_POSTS && tower->rise_age < BFM_TOWER_RELEASE)
+        ++tower->rise_age;
+    tower->submitted_rise[tower->pylons.next_frame] = tower->rise_age;
+    /* The room's center is at the world origin. The stone head turns its
+     * forward (-Z) axis toward the player, separately from the tower body. */
+    tower->face_yaw[tower->pylons.next_frame] = bfm_forest_shore_bearing(-player[0], -player[2]);
     bfm_tower_pylons_tick(&tower->pylons, player, gameplay);
     bfm_tower_camera_plate_hint(&tower->camera, bfm_tower_field_plate_note(tower));
+    if (tower->rise_age >= BFM_TOWER_CAMERA_CUT && tower->rise_age < BFM_TOWER_RELEASE)
+        tower->camera.desired_pitch = 288;
+    else if (tower->rise_age == BFM_TOWER_RELEASE)
+        tower->camera.desired_pitch = 0;
     bfm_tower_camera_tick(&tower->camera, player);
+    bfm_tower_camera_rise_tick(&tower->camera, tower->rise_age, facing);
     bfm_tower_lightning_tick(tower->circuit, gameplay, bfm_tower_pylons_broken(&tower->pylons));
 }
 
@@ -98,6 +112,25 @@ void bfm_tower_field_close_plate_note(BfmTowerField *tower)
     if (bfm_tower_field_plate_note(tower)) tower->pylons.note_closed = 1;
 }
 
+int bfm_tower_field_revealing(const BfmTowerField *tower)
+{
+    return tower && tower->pylons.credits == BFM_TOWER_POSTS && tower->rise_age < BFM_TOWER_RELEASE;
+}
+
+unsigned bfm_tower_field_rise_phase(const BfmTowerField *tower)
+{
+    unsigned age = tower ? tower->rise_age : 0;
+    if (age >= BFM_TOWER_RELEASE) return 4;
+    if (age >= BFM_TOWER_RISE_END) return 3;
+    if (age >= BFM_TOWER_RISE_START) return 2;
+    return age >= BFM_TOWER_POOL_DRAINS;
+}
+
+int bfm_tower_field_raised(const BfmTowerField *tower)
+{
+    return tower && tower->rise_age == BFM_TOWER_RELEASE;
+}
+
 int bfm_tower_field_plate_pressing(const BfmTowerField *tower)
 {
     return tower && tower->pylons.pressing;
@@ -111,6 +144,8 @@ unsigned bfm_tower_field_plate_count(const BfmTowerField *tower)
 int bfm_tower_field_camera(const BfmTowerField *tower, const int16_t player[3],
                            BfmForestCamera *out, int32_t eye[3])
 {
+    if (tower && tower->rise_age >= BFM_TOWER_CAMERA_CUT)
+        return bfm_tower_camera_rise_view(&tower->camera, player, tower->rise_age, out, eye);
     return tower && bfm_tower_camera_view(&tower->camera, player, out, eye);
 }
 
@@ -125,10 +160,11 @@ int bfm_tower_field_draw(BfmTowerField *tower, const BfmForestCamera *camera,
     BfmForestActor actors[BFM_TOWER_FIGURE_ACTORS];
     BfmForestDustCard cards[BFM_TOWER_LIGHTNING_CARDS + BFM_TOWER_FIGURE_CARDS];
     const BfmTowerPylonFrame *posts = tower->pylons.history[field_tick % 3];
-    size_t count = bfm_tower_figures_actors(tower->figures, field_tick, posts, actors, BFM_TOWER_FIGURE_ACTORS);
+    size_t count = bfm_tower_figures_actors(tower->figures, field_tick, posts,
+                                            tower->submitted_rise[field_tick % 3], tower->face_yaw[field_tick % 3], actors, BFM_TOWER_FIGURE_ACTORS);
     size_t arcs = bfm_tower_lightning_cards(tower->circuit, 2, camera, cards, BFM_TOWER_LIGHTNING_CARDS);
     size_t glows = bfm_tower_figures_cards(tower->figures, field_tick, posts, field_tick & 1u,
-                                          camera, cards + arcs, BFM_TOWER_FIGURE_CARDS);
+                                          tower->submitted_rise[field_tick % 3], camera, cards + arcs, BFM_TOWER_FIGURE_CARDS);
     return bfm_forest_draw_room(tower->field, camera, pose, root, visible_parts, field_tick & 1u, blade,
                                 actors, count, cards, arcs + glows, pixels);
 }
