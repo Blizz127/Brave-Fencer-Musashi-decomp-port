@@ -3,6 +3,7 @@
 #include "../pc_port/forest_player_bytes.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 static const uint32_t scene_origin = UINT32_C(0x80128158);
 
@@ -35,6 +36,7 @@ static const uint32_t cast_origin = UINT32_C(0x801e4c60);
 struct BfmSteamKnightHostages {
     uint8_t payload[CAST_PAYLOAD];
     MusashiForestPlayerMesh *mesh[2];
+    MusashiForestPlayerMesh *fillet_eyes_shut;
 };
 
 static const struct {
@@ -74,6 +76,54 @@ static int read_cast_member(const MusashiDiscMedia *disc, uint8_t *out)
                                               out, CAST_PAYLOAD, &bytes);
 }
 
+/* The open and closed face cells share a page and palette. Decode the closed
+ * expression from a private copy of Fillet's model group so poses and ordinary
+ * draws continue to use the mounted original. */
+static MusashiForestPlayerMesh *load_shut_eyes(const BfmSteamKnightHostages *cast)
+{
+    unsigned who = BFM_STEAM_FILLET;
+    unsigned table = performer[who].table;
+    uint32_t first = u32le(cast->payload + table);
+    uint32_t next = u32le(cast->payload + table + 4);
+    uint32_t table_address = cast_origin + table;
+    if (first < cast_origin || next <= first || next > table_address || next - first < 40)
+        return NULL;
+    size_t bytes = table_address - first + 4 * (performer[who].parts + 1);
+    uint8_t *copy = malloc(bytes);
+    if (!copy) return NULL;
+    memcpy(copy, cast->payload + (first - cast_origin), bytes);
+
+    /* The ordinary decoder already validated the head's ordered primitives.
+     * Its object directory follows the 12-byte TMD header. */
+    const MusashiForestPlayerPart *head = musashi_forest_player_mesh_part(cast->mesh[who], 0);
+    size_t end = next - first;
+    size_t offset = 12u + (size_t)u32le(copy + 28);
+    unsigned changed = 0, parts = 0;
+    MusashiForestPlayerMesh *mesh = NULL;
+    for (size_t i = 0; i < head->face_count; ++i) {
+        if (offset > end - 4) goto done;
+        uint8_t *primitive = copy + offset;
+        size_t length = 4u * (1u + primitive[1]);
+        if (length > end - offset) goto done;
+        offset += length;
+        const MusashiForestPlayerFace *face = head->faces + i;
+        if (!(face->mode & 4) || face->tpage != 28 || face->clut != 24150) continue;
+        if (face->corners != 3 || length < 16) goto done;
+        for (unsigned corner = 0; corner < 3; ++corner) {
+            unsigned u = face->u[corner], v = face->v[corner];
+            if (u < 176 || u >= 208 || v < 200 || v >= 232) goto done;
+            primitive[4 + 4*corner] = (uint8_t)(u - 16);
+            primitive[5 + 4*corner] = (uint8_t)(v - 136);
+        }
+        ++changed;
+    }
+    if (changed == 18)
+        mesh = musashi_forest_player_mesh_from_table(copy, bytes, first, table_address, &parts);
+done:
+    free(copy);
+    return mesh;
+}
+
 BfmSteamKnightHostages *bfm_steam_knight_hostages_load(const MusashiDiscMedia *disc, size_t scene_bytes)
 {
     size_t capacity = cast_origin - scene_origin;
@@ -89,6 +139,7 @@ BfmSteamKnightHostages *bfm_steam_knight_hostages_load(const MusashiDiscMedia *d
         if (!cast->mesh[who] || parts != performer[who].parts)
             goto fail;
     }
+    cast->fillet_eyes_shut = load_shut_eyes(cast);
     return cast;
 fail:
     bfm_steam_knight_hostages_free(cast);
@@ -100,6 +151,7 @@ void bfm_steam_knight_hostages_free(BfmSteamKnightHostages *cast)
     if (!cast) return;
     for (unsigned who = 0; who < 2; ++who)
         musashi_forest_player_mesh_free(cast->mesh[who]);
+    musashi_forest_player_mesh_free(cast->fillet_eyes_shut);
     free(cast);
 }
 
@@ -132,5 +184,14 @@ int bfm_steam_knight_hostage_actor(const BfmSteamKnightHostages *cast,
         return 0;
     *out = (BfmForestActor){.mesh = cast->mesh[who], .pose = pose, .root = root,
                             .visible_parts = (UINT32_C(1) << parts) - 1};
+    return 1;
+}
+
+int bfm_steam_knight_fillet_close_eyes(const BfmSteamKnightHostages *cast, BfmForestActor *actor)
+{
+    if (!cast || !actor || !cast->fillet_eyes_shut ||
+        (actor->mesh != cast->mesh[BFM_STEAM_FILLET] && actor->mesh != cast->fillet_eyes_shut))
+        return 0;
+    actor->mesh = cast->fillet_eyes_shut;
     return 1;
 }

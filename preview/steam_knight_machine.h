@@ -9,6 +9,8 @@ BfmSteamKnightMachine *bfm_steam_knight_machine_load(const uint8_t *scene, size_
 void bfm_steam_knight_machine_free(BfmSteamKnightMachine *machine);
 /* Elapsed world updates from the ceiling cue, then from handover to Musashi. */
 void bfm_steam_knight_machine_present(BfmSteamKnightMachine *machine, unsigned elapsed);
+/* Enable submissions after the room has committed its roof-opening mesh. */
+void bfm_steam_knight_machine_reveal(BfmSteamKnightMachine *machine);
 void bfm_steam_knight_machine_handover(BfmSteamKnightMachine *machine);
 size_t bfm_steam_knight_machine_actors(const BfmSteamKnightMachine *machine,
                                       BfmForestActor *out, size_t capacity);

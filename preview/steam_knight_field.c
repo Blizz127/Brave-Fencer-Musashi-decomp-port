@@ -268,3 +268,13 @@ int bfm_steam_knight_field_draw(BfmSteamKnightField *field, const BfmForestCamer
         pose ? field->hero : NULL, pose, root, visible_parts, blade, buffer, blade_frame,
         actors, actor_count, cards, card_count, pixels);
 }
+
+void bfm_steam_knight_duel_camera(BfmForestCamera *camera)
+{
+    if (!camera) return;
+    *camera = (BfmForestCamera) {
+        .rotation = {{2896, 0, 2896}, {2250, 2579, -2250}, {-1824, 3182, 1824}},
+        .projection = 292
+    };
+    camera_at(camera, (const int16_t[3]){140, -2728, -3464});
+}

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "steam_knight_machine.h"
-#include "forest_player_bytes.h"
+#include "../pc_port/forest_player_bytes.h"
 #include <stdlib.h>
 
 enum { CHASSIS, TORSO, ASSEMBLIES, MAX_KEYS = 16 };
@@ -10,7 +10,8 @@ static const struct { uint32_t table; unsigned parts; } model[] = {
     {0x801b82f4, 22}, {0x801bb8dc, 10}
 };
 static const struct { uint32_t table; unsigned index, keys; } chassis_program[] = {
-    {0x801945b0, 0, 16}, {0x80194960, 6, 8}, {0x801949a8, 7, 5}, {0x801949d8, 8, 8}
+    [NEUTRAL] = {0x801945b0, 0, 16}, [FIRST_ACTION] = {0x80194960, 6, 8},
+    [LOWER]   = {0x801949a8, 7, 5},  [RISE] = {0x801949d8, 8, 8}
 };
 typedef struct {
     BfmForestPose pose[MAX_KEYS];
@@ -21,8 +22,9 @@ struct BfmSteamKnightMachine {
     MachineClip chassis[CLIPS], torso;
     BfmForestTransform root, display_root;
     const BfmForestPose *display[ASSEMBLIES], *chassis_pose;
-    unsigned entrance_age, outgoing_display;
-    int spawn_y, active, controlled;
+    unsigned entrance_age, outgoing_display, control_age, clip_epoch, clip_age;
+    const MachineClip *selected;
+    int spawn_y, active, revealed, controlled;
 };
 
 static const uint8_t *record(const uint8_t *scene, size_t bytes, uint32_t address, size_t count)
@@ -116,9 +118,9 @@ void bfm_steam_knight_machine_free(BfmSteamKnightMachine *machine)
     free(machine);
 }
 
-static const BfmForestPose *sample(const MachineClip *clip, unsigned elapsed)
+static const BfmForestPose *sample(const MachineClip *clip, uint64_t elapsed)
 {
-    unsigned key = elapsed / 2;
+    uint64_t key = elapsed / 2;
     if (clip->terminal == 0xffff) key %= clip->count;
     else if (key >= clip->count) key = clip->count - 1;
     return &clip->pose[key];
@@ -143,11 +145,22 @@ static unsigned entrance_clock(unsigned age)
     return (age - 6) % 32;
 }
 
+static void selected_chassis(BfmSteamKnightMachine *machine)
+{
+    if (!machine->selected) return;
+    unsigned delta = machine->control_age >= machine->clip_epoch
+                   ? machine->control_age - machine->clip_epoch : 0;
+    uint64_t age = (uint64_t)machine->clip_age + delta;
+    machine->chassis_pose = sample(machine->selected, age);
+    if (age >= 2) machine->display[CHASSIS] = sample(machine->selected, age - 2);
+}
+
 void bfm_steam_knight_machine_present(BfmSteamKnightMachine *machine, unsigned elapsed)
 {
     if (!machine) return;
     unsigned clock, shown;
     if (machine->controlled) {
+        machine->control_age = elapsed;
         clock = elapsed % 32;
         shown = elapsed < 2 ? machine->outgoing_display : (elapsed - 2) % 32;
         machine->root.translation[1] = machine->display_root.translation[1] = -2050;
@@ -157,12 +170,21 @@ void bfm_steam_knight_machine_present(BfmSteamKnightMachine *machine, unsigned e
         shown = (clock + 30) % 32;
         unsigned age = elapsed > 29 ? 29 : elapsed;
         machine->root.translation[1] = fall_height(machine->spawn_y, age + 5);
-        machine->display_root.translation[1] = fall_height(machine->spawn_y, age + 2);
+        int y0 = fall_height(machine->spawn_y, age + 2);
+        int y1 = fall_height(machine->spawn_y, age + 3);
+        /* The exposed forearm trails the sampled collision assembly. */
+        machine->display_root.translation[1] = y0 + (y1 - y0) * 2 / 3;
     }
     machine->active = 1;
     machine->chassis_pose = sample(&machine->chassis[NEUTRAL], clock);
     machine->display[CHASSIS] = sample(&machine->chassis[NEUTRAL], shown);
     machine->display[TORSO] = sample(&machine->torso, shown);
+    selected_chassis(machine);
+}
+
+void bfm_steam_knight_machine_reveal(BfmSteamKnightMachine *machine)
+{
+    if (machine) machine->revealed = 1;
 }
 
 void bfm_steam_knight_machine_handover(BfmSteamKnightMachine *machine)
@@ -180,9 +202,10 @@ int bfm_steam_knight_machine_set_chassis_clip(BfmSteamKnightMachine *machine,
     if (!machine || !machine->controlled) return 0;
     for (unsigned i = 0; i < CLIPS; ++i)
         if (chassis_program[i].index == clip) {
-            machine->chassis_pose = sample(&machine->chassis[i], elapsed);
-            if (elapsed >= 2)
-                machine->display[CHASSIS] = sample(&machine->chassis[i], elapsed - 2);
+            machine->selected = &machine->chassis[i];
+            machine->clip_epoch = machine->control_age;
+            machine->clip_age = elapsed;
+            selected_chassis(machine);
             return 1;
         }
     return 0;
@@ -191,7 +214,7 @@ int bfm_steam_knight_machine_set_chassis_clip(BfmSteamKnightMachine *machine,
 size_t bfm_steam_knight_machine_actors(const BfmSteamKnightMachine *machine,
                                       BfmForestActor *out, size_t capacity)
 {
-    if (!machine || !machine->active || !out || capacity < ASSEMBLIES) return 0;
+    if (!machine || !machine->active || !machine->revealed || !out || capacity < ASSEMBLIES) return 0;
     for (unsigned i = 0; i < ASSEMBLIES; ++i)
         out[i] = (BfmForestActor){.mesh = machine->mesh[i], .pose = machine->display[i],
             .root = &machine->display_root, .visible_parts = (UINT32_C(1) << model[i].parts) - 1};

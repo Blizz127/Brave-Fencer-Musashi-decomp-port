@@ -189,6 +189,8 @@ add_executable(musashi_native_boot
     steam_knight_entry_light.c
     steam_knight_cast.c
     steam_knight_machine.c
+    steam_knight_armor.c
+    steam_knight_hero_motion.c
     steam_knight_boss_hud.c
     steam_knight_rotation.c
     steam_knight_flames.c

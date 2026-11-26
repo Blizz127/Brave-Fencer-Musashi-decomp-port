@@ -123,6 +123,8 @@ static void postfire_motion(BfmSteamKnightEvent *e)
     if (e->stage == BFM_STEAM_BREACH || e->stage == BFM_STEAM_DESCENT ||
         e->stage == BFM_STEAM_CHALLENGE)
         ++e->landing_age;
+    if (e->stage == BFM_STEAM_BREACH && e->message && e->message_age >= 7)
+        e->shot = BFM_STEAM_MACHINE_CAMERA;
     if (e->stage == BFM_STEAM_CHALLENGE)
         forward(e, -3456, ENTER_STRIDE);
 }
@@ -272,7 +274,7 @@ int bfm_steam_event_ring_started(const BfmSteamKnightEvent *e)
 }
 int bfm_steam_event_hud(const BfmSteamKnightEvent *e)
 {
-    if (e->stage == BFM_STEAM_DUEL) return 1;
+    if (e->stage == BFM_STEAM_DUEL) return e->stage_age >= 3;
     if (e->shot == BFM_STEAM_REPLY_CAMERA || e->stage > BFM_STEAM_REPLY) return 0;
     return e->stage >= BFM_STEAM_READY ||
            (e->stage == BFM_STEAM_INSTRUCTION && e->step == ROTATION_TUTORIAL);

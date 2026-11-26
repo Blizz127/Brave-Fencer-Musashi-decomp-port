@@ -21,4 +21,7 @@ int bfm_steam_knight_hostage_actor(const BfmSteamKnightHostages *cast,
                                   unsigned elapsed, const BfmForestTransform *root,
                                   BfmForestPose *pose, BfmForestActor *out);
 
+/* Select the mounted closed-eye face for this sampled Fillet draw. */
+int bfm_steam_knight_fillet_close_eyes(const BfmSteamKnightHostages *cast, BfmForestActor *actor);
+
 #endif

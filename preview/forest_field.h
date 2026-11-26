@@ -44,6 +44,9 @@ BfmForestShoreFloor bfm_forest_pursuit_floor_step(const BfmForestField *field,
 /* Build the terrain, floor and player-model owners for the mounted field room
  * selected by the scene loader. The disc may close after a successful call. */
 BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t room);
+/* Mount only a room's collision grid for ordinary hero movement. The caller owns
+ * both the room's rendering and its actor pool. Release with bfm_forest_field_free. */
+BfmForestField *bfm_forest_motion_surface_open(const uint8_t *scene, size_t bytes, uint32_t room);
 void bfm_forest_field_free(BfmForestField *field);
 /* Borrow this room's unpacked scene and 36-byte authored doorway. */
 int bfm_forest_mount_summit_road(BfmForestField *field, const MusashiDiscMedia *disc);

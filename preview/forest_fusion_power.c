@@ -4,11 +4,11 @@
 #include "forest_opening_data.h"
 #include "../pc_port/forest_player_bytes.h"
 
-int bfm_forest_fusion_power_load(const MusashiDiscMedia *disc, const BfmForestField *field,
-                                BfmForestFusionPower *out)
+int bfm_forest_fusion_power_rows(const MusashiDiscMedia *disc, const uint8_t moves[40],
+                                const uint8_t *const rows[2], BfmForestFusionPower *out)
 {
     uint8_t ranks[30 * 16];
-    if (!disc || !field || !out ||
+    if (!disc || !moves || !rows || !out ||
         !bfm_bedroom_resident_data(disc, UINT32_C(0x800638f8), ranks, sizeof ranks)) return 0;
 
     BfmForestFusionPower loaded;
@@ -16,12 +16,10 @@ int bfm_forest_fusion_power_load(const MusashiDiscMedia *disc, const BfmForestFi
         loaded.body[i] = u16le(ranks + i * 16 + 2);
         loaded.sword[i] = u16le(ranks + i * 16 + 14);
     }
-    const uint8_t *moves = bfm_forest_room_bytes(field, UINT32_C(0x801889dc), 40);
-    if (!moves) return 0;
     for (unsigned i = 0; i < 2; ++i) {
         const uint8_t *entry = moves + 20 * i;
         uint16_t kind = u16le(entry);
-        const uint8_t *row = bfm_forest_room_bytes(field, UINT32_C(0x80188b80) + 12u * kind, 12);
+        const uint8_t *row = rows[i];
         /* These two grounded Fusion moves have one scaled body/sword term.
          * More complex attacks use their own stat or target-dependent path. */
         if (!row || !kind || u32le(entry + 4) || (u16le(row) & 0xf000) != 0x4000 ||
@@ -31,6 +29,20 @@ int bfm_forest_fusion_power_load(const MusashiDiscMedia *disc, const BfmForestFi
     }
     *out = loaded;
     return 1;
+}
+
+int bfm_forest_fusion_power_load(const MusashiDiscMedia *disc, const BfmForestField *field,
+                                BfmForestFusionPower *out)
+{
+    if (!disc || !field || !out) return 0;
+    const uint8_t *moves = bfm_forest_room_bytes(field, UINT32_C(0x801889dc), 40);
+    if (!moves) return 0;
+    const uint8_t *rows[2];
+    for (unsigned i = 0; i < 2; ++i) {
+        uint16_t kind = u16le(moves + 20 * i);
+        rows[i] = bfm_forest_room_bytes(field, UINT32_C(0x80188b80) + 12u * kind, 12);
+    }
+    return bfm_forest_fusion_power_rows(disc, moves, rows, out);
 }
 
 int bfm_forest_fusion_strength(const BfmForestFusionPower *power, const BfmForestStatus *status,

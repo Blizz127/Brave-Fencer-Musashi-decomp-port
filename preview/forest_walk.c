@@ -1245,7 +1245,7 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
 
 int bfm_forest_walk_hit_sound(const BfmForestWalk *w)
 {
-    return w && w->hit_sound;
+    return w && (w->steam_knight ? bfm_steam_knight_hit_sound(w->steam_knight) : w->hit_sound);
 }
 
 const RoomTransferDescriptor *bfm_forest_walk_inner_exit(const BfmForestWalk *w)
@@ -1266,7 +1266,7 @@ int bfm_forest_walk_gunshot_sound(const BfmForestWalk *w)
 
 int bfm_forest_walk_swing_sound(const BfmForestWalk *w)
 {
-    return w && w->swing_sound;
+    return w && (w->steam_knight ? bfm_steam_knight_swing_sound(w->steam_knight) : w->swing_sound);
 }
 
 uint16_t bfm_forest_walk_room(const BfmForestWalk *w)
@@ -2088,7 +2088,7 @@ int bfm_forest_walk_tick_controller(BfmForestWalk *w, int x, int y, uint16_t pre
                                     uint16_t held, int stick_direction)
 {
     if (w && w->steam_knight) {
-        int stepped = bfm_steam_knight_tick(w->steam_knight, pressed, held);
+        int stepped = bfm_steam_knight_tick(w->steam_knight, x, y, pressed, held, w->data.initial_velocity);
         if (stepped <= 0) return stepped;
         ++w->tick;
         int16_t feet[3], heading;

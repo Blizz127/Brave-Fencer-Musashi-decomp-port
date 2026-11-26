@@ -15,6 +15,9 @@ typedef struct {
 /* Mount the resident rank table and the first two field attack descriptors. */
 int bfm_forest_fusion_power_load(const MusashiDiscMedia *disc, const BfmForestField *field,
                                 BfmForestFusionPower *out);
+/* Decode two mounted 20-byte move descriptors with their 12-byte power rows. */
+int bfm_forest_fusion_power_rows(const MusashiDiscMedia *disc, const uint8_t moves[40],
+                                const uint8_t *const rows[2], BfmForestFusionPower *out);
 /* The action owner supplies the shared gameplay RNG draw and current flag 0x81. */
 int bfm_forest_fusion_strength(const BfmForestFusionPower *power, const BfmForestStatus *status,
                               unsigned move, int boosted, unsigned random_sample, uint16_t *strength);

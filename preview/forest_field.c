@@ -414,6 +414,18 @@ BfmRoomWalkGrid *bfm_room_walk_grid_open(const uint8_t *scene, size_t bytes, uin
     return walk;
 }
 
+BfmForestField *bfm_forest_motion_surface_open(const uint8_t *scene, size_t bytes, uint32_t room)
+{
+    const uint8_t *descriptor = scene ? scene_record(scene, bytes, room, 0x8c) : NULL;
+    if (!descriptor) return NULL;
+    BfmForestField *surface = calloc(1, sizeof *surface);
+    if (surface && !load_grid(&surface->grid, scene, bytes, read32(descriptor + 0x88))) {
+        bfm_forest_field_free(surface);
+        return NULL;
+    }
+    return surface;
+}
+
 void bfm_room_walk_grid_free(BfmRoomWalkGrid *walk)
 {
     if (walk) free_grid(&walk->grid);
