@@ -21,6 +21,7 @@ struct BfmSteamKnightField {
     uint8_t *damaged_mesh;
     size_t damaged_size;
     unsigned open_gates;
+    unsigned broken_houses;
     int arena_ready;
     unsigned arena_round, arena_stage;
     int16_t stomp_origin_z;
@@ -121,6 +122,18 @@ int bfm_steam_knight_field_open_roof(BfmSteamKnightField *field)
     return 1;
 }
 
+static int install_damaged_mesh(BfmSteamKnightField *field, uint8_t *pending, size_t bytes)
+{
+    if (!bfm_forest_terrain_replace_mesh(field->terrain, pending, bytes)) {
+        free(pending);
+        return 0;
+    }
+    free(field->damaged_mesh);
+    field->damaged_mesh = pending;
+    field->damaged_size = bytes;
+    return 1;
+}
+
 /* Each throw breaks a wall in the existing field: the hall door, the
  * approach to the town square, and the western wall beyond the houses. */
 int bfm_steam_knight_field_break_gate(BfmSteamKnightField *field, unsigned gate)
@@ -146,14 +159,28 @@ int bfm_steam_knight_field_break_gate(BfmSteamKnightField *field, unsigned gate)
         base = pending = next;
         bytes = new_size;
     }
-    if (!bfm_forest_terrain_replace_mesh(field->terrain, pending, bytes)) {
-        free(pending);
-        return 0;
-    }
-    free(field->damaged_mesh);
-    field->damaged_mesh = pending;
-    field->damaged_size = bytes;
+    if (!install_damaged_mesh(field, pending, bytes)) return 0;
     field->open_gates = gate;
+    return 1;
+}
+
+int bfm_steam_knight_field_break_house(BfmSteamKnightField *field, unsigned house)
+{
+    static const struct { uint32_t start, end; } houses[] = {
+        {UINT32_C(0x801dc180), UINT32_C(0x801dcd04)},
+        {UINT32_C(0x801dcd04), UINT32_C(0x801dd2d4)}
+    };
+    if (!field || !field->damaged_mesh || house == 0 || house > 2) return 0;
+    unsigned bit = 1u << (house - 1);
+    if (field->broken_houses & bit) return 1;
+    uint32_t start = houses[house - 1].start;
+    size_t size = houses[house - 1].end - start;
+    const uint8_t *record = scene_range(field, start, size);
+    size_t bytes = 0;
+    uint8_t *pending = bfm_steam_knight_house_mesh(field->damaged_mesh, field->damaged_size,
+                                                  record, size, house, &bytes);
+    if (!pending || !install_damaged_mesh(field, pending, bytes)) return 0;
+    field->broken_houses |= bit;
     return 1;
 }
 

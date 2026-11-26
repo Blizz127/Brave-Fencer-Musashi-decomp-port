@@ -17,6 +17,7 @@
 #include "forest_damage_digits.h"
 #include "forest_message_art.h"
 #include "steam_knight_street_route.h"
+#include "steam_knight_flail.h"
 #include "../pc_port/forest_player_bytes.h"
 #include <stdlib.h>
 #include <string.h>
@@ -52,6 +53,11 @@ struct BfmSteamKnight {
         unsigned neutral_age, jump_age, shot_age;
         int32_t shot_root[3];
         int marker;
+        BfmSteamKnightFlail flail;
+        BfmForestTransform head;
+        int16_t endpoint[3];
+        unsigned reach, orbit, settled_age;
+        int detached, resting, recovery_age;
     } street;
     BfmSteamKnightFinale finale;
     unsigned final_pickup_phase, launch_action;
@@ -290,11 +296,64 @@ static int street_begin_jump(BfmSteamKnight *s, int rebound)
     return street_jump_frame(s);
 }
 
+static int street_choose(BfmSteamKnight *s);
+
 static int street_shot_frame(BfmSteamKnight *s)
 {
     int marked = s->street.selected.action == BFM_STREET_MARKED_SHOT;
-    return bfm_steam_knight_machine_street_shot(s->machine, marked, s->street.shot_age++, -1,
-                                                s->street.shot_root, 0);
+    unsigned age = s->street.shot_age++;
+    unsigned windup = marked ? 15 : 31;
+    int recovery = s->street.recovery_age;
+    if (recovery == 16) return street_choose(s);
+    if (s->street.resting && recovery < 0 && age > windup + 8) {
+        unsigned wait = s->battle_flags & 0x2000u ? 32 : 64;
+        if (s->street.settled_age++ >= wait) recovery = 0;
+    }
+    if (age == windup) s->battle_flags &= ~1u;
+    if (!bfm_steam_knight_machine_street_shot(s->machine, marked, age, recovery,
+                                              s->street.shot_root, 0)) return 0;
+    BfmForestTransform socket;
+    if (!bfm_steam_knight_machine_gauntlet_socket(s->machine, &socket)) return 0;
+    if (recovery >= 0) {
+        if (recovery >= 5 && recovery <= 8) {
+            if (!bfm_steam_flail_reel(&socket, s->street.endpoint, (unsigned)(8 - recovery),
+                                      &s->street.head)) return 0;
+            if (recovery == 8) s->street.detached = 0;
+        }
+        s->street.recovery_age = recovery + 1;
+        return 1;
+    }
+    /* Lowering key three releases the travelling head on its second update.
+     * Aim is latched here, after the earlier orbit, and stays fixed in flight. */
+    if (age < windup + 7) {
+        s->street.detached = 1;
+        return bfm_steam_flail_wind(&socket, &s->street.reach, &s->street.orbit,
+                                    &s->street.head);
+    }
+    if (age == windup + 7) {
+        int16_t head[3];
+        for (unsigned i = 0; i < 3; ++i) head[i] = (int16_t)s->street.head.translation[i];
+        const int16_t *target = bfm_steam_hero_sample(s->hero)->feet;
+        if (!bfm_steam_flail_launch(&s->street.flail, head, s->street.shot_root[1] >> 12,
+                target, &s->street.route, s->street.selected.marker, s->battle_flags)) return 0;
+    }
+    if (s->street.resting) return 1;
+    BfmSteamFlailStep step = bfm_steam_flail_step(&s->street.flail, &s->street.route);
+    if (step == BFM_STEAM_FLAIL_INVALID) return 0;
+    for (unsigned i = 0; i < 3; ++i)
+        s->street.head.translation[i] = s->street.flail.position[i] >> 16;
+    if (step == BFM_STEAM_FLAIL_MOVING) return 1;
+    if (step == BFM_STEAM_FLAIL_AT_MARKER) {
+        int which = s->street.selected.marker;
+        if (which != s->street.marker || which < 0 || which > 1) return 0;
+        unsigned phase = (unsigned)s->street.route.markers[which].phase;
+        if (phase != 25u + (unsigned)which ||
+            !bfm_steam_knight_field_break_house(s->field, phase - 24)) return 0;
+        ++s->street.marker;
+    }
+    for (unsigned i = 0; i < 3; ++i) s->street.endpoint[i] = (int16_t)s->street.head.translation[i];
+    s->street.resting = 1;
+    return 1;
 }
 
 static int street_choose(BfmSteamKnight *s)
@@ -316,6 +375,11 @@ static int street_choose(BfmSteamKnight *s)
         s->body_stage = 3;
         s->battle_flags &= ~0x1000u;
         s->street.shot_age = 0;
+        s->street.reach = 16;
+        s->street.orbit = 512;
+        s->street.resting = s->street.detached = 0;
+        s->street.settled_age = 0;
+        s->street.recovery_age = -1;
         return bfm_steam_knight_machine_root_q12(s->machine, s->street.shot_root) && street_shot_frame(s);
     } else {
         s->body_stage = 1;
@@ -626,7 +690,7 @@ int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
     if (!s || !pixels) return 0;
     BfmForestCamera camera;
     hall_camera(s, &camera);
-    BfmForestActor actors[3];
+    BfmForestActor actors[4];
     BfmForestPose actor_poses[2];
     BfmForestTransform actor_roots[2];
     /* As Musashi approaches, the pair retreat one carpet tile. Their feet
@@ -664,7 +728,8 @@ int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
             !bfm_steam_knight_fillet_close_eyes(s->hostages, &actors[i])) return 0;
     }
     if (!actor_count)
-        actor_count = bfm_steam_knight_machine_actors(s->machine, actors, sizeof actors / sizeof actors[0]);
+        actor_count = bfm_steam_knight_machine_gauntlet_actors(s->machine,
+            s->street.detached ? &s->street.head : NULL, actors, sizeof actors / sizeof actors[0]);
     BfmForestDustCard cards[BFM_STEAM_ENTRY_LIGHT_CARDS + BFM_STEAM_FLAMES + BFM_STEAM_WEAPON_CARDS
                             + BFM_STEAM_WEAK_HALO_CARDS
                             + BFM_STEAM_ARMOR_PLATES * BFM_FOREST_DAMAGE_DIGIT_CARDS];

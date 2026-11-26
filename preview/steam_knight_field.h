@@ -33,6 +33,8 @@ void bfm_steam_knight_field_arena_camera(const BfmSteamKnightField *field,
 int bfm_steam_knight_field_open_roof(BfmSteamKnightField *field);
 /* Gates 1 through 3 open in order after the roof. Repeating a gate is safe. */
 int bfm_steam_knight_field_break_gate(BfmSteamKnightField *field, unsigned gate);
+/* Each street house breaks once. 1 is on the left, 2 on the right. */
+int bfm_steam_knight_field_break_house(BfmSteamKnightField *field, unsigned house);
 /* Omit both hero arguments for a shot that hides Musashi. */
 int bfm_steam_knight_field_draw(BfmSteamKnightField *field, const BfmForestCamera *camera,
     const BfmForestPose *pose, const BfmForestTransform *root, uint32_t visible_parts,

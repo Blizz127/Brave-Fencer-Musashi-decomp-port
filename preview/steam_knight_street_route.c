@@ -26,8 +26,14 @@ int bfm_steam_street_route_load(BfmSteamKnightStreetRoute *out,
     if ((table & 3u) || table > UINT32_MAX - 4u * BFM_STREET_ROWS) return 0;
     BfmSteamKnightStreetRoute route = {0};
     route.depth_limit = (int16_t)half(depth);
-    for (unsigned i = 0; i < BFM_STREET_MARKERS; ++i)
-        route.marker_tags[i] = (int16_t)half(markers + 8*i + 4);
+    for (unsigned i = 0; i < BFM_STREET_MARKERS; ++i) {
+        const uint8_t *mark = markers + 8*i;
+        route.marker_tags[i] = (int16_t)half(mark + 4);
+        route.markers[i] = (BfmSteamStreetMarker){
+            .x = (int16_t)half(mark), .z = (int16_t)half(mark + 2),
+            .phase = (int16_t)half(mark + 6)
+        };
+    }
     for (unsigned i = 0; i <= BFM_STREET_ROWS; ++i) {
         const uint8_t *entry = row(scene, bytes, table + 4*i, 4);
         if (!entry) return 0;

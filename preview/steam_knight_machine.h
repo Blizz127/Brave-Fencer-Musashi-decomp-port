@@ -14,6 +14,13 @@ void bfm_steam_knight_machine_reveal(BfmSteamKnightMachine *machine);
 void bfm_steam_knight_machine_handover(BfmSteamKnightMachine *machine);
 size_t bfm_steam_knight_machine_actors(const BfmSteamKnightMachine *machine,
                                       BfmForestActor *out, size_t capacity);
+/* The current logical center and basis of the mounted sphere, before any
+ * displacement by its child. The externally supplied transform is borrowed
+ * for the draw. Four actor slots cover both shell replacements and sphere. */
+int bfm_steam_knight_machine_gauntlet_socket(const BfmSteamKnightMachine *machine,
+                                           BfmForestTransform *world);
+size_t bfm_steam_knight_machine_gauntlet_actors(const BfmSteamKnightMachine *machine,
+    const BfmForestTransform *detached_world, BfmForestActor *out, size_t capacity);
 /* The encounter selects an action once its live control has issued it. */
 int bfm_steam_knight_machine_set_chassis_clip(BfmSteamKnightMachine *machine,
                                              unsigned clip, unsigned elapsed);

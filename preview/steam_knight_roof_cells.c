@@ -180,3 +180,18 @@ uint8_t *bfm_steam_knight_gate_mesh(const uint8_t *mesh, size_t bytes,
 {
     return replace_cells(mesh, bytes, record, size, 2, out_size);
 }
+
+uint8_t *bfm_steam_knight_house_mesh(const uint8_t *mesh, size_t bytes,
+                                     const uint8_t *record, size_t size,
+                                     unsigned house, size_t *out_size)
+{
+    if (!out_size) return NULL;
+    *out_size = 0;
+    if (!record || size < 32 || (house != 1 && house != 2)) return NULL;
+    /* Both houses start with two adjacent columns. The left house also
+     * supplies the two sectors directly behind them. */
+    unsigned first_cell = house == 1 ? 2270u : 2336u;
+    if (read32(record + 16) != first_cell * 4 ||
+        read32(record + 28) != (first_cell + 1) * 4) return NULL;
+    return replace_cells(mesh, bytes, record, size, house == 1 ? 4 : 2, out_size);
+}

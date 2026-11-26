@@ -9,7 +9,7 @@ enum { CHASSIS, TORSO, ASSEMBLIES, MAX_KEYS = 24 };
 enum { NEUTRAL, FIRST_ACTION, LOWER, RISE, STEP_RIGHT, STEP_LEFT, STEP_FORWARD,
        KNEEL_RIGHT, KNEEL_LEFT, SMASH, SMASH_RISE, COLLAPSE, DEPARTURE, ARRIVAL, REARM, JUMP_START, AIRBORNE, LANDED, CLIPS };
 
-enum { FIRST_HIT_JOINT = 18, FIRST_WHITE_UPDATE = 2, OBSERVED_WHITE_UPDATES = 6 };
+enum { GAUNTLET = 6, FIRST_HIT_JOINT = 18, FIRST_WHITE_UPDATE = 2, OBSERVED_WHITE_UPDATES = 6 };
 static const uint32_t origin = UINT32_C(0x80128158);
 static const struct { uint32_t table; unsigned parts; } model[] = {
     {0x801b82f4, 22}, {0x801bb8dc, 10}
@@ -263,6 +263,23 @@ static void select_clip(BfmSteamKnightMachine *machine, unsigned id, unsigned ag
 
 /* Carry the upper assembly on the posed waist. Its neutral reference waist
  * has identity rotation and its position already occurs in each upper joint. */
+static void mounted_upper_part(const BfmForestTransform *waist, const BfmForestTransform *reference,
+                               const BfmForestTransform *local, BfmForestTransform *placed)
+{
+    for (unsigned i = 0; i < 3; ++i) {
+        int move = 0;
+        for (unsigned k = 0; k < 3; ++k)
+            move += waist->rotation[i][k] * (local->translation[k] - reference->translation[k]);
+        placed->translation[i] = waist->translation[i] + (move >> 12);
+        for (unsigned j = 0; j < 3; ++j) {
+            int turn = 0;
+            for (unsigned k = 0; k < 3; ++k)
+                turn += waist->rotation[i][k] * local->rotation[k][j];
+            placed->rotation[i][j] = (int16_t)(turn >> 12);
+        }
+    }
+}
+
 static void mount_torso(BfmSteamKnightMachine *machine, unsigned shown)
 {
     const BfmForestTransform *waist = &machine->display[CHASSIS]->local[21];
@@ -271,18 +288,7 @@ static void mount_torso(BfmSteamKnightMachine *machine, unsigned shown)
     for (unsigned p = 0; p < model[TORSO].parts; ++p) {
         const BfmForestTransform *local = &source->local[p];
         BfmForestTransform *placed = &machine->mounted_torso.local[p];
-        for (unsigned i = 0; i < 3; ++i) {
-            int move = 0;
-            for (unsigned k = 0; k < 3; ++k)
-                move += waist->rotation[i][k] * (local->translation[k] - reference->translation[k]);
-            placed->translation[i] = waist->translation[i] + (move >> 12);
-            for (unsigned j = 0; j < 3; ++j) {
-                int turn = 0;
-                for (unsigned k = 0; k < 3; ++k)
-                    turn += waist->rotation[i][k] * local->rotation[k][j];
-                placed->rotation[i][j] = (int16_t)(turn >> 12);
-            }
-        }
+        mounted_upper_part(waist, reference, local, placed);
     }
     machine->display[TORSO] = &machine->mounted_torso;
 }
@@ -544,6 +550,23 @@ size_t bfm_steam_knight_machine_actors(const BfmSteamKnightMachine *machine,
     return ASSEMBLIES;
 }
 
+size_t bfm_steam_knight_machine_gauntlet_actors(const BfmSteamKnightMachine *machine,
+    const BfmForestTransform *detached_world, BfmForestActor *out, size_t capacity)
+{
+    static const BfmForestPose origin = {.local = {
+        [GAUNTLET] = {.rotation = {{4096,0,0},{0,4096,0},{0,0,4096}}}
+    }};
+    if (!detached_world) return bfm_steam_knight_machine_actors(machine, out, capacity);
+    if (capacity < ASSEMBLIES + 1) return 0;
+    size_t count = bfm_steam_knight_machine_actors(machine, out, capacity);
+    if (!count || count >= capacity) return 0;
+    uint32_t bit = UINT32_C(1) << GAUNTLET;
+    out[TORSO].visible_parts &= ~bit;
+    out[count] = (BfmForestActor){.mesh = machine->mesh[TORSO], .pose = &origin,
+        .root = detached_world, .visible_parts = bit};
+    return count + 1;
+}
+
 void bfm_steam_knight_machine_step_light(BfmSteamKnightMachine *machine)
 {
     if (machine && machine->core_light) --machine->core_light;
@@ -561,12 +584,9 @@ void bfm_steam_knight_machine_flash_armor(BfmSteamKnightMachine *machine, unsign
     machine->shell_white_until = machine->shell_white_from + OBSERVED_WHITE_UPDATES;
 }
 
-int bfm_steam_knight_machine_joint(const BfmSteamKnightMachine *machine, unsigned chassis_part,
-                                  BfmForestTransform *world, const MusashiForestPlayerPart **mesh_part)
+static void world_part(const BfmSteamKnightMachine *machine, const BfmForestTransform *local,
+                       BfmForestTransform *world)
 {
-    if (!machine || !machine->active || chassis_part >= model[CHASSIS].parts || !world || !mesh_part)
-        return 0;
-    const BfmForestTransform *local = &machine->chassis_pose->local[chassis_part];
     *world = *local;
     for (unsigned i = 0; i < 3; ++i) {
         if (machine->yaw) {
@@ -583,6 +603,29 @@ int bfm_steam_knight_machine_joint(const BfmSteamKnightMachine *machine, unsigne
         }
         world->translation[i] += machine->root.translation[i];
     }
+}
+
+int bfm_steam_knight_machine_gauntlet_socket(const BfmSteamKnightMachine *machine,
+                                           BfmForestTransform *world)
+{
+    if (!machine || !machine->active || !world) return 0;
+    unsigned tick = machine->controlled ? machine->control_age % 32 : entrance_clock(machine->entrance_age);
+    const BfmForestTransform *waist = &machine->chassis_pose->local[21];
+    const BfmForestTransform *reference = &sample(&machine->chassis[NEUTRAL], tick)->local[21];
+    const BfmForestTransform *part = &sample(&machine->torso, tick)->local[GAUNTLET];
+    BfmForestTransform mounted;
+    mounted_upper_part(waist, reference, part, &mounted);
+    world_part(machine, &mounted, world);
+    return 1;
+}
+
+int bfm_steam_knight_machine_joint(const BfmSteamKnightMachine *machine, unsigned chassis_part,
+                                  BfmForestTransform *world, const MusashiForestPlayerPart **mesh_part)
+{
+    if (!machine || !machine->active || chassis_part >= model[CHASSIS].parts || !world || !mesh_part)
+        return 0;
+    const BfmForestTransform *local = &machine->chassis_pose->local[chassis_part];
+    world_part(machine, local, world);
     *mesh_part = musashi_forest_player_mesh_part(machine->mesh[CHASSIS], chassis_part);
     return *mesh_part != NULL;
 }
