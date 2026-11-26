@@ -40,8 +40,37 @@ static int copy_tile_block(const MusashiDiscMedia *disc, const char *archive,
     return copied == count;
 }
 
-int bfm_scene_read_tiles(const MusashiDiscMedia *disc, const char *archive,
-                         unsigned member, uint16_t words[512][1024])
+/* A rectangular upload occupies one sector. Its directory has eighteen
+ * eight-byte slots. The packed, little-endian pixels follow the directory. */
+static int copy_rectangles(const uint8_t sector[SECTOR_BYTES], uint32_t bytes,
+                           uint16_t words[512][1024])
+{
+    const unsigned directory_end = 0xa0;
+    uint32_t count = read_le32(sector + 8);
+    size_t cursor = directory_end;
+    if (bytes != SECTOR_BYTES || !count || count > (directory_end - 16) / 8)
+        return 0;
+    for (unsigned i = 0; i < count; ++i) {
+        const uint8_t *p = sector + 16 + 8 * i;
+        unsigned x = p[0] | (unsigned)p[1] << 8;
+        unsigned y = p[2] | (unsigned)p[3] << 8;
+        unsigned width = p[4] | (unsigned)p[5] << 8;
+        unsigned height = p[6] | (unsigned)p[7] << 8;
+        if (!width || !height || x >= 1024 || width > 1024 - x ||
+            y >= 512 || height > 512 - y || height > (bytes - cursor) / (2 * width))
+            return 0;
+        for (unsigned j = 0; j < height; ++j) {
+            for (unsigned k = 0; k < width; ++k) {
+                words[y + j][x + k] = (uint16_t)(sector[cursor] | (unsigned)sector[cursor + 1] << 8);
+                cursor += 2;
+            }
+        }
+    }
+    return 1;
+}
+
+static int read_upload(const MusashiDiscMedia *disc, const char *archive,
+                         unsigned member, unsigned type, uint16_t words[512][1024])
 {
     uint8_t header[SECTOR_BYTES];
     size_t file_size;
@@ -66,8 +95,11 @@ int bfm_scene_read_tiles(const MusashiDiscMedia *disc, const char *archive,
         uint32_t bytes = read_le32(header + 12);
         if (bytes < 16 || bytes > remaining)
             return 0;
-        if (header[4] == 0)
+        if (type == 0 && header[4] == 0)
             return copy_tile_block(disc, archive, offset, header, bytes, words);
+        if (type == 6 && read_le32(header + 4) == type) {
+            return copy_rectangles(header, bytes, words);
+        }
         size_t padded = (((size_t)bytes - 1) / SECTOR_BYTES + 1) * SECTOR_BYTES;
         if (padded > remaining)
             return 0;
@@ -75,4 +107,16 @@ int bfm_scene_read_tiles(const MusashiDiscMedia *disc, const char *archive,
         remaining -= padded;
     }
     return 0;
+}
+
+int bfm_scene_read_tiles(const MusashiDiscMedia *disc, const char *archive,
+                         unsigned member, uint16_t words[512][1024])
+{
+    return read_upload(disc, archive, member, 0, words);
+}
+
+int bfm_scene_read_palettes(const MusashiDiscMedia *disc, const char *archive,
+                            unsigned member, uint16_t words[512][1024])
+{
+    return read_upload(disc, archive, member, 6, words);
 }

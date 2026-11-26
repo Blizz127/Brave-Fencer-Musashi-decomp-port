@@ -310,6 +310,21 @@ BfmBedroomEffects *bfm_bedroom_effects_load(const MusashiDiscMedia *disc, unsign
     return e;
 }
 
+BfmBedroomEffects *bfm_menu_effects_load(const MusashiDiscMedia *disc)
+{
+    Sources s = {.disc=disc};
+    s.common = bfm_archive_sound_bank_load(disc,"MAIN.CD",2);
+    BfmBedroomEffects *e = calloc(1,sizeof *e);
+    if (!e || !s.common || !load_tables(&s) ||
+        !prepare(&s,BFM_ROOM_MOVE_SOUND,&e->clips[0]) ||
+        !prepare(&s,BFM_ROOM_ACCEPT_SOUND,&e->clips[1])) {
+        bfm_bedroom_effects_free(e);
+        e = NULL;
+    }
+    bfm_palace_sound_bank_free(s.common);
+    return e;
+}
+
 void bfm_bedroom_effects_free(BfmBedroomEffects *e)
 {
     if (!e) return;

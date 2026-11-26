@@ -127,6 +127,12 @@ BfmForestHud *bfm_bedroom_hud_load(const MusashiDiscMedia *disc, const uint8_t *
     return load_hud(disc, scene, bytes, BEDROOM_PANELS, tiles);
 }
 
+BfmForestHud *bfm_village_hud_load(const MusashiDiscMedia *disc, const uint8_t *scene,
+                                  size_t bytes, const uint16_t tiles[512][1024])
+{
+    return load_hud(disc, scene, bytes, 0x68a74, tiles);
+}
+
 void bfm_forest_hud_free(BfmForestHud *hud)
 {
     free(hud);
@@ -319,7 +325,9 @@ static void calendar(Canvas *c, const BfmForestStatusValues *v, int x, int y, un
     unsigned quarter = v->minutes_of_day / 15;
     number(c,x+61,y,quarter/4,2,clock_palette);
     glyph(c,x+76,y,0x3850,clock_palette);
-    number(c,x+83,y,quarter%4*15,2,clock_palette);
+    unsigned minutes = quarter % 4 * 15;
+    glyph(c,x+83,y,c->hud->digit[minutes/10],clock_palette);
+    glyph(c,x+91,y,c->hud->digit[minutes%10],clock_palette);
 }
 
 void bfm_forest_hud_draw(const BfmForestHud *hud, const BfmForestStatus *status,

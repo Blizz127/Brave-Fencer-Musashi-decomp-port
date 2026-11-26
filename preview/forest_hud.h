@@ -13,6 +13,8 @@ BfmForestHud *bfm_forest_hud_load(const MusashiDiscMedia *disc, const uint8_t *s
                                  size_t bytes, const BfmForestTerrain *terrain);
 BfmForestHud *bfm_bedroom_hud_load(const MusashiDiscMedia *disc, const uint8_t *scene,
                                   size_t bytes, const uint16_t tiles[512][1024]);
+BfmForestHud *bfm_village_hud_load(const MusashiDiscMedia *disc, const uint8_t *scene,
+                                  size_t bytes, const uint16_t tiles[512][1024]);
 void bfm_bedroom_hud_hide(BfmForestHud *hud);
 /* COMMAND leaves the status panel on screen, moving its charge meter offscreen. */
 void bfm_castle_hud_command(BfmForestHud *hud);

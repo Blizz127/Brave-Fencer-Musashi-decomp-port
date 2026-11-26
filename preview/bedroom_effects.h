@@ -10,6 +10,7 @@ enum { BFM_FOREST_SWING_SOUND = 0x400, BFM_FOREST_HIT_SOUND = 0x437,
 enum { BFM_VILLAGE_KNOCK_SOUND = 0x516 };
 BfmBedroomEffects *bfm_village_knock_sound_load(const MusashiDiscMedia *disc);
 BfmBedroomEffects *bfm_forest_swing_sound_load(const MusashiDiscMedia *disc);
+BfmBedroomEffects *bfm_menu_effects_load(const MusashiDiscMedia *disc);
 BfmBedroomEffects *bfm_bedroom_effects_load(const MusashiDiscMedia *disc, unsigned member, uint32_t room);
 void bfm_bedroom_effects_free(BfmBedroomEffects *effects);
 /* Serialized with the sound callback. All source decoding occurs during load. */

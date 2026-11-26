@@ -85,7 +85,7 @@ static unsigned blend(unsigned source, unsigned destination, unsigned mode)
 }
 
 static void paint(const BfmForestRaster *surface, const BfmForestRasterMaterial *m,
-                  const Plane lights[3], const Plane uv[2], int64_t uv_unit, int x, int y)
+                  const Plane lights[3], const Plane uv[2], int64_t uv_unit, int x, int y, int field_levels)
 {
     static const int8_t dither[4][4] = {
         {-4, 0,-3, 1}, { 2,-2, 3,-1}, {-3, 1,-4, 0}, { 3,-1, 2,-2}
@@ -107,7 +107,8 @@ static void paint(const BfmForestRaster *surface, const BfmForestRasterMaterial 
         unsigned channel = 16-8*k;
         if (semi)
             level = blend(level, (background >> (channel+3)) & 31, (m->page >> 5) & 3);
-        pixel |= (level*8 + level/4) << channel;
+        unsigned display = field_levels ? level * 255 / 31 : level * 8 + level / 4;
+        pixel |= display << channel;
     }
     surface->pixels[y][x] = pixel;
 }
@@ -118,7 +119,7 @@ static int precedes(const Vertex *a, const Vertex *b)
 }
 
 static void raster_triangle(const BfmForestRaster *surface, const BfmForestRasterMaterial *m,
-                     const Vertex *a, const Vertex *b, const Vertex *c)
+                     const Vertex *a, const Vertex *b, const Vertex *c, int field_levels)
 {
     /* A cyclic permutation puts both attributes and coverage in one basis. */
     if (precedes(b,a) && precedes(b,c)) {
@@ -165,7 +166,7 @@ static void raster_triangle(const BfmForestRaster *surface, const BfmForestRaste
         int64_t ca = edge(c,a,left,y) - ca_excluded;
         for (int x = left; x <= right; ++x) {
             if (ab >= 0 && bc >= 0 && ca >= 0)
-                paint(surface,m,lights,uv,uv_unit,x,y);
+                paint(surface,m,lights,uv,uv_unit,x,y,field_levels);
             ab += (int64_t)a->y - b->y;
             bc += (int64_t)b->y - c->y;
             ca += (int64_t)c->y - a->y;
@@ -180,7 +181,7 @@ static int with_offset(int coordinate, int offset)
 }
 
 static void triangle(const BfmForestRaster *surface, const BfmForestRasterMaterial *m,
-                     const Vertex *a, const Vertex *b, const Vertex *c, int dx, int dy)
+                     const Vertex *a, const Vertex *b, const Vertex *c, int dx, int dy, int field_levels)
 {
     int left = minimum(a->x, minimum(b->x, c->x));
     int right = maximum(a->x, maximum(b->x, c->x));
@@ -194,10 +195,22 @@ static void triangle(const BfmForestRaster *surface, const BfmForestRasterMateri
             shifted[i].x = with_offset(shifted[i].x, dx);
             shifted[i].y = with_offset(shifted[i].y, dy);
         }
-        raster_triangle(surface, m, &shifted[0], &shifted[1], &shifted[2]);
+        raster_triangle(surface, m, &shifted[0], &shifted[1], &shifted[2], field_levels);
     } else {
-        raster_triangle(surface, m, a, b, c);
+        raster_triangle(surface, m, a, b, c, field_levels);
     }
+}
+
+static void raster_face(const BfmForestRaster *surface, const BfmForestRasterMaterial *m,
+                        const BfmForestRasterVertex corners[4], int offset_x, int offset_y,
+                        int field_levels)
+{
+    if (!surface || !surface->pixels || !m || !corners ||
+        (m->count != 3 && m->count != 4) || (m->textured &&
+        (!surface->tiles || ((m->page >> 7) & 3) == 3))) return;
+    triangle(surface, m, &corners[0], &corners[1], &corners[2], offset_x, offset_y, field_levels);
+    if (m->count == 4)
+        triangle(surface, m, &corners[2], &corners[1], &corners[3], offset_x, offset_y, field_levels);
 }
 
 void bfm_forest_raster_offset_face(const BfmForestRaster *surface,
@@ -205,17 +218,18 @@ void bfm_forest_raster_offset_face(const BfmForestRaster *surface,
                                    const BfmForestRasterVertex corners[4],
                                    int offset_x, int offset_y)
 {
-    if (!surface || !surface->pixels || !m || !corners ||
-        (m->count != 3 && m->count != 4) || (m->textured &&
-        (!surface->tiles || ((m->page >> 7) & 3) == 3))) return;
-    triangle(surface, m, &corners[0], &corners[1], &corners[2], offset_x, offset_y);
-    if (m->count == 4)
-        triangle(surface, m, &corners[2], &corners[1], &corners[3], offset_x, offset_y);
+    raster_face(surface, m, corners, offset_x, offset_y, 0);
 }
 
 void bfm_forest_raster_face(const BfmForestRaster *surface,
                             const BfmForestRasterMaterial *m,
                             const BfmForestRasterVertex corners[4])
 {
-    bfm_forest_raster_offset_face(surface, m, corners, 0, 0);
+    raster_face(surface, m, corners, 0, 0, 0);
+}
+
+void bfm_field_raster_face(const BfmForestRaster *surface, const BfmForestRasterMaterial *m,
+                           const BfmForestRasterVertex corners[4])
+{
+    raster_face(surface, m, corners, 0, 0, 1);
 }

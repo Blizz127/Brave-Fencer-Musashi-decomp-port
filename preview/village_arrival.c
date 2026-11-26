@@ -97,6 +97,24 @@ fail:
     return NULL;
 }
 
+BfmVillageArrival *bfm_village_resume_inn(const MusashiDiscMedia *disc, BfmBedroomEntry *entry,
+                                         const uint8_t *main, size_t bytes,
+                                         uint16_t tiles[512][1024], BfmForestHud **hud)
+{
+    BfmVillageArrival *a = calloc(1, sizeof *a);
+    if (!a) return NULL;
+    a->lower = bfm_village_lower_resume(disc, entry, main, bytes, tiles, hud);
+    if (!a->lower) {
+        free(a);
+        return NULL;
+    }
+    a->disc = disc;
+    a->entry = entry;
+    a->record = &entry->state;
+    a->tiles = tiles;
+    return a;
+}
+
 const BfmVillagePlayer *bfm_village_arrival_player(const BfmVillageArrival *a)
 {
     return a->lower ? bfm_village_lower_player(a->lower) : bfm_village_motion_player(a->motion);
@@ -123,6 +141,11 @@ int bfm_village_arrival_message_closed(BfmVillageArrival *a, unsigned answer)
 void bfm_village_arrival_set_scene_tick(BfmVillageArrival *a, unsigned tick)
 {
     a->scene_tick = tick;
+}
+
+const uint8_t *bfm_village_arrival_inn_transfer(const BfmVillageArrival *arrival)
+{
+    return arrival->lower ? bfm_village_lower_inn_transfer(arrival->lower) : NULL;
 }
 
 unsigned bfm_village_arrival_transfer_tick(const BfmVillageArrival *a)

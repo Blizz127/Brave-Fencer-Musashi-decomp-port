@@ -23,6 +23,10 @@ int bfm_bedroom_step_pad(BfmBedroom *room, int confirm_edge, int reveal_edge,
 int bfm_bedroom_step_controls(BfmBedroom *room, int confirm_edge, int reveal_edge,
                               int direction, int accept_edge);
 int bfm_bedroom_step_input(BfmBedroom *room, int confirm_edge, int reveal_edge);
+/* Available while the keeper is offering service. */
+const BfmSaveRecord *bfm_bedroom_inn_record(const BfmBedroom *room);
+int bfm_bedroom_leave_inn(BfmBedroom *room);
+int bfm_bedroom_draw_counter(BfmBedroom *room, int dialogue, uint32_t pixels[240][320]);
 int bfm_bedroom_draw(BfmBedroom *room, uint32_t pixels[240][320]);
 struct BfmBedroomEffects *bfm_bedroom_effect(const BfmBedroom *room, unsigned *command);
 struct BfmForestScore *bfm_bedroom_score(const BfmBedroom *room);

@@ -90,6 +90,15 @@ static void read_directory(BfmSaveMenu *menu, CardImage image)
     if (empty_slots == MUSASHI_SAVE_FILES) menu->page = BFM_SAVE_CARD_LOADING;
 }
 
+void bfm_save_menu_read_image(BfmSaveMenu *menu, uint8_t *image, size_t length)
+{
+    *menu = (BfmSaveMenu){0};
+    if (!image || length != CARD_IMAGE_SIZE)
+        menu->issue = "Expected a raw 128 KiB memory card.";
+    else
+        read_directory(menu, (CardImage){image, length});
+}
+
 void bfm_save_menu_open(BfmSaveMenu *menu, const char *path)
 {
     *menu = (BfmSaveMenu){0};
@@ -108,7 +117,7 @@ void bfm_save_menu_open(BfmSaveMenu *menu, const char *path)
              fgetc(file) != EOF || ferror(file))
         menu->issue = "Expected a raw 128 KiB memory card.";
     else
-        read_directory(menu, (CardImage){bytes, CARD_IMAGE_SIZE});
+        bfm_save_menu_read_image(menu, bytes, CARD_IMAGE_SIZE);
     free(bytes);
     fclose(file);
 }

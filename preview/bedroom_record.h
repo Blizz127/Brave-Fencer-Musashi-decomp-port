@@ -15,13 +15,19 @@ typedef struct {
     uint8_t timestamps[96];
 } BfmSaveRecord;
 
+/* Bits 29..33 select alternate room tables on Continue. */
+static inline int bfm_save_uses_default_room_table(const BfmSaveRecord *record)
+{
+    return !(record->flags[3] & 0xe0u) && !(record->flags[4] & 3u);
+}
+
 typedef struct {
     BfmSaveRecord state;
     unsigned scene_member;
 } BfmBedroomEntry;
 
-/* Stage a checked Chapter 1 save at the story transition into room 3001.
- * Returns zero for another destination/story path or a malformed disc row. */
+/* Resolve the earned castle wake or the story-ten inn exterior against the
+ * mounted disc. Unsupported saved destinations remain at the load boundary. */
 int bfm_bedroom_entry(const MusashiDiscMedia *disc, const BfmSaveRecord *record,
                       BfmBedroomEntry *out);
 int bfm_castle_room_entry(const MusashiDiscMedia *disc, const uint8_t *transfer,

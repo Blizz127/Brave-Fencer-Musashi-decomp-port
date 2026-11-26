@@ -9,4 +9,7 @@
  * on failure and must then be discarded. */
 int bfm_scene_read_tiles(const MusashiDiscMedia *disc, const char *archive,
                          unsigned member, uint16_t words[512][1024]);
+/* Apply the first single-sector rectangular palette upload in the member. */
+int bfm_scene_read_palettes(const MusashiDiscMedia *disc, const char *archive,
+                            unsigned member, uint16_t words[512][1024]);
 #endif

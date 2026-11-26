@@ -35,4 +35,8 @@ void bfm_forest_raster_offset_face(const BfmForestRaster *surface,
                                    const BfmForestRasterVertex corners[4],
                                    int offset_x, int offset_y);
 
+/* Use the RGB555 expansion of the field renderer for objects in the town mesh. */
+void bfm_field_raster_face(const BfmForestRaster *surface, const BfmForestRasterMaterial *material,
+                           const BfmForestRasterVertex corners[4]);
+
 #endif

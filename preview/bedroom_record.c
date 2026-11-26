@@ -41,8 +41,9 @@ static int payload(const MusashiDiscMedia *disc, const char *archive, unsigned m
                                                  sizeof header, &total) ||
             memcmp(header, "PAC", 4)) return 0;
         uint32_t length = word(header + 12);
-        if (length <= SECTOR || length > left) return 0;
+        if (length < SECTOR || length > left) return 0;
         if (word(header + 4) == type) {
+            if (length == SECTOR) return 0;
             *position = start + SECTOR;
             *bytes = length - SECTOR;
             return *bytes <= MAIN_BYTES_LIMIT;
@@ -94,19 +95,27 @@ uint8_t *bfm_village_event_data(const MusashiDiscMedia *disc, unsigned member, s
 int bfm_bedroom_entry(const MusashiDiscMedia *disc, const BfmSaveRecord *record,
                       BfmBedroomEntry *out)
 {
-    /* MAIN/12 selects its early-story descriptor below story ten. Only
-     * the earned story-two wake and its SC01/6 actor graph are supported. */
-    enum { EARLY_DESTINATION = 0x58664, EARLY_RESOURCE_ROW = 55 };
+    /* Continue selects a resident destination when the save has no explicit
+     * transfer. The first castle wake and the inn exterior use separate rows. */
+    enum { EARLY_DESTINATION = 0x58664, INN_DESTINATION = 0x586f4, EARLY_RESOURCE_ROW = 55 };
     size_t start, length, total;
     uint8_t room[36], group_counts[8], scene_row[8];
     /* Flags 29 through 33 select five additional room setup tables. */
-    if ((record->flags[3] & 0xe0u) || (record->flags[4] & 3u)) return 0;
-    if (word(record->progress + 8) != 2 ||
-        !payload(disc, "MAIN.CD", 12, 0x101, &start, &length) ||
-        length < EARLY_DESTINATION + sizeof room ||
-        !musashi_disc_media_read_root_range(disc, "MAIN.CD", start + EARLY_DESTINATION,
-                                             room, sizeof room, &total) ||
-        word(room) != 0x3001 ||
+    if (!bfm_save_uses_default_room_table(record)) return 0;
+    uint32_t story = word(record->progress + 8);
+    if (story != 2 && story != 10) return 0;
+    size_t offset = story == 10 ? INN_DESTINATION : EARLY_DESTINATION;
+    if (!payload(disc, "MAIN.CD", 12, 0x101, &start, &length) ||
+        length < offset + sizeof room ||
+        !musashi_disc_media_read_root_range(disc, "MAIN.CD", start + offset,
+                                             room, sizeof room, &total)) return 0;
+    if (story == 10) {
+        if (memcmp(record->destination, (uint8_t[36]){0}, sizeof record->destination) ||
+            word(room) != 0x000a1010u) return 0;
+        out->state = *record;
+        return bfm_castle_room_entry(disc, room, out);
+    }
+    if (word(room) != 0x3001 ||
         !musashi_disc_media_read_root_range(disc, "MAIN.CD", 0, group_counts, 4, &total) ||
         !musashi_disc_media_read_root_range(disc, "SC01.CD", 0, group_counts + 4, 4, &total))
         return 0;
@@ -132,7 +141,7 @@ int bfm_castle_room_entry(const MusashiDiscMedia *disc, const uint8_t *transfer,
     case 0x3002: member = 8; resource = 57; group = 1; break;
     case 0x43000: member = 4; resource = 53; group = 1; break;
     case 0x3004: member = 74; resource = 123; group = 1; break;
-    case 0x02011010: member = 1; resource = 179; group = 3; break;
+    case 0x000a1010: case 0x02011010: member = 1; resource = 179; group = 3; break;
     case 0x51011: member = 2; resource = 180; group = 3; break;
     default: return 0;
     }

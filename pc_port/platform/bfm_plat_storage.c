@@ -24,6 +24,7 @@
 #include <unistd.h>
 #endif
 
+#ifndef BFM_MEMCARD_ONLY
 #define MAX_BACKENDS 8
 
 /* ---- "image" backend: user .cue/.bin (raw 2352) or .iso (2048) ---- */
@@ -159,7 +160,6 @@ static const BfmPlatStorageBackend image_backend = {
 static const BfmPlatStorageBackend *backends[MAX_BACKENDS] = {&image_backend};
 static unsigned backend_count = 1;
 static const BfmPlatStorageBackend *active;
-static char card_dir[512] = "saves";
 
 int bfm_plat_storage_register(const BfmPlatStorageBackend *b) {
     unsigned i;
@@ -356,7 +356,11 @@ int bfm_plat_disc_read_file(const char *path, void *out, size_t cap,
     return BFM_PLAT_OK;
 }
 
+#endif /* BFM_MEMCARD_ONLY */
+
 /* ---- memory cards ---- */
+
+static char card_dir[512] = "saves";
 
 enum { CARD_PATH_CAPACITY = 600 };
 #ifdef _WIN32
@@ -731,7 +735,9 @@ int bfm_plat_memcard_save(unsigned slot, const uint8_t *card, size_t size) {
 void bfm_plat_storage_reset(void) {
     unsigned i;
     for (i = 0; i < BFM_MEMCARD_SLOTS; i++) bfm_plat_memcard_release(i);
+#ifndef BFM_MEMCARD_ONLY
     bfm_plat_disc_close();
     backend_count = 1;
+#endif
     strcpy(card_dir, "saves");
 }

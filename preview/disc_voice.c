@@ -5,11 +5,24 @@
 
 enum { GROUPS = 16, STEREO_FRAMES = 18 * 4 * 28, MONO_FRAMES = 2 * STEREO_FRAMES, EXE_HEADER = 2048 };
 
+typedef struct {
+    const char *file;
+    uint32_t table_address;
+    unsigned script_bank, prefix;
+} VoiceArchive;
+
+static const VoiceArchive archives[] = {
+    [BFM_VOICE_OPEN] = { "OPEN.STR", 0x8006a774, 8, 0x4600 },
+    [BFM_VOICE_ST01] = { "ST01.STR", 0x8006a69c, 0, 0x4000 },
+    [BFM_VOICE_ST02] = { "ST02.STR", 0x8006a6e4, 1, 0x4200 },
+    [BFM_VOICE_SHOPS01] = { "SHOPS01.STR", 0x8006a72c, 2, 0x4400 }
+};
+
 struct PalaceVoice {
     const MusashiDiscMedia *disc;
     uint32_t archive_start, archive_sectors, group_start[GROUPS];
     size_t cue_directory;
-    BfmDiscVoiceArchive archive;
+    const VoiceArchive *archive;
     unsigned half_channels, interleave;
     uint32_t next, limit;
     unsigned channel, pending, consumed;
@@ -30,13 +43,12 @@ static int exe_read(const MusashiDiscMedia *disc, size_t offset, uint8_t *out, s
 
 DiscVoice *bfm_disc_voice_load(const MusashiDiscMedia *disc, BfmDiscVoiceArchive archive)
 {
-    if (archive != BFM_VOICE_OPEN && archive != BFM_VOICE_ST01 && archive != BFM_VOICE_ST02) return NULL;
-    const char *file = archive == BFM_VOICE_OPEN ? "OPEN.STR" : archive == BFM_VOICE_ST02 ? "ST02.STR" : "ST01.STR";
-    const uint32_t table_address = archive == BFM_VOICE_OPEN ? UINT32_C(0x8006a774) :
-                                   archive == BFM_VOICE_ST02 ? UINT32_C(0x8006a6e4) : UINT32_C(0x8006a69c);
+    if ((unsigned)archive >= sizeof(archives) / sizeof(archives[0])) return NULL;
+    const VoiceArchive *spec = &archives[archive];
+    const uint32_t table_address = spec->table_address;
     uint8_t header[32], directory[8 + 4 * GROUPS];
     uint32_t first, sectors;
-    if (!disc || !musashi_disc_media_root_frames(disc, file, &first, &sectors) ||
+    if (!disc || !musashi_disc_media_root_frames(disc, spec->file, &first, &sectors) ||
         !exe_read(disc, 0, header, sizeof(header)) || memcmp(header, "PS-X EXE", 8)) return NULL;
     uint32_t origin = little32(header + 24);
     if (origin > table_address || !exe_read(disc, EXE_HEADER + (size_t)(table_address - origin),
@@ -46,7 +58,7 @@ DiscVoice *bfm_disc_voice_load(const MusashiDiscMedia *disc, BfmDiscVoiceArchive
     DiscVoice *v = calloc(1, sizeof(*v));
     if (!v) return NULL;
     v->disc = disc;
-    v->archive = archive;
+    v->archive = spec;
     v->archive_start = first;
     v->archive_sectors = sectors;
     v->cue_directory = EXE_HEADER + (size_t)(table - origin);
@@ -83,9 +95,7 @@ int bfm_disc_voice_request(DiscVoice *v, unsigned bank, unsigned cue, BfmDiscVoi
     if (!v) return 0;
     /* The mounted descriptor maps each pair of selector rows onto one
      * interleaved group. Bits 9..13 select the sound archive. */
-    unsigned script_bank = v->archive == BFM_VOICE_OPEN ? 8u : v->archive == BFM_VOICE_ST02 ? 1u : 0u;
-    unsigned prefix = v->archive == BFM_VOICE_OPEN ? 0x4600u : v->archive == BFM_VOICE_ST02 ? 0x4200u : 0x4000u;
-    if (bank != script_bank || (cue & ~0x1ffu) != prefix) return 0;
+    if (bank != v->archive->script_bank || (cue & ~0x1ffu) != v->archive->prefix) return 0;
     unsigned pair = (cue >> 4) & 31u;
     unsigned group = pair / 2;
     unsigned channel = (cue & 15u) + (pair % 2) * v->half_channels;

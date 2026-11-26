@@ -6,6 +6,7 @@
 #include "../pc_port/forest_player_bytes.h"
 #include "village_mayor.h"
 #include "village_mayor_stage.h"
+#include "village_mayor_door.h"
 #include "village_portrait.h"
 #include "village_residents.h"
 #include "village_sky.h"
@@ -29,6 +30,7 @@ struct BfmVillageLower {
     BfmVillageCamera camera, presented;
     BfmVillageMayorStage *stage;
     BfmVillageStreetScenery *scenery;
+    BfmVillageShopDoors *shop_doors;
     BfmVillageMayorDialogue talk;
     BfmSaveRecord *save;
     BfmForestMessageArt *art;
@@ -41,6 +43,7 @@ void bfm_village_lower_free(BfmVillageLower *lower)
     if (!lower) return;
     bfm_forest_message_art_free(lower->art);
     bfm_village_mayor_stage_free(lower->stage);
+    bfm_village_shop_doors_free(lower->shop_doors);
     bfm_village_street_scenery_free(lower->scenery);
     bfm_village_motion_free(lower->motion);
     bfm_village_field_clear(&lower->field);
@@ -48,26 +51,30 @@ void bfm_village_lower_free(BfmVillageLower *lower)
     free(lower);
 }
 
-BfmVillageLower *bfm_village_lower_open(const MusashiDiscMedia *disc, BfmBedroomEntry *entry,
-                                       const BfmVillageMotion *departed, uint16_t tiles[512][1024])
+static BfmVillageLower *lower_open(const MusashiDiscMedia *disc, BfmBedroomEntry *entry,
+                                   const BfmVillageMotion *departed, const uint8_t *main,
+                                   size_t main_bytes, uint16_t tiles[512][1024], BfmForestHud **hud)
 {
-    const uint8_t *transfer = bfm_village_motion_transfer(departed);
     BfmBedroomEntry next = *entry;
-    if (!transfer || !bfm_castle_room_entry(disc, transfer, &next) || next.scene_member != 1)
+    if (departed && !bfm_castle_room_entry(disc, bfm_village_motion_transfer(departed), &next))
         return NULL;
+    if (next.scene_member != 1) return NULL;
     BfmVillageLower *lower = calloc(1, sizeof *lower);
     if (!lower) return NULL;
     lower->scene_bytes = bfm_read_archive_field_scene(disc, "SC03.CD", next.scene_member, lower->scene);
     if (lower->scene_bytes < room_root - scene_origin + 0xcc) goto fail;
-    lower->motion = bfm_village_motion_arrive(departed, lower->scene, lower->scene_bytes, room_root);
+    lower->motion = departed ? bfm_village_motion_arrive(departed, lower->scene, lower->scene_bytes, room_root) :
+                    bfm_village_motion_resume(lower->scene, lower->scene_bytes, room_root, main, main_bytes);
     if (!lower->motion || !bfm_village_field_load_lower(&lower->field, disc, lower->scene,
                                                        lower->scene_bytes, room_root)) goto fail;
     lower->module = bfm_village_event_data(disc, 53, &lower->module_bytes);
     if (!lower->module) goto fail;
     lower->stage = bfm_village_mayor_stage_open(lower->scene, lower->scene_bytes, room_root,
                         lower->module, lower->module_bytes, UINT32_C(0x80190fb0));
+    lower->shop_doors = bfm_village_shop_doors_load(lower->scene, lower->scene_bytes, room_root);
     lower->scenery = bfm_village_street_scenery_load(lower->scene, lower->scene_bytes, room_root);
-    if (!lower->scenery || !lower->stage || !bfm_scene_read_tiles(disc, "MAIN.CD", 10, tiles) ||
+    if (!lower->scenery || !lower->stage || !lower->shop_doors ||
+        !bfm_scene_read_tiles(disc, "MAIN.CD", 10, tiles) ||
         !bfm_scene_read_tiles(disc, "SC03.CD", next.scene_member, tiles)) goto fail;
     bfm_village_mayor_portrait_load(tiles);
     lower->art = bfm_castle_message_art_load(disc, lower->scene, lower->scene_bytes, tiles, 0x65a84);
@@ -76,12 +83,60 @@ BfmVillageLower *bfm_village_lower_open(const MusashiDiscMedia *disc, BfmBedroom
     lower->save = &entry->state;
     const BfmVillagePlayer *p = bfm_village_motion_player(lower->motion);
     bfm_village_camera_lower(&lower->camera, p->root.xyz, 1);
+    if (hud) {
+        /* The exterior cold view faces back toward the inn entrance. */
+        lower->camera.yaw = 3584;
+        bfm_village_camera_lower(&lower->camera, p->root.xyz, 0);
+        if (!bfm_village_motion_lower_orb(lower->motion, next.state.progress[0x48], tiles))
+            goto fail;
+        *hud = bfm_village_hud_load(disc, lower->scene, lower->scene_bytes, tiles);
+        if (!*hud) goto fail;
+    }
     lower->presented = lower->camera;
     *entry = next;
     return lower;
 fail:
     bfm_village_lower_free(lower);
     return NULL;
+}
+
+BfmVillageLower *bfm_village_lower_open(const MusashiDiscMedia *disc, BfmBedroomEntry *entry,
+                                       const BfmVillageMotion *departed, uint16_t tiles[512][1024])
+{
+    if (!departed) return NULL;
+    return lower_open(disc, entry, departed, NULL, 0, tiles, NULL);
+}
+
+BfmVillageLower *bfm_village_lower_resume(const MusashiDiscMedia *disc, BfmBedroomEntry *entry,
+                                         const uint8_t *main, size_t bytes,
+                                         uint16_t tiles[512][1024], BfmForestHud **hud)
+{
+    if (!hud || entry->state.destination[2] != 10) return NULL;
+    return lower_open(disc, entry, NULL, main, bytes, tiles, hud);
+}
+
+static const uint8_t *scene_pointer(const BfmVillageLower *lower, const uint8_t *slot,
+                                    size_t length)
+{
+    uint32_t address = (uint32_t)slot[0] | (uint32_t)slot[1] << 8 |
+                       (uint32_t)slot[2] << 16 | (uint32_t)slot[3] << 24;
+    if (address < scene_origin || length > lower->scene_bytes ||
+        address - scene_origin > lower->scene_bytes - length) return NULL;
+    return lower->scene + (address - scene_origin);
+}
+
+const uint8_t *bfm_village_lower_inn_transfer(const BfmVillageLower *lower)
+{
+    if (!lower || bfm_village_mayor_stage_active(lower->stage)) return NULL;
+    const BfmVillagePlayer *player = bfm_village_motion_player(lower->motion);
+    if (!player->controlled || (player->wall_contact & 31u) != 14) return NULL;
+    /* Lower village wall 14 leads through descriptor 10. It also carries
+     * the inn's exterior return position and heading. */
+    const uint8_t *room = lower->scene + (room_root - scene_origin);
+    const uint8_t *entries = scene_pointer(lower, room + 0xc8, 11 * 4);
+    const uint8_t *door = entries ? scene_pointer(lower, entries + 10 * 4, 36) : NULL;
+    if (!door || door[0] != 0x17 || door[1] != 0x20 || door[2] != 0) return NULL;
+    return door;
 }
 
 const BfmVillagePlayer *bfm_village_lower_player(const BfmVillageLower *lower)
@@ -140,7 +195,10 @@ static void draw_figures(void *context, int depth)
         int door = bfm_village_mayor_stage_next_depth(lower->stage);
         int bucket = tree > actor ? tree : actor;
         if (door > bucket) bucket = door;
+        int shop = bfm_village_shop_doors_next_depth(lower->shop_doors);
+        if (shop > bucket) bucket = shop;
         if (bucket == INT_MIN || bucket < depth) break;
+        bfm_village_shop_doors_draw_to(lower->shop_doors, bucket);
         bfm_village_mayor_stage_draw_to(lower->stage, bucket);
         bfm_bedroom_figure_draw_to(lower->field.hero, bucket);
         bfm_village_street_scenery_draw_to(lower->scenery, bucket);
@@ -162,6 +220,7 @@ int bfm_village_lower_draw(BfmVillageLower *lower, unsigned tick, const uint8_t 
                                    lower->age, lower->tiles, &pixels[0][0])) return 0;
     bfm_village_street_scenery_step(lower->scenery, tick, u32le(lower->save->progress + 8));
     const BfmBedroomView *camera = bfm_bedroom_field_view(lower->field.field);
+    bfm_village_shop_doors_prepare(lower->shop_doors, camera, lower->tiles, &pixels[0][0], lower->save);
     if (!bfm_village_mayor_stage_prepare(lower->stage, camera, lower->tiles, &pixels[0][0]) ||
         !bfm_village_street_scenery_prepare(lower->scenery, camera, lower->tiles, &pixels[0][0]) ||
         !bfm_village_mayor_stage_add(lower->stage, lower->field.hero, camera)) return 0;

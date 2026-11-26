@@ -178,7 +178,7 @@ static int floors(const BfmVillageGround *g, const int start[3], int end[3],
     return found;
 }
 
-static int slide(const BfmVillageGround *g, const int start[3], int end[3])
+static int slide(const BfmVillageGround *g, const int start[3], int end[3], uint16_t *wall)
 {
     Slice origin;
     if (!cell(g, start, &origin)) return 0;
@@ -193,6 +193,7 @@ static int slide(const BfmVillageGround *g, const int start[3], int end[3])
                 if (!read_face(g, read16(cells[c].data + i), &face)) return 0;
                 if (face.planes[0].normal[1] || !crosses(&face, start, end)) continue;
                 if (!project(face.planes, end)) return 0;
+                if (face.material & 31u) *wall = (uint16_t)face.material;
                 adjusted = 1;
                 break;
             }
@@ -203,7 +204,7 @@ static int slide(const BfmVillageGround *g, const int start[3], int end[3])
 }
 
 static BfmVillageGroundResult sweep(const BfmVillageGround *g, const int16_t from[3],
-                                    int16_t to[3], BfmForestContact *floor, int airborne)
+                                    int16_t to[3], BfmForestContact *floor, int airborne, uint16_t *wall)
 {
     if (!g || !from || !to || !floor) return BFM_VILLAGE_GROUND_BLOCKED;
     int start[3] = {from[0], from[1], from[2]}, end[3] = {to[0], to[1], to[2]};
@@ -219,7 +220,9 @@ static BfmVillageGroundResult sweep(const BfmVillageGround *g, const int16_t fro
     int hit = floors(g, start, end, &support);
     if (hit < 0) return BFM_VILLAGE_GROUND_BLOCKED;
     if (!hit && !airborne) end[1] = to[1];
-    if (!slide(g, start, end)) return BFM_VILLAGE_GROUND_BLOCKED;
+    uint16_t touched = 0;
+    if (!slide(g, start, end, &touched)) return BFM_VILLAGE_GROUND_BLOCKED;
+    if (wall) *wall = touched;
     for (int k = 0; k < 3; ++k) to[k] = (int16_t)end[k];
     if (!hit) return BFM_VILLAGE_GROUND_AIR;
     const int *n = support.planes[0].normal;
@@ -233,11 +236,17 @@ static BfmVillageGroundResult sweep(const BfmVillageGround *g, const int16_t fro
 BfmVillageGroundResult bfm_village_ground_step(const BfmVillageGround *g, const int16_t from[3],
                                               int16_t to[3], BfmForestContact *floor)
 {
-    return sweep(g, from, to, floor, 0);
+    return sweep(g, from, to, floor, 0, NULL);
+}
+
+BfmVillageGroundResult bfm_village_ground_wall_step(const BfmVillageGround *g,
+    const int16_t from[3], int16_t to[3], BfmForestContact *floor, uint16_t *wall)
+{
+    return sweep(g, from, to, floor, 0, wall);
 }
 
 BfmVillageGroundResult bfm_village_ground_air(const BfmVillageGround *g, const int16_t from[3],
                                              int16_t to[3], BfmForestContact *floor)
 {
-    return sweep(g, from, to, floor, 1);
+    return sweep(g, from, to, floor, 1, NULL);
 }

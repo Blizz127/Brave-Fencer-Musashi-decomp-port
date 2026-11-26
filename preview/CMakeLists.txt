@@ -15,6 +15,14 @@ add_executable(musashi_native_boot
     palace_flash.c
     spu_sample.c
     palace_voice.c
+    inn_field.c
+    inn_keeper.c
+    inn_greeting.c
+    inn_menu.c
+    inn_profile.c
+    inn_card.c
+    "${bfm_root}/pc_port/card/card_host_storage.c"
+    "${bfm_root}/pc_port/platform/bfm_plat_storage.c"
     save_menu.c
     save_view.c
     bedroom.c
@@ -184,7 +192,7 @@ target_include_directories(musashi_native_boot PRIVATE
     "${bfm_root}/pc_port/platform"
     "${bfm_root}/include")
 target_link_libraries(musashi_native_boot PRIVATE SDL2::SDL2)
-target_compile_definitions(musashi_native_boot PRIVATE MUSASHI_STANDALONE_SHA256=1)
+target_compile_definitions(musashi_native_boot PRIVATE MUSASHI_STANDALONE_SHA256=1 BFM_MEMCARD_ONLY=1)
 
 if(NOT MSVC)
     target_link_libraries(musashi_native_boot PRIVATE m)

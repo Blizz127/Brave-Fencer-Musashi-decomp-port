@@ -2,6 +2,7 @@
 #ifndef BFM_SAVE_MENU_H
 #define BFM_SAVE_MENU_H
 
+#include <stddef.h>
 #include <stdint.h>
 #include "musashi_disc_media.h"
 #include "bedroom_record.h"
@@ -28,6 +29,8 @@ typedef struct {
 /* Read the explicitly selected raw US card once per visit. The menu retains
    a snapshot only for each validated slot and closes the card before returning. */
 void bfm_save_menu_open(BfmSaveMenu *menu, const char *path);
+/* Parse an already captured image without opening or changing its source. */
+void bfm_save_menu_read_image(BfmSaveMenu *menu, uint8_t *image, size_t length);
 /* PlayStation wire-order button edges. Returns one when leaving for title. */
 int bfm_save_menu_input(BfmSaveMenu *menu, uint16_t pressed);
 typedef struct BfmSaveArt BfmSaveArt;

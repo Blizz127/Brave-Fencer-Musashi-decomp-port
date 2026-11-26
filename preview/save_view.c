@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "save_menu.h"
+#include "inn_menu.h"
 #include "scene_tiles.h"
 
 #include <stdio.h>
@@ -33,6 +34,7 @@ BfmSaveArt *bfm_save_art_load(const MusashiDiscMedia *disc)
 typedef struct {
     const BfmSaveArt *art;
     uint32_t (*pixels)[320];
+    unsigned over_field;
 } Canvas;
 
 static uint32_t rgb(unsigned r, unsigned g, unsigned b)
@@ -103,17 +105,25 @@ static void shade(Canvas *c, int x, int y, int w, int h, int stripe, int dim)
             int d = dither[(y+j) % 4][(x+i) % 4];
             int numerator = (stripe ? 40 : 120) * j * w - 40 * i * h;
             int blue = ((stripe ? 208 : 112) * w * h + numerator + w * h / 2) / (w * h);
-            c->pixels[y+j][x+i] = rgb(quantize(stripe ? 8 : 0, d, dim),
-                                       quantize(stripe ? 16 : 8, d, dim), quantize(blue, d, dim));
+            unsigned red = quantize(stripe ? 8 : 0, d, dim);
+            unsigned green = quantize(stripe ? 16 : 8, d, dim);
+            unsigned b = quantize(blue, d, dim);
+            if (dim && c->over_field) {
+                uint32_t field = c->pixels[y+j][x+i];
+                red += (field >> 20) & 15u;
+                green += (field >> 12) & 15u;
+                b += (field >> 4) & 15u;
+            }
+            c->pixels[y+j][x+i] = rgb(red, green, b);
         }
     }
 }
 
-static void panel(Canvas *c, int x, int y, int w, int h, int bright)
+static void panel(Canvas *c, int x, int y, int w, int h, int heading_height)
 {
-    unsigned light = bright ? 128u : 88u;
-    shade(c, x+4, y+6, w-8, h-9, 0, !bright);
-    if (bright) shade(c, x+4, y+4, w-8, h == 38 ? 29 : 27, 1, 0);
+    unsigned light = heading_height ? 128u : 88u;
+    shade(c, x+4, y+6, w-8, h-9, 0, !heading_height);
+    if (heading_height) shade(c, x+4, y+4, w-8, heading_height, 1, 0);
     for (int side = 0; side <= 1; ++side) {
         int dx = side * (w-8), dy = side * (h-8);
         blit(c, GLYPHS, x+dx, y+8, 8, h-16, 32, 72, 8, 7, light);
@@ -129,7 +139,7 @@ static void draw_row(Canvas *c, const BfmSaveMenu *menu, unsigned i)
     unsigned light = i == menu->selected ? 128 : 88;
     const BfmSaveRow *row = &menu->rows[i];
     char line[64];
-    panel(c, x, y, 153, 92, i == menu->selected);
+    panel(c, x, y, 153, 92, i == menu->selected ? 27 : 0);
     label(c, x+19, y+8, 36*(int)(i%2), 12*(int)(i/2), 35, 12, light);
     unsigned badge = row->state == BFM_SAVE_EMPTY ? 1 : row->chapter;
     if (badge) label(c, x+96, y+8, 72+18*(int)(badge-1), 0, 17, 12, light);
@@ -157,13 +167,21 @@ static void draw_row(Canvas *c, const BfmSaveMenu *menu, unsigned i)
     text(c, x+17, y+76, line, light);
 }
 
+static void file_cursor(Canvas *c, unsigned selected, unsigned fields)
+{
+    static const int motion[] = {0, 0, 2, 4, 4, 3, 2, 1};
+    int x = 8 + 151 * (int)(selected % 2);
+    int y = 54 + 90 * (int)(selected / 2);
+    blit(c, GLYPHS, x + motion[(fields / 2) % 8], y, 16, 16, 112, 16, 16, 16, 128);
+}
+
 void bfm_save_menu_draw(const BfmSaveArt *art, const BfmSaveMenu *menu, unsigned fields,
                         uint32_t pixels[240][320])
 {
-    Canvas c = {art, pixels};
+    Canvas c = {art, pixels, 0};
     for (int y = 0; y < 240; ++y)
         for (int x = 0; x < 320; ++x) pixels[y][x] = 0xff000000u;
-    panel(&c, 8, 12, 304, 38, 1);
+    panel(&c, 8, 12, 304, 38, 29);
     if (menu->issue) {
         text(&c, 22, 18, menu->issue, 128);
         text(&c, 22, 31, "Press T or Triangle to return.", 128);
@@ -191,12 +209,55 @@ void bfm_save_menu_draw(const BfmSaveArt *art, const BfmSaveMenu *menu, unsigned
         label(&c, 46, 31, 0, 168, 221, 12, 128);
     }
     if (menu->page == BFM_SAVE_LOADED) {
-        panel(&c, 32, 118, 256, 38, 1);
+        panel(&c, 32, 118, 256, 38, 29);
         label(&c, 122, 131, 76, 216, 74, 12, 128);
         return;
     }
-    static const int motion[] = {0, 0, 2, 4, 4, 3, 2, 1};
-    int x = 8 + 151 * (int)(menu->selected % 2);
-    int y = 54 + 90 * (int)(menu->selected / 2);
-    blit(&c, GLYPHS, x + motion[(fields / 2) % 8], y, 16, 16, 112, 16, 16, 16, 128);
+    file_cursor(&c, menu->selected, fields);
+}
+
+void bfm_inn_menu_draw(const BfmInnMenu *menu, const BfmSaveArt *art,
+                       unsigned fields, uint32_t pixels[240][320])
+{
+    Canvas c = {art, pixels, 1};
+    if (menu->page == BFM_INN_SERVICE || menu->page == BFM_INN_SERVICE_ERROR) {
+        static const char *const services[] = {"Sleep", "Save", "Chat", "Quit"};
+        panel(&c, 4, 12, 88, 75, 13);
+        text(&c, 34, 20, "INN", 128);
+        for (unsigned i = 0; i < 4; ++i)
+            text(&c, 25, 33 + 13*(int)i, services[i], 128);
+        blit(&c, GLYPHS, 13, 33 + 13*(int)menu->service, 8, 8, 48, 72, 8, 8, 128);
+        if (menu->page == BFM_INN_SERVICE_ERROR) {
+            panel(&c, 24, 116, 272, 38, 29);
+            text(&c, 32, 130, menu->notice, 128);
+        }
+        return;
+    }
+    panel(&c, 8, 12, 304, 38, 29);
+    for (unsigned i = 0; i < 4; ++i) draw_row(&c, &menu->card, i);
+    if (menu->page == BFM_INN_FILES || menu->page == BFM_INN_FILE_ERROR) {
+        label(&c, 46, 18, 0, 156, 172, 12, 128);
+        label(&c, 219, 18, 179, 132, 50, 12, 128);
+        label(&c, 94, 31, 126, 24, 126, 12, 128);
+    } else {
+        label(&c, 106, 18, 0, 180, 102, 12, 128);
+        label(&c, 118, 31, 114, 72, 85, 12, 128);
+    }
+    switch (menu->page) {
+    case BFM_INN_WRITING:
+    case BFM_INN_SAVED:
+        panel(&c, 32, 118, 256, 38, 29);
+        if (menu->page == BFM_INN_SAVED)
+            label(&c, 124, 131, 72, 204, 65, 12, 128);
+        else
+            label(&c, 121, 131, 0, 204, 71, 12, 128);
+        break;
+    case BFM_INN_FILE_ERROR:
+        panel(&c, 24, 116, 272, 38, 29);
+        text(&c, 32, 130, menu->notice, 128);
+        break;
+    default:
+        file_cursor(&c, menu->card.selected, fields);
+        break;
+    }
 }

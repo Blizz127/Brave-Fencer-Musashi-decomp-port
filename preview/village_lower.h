@@ -1,10 +1,17 @@
 /* SPDX-License-Identifier: MIT */
 #ifndef BFM_VILLAGE_LOWER_H
 #define BFM_VILLAGE_LOWER_H
+#include "forest_hud.h"
 #include "village_arrival.h"
 typedef struct BfmVillageLower BfmVillageLower;
 BfmVillageLower *bfm_village_lower_open(const MusashiDiscMedia *disc, BfmBedroomEntry *entry,
                                        const BfmVillageMotion *departed, uint16_t tiles[512][1024]);
+BfmVillageLower *bfm_village_lower_resume(const MusashiDiscMedia *disc, BfmBedroomEntry *entry,
+                                         const uint8_t *main, size_t bytes,
+                                         uint16_t tiles[512][1024], BfmForestHud **hud);
+/* Valid on the field update in which the controlled player presses into
+ * the inn wall. The mounted descriptor lives until the lower field closes. */
+const uint8_t *bfm_village_lower_inn_transfer(const BfmVillageLower *lower);
 void bfm_village_lower_free(BfmVillageLower *lower);
 const BfmVillagePlayer *bfm_village_lower_player(const BfmVillageLower *lower);
 int bfm_village_lower_step(BfmVillageLower *lower, int x, int y, int square,

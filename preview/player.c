@@ -6,6 +6,8 @@
 #include "bfm_plat_font.h"
 #include "title_flow.h"
 #include "save_menu.h"
+#include "inn_profile.h"
+#include "inn_menu.h"
 #include "forest_walk.h"
 #include "gameplay_run.h"
 #include "bedroom.h"
@@ -41,6 +43,10 @@ typedef struct Player {
     uint16_t digital, held, pressed;
     int axis_x, axis_y;
     const char *card_path;
+    BfmInnProfile *save_copy;
+    BfmInnMenu inn_menu;
+    unsigned inn_age;
+    int inn_service;
     BfmSaveMenu saves;
     BfmSaveArt *save_art;
     BfmBedroom *bedroom;
@@ -55,10 +61,11 @@ typedef struct Player {
 
 static const char usage[] =
     "Brave Fencer Musashi - native preview\n"
-    "Usage: musashi_native_boot --disc path/to/game.cue [--card path/to/card.mcd] [--windowed]\n"
+    "Usage: musashi_native_boot --disc path/to/game.cue [--card path/to/card.mcd [--save-copy new-directory]] [--windowed]\n"
     "Use your own US PlayStation disc image (SLUS-00726). A complete raw BIN or "
     "a CUE with all its BIN tracks alongside is supported.\n"
     "Continue reads a supplied raw 128 KiB card and supports the early castle bedroom wake.\n"
+    "--save-copy starts a writable copy in a new directory. The --card input remains read-only.\n"
     "Enter/Start: start. Space/Cross: confirm or skip the opening. Arrows: select. "
     "D-pad, arrows or left stick: move in Giant Forest. A/Square: swing Fusion on the ground. "
     "Right Shift/R1: charge Fusion. Z/Circle: fire earned Gunshot. T/Triangle: back from files. Escape: quit.\n";
@@ -131,7 +138,8 @@ static void phase_changed(Player *p) {
     case BFM_TITLE_OPENING: caption = "Brave Fencer Musashi - Opening"; break;
     case BFM_TITLE_BEDROOM: caption = "Brave Fencer Musashi - Castle bedroom"; break;
     case BFM_TITLE_FILES:
-        bfm_save_menu_open(&p->saves, p->card_path);
+        if (p->save_copy) bfm_inn_profile_menu(p->save_copy, &p->saves);
+        else bfm_save_menu_open(&p->saves, p->card_path);
         caption = "Brave Fencer Musashi - Saved files"; break;
     default: return;
     }
@@ -246,9 +254,46 @@ static int present(Player *p) {
 }
 
 static int bedroom_frame(Player *p) {
-    if (!bfm_bedroom_draw(p->bedroom, (uint32_t (*)[320])p->pixels)) return -1;
+    uint32_t (*pixels)[320] = (uint32_t (*)[320])p->pixels;
+    if (p->inn_service) {
+        int at_counter = p->inn_menu.page == BFM_INN_SERVICE || p->inn_menu.page == BFM_INN_SERVICE_ERROR;
+        if (!bfm_bedroom_draw_counter(p->bedroom, at_counter, pixels)) return -1;
+        bfm_inn_menu_draw(&p->inn_menu, p->save_art, p->inn_age * 2u, pixels);
+    } else if (!bfm_bedroom_draw(p->bedroom, pixels)) return -1;
     if (bfm_bedroom_endpoint(p->bedroom))
         status_line(p, bfm_bedroom_end_message(p->bedroom));
+    return 1;
+}
+
+static int keeper_service(Player *p, unsigned pressed, int previously_open)
+{
+    const BfmSaveRecord *record = bfm_bedroom_inn_record(p->bedroom);
+    if (!record) {
+        p->inn_service = 0;
+        return 1;
+    }
+    if (!previously_open) {
+        if (!p->save_art) p->save_art = bfm_save_art_load(p->disc);
+        if (!p->save_art) return 0;
+        if (p->save_copy) bfm_inn_profile_menu(p->save_copy, &p->saves);
+        bfm_inn_menu_begin(&p->inn_menu, p->save_copy ? &p->saves : NULL);
+        p->inn_service = 1;
+        p->inn_age = 0;
+        return 1;
+    }
+    ++p->inn_age;
+    if (p->inn_menu.page == BFM_INN_WRITING) {
+        unsigned file = p->inn_menu.card.selected + 1;
+        const char *error = bfm_inn_profile_save(p->save_copy, file, record);
+        if (!error) bfm_inn_profile_menu(p->save_copy, &p->saves);
+        bfm_inn_menu_complete(&p->inn_menu, error ? NULL : &p->saves, error);
+        return 1;
+    }
+    if (bfm_inn_menu_input(&p->inn_menu, pressed) == BFM_INN_LEAVE) {
+        p->inn_service = 0;
+        bfm_desktop_voice_room_skip(p->voice);
+        return bfm_bedroom_leave_inn(p->bedroom);
+    }
     return 1;
 }
 
@@ -419,18 +464,20 @@ static int play(Player *p, char *error, size_t size) {
                             return 2;
                         }
                         unsigned pressed = t == last_logic ? p->pressed : 0;
-                        int direction = (pressed & PAD_UP) ? -1 : !!(pressed & PAD_DOWN);
+                        int service = p->inn_service;
+                        unsigned scene_input = service ? 0 : pressed;
+                        int direction = (scene_input & PAD_UP) ? -1 : !!(scene_input & PAD_DOWN);
                         int held = (p->held & PAD_UP) ? -1 : !!(p->held & PAD_DOWN);
                         int x = field_axis(p->keys[SDL_SCANCODE_LEFT] || (p->digital & PAD_LEFT),
                                            p->keys[SDL_SCANCODE_RIGHT] || (p->digital & PAD_RIGHT), p->axis_x);
                         int y = field_axis(p->keys[SDL_SCANCODE_UP] || (p->digital & PAD_UP),
                                            p->keys[SDL_SCANCODE_DOWN] || (p->digital & PAD_DOWN), p->axis_y);
                         int result = bfm_bedroom_step_axes(p->bedroom,
-                                    pressed & (PAD_CIRCLE | PAD_CROSS | PAD_TRIANGLE),
-                                    pressed & PAD_CIRCLE, direction, held, pressed & PAD_CROSS,
-                                    pressed & PAD_TRIANGLE, x, y, pressed & PAD_SQUARE);
-                        if (!result) {
-                            snprintf(error, size, "Could not advance the mounted bedroom scene.");
+                                    scene_input & (PAD_CIRCLE | PAD_CROSS | PAD_TRIANGLE),
+                                    scene_input & PAD_CIRCLE, direction, held, scene_input & PAD_CROSS,
+                                    scene_input & PAD_TRIANGLE, x, y, scene_input & PAD_SQUARE);
+                        if (!result || !keeper_service(p, pressed, service)) {
+                            snprintf(error, size, "Could not advance the mounted room.");
                             return 2;
                         }
                         if (result == BFM_BEDROOM_VOICE_STOPPED) bfm_desktop_voice_room_skip(p->voice);
@@ -600,7 +647,7 @@ static int play(Player *p, char *error, size_t size) {
     return 0;
 }
 
-static int run(const char *disc_path, const char *card_path, int windowed) {
+static int run(const char *disc_path, const char *card_path, const char *save_directory, int windowed) {
     char error[512] = {0};
     int status = 2;
     int window_width = TITLE_W, window_height = TITLE_H;
@@ -616,6 +663,14 @@ static int run(const char *disc_path, const char *card_path, int windowed) {
         return 2;
     }
     if (!bfm_title_load(p->disc, &p->title, error, sizeof error)) goto done;
+    if (save_directory) {
+        const char *issue;
+        p->save_copy = bfm_inn_profile_create(card_path, save_directory, &issue);
+        if (!p->save_copy) {
+            snprintf(error, sizeof error, "%s", issue);
+            goto done;
+        }
+    }
     SDL_SetMainReady();
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) < 0) goto sdl_error;
     sdl_ready = 1;
@@ -654,6 +709,7 @@ done:
     bfm_forest_walk_free(p->forest);
     if (p->opening) bfm_opening_free(p->opening);
     bfm_bedroom_free(p->bedroom);
+    bfm_inn_profile_close(p->save_copy);
     free(p->save_art);
     if (p->title) bfm_title_free(p->title);
     musashi_disc_media_close(p->disc);
@@ -662,7 +718,7 @@ done:
 }
 
 int main(int argc, char **argv) {
-    const char *disc = NULL, *card = NULL;
+    const char *disc = NULL, *card = NULL, *save_directory = NULL;
     int i, windowed = 0;
     for (i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
@@ -670,6 +726,7 @@ int main(int argc, char **argv) {
             return 0;
         }
         if (!strcmp(argv[i], "--windowed")) windowed = 1;
+        else if (!strcmp(argv[i], "--save-copy") && i + 1 < argc && !save_directory) save_directory = argv[++i];
         else if (!strcmp(argv[i], "--card") && i + 1 < argc && !card) card = argv[++i];
         else if (!strcmp(argv[i], "--disc") && i + 1 < argc && !disc) disc = argv[++i];
         else if (argv[i][0] != '-' && !disc) disc = argv[i];
@@ -677,5 +734,6 @@ int main(int argc, char **argv) {
     }
     if (!disc) disc = getenv("BFM_DISC");
     if (!disc || !*disc) { fputs(usage, stderr); return 2; }
-    return run(disc, card, windowed);
+    if (save_directory && (!card || !*card || !*save_directory)) { fputs(usage, stderr); return 2; }
+    return run(disc, card, save_directory, windowed);
 }

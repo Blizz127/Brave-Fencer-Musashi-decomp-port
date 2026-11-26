@@ -20,6 +20,10 @@ void bfm_village_ground_free(BfmVillageGround *ground);
  * swept endpoint. BLOCKED leaves the endpoint and contact untouched. */
 BfmVillageGroundResult bfm_village_ground_step(const BfmVillageGround *ground,
     const int16_t from[3], int16_t to[3], BfmForestContact *floor);
+/* The optional wall material is set on successful sweeps, including zero
+ * when the actor stays clear of the marked doorway surfaces. */
+BfmVillageGroundResult bfm_village_ground_wall_step(const BfmVillageGround *ground,
+    const int16_t from[3], int16_t to[3], BfmForestContact *floor, uint16_t *wall);
 BfmVillageGroundResult bfm_village_ground_air(const BfmVillageGround *ground,
     const int16_t from[3], int16_t to[3], BfmForestContact *floor);
 

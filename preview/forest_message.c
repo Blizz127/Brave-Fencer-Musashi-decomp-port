@@ -17,7 +17,8 @@ struct BfmForestMessage {
     unsigned row, column, ink;
     unsigned timer, delay, glyph_interval;
     int speaker_name, voiced_page, rapid, voice_interrupted, sync_on_open;
-    int notice, last_shortcut;
+    int notice, last_shortcut, voice_script;
+    unsigned choice_count;
     const uint8_t *program, *insertion, *resume;
     size_t insertion_bytes, resume_bytes;
 };
@@ -129,7 +130,8 @@ static int print_update(BfmForestMessage *m)
             m->phase = OPENING;
             return 1;
         case 0x03: /* The closing pass keeps the cursor on this command. */
-            if (left < 1 || (arg[0] && !m->notice)) return 0;
+            if (left < 1 || (arg[0] && !m->notice &&
+                             !(arg[0] == 10 && m->voice_script))) return 0;
             if (m->notice && arg[0]) {
                 m->timer = arg[0];
                 m->phase = NOTICE_HOLD;
@@ -174,6 +176,7 @@ static int print_update(BfmForestMessage *m)
         case 0x0b: /* Request voice. The high parameter bit permits layout
                     * to continue before the explicit synchronization point. */
             if (left < 3) return 0;
+            m->voice_script = 1;
             if (m->rapid) {
                 m->cursor += 3;
                 break;
@@ -231,8 +234,9 @@ static int print_update(BfmForestMessage *m)
         case 0x17:
             m->last_shortcut = 1;
             break;
-        case 0x0c:
-            if (m->row >= 2) return 0;
+        case 0x0c: case 0x0d:
+            m->choice_count = op == 0x0c ? 2 : 3;
+            if (m->row + m->choice_count > 3) return 0;
             f->choice_row = m->row;
             m->phase = BUILD_CHOICE;
             return 1;
@@ -285,12 +289,12 @@ static int build_choice(BfmForestMessage *m)
             if (m->column == 36) return 0;
             m->frame.cells[m->row][m->column++] = (BfmForestMessageCell){(uint8_t)ch, (uint8_t)m->ink};
             ++glyphs;
-        } else if (ch == 0x0a && m->row == m->frame.choice_row) {
+        } else if (ch == 0x0a && m->row + 1 < m->frame.choice_row + m->choice_count) {
             ++m->row;
             m->column = 0;
         } else if (ch == 0 || ch == 7) {
-            if (m->row != m->frame.choice_row + 1 || !m->column) return 0;
-            m->frame.choices = 2;
+            if (m->row + 1 != m->frame.choice_row + m->choice_count || !m->column) return 0;
+            m->frame.choices = m->choice_count;
             m->frame.answer = 1;
             m->phase = WAIT_CHOICE;
             return 1;

@@ -26,7 +26,7 @@ typedef struct {
     unsigned controlled, events;
     uint32_t message;
     unsigned movement; /* Cable updates since mounting, retained through impact. */
-    uint16_t destination;
+    uint16_t destination, wall_contact;
     uint8_t entrance;
 } BfmVillagePlayer;
 
@@ -36,8 +36,11 @@ BfmVillageMotion *bfm_village_motion_open(const uint8_t *scene, size_t scene_byt
 /* The marked floor queues a descriptor. The destination restores integer XYZ
  * and heading captured before the final upper-room movement pass. */
 const uint8_t *bfm_village_motion_transfer(const BfmVillageMotion *motion);
-BfmVillageMotion *bfm_village_motion_arrive(const BfmVillageMotion *departed,
-    const uint8_t *scene, size_t scene_bytes, uint32_t room);
+BfmVillageMotion *bfm_village_motion_arrive(const BfmVillageMotion *upper, const uint8_t *scene,
+                                            size_t bytes, uint32_t room_address);
+BfmVillageMotion *bfm_village_motion_resume(const uint8_t *scene, size_t bytes,
+                                            uint32_t room_address,
+                                            const uint8_t *main, size_t main_bytes);
 /* Submit one scripted root and advance the player model once, then use place
  * on release to resume ordinary movement from the script endpoint. */
 int bfm_village_motion_porch(BfmVillageMotion *motion, const BfmBedroomRoot *root, int knock);
@@ -58,6 +61,8 @@ int bfm_village_motion_view_yaw(const int32_t eye[3], const int32_t target[3]);
 int bfm_village_motion_talk_ready(const BfmVillageMotion *motion);
 int bfm_village_motion_end_talk(BfmVillageMotion *motion);
 int bfm_village_motion_face(const BfmVillageMotion *motion, uint16_t tiles[512][1024]);
+int bfm_village_motion_lower_orb(const BfmVillageMotion *motion, unsigned orb,
+                                uint16_t tiles[512][1024]);
 void bfm_village_motion_free(BfmVillageMotion *motion);
 
 #endif

@@ -252,7 +252,8 @@ static int move(BfmVillageMotion *m, int speed, int vertical, int require_floor)
         BfmForestContact floor;
         BfmVillageGroundResult hit = m->airborne ?
             bfm_village_ground_air(m->ground,m->player.root.xyz,candidate.xyz,&floor) :
-            bfm_village_ground_step(m->ground,m->player.root.xyz,candidate.xyz,&floor);
+            bfm_village_ground_wall_step(m->ground,m->player.root.xyz,candidate.xyz,&floor,
+                                         &m->player.wall_contact);
         if (hit == BFM_VILLAGE_GROUND_BLOCKED) return 1;
         if (hit == BFM_VILLAGE_GROUND_FOOTING) {
             m->landed = m->airborne;
@@ -422,6 +423,7 @@ static int advance(BfmVillageMotion *m, int stick_x, int stick_y, int camera)
     BfmVillagePlayer *p = &m->player;
     BfmBedroomAction action = BFM_BEDROOM_NONE;
     p->events = 0;
+    p->wall_contact = 0;
     switch (p->phase) {
     case BFM_VILLAGE_RIDE:
         ++p->movement;
@@ -587,30 +589,54 @@ int bfm_village_motion_place(BfmVillageMotion *m, const BfmBedroomRoot *root)
     return 1;
 }
 
-BfmVillageMotion *bfm_village_motion_arrive(const BfmVillageMotion *upper, const uint8_t *scene,
-                                            size_t bytes, uint32_t room_address)
+static BfmVillageMotion *lower_motion(const BfmVillageMotion *upper,
+                                            const uint8_t *main, size_t main_bytes,
+                                            const uint8_t *scene, size_t bytes,
+                                            uint32_t room_address, unsigned entrance)
 {
-    if (!upper || !upper->transfer || !scene) return NULL;
+    if (!scene || !((entrance == 1 && upper && upper->transfer) ||
+                    (entrance == 10 && !upper && main))) return NULL;
     BfmVillageMotion *m = calloc(1,sizeof *m);
     if (!m) return NULL;
     m->scene = (Region){scene,bytes,scene_base};
-    m->resident = upper->resident;
+    m->resident = upper ? upper->resident : (Region){main, main_bytes, main_base};
     m->room = room_address;
     const uint8_t *header = at(&m->scene,0x8018d260u,4);
     const uint8_t *room = at(&m->scene,room_address,0xcc);
     if (!header || read32(header) != room_address || !room || !load_field(m,room)) goto fail;
-    const uint8_t *entries = at(&m->scene,read32(room+0xc8),8);
-    const uint8_t *entry = entries ? at(&m->scene,read32(entries+4),36) : NULL;
-    if (!entry || read16(entry) != 0x1011 || entry[2] != 1) goto fail;
+    const uint8_t *entries = at(&m->scene,read32(room+0xc8),(entrance+1)*4);
+    const uint8_t *entry = entries ? at(&m->scene,read32(entries+4*entrance),36) : NULL;
+    if (!entry || (upper ? read16(entry) != 0x1011 || entry[2] != 1 :
+                           read16(entry) != 0x2017 || entry[2] != 0)) goto fail;
     m->player.phase = BFM_VILLAGE_CONTROL;
     m->player.controlled = 1;
     const uint8_t *velocity = at(&m->scene,0x8018fb1cu,12);
     if (!velocity || read32(velocity+8) < 0u-11u*Q || !read32(velocity+8)) goto fail;
     m->starting_speed = (int32_t)(0u-read32(velocity+8));
-    if (bfm_village_motion_place(m,&upper->crossing)) return m;
+    BfmBedroomRoot root = {0};
+    if (upper) root = upper->crossing;
+    else {
+        for (int i = 0; i < 3; ++i) root.xyz[i] = (int16_t)read16(entry+16+2*i);
+        root.yaw = (unsigned)read16(entry+22) & 4095;
+        root.normal[1] = -4096;
+    }
+    if (bfm_village_motion_place(m,&root)) return m;
 fail:
     bfm_village_motion_free(m);
     return NULL;
+}
+
+BfmVillageMotion *bfm_village_motion_arrive(const BfmVillageMotion *upper, const uint8_t *scene,
+                                            size_t bytes, uint32_t room_address)
+{
+    return lower_motion(upper, NULL, 0, scene, bytes, room_address, 1);
+}
+
+BfmVillageMotion *bfm_village_motion_resume(const uint8_t *scene, size_t bytes,
+                                            uint32_t room_address,
+                                            const uint8_t *main, size_t main_bytes)
+{
+    return lower_motion(NULL, main, main_bytes, scene, bytes, room_address, 10);
 }
 
 int bfm_village_motion_continue(BfmVillageMotion *m)
@@ -668,6 +694,11 @@ const BfmVillagePlayer *bfm_village_motion_player(const BfmVillageMotion *m)
 int bfm_village_motion_face(const BfmVillageMotion *m, uint16_t tiles[512][1024])
 {
     return m && tiles && bfm_bedroom_motion_face(m->ordinary,tiles);
+}
+
+int bfm_village_motion_lower_orb(const BfmVillageMotion *m, unsigned orb, uint16_t tiles[512][1024])
+{
+    return m && bfm_bedroom_orb_palette(m->ordinary, 0x80190cd4u, orb, tiles);
 }
 
 void bfm_village_motion_free(BfmVillageMotion *m)
