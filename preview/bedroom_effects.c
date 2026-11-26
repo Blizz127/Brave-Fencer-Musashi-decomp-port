@@ -35,7 +35,7 @@ typedef struct {
     BfmDecodedSpuSample sample;
     BfmSpuEnvelope envelope;
     uint8_t control[20];
-    unsigned delay, gain, center, pitch, field, sample_in_field;
+    unsigned delay, gain, center, pitch, field, sample_in_field, gate;
     int key, modulated, done;
     size_t phase;
 } Layer;
@@ -113,11 +113,20 @@ static int layer_open(const Sources *s, const uint8_t d[20], Layer *l)
     bfm_spu_envelope_start(&l->envelope,(uint16_t)tone.adsr1,(uint16_t)tone.adsr2);
     if (word(d+12)) return 0;
     if (word(d+16)) {
-        if (!read_data(s, word(d+16), l->control, sizeof l->control) || half(l->control)!=6 ||
-            !half(l->control+4) || !half(l->control+8) || !half(l->control+16)) return 0;
-        l->modulated = 1;
+        uint32_t command = word(d+16);
+        if (!read_data(s, command, l->control, 4)) return 0;
+        if (half(l->control) == 2) {
+            /* A fixed-pitch gate is just two halfwords, independent of the
+             * adjacent controls in the resident effect table. */
+            l->gate = half(l->control+2);
+            if (!l->gate) return 0;
+        } else {
+            if (half(l->control) != 6 || !read_data(s, command, l->control, sizeof l->control) ||
+                !half(l->control+4) || !half(l->control+8) || !half(l->control+16)) return 0;
+            l->modulated = 1;
+        }
     }
-    return l->pitch && (l->modulated || l->sample.loop_start == l->sample.frames);
+    return l->pitch && (l->gate || l->modulated || l->sample.loop_start == l->sample.frames);
 }
 
 static int approach(int value, int target, int step)
@@ -130,6 +139,7 @@ static void sound_field(const Sources *s, Layer *l)
 {
     const uint8_t *c = l->control;
     unsigned t = ++l->field;
+    if (l->gate == t) bfm_spu_envelope_release(&l->envelope);
     if (!l->modulated || t <= half(c+2)) return;
     if (t == half(c+16)) bfm_spu_envelope_release(&l->envelope);
     if (t > half(c+16)) l->key = approach(l->key,c[13]*256,(int)half(c+14));
@@ -310,19 +320,35 @@ BfmBedroomEffects *bfm_bedroom_effects_load(const MusashiDiscMedia *disc, unsign
     return e;
 }
 
-BfmBedroomEffects *bfm_menu_effects_load(const MusashiDiscMedia *disc)
+static BfmBedroomEffects *common_effects_load(const MusashiDiscMedia *disc,
+                                              const unsigned commands[], size_t count)
 {
     Sources s = {.disc=disc};
     s.common = bfm_archive_sound_bank_load(disc,"MAIN.CD",2);
-    BfmBedroomEffects *e = calloc(1,sizeof *e);
-    if (!e || !s.common || !load_tables(&s) ||
-        !prepare(&s,BFM_ROOM_MOVE_SOUND,&e->clips[0]) ||
-        !prepare(&s,BFM_ROOM_ACCEPT_SOUND,&e->clips[1])) {
-        bfm_bedroom_effects_free(e);
-        e = NULL;
+    BfmBedroomEffects *e = NULL;
+    if (s.common && load_tables(&s)) e = calloc(1, sizeof *e);
+    for (size_t i = 0; e && i < count; ++i) {
+        if (!prepare(&s, commands[i], &e->clips[i])) {
+            bfm_bedroom_effects_free(e);
+            e = NULL;
+        }
     }
     bfm_palace_sound_bank_free(s.common);
     return e;
+}
+
+BfmBedroomEffects *bfm_menu_effects_load(const MusashiDiscMedia *disc)
+{
+    const unsigned commands[] = {BFM_ROOM_MOVE_SOUND, BFM_ROOM_ACCEPT_SOUND};
+    return common_effects_load(disc, commands, sizeof commands / sizeof *commands);
+}
+
+BfmBedroomEffects *bfm_woods_shrink_sound_load(const MusashiDiscMedia *disc)
+{
+    /* The award uses the common bank despite the visual effect loading
+     * from the equipped skill member. Its resident row selects the tone. */
+    const unsigned command = BFM_WOODS_SHRINK_SOUND;
+    return common_effects_load(disc, &command, 1);
 }
 
 void bfm_bedroom_effects_free(BfmBedroomEffects *e)
