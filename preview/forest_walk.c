@@ -1339,6 +1339,10 @@ static int tick_gateway(BfmForestWalk *w, int x, int y, int square_edge, int con
         w->last_forest_tick = w->tick;
         w->tower = bfm_tower_field_open(w->disc, &w->gateway.destination);
         if (!w->tower) return -1;
+        BfmForestMessageArt *art = bfm_tower_note_art(bfm_tower_field_room(w->tower), w->disc);
+        if (!art) return -1;
+        bfm_forest_message_art_free(w->message_art);
+        w->message_art = art;
     }
     if (frame.view == BFM_GATEWAY_BLACK && w->held_forest) {
         free(w->held_forest);

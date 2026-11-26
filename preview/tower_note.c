@@ -3,6 +3,13 @@
 #include "forest_opening_data.h"
 #include "../pc_port/forest_player_bytes.h"
 
+BfmForestMessageArt *bfm_tower_note_art(const BfmForestField *room, const MusashiDiscMedia *disc)
+{
+    size_t bytes;
+    const uint8_t *scene = bfm_forest_field_scene(room, &bytes);
+    return bfm_castle_message_art_load(disc, scene, bytes, bfm_forest_field_tiles(room), 0x5bad0);
+}
+
 BfmForestMessage *bfm_tower_note_open(const BfmForestField *room, unsigned entrance,
                                       BfmTowerNoteKind note)
 {
