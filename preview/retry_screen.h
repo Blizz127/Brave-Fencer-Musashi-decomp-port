@@ -19,6 +19,23 @@ BfmRetryScreen *bfm_retry_screen_open(const MusashiDiscMedia *disc, const BfmFor
                                       const BfmForestCamera *last_camera, const int32_t last_target[3],
                                       const int16_t feet[3],
                                       unsigned yaw, uint32_t visible_parts);
+enum { BFM_RETRY_ROOM_DATA_BYTES = 0x9c + 3 * 16 };
+typedef struct {
+    BfmForestTerrain *terrain;
+    const MusashiForestPlayerMesh *hero;
+    const uint8_t *data;
+    size_t bytes;
+} BfmRetryMountedRoom;
+
+/* The active room supplies its bounded defeat dialogue/light records at
+ * open. Its textured terrain and hero mesh must outlive the screen.
+ * The room owns its checkpoint, score policy and live resource recovery. */
+BfmRetryScreen *bfm_retry_screen_open_mounted(const MusashiDiscMedia *disc,
+                                             const BfmRetryMountedRoom *room,
+                                             BfmGameplayRun *gameplay,
+                                             const BfmForestCamera *last_camera,
+                                             const int32_t last_target[3], const int16_t feet[3],
+                                             unsigned yaw, uint32_t visible_parts);
 /* Refresh the original field camera and its subject before the room is hidden.
  * The field heading tracker can sample the turning player's current yaw. */
 void bfm_retry_screen_update_outgoing_view(BfmRetryScreen *screen, const BfmForestCamera *view,

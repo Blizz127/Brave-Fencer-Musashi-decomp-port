@@ -22,6 +22,9 @@ typedef struct {
 
 struct BfmRetryScreen {
     const BfmForestField *field;
+    BfmForestTerrain *terrain;
+    const MusashiForestPlayerMesh *hero;
+    void (*restore_status)(BfmForestStatus *);
     BfmGameplayRun *run;
     ForestPlayerArchive archive;
     BfmForestCamera camera;
@@ -60,7 +63,7 @@ static int load_clip(const ForestPlayerArchive *archive, uint32_t program, Defea
 
 /* The same resident dialogue programs are indexed from the active overlay.
  * The field archives relocate the table to different addresses. */
-static int read_resources(BfmRetryScreen *s, uint16_t room)
+static const uint8_t *field_resources(const BfmForestField *field, uint16_t room)
 {
     uint32_t table;
     switch (room) {
@@ -69,10 +72,14 @@ static int read_resources(BfmRetryScreen *s, uint16_t room)
     case 0x300a: table = 0x80188bbc; break;
     case 0x300b: table = 0x8018cf6c; break;
     case 0x300d: table = 0x8018004c; break;
-    default: return 0;
+    default: return NULL;
     }
-    const uint8_t *mounted = bfm_forest_room_bytes(s->field, table, 0x9c + 3 * 16);
-    if (!mounted) return 0;
+    return bfm_forest_room_bytes(field, table, BFM_RETRY_ROOM_DATA_BYTES);
+}
+
+static int read_resources(BfmRetryScreen *s, const uint8_t *mounted, size_t bytes)
+{
+    if (!mounted || bytes < BFM_RETRY_ROOM_DATA_BYTES) return 0;
     s->line[LINES] = 0x80110c3c;
     for (unsigned i = LINES; i > 0; --i) {
         uint32_t address = u32le(mounted + (i - 1) * 4);
@@ -123,17 +130,15 @@ void bfm_retry_screen_update_outgoing_view(BfmRetryScreen *s, const BfmForestCam
 
 unsigned bfm_retry_screen_yaw(const BfmRetryScreen *s) { return s ? s->yaw : 0; }
 
-BfmRetryScreen *bfm_retry_screen_open(const MusashiDiscMedia *disc, const BfmForestField *field,
-                                      uint16_t room_id, BfmGameplayRun *gameplay,
-                                      const BfmForestCamera *last_camera, const int32_t last_target[3],
-                                      const int16_t feet[3],
-                                      unsigned yaw, uint32_t visible_parts)
+static BfmRetryScreen *open_screen(const MusashiDiscMedia *disc, const uint8_t *data, size_t bytes,
+                                   BfmGameplayRun *gameplay, const BfmForestCamera *last_camera,
+                                   const int32_t last_target[3], const int16_t feet[3],
+                                   unsigned yaw, uint32_t visible_parts)
 {
-    if (!disc || !field || !gameplay || !last_camera || !last_target || !feet ||
-        room_id < 0x3008 || room_id > 0x300e) return NULL;
+    if (!disc || !data || bytes < BFM_RETRY_ROOM_DATA_BYTES || !gameplay ||
+        !last_camera || !last_target || !feet) return NULL;
     BfmRetryScreen *s = calloc(1, sizeof *s);
     if (!s) return NULL;
-    s->field = field;
     s->run = gameplay;
     memcpy(s->feet, feet, sizeof s->feet);
     s->yaw = yaw & TURN_MASK;
@@ -142,9 +147,42 @@ BfmRetryScreen *bfm_retry_screen_open(const MusashiDiscMedia *disc, const BfmFor
     if (!forest_player_archive_open(disc, &s->archive) ||
         !load_clip(&s->archive, 0x800d58d8, &s->clip[0]) ||
         !load_clip(&s->archive, 0x800d5904, &s->clip[1]) ||
-        !read_resources(s, room_id) || !(s->voice = bfm_defeat_voice_load(disc))) {
+        !read_resources(s, data, bytes) || !(s->voice = bfm_defeat_voice_load(disc))) {
         bfm_retry_screen_free(s);
         return NULL;
+    }
+    return s;
+}
+
+BfmRetryScreen *bfm_retry_screen_open(const MusashiDiscMedia *disc, const BfmForestField *field,
+                                      uint16_t room_id, BfmGameplayRun *gameplay,
+                                      const BfmForestCamera *last_camera, const int32_t last_target[3],
+                                      const int16_t feet[3],
+                                      unsigned yaw, uint32_t visible_parts)
+{
+    if (!field) return NULL;
+    BfmRetryScreen *s = open_screen(disc, field_resources(field, room_id), BFM_RETRY_ROOM_DATA_BYTES,
+                                    gameplay, last_camera, last_target, feet, yaw, visible_parts);
+    if (s) {
+        s->field = field;
+        s->restore_status = bfm_forest_status_chapter_retry;
+    }
+    return s;
+}
+
+BfmRetryScreen *bfm_retry_screen_open_mounted(const MusashiDiscMedia *disc,
+                                             const BfmRetryMountedRoom *room,
+                                             BfmGameplayRun *gameplay,
+                                             const BfmForestCamera *last_camera,
+                                             const int32_t last_target[3], const int16_t feet[3],
+                                             unsigned yaw, uint32_t visible_parts)
+{
+    if (!room || !room->terrain || !room->hero) return NULL;
+    BfmRetryScreen *s = open_screen(disc, room->data, room->bytes, gameplay,
+                                    last_camera, last_target, feet, yaw, visible_parts);
+    if (s) {
+        s->terrain = room->terrain;
+        s->hero = room->hero;
     }
     return s;
 }
@@ -289,7 +327,7 @@ int bfm_retry_screen_step(BfmRetryScreen *s, unsigned held_pad, unsigned pressed
             break;
         }
         case RESTORE:
-            bfm_forest_status_chapter_retry(&s->run->player);
+            if (s->restore_status) s->restore_status(&s->run->player);
             s->phase = WAIT_FOR_RELEASE;
             /* Entering the grace state and submitting its fade command
              * each take their own game-service update. */
@@ -358,8 +396,13 @@ int bfm_retry_screen_draw(const BfmRetryScreen *s, const BfmForestHud *hud,
     if (s->phase == FINISHED) return 1;
     BfmForestTransform root;
     bfm_forest_actor_pitch_yaw(s->pitch, s->yaw, s->feet, &root);
-    if (!bfm_forest_draw_player_only(s->field, &s->camera, &s->clip[s->clip_index].key[s->key],
-                                     &root, s->visible, bfm_retry_screen_keep_world(s) ? NULL : &s->light, pixels)) return 0;
+    const BfmForestPose *pose = &s->clip[s->clip_index].key[s->key];
+    const BfmForestModelLighting *light = bfm_retry_screen_keep_world(s) ? NULL : &s->light;
+    int drawn = s->field ? bfm_forest_draw_player_only(s->field, &s->camera, pose, &root,
+                                                       s->visible, light, pixels)
+                         : bfm_forest_terrain_draw_player_only(s->terrain, &s->camera, s->hero,
+                                                               pose, &root, s->visible, light, pixels);
+    if (!drawn) return 0;
     if (hud && s->phase <= SPEAK) bfm_forest_hud_draw(hud, &s->run->player, pixels);
     if (art && s->phase == SPEAK)
         bfm_forest_message_art_draw(art, bfm_forest_message_frame(s->page), pixels);
