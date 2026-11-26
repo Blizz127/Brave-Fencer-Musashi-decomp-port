@@ -17,7 +17,7 @@ typedef struct {
     int ended;
 } Channel;
 
-enum Activity { QUIET, TILTING, UNROLLING, RISING, YAWNING, STANDING, RETURNING, STARTING_RUN, SHOWING_FUSION, COLLECTING };
+enum Activity { QUIET, TILTING, UNROLLING, RISING, YAWNING, STANDING, RETURNING, STARTING_RUN, SHOWING_FUSION, COLLECTING, KNOCKING };
 
 struct BfmBedroomMotion {
     Region main, scene;
@@ -96,6 +96,10 @@ static int advance(BfmBedroomMotion *m, Channel *channel, int body)
             break;
         case 4: /* Body resource declaration. */
             if (!body || !next_word(m, channel, &operand) || !data(m, operand, 4)) return 0;
+            break;
+        case 7: /* Contact marker in the player's door-knock gesture. */
+            if (!body || m->activity != KNOCKING) return 0;
+            m->frame.knock_contact = 1;
             break;
         case 8: /* Running foot contact. The pose follows in the same update. */
             if (!body) return 0;
@@ -176,6 +180,7 @@ BfmBedroomMotion *bfm_bedroom_motion_open(const uint8_t *scene, size_t scene_byt
 static int update(BfmBedroomMotion *m, BfmBedroomAction action)
 {
     int update_body = 1;
+    m->frame.knock_contact = 0;
     m->frame.finished = 0;
     switch (action) {
     case BFM_BEDROOM_LIE:
@@ -239,6 +244,13 @@ static int update(BfmBedroomMotion *m, BfmBedroomAction action)
         m->frame.draw_current = 1;
         m->activity = action == BFM_BEDROOM_RECEIVE ? QUIET : COLLECTING;
         break;
+    case BFM_BEDROOM_KNOCK:
+        /* The village's Knock request selects the resident direct body
+         * program. Its two impacts belong to the motion, including holds. */
+        start(&m->body, 0x800d5aa0u);
+        m->frame.draw_current = 1;
+        m->activity = KNOCKING;
+        break;
     case BFM_BEDROOM_CABLE:
         start(&m->body, 0x80182168u);
         m->activity = QUIET;
@@ -284,6 +296,11 @@ static int update(BfmBedroomMotion *m, BfmBedroomAction action)
         /* The scene marks the scripted player done. Normal stance selection
          * resumes on the following player update. */
         if (!pair(m, 0, 17)) return 0;
+        m->activity = QUIET;
+    } else if (m->activity == KNOCKING && m->body.ended) {
+        /* Keep the lowered hand until the scene orders the backward walk. */
+        m->frame.draw_current = 0;
+        m->frame.finished = 1;
         m->activity = QUIET;
     } else if (m->body.ended && m->activity != QUIET && m->activity != SHOWING_FUSION) {
         if (m->activity == UNROLLING && !pair(m, 39, 31)) return 0;

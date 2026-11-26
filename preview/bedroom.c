@@ -72,7 +72,7 @@ struct BfmBedroom {
     const MusashiDiscMedia *disc;
     BfmForestScore *scores[5], *prepared_score, *current_score;
     unsigned score_count, effect_request;
-    BfmBedroomEffects *effects;
+    BfmBedroomEffects *effects, *knock;
     uint32_t room_sound_group;
     BfmForestHud *hud;
     BfmForestStatus status;
@@ -132,6 +132,7 @@ void bfm_bedroom_free(BfmBedroom *room)
     bfm_village_impact_sound_free(room->landing_sound);
     bfm_cable_sound_free(room->slider_sound);
     bfm_forest_hud_free(room->hud);
+    bfm_bedroom_effects_free(room->knock);
     bfm_bedroom_effects_free(room->effects);
     free(room->books_background);
     bfm_library_books_free(room->books);
@@ -633,6 +634,11 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
     if (room->story_flags != room->entry.state.flags)
         memcpy(room->story_flags, room->entry.state.flags, sizeof room->entry.state.flags);
     const BfmVillagePlayer *player = bfm_village_arrival_player(room->village);
+    if (player->pose.knock_contact) {
+        if (!room->knock) room->knock = bfm_village_knock_sound_load(room->disc);
+        if (!room->knock) return 0;
+        room->effect_request = BFM_VILLAGE_KNOCK_SOUND;
+    }
     if (player->events & BFM_VILLAGE_CAMERA) {
         unsigned minute = half(room->entry.state.progress + 0x1a);
         if (!apply(room, BFM_BED_SOUND_CHANGE, minute >= 420 && minute < 1140 ? 0x0f : 0x10))
@@ -651,9 +657,7 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
     uint32_t (*frame)[320] = room->frames[room->presented];
     if (!bfm_village_arrival_draw(room->village, room->story_flags,
                 room->message ? bfm_forest_message_frame(room->message) : NULL, frame)) return 0;
-    memcpy(room->status.record + 0x18, room->entry.state.progress + 0x18, 4);
-    memcpy(room->status.record + 0x34, room->entry.state.progress + 0x34, 6);
-    room->status.record[0x42] = room->entry.state.progress[0x42];
+    memcpy(room->status.record, room->entry.state.progress, sizeof room->status.record);
     bfm_forest_hud_draw(room->hud, &room->status, frame);
     room->presented = (room->presented + 1) % 3;
     ++room->village_updates;
@@ -687,6 +691,7 @@ static int cable_trip_step(BfmBedroom *room)
         room->village = bfm_village_arrival_open(room->disc, &room->entry, room->main,
                                                 room->main_bytes, room->tiles);
         if (!room->village) return 0;
+        bfm_village_arrival_set_scene_tick(room->village, room->update);
         bfm_forest_voice_free(room->voice);
         room->voice = bfm_bedroom_voice_load(room->disc);
         room->landing_sound = bfm_village_impact_sound_load(room->disc);
@@ -950,7 +955,7 @@ BfmCableSound *bfm_bedroom_slider(const BfmBedroom *room, int *event)
 BfmBedroomEffects *bfm_bedroom_effect(const BfmBedroom *room, unsigned *command)
 {
     *command = room->effect_request;
-    return room->effects;
+    return *command == BFM_VILLAGE_KNOCK_SOUND ? room->knock : room->effects;
 }
 
 BfmForestScore *bfm_bedroom_score(const BfmBedroom *room)

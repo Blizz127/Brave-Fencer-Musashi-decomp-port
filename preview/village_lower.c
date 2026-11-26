@@ -3,6 +3,7 @@
 #include "village_field.h"
 #include "village_clock.h"
 #include "village_lighting.h"
+#include "../pc_port/forest_player_bytes.h"
 #include "village_mayor.h"
 #include "village_mayor_stage.h"
 #include "village_portrait.h"
@@ -113,7 +114,8 @@ int bfm_village_lower_step(BfmVillageLower *lower, int x, int y, int square,
         if (!bfm_village_mayor_stage_active(lower->stage)) {
             if (!bfm_village_motion_place(lower->motion, bfm_village_mayor_stage_player(lower->stage)))
                 return 0;
-        } else if (!bfm_village_motion_staged(lower->motion, bfm_village_mayor_stage_player(lower->stage))) {
+        } else if (!bfm_village_motion_porch(lower->motion, bfm_village_mayor_stage_player(lower->stage),
+                                            bfm_village_mayor_stage_knock(lower->stage))) {
             return 0;
         }
         if (bfm_village_mayor_stage_message_ready(lower->stage) && !lower->talk.finished) {
@@ -143,9 +145,10 @@ static void draw_figures(void *context, int depth)
         bfm_bedroom_figure_draw_to(lower->field.hero, bucket);
         bfm_village_street_scenery_draw_to(lower->scenery, bucket);
     }
+    if (depth == INT_MIN) bfm_bedroom_figure_draw_to(lower->field.hero, depth);
 }
 
-int bfm_village_lower_draw(BfmVillageLower *lower, const uint8_t flags[64],
+int bfm_village_lower_draw(BfmVillageLower *lower, unsigned tick, const uint8_t flags[64],
                           const BfmForestMessageFrame *window, uint32_t pixels[240][320])
 {
     const BfmVillagePlayer *p = bfm_village_motion_player(lower->motion);
@@ -157,6 +160,7 @@ int bfm_village_lower_draw(BfmVillageLower *lower, const uint8_t flags[64],
         !bfm_lower_village_sky_draw(lower->scene, lower->scene_bytes, minutes / 60, pixels) ||
         !bfm_village_field_prepare(&lower->field, &lower->presented, root, &p->pose, flags,
                                    lower->age, lower->tiles, &pixels[0][0])) return 0;
+    bfm_village_street_scenery_step(lower->scenery, tick, u32le(lower->save->progress + 8));
     const BfmBedroomView *camera = bfm_bedroom_field_view(lower->field.field);
     if (!bfm_village_mayor_stage_prepare(lower->stage, camera, lower->tiles, &pixels[0][0]) ||
         !bfm_village_street_scenery_prepare(lower->scenery, camera, lower->tiles, &pixels[0][0]) ||

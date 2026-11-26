@@ -543,6 +543,11 @@ const uint8_t *bfm_village_motion_transfer(const BfmVillageMotion *m)
 
 int bfm_village_motion_staged(BfmVillageMotion *m, const BfmBedroomRoot *root)
 {
+    return bfm_village_motion_porch(m, root, 0);
+}
+
+int bfm_village_motion_porch(BfmVillageMotion *m, const BfmBedroomRoot *root, int knock)
+{
     if (!m || !root || m->player.phase != BFM_VILLAGE_CONTROL || m->talk != NO_TALK ||
         root->yaw >= 4096) return 0;
     BfmBedroomAction action = BFM_BEDROOM_NONE;
@@ -554,6 +559,7 @@ int bfm_village_motion_staged(BfmVillageMotion *m, const BfmBedroomRoot *root)
     case BFM_TRAVEL_NONE: break;
     default: return 0;
     }
+    if (knock) action = BFM_BEDROOM_KNOCK;
     BfmBedroomRoot next = *root;
     if (!shadow(m,&next) || !bfm_bedroom_motion_step(m->ordinary,action,&m->player.pose))
         return 0;

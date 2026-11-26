@@ -17,7 +17,7 @@ struct BfmVillageMayorStage {
     BfmVillageMayorCamera camera;
     BfmBedroomTravel *walk;
     BfmVillageCamera shown;
-    int door_angle, station_x, station_z, knock_z, retreat;
+    int door_angle, station_x, station_z, knock_z, retreat, knock;
     unsigned first_message, elapsed, release_age, phase;
 };
 
@@ -36,7 +36,7 @@ static int load_walk(BfmVillageMayorStage *s)
     if (s->mayor_bytes < prepare + 8 || u32le(s->mayor+prepare) != 0x35) return 0;
     const uint8_t *script = field_record(s, u32le(s->mayor+prepare+4), 128);
     if (!script || u32le(script+8) != 4 || s16le(script+12) != 0 ||
-        u32le(script+32) != 5 || u32le(script+120) != 2) return 0;
+        u32le(script+24) != 0x10 || u32le(script+32) != 5 || u32le(script+120) != 2) return 0;
     s->station_x = s16le(s->mayor+station);
     s->station_z = s16le(s->mayor+station+4);
     s->knock_z = s->station_z + s16le(script+14);
@@ -97,6 +97,7 @@ int bfm_village_mayor_stage_begin(BfmVillageMayorStage *s, const BfmSaveRecord *
     s->walk = walk;
     s->shown = *camera;
     s->elapsed = s->release_age = 0;
+    s->knock = 0;
     s->phase = PREPARING;
     return 1;
 }
@@ -105,6 +106,10 @@ int bfm_village_mayor_stage_step(BfmVillageMayorStage *s, BfmVillageCamera *norm
 {
     if (!s || !normal) return 0;
     if (s->phase == PORCH) return 1;
+    /* The knock action starts on the player update after the approach ends. */
+    const BfmBedroomRoot *player = bfm_bedroom_travel_root(s->walk);
+    s->knock = s->phase == PREPARING && s->elapsed > 17 && s->elapsed < 63 &&
+               player->locomotion_edge == BFM_TRAVEL_STAND;
     /* Approach and face the closed door. After knocking, Musashi makes room
      * for the resident by retreating without turning away from the door. */
     if (s->phase == PREPARING) {
@@ -129,6 +134,11 @@ int bfm_village_mayor_stage_step(BfmVillageMayorStage *s, BfmVillageCamera *norm
     }
     if (s->elapsed < UINT_MAX) ++s->elapsed;
     return 1;
+}
+
+int bfm_village_mayor_stage_knock(const BfmVillageMayorStage *s)
+{
+    return s && s->knock;
 }
 
 int bfm_village_mayor_stage_message_ready(const BfmVillageMayorStage *s)

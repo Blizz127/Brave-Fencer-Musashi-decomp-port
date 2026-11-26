@@ -221,6 +221,38 @@ static int load_tables(Sources *s)
            read_data(s,0x8006ab30u,s->pitch,sizeof s->pitch);
 }
 
+BfmBedroomEffects *bfm_village_knock_sound_load(const MusashiDiscMedia *disc)
+{
+    enum { TOWN_MEMBER = 2 };
+    Sources sources = {.disc = disc};
+    uint8_t *data = bfm_archive_effect_data(disc, "SC03.CD", TOWN_MEMBER, &sources.bytes);
+    if (!data || sources.bytes < 28) {
+        free(data);
+        return NULL;
+    }
+
+    /* This town member has one bank and one area selector column. The two
+     * knocks use the same mounted command on successive gesture contacts. */
+    const uint8_t *directory = data + sources.bytes - 28;
+    BfmBedroomEffects *effects = NULL;
+    if (half(directory + 2) == 1 && half(directory + 14) == 1) {
+        sources.data = data;
+        sources.group = half(directory);
+        sources.key = half(directory + 4);
+        sources.scene = bfm_archive_sound_bank_load(disc, "SC03.CD", TOWN_MEMBER);
+        if (sources.scene && load_tables(&sources)) {
+            effects = calloc(1, sizeof *effects);
+            if (effects && !prepare(&sources, BFM_VILLAGE_KNOCK_SOUND, &effects->clips[0])) {
+                bfm_bedroom_effects_free(effects);
+                effects = NULL;
+            }
+        }
+    }
+    bfm_palace_sound_bank_free(sources.scene);
+    free(data);
+    return effects;
+}
+
 BfmBedroomEffects *bfm_forest_swing_sound_load(const MusashiDiscMedia *disc)
 {
     Sources s = {.disc=disc};

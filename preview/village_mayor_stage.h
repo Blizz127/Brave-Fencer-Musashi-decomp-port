@@ -17,6 +17,8 @@ int bfm_village_mayor_stage_begin(BfmVillageMayorStage *stage, const BfmSaveReco
                    const BfmBedroomRoot *player, const BfmVillageCamera *camera, int square_edge);
 /* Once per field logic tick after updating the lower-village camera. */
 int bfm_village_mayor_stage_step(BfmVillageMayorStage *stage, BfmVillageCamera *normal);
+/* True for one update after stepping into position to knock at the door. */
+int bfm_village_mayor_stage_knock(const BfmVillageMayorStage *stage);
 int bfm_village_mayor_stage_message_ready(const BfmVillageMayorStage *stage);
 void bfm_village_mayor_stage_finish(BfmVillageMayorStage *stage);
 int bfm_village_mayor_stage_active(const BfmVillageMayorStage *stage);

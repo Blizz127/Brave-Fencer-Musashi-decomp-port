@@ -22,7 +22,7 @@ struct BfmVillageArrival {
     const MusashiDiscMedia *disc;
     BfmBedroomEntry *entry;
     BfmVillageLower *lower;
-    unsigned transfer_tick;
+    unsigned transfer_tick, scene_tick;
     uint16_t (*tiles)[1024];
     BfmVillageMotion *motion;
     BfmVillageCamera camera, presented_camera;
@@ -120,6 +120,11 @@ int bfm_village_arrival_message_closed(BfmVillageArrival *a, unsigned answer)
     return bfm_village_arrival_continue(a);
 }
 
+void bfm_village_arrival_set_scene_tick(BfmVillageArrival *a, unsigned tick)
+{
+    a->scene_tick = tick;
+}
+
 unsigned bfm_village_arrival_transfer_tick(const BfmVillageArrival *a)
 {
     return a->transfer_tick;
@@ -137,6 +142,9 @@ int bfm_village_arrival_step_input(BfmVillageArrival *a, BfmGameplayRun *run,
                                    int x, int y, int talk_edge, BfmForestMessage **opened)
 {
     if (opened) *opened = NULL;
+    /* The upper field and the lower street share the running world clock. The
+     * player is already on the incoming actor list for its 17 fade-in updates. */
+    if (!a->transfer_tick || a->transfer_tick >= 143) ++a->scene_tick;
     if (a->transfer_tick) {
         /* The outgoing field freezes at its exit contact. The incoming mesh is
          * ready before the crossfade makes its first scanout visible. */
@@ -232,7 +240,7 @@ static void draw_actors(void *context, int depth)
 int bfm_village_arrival_draw(BfmVillageArrival *a, const uint8_t flags[64],
                              const BfmForestMessageFrame *window, uint32_t pixels[240][320])
 {
-    if (a->lower) return bfm_village_lower_draw(a->lower, flags, window, pixels);
+    if (a->lower) return bfm_village_lower_draw(a->lower, a->scene_tick, flags, window, pixels);
     const BfmVillagePlayer *p = bfm_village_motion_player(a->motion);
     BfmVillageCamera drawing = a->presented_camera;
     int shake = bfm_village_impact_shake_y(a->impact);

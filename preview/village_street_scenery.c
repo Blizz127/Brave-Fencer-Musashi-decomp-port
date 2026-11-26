@@ -8,13 +8,14 @@
 #include <math.h>
 #include <stdlib.h>
 
-enum { TREE_LIMIT = 16, CORNERS = 4 };
+enum { TREE_LIMIT = 16, ROOF_VERTICES = 26, ROOF_FACES = 24, BELL_VERTICES = 19, BELL_FACES = 18, CORNERS = 4 };
 static const uint32_t scene_origin = UINT32_C(0x80128158);
 
 typedef struct {
     BfmForestRasterVertex points[CORNERS];
-    int depth;
-} TreeFace;
+    BfmForestRasterMaterial material;
+    int depth, with_offset;
+} StreetFace;
 
 struct BfmVillageStreetScenery {
     unsigned count, visible, next;
@@ -22,7 +23,11 @@ struct BfmVillageStreetScenery {
     MusashiForestPlayerVector local[CORNERS];
     BfmForestRasterMaterial material;
     BfmForestRasterVertex texture[CORNERS];
-    TreeFace faces[TREE_LIMIT];
+    MusashiForestPlayerMesh *roof, *bell;
+    int16_t hanger[3];
+    unsigned tick, progress;
+    int ambient[3], daylight[3][3];
+    StreetFace faces[TREE_LIMIT + ROOF_FACES + BELL_FACES];
     BfmForestRaster raster;
 };
 
@@ -34,7 +39,23 @@ static const uint8_t *scene_at(const uint8_t *scene, size_t bytes, uint32_t addr
 }
 
 static int read_roots(BfmVillageStreetScenery *scenery, const uint8_t *scene,
-                      size_t bytes, uint32_t room)
+                      size_t bytes, uint32_t list)
+{
+    for (unsigned i = 0; i < TREE_LIMIT; ++i) {
+        const uint8_t *row = scene_at(scene, bytes, list, 2);
+        if (!row) return 0;
+        if (s16le(row) == INT16_MIN) return i != 0;
+        if (!scene_at(scene, bytes, list, 6)) return 0;
+        for (unsigned axis = 0; axis < 3; ++axis)
+            scenery->roots[i][axis] = s16le(row + 2 * axis);
+        ++scenery->count;
+        list += 6;
+    }
+    return 1;
+}
+
+static int read_street(BfmVillageStreetScenery *scenery, const uint8_t *scene,
+                       size_t bytes, uint32_t room)
 {
     const uint8_t *descriptor = scene_at(scene, bytes, room, 0xbc);
     if (!descriptor) return 0;
@@ -42,24 +63,52 @@ static int read_roots(BfmVillageStreetScenery *scenery, const uint8_t *scene,
     if (end < first || (end - first) % 20) return 0;
     const uint8_t *records = scene_at(scene, bytes, first, end - first);
     if (!records) return 0;
+    int roof = 0;
     for (size_t offset = 0; offset < end - first; offset += 20) {
         const uint8_t *p = records + offset;
-        if (!u16le(p + 6)) break;
-        if (u16le(p + 6) != 106 || u16le(p + 8) != 1) continue;
-        uint32_t list = u32le(p + 16);
-        for (unsigned i = 0; i < TREE_LIMIT; ++i) {
-            const uint8_t *row = scene_at(scene, bytes, list, 2);
-            if (!row) return 0;
-            if (s16le(row) == INT16_MIN) return i != 0;
-            if (!scene_at(scene, bytes, list, 6)) return 0;
-            for (unsigned axis = 0; axis < 3; ++axis)
-                scenery->roots[i][axis] = s16le(row + 2 * axis);
-            ++scenery->count;
-            list += 6;
+        unsigned kind = u16le(p + 6);
+        if (!kind) break;
+        if (kind == 298) roof = 1;
+        if (kind == 106 && u16le(p + 8) == 1) {
+            if (scenery->count || !read_roots(scenery, scene, bytes, u32le(p + 16))) return 0;
         }
-        return 1;
     }
-    return 0;
+    if (!scenery->count) return 0;
+    /* The street controller places the church belfry at the scene origin. Its
+     * roof is in field coordinates. The bell has a separate hanger and swing. */
+    if (roof) {
+        const uint8_t *hanger = scene_at(scene, bytes, UINT32_C(0x80191948), 6);
+        const uint8_t *daylight = scene_at(scene, bytes, UINT32_C(0x8018de3c) + 9, 9);
+        if (!hanger || !daylight) return 0;
+        for (unsigned k = 0; k < 3; ++k) {
+            scenery->hanger[k] = s16le(hanger + 2*k);
+            scenery->ambient[k] = s16le(descriptor + 2*k) & ~15;
+            for (unsigned i = 0; i < 3; ++i)
+                scenery->daylight[i][k] = daylight[3*i+k]*4096/255;
+        }
+        unsigned count;
+        scenery->bell = musashi_forest_player_mesh_from_table(scene, bytes, scene_origin,
+                                                              UINT32_C(0x801be978), &count);
+        const MusashiForestPlayerPart *bell = musashi_forest_player_mesh_part(scenery->bell, 0);
+        if (!bell || count != 1 || bell->face_count != BELL_FACES ||
+            bell->normal_count != BELL_VERTICES || bell->vertex_count != BELL_VERTICES) return 0;
+        for (unsigned i = 0; i < BELL_FACES; ++i) {
+            const MusashiForestPlayerFace *f = bell->faces + i;
+            if (f->mode != 0x38 && f->mode != 0x30) return 0;
+            for (unsigned k = 0; k < 3; ++k)
+                if (f->rgb[k] != bell->faces[0].rgb[k]) return 0;
+        }
+        scenery->roof = musashi_forest_player_mesh_from_table(scene, bytes, scene_origin,
+                                                             UINT32_C(0x801ca118), &count);
+        const MusashiForestPlayerPart *part = musashi_forest_player_mesh_part(scenery->roof, 0);
+        if (!part || count != 1 || part->face_count != ROOF_FACES ||
+            part->vertex_count != ROOF_VERTICES) return 0;
+        for (unsigned i = 0; i < ROOF_FACES; ++i) {
+            const MusashiForestPlayerFace *f = part->faces + i;
+            if ((f->mode != 0x24 && f->mode != 0x2c) || ((f->tpage >> 7) & 3u) != 1) return 0;
+        }
+    }
+    return 1;
 }
 
 BfmVillageStreetScenery *bfm_village_street_scenery_load(const uint8_t *scene,
@@ -68,8 +117,8 @@ BfmVillageStreetScenery *bfm_village_street_scenery_load(const uint8_t *scene,
     if (!scene || bytes > BFM_FIELD_SCENE_CAPACITY) return NULL;
     BfmVillageStreetScenery *scenery = calloc(1, sizeof(*scenery));
     if (!scenery) return NULL;
-    if (!read_roots(scenery, scene, bytes, room)) {
-        free(scenery);
+    if (!read_street(scenery, scene, bytes, room)) {
+        bfm_village_street_scenery_free(scenery);
         return NULL;
     }
 
@@ -81,7 +130,7 @@ BfmVillageStreetScenery *bfm_village_street_scenery_load(const uint8_t *scene,
     if (!part || count != 1 || part->face_count != 1 || part->faces->mode != 0x2d ||
         part->faces->corners != CORNERS || ((part->faces->tpage >> 7) & 3u) > 2) {
         musashi_forest_player_mesh_free(model);
-        free(scenery);
+        bfm_village_street_scenery_free(scenery);
         return NULL;
     }
     const MusashiForestPlayerFace *face = part->faces;
@@ -98,12 +147,123 @@ BfmVillageStreetScenery *bfm_village_street_scenery_load(const uint8_t *scene,
 
 void bfm_village_street_scenery_free(BfmVillageStreetScenery *scenery)
 {
+    if (scenery) {
+        musashi_forest_player_mesh_free(scenery->roof);
+        musashi_forest_player_mesh_free(scenery->bell);
+    }
     free(scenery);
 }
 
 static int floor_q12(int64_t value)
 {
     return (int)(value / 4096 - (value % 4096 < 0));
+}
+
+static void enqueue(BfmVillageStreetScenery *scenery, const StreetFace *face)
+{
+    unsigned slot = scenery->visible++;
+    while (slot && scenery->faces[slot - 1].depth <= face->depth) {
+        scenery->faces[slot] = scenery->faces[slot - 1];
+        --slot;
+    }
+    scenery->faces[slot] = *face;
+}
+
+void bfm_village_street_scenery_step(BfmVillageStreetScenery *scenery,
+                                     unsigned scene_tick, unsigned progress)
+{
+    if (scenery) {
+        scenery->tick = scene_tick;
+        scenery->progress = progress;
+    }
+}
+
+static void rotated(const BfmForestTransform *rotation, const MusashiForestPlayerVector *v,
+                    int result[3])
+{
+    for (unsigned k = 0; k < 3; ++k) {
+        const int16_t *row = rotation->rotation[k];
+        result[k] = floor_q12((int64_t)row[0]*v->x + (int64_t)row[1]*v->y + (int64_t)row[2]*v->z);
+    }
+}
+
+static uint32_t bell_color(const BfmVillageStreetScenery *scenery, const int normal[3],
+                           const uint8_t rgb[3])
+{
+    /* The street is lit from above, from an incline and from below. */
+    int light[3] = {-normal[1], floor_q12(-1365LL*normal[1] - 3900LL*normal[2]), normal[1]};
+    uint32_t color = 0;
+    for (unsigned k = 0; k < 3; ++k) {
+        int64_t sum = 0;
+        for (unsigned i = 0; i < 3; ++i)
+            if (light[i] > 0) sum += scenery->daylight[i][k] * (int64_t)light[i];
+        int v = (scenery->ambient[k] + floor_q12(sum)) * rgb[k] / 4096;
+        if (v < 0) v = 0;
+        if (v > 255) v = 255;
+        color |= (uint32_t)v << (8*k);
+    }
+    return color;
+}
+
+static void prepare_landmark(BfmVillageStreetScenery *scenery, const BfmBedroomView *view, int bell)
+{
+    const MusashiForestPlayerPart *part =
+        musashi_forest_player_mesh_part(bell ? scenery->bell : scenery->roof, 0);
+    if (!part || (bell && scenery->progress >= 385 && scenery->progress < 470)) return;
+    int projected[ROOF_VERTICES][3];
+    uint32_t colors[BELL_VERTICES];
+    BfmForestTransform rotation;
+    if (bell) {
+        const int16_t zero[3] = {0};
+        BfmForestTransform wave;
+        bfm_forest_actor_root(scenery->tick * 48u, zero, &wave);
+        int sine = wave.rotation[0][2];
+        int pitch = sine / 32 - (sine % 32 < 0);
+        bfm_forest_actor_pitch_yaw((unsigned)pitch, 0, scenery->hanger, &rotation);
+        for (unsigned i = 0; i < part->normal_count; ++i) {
+            int normal[3];
+            rotated(&rotation, part->normals + i, normal);
+            colors[i] = bell_color(scenery, normal, part->faces[0].rgb);
+        }
+    }
+    for (unsigned i = 0; i < part->vertex_count; ++i) {
+        const MusashiForestPlayerVector *p = part->vertices + i;
+        int16_t location[3] = {p->x, p->y, p->z};
+        if (bell) {
+            int point[3];
+            rotated(&rotation, p, point);
+            for (unsigned k = 0; k < 3; ++k) {
+                int value = point[k] + scenery->hanger[k];
+                if (value < INT16_MIN || value > INT16_MAX) return;
+                location[k] = (int16_t)value;
+            }
+        }
+        bfm_bedroom_project(view, location, projected[i]);
+    }
+    for (unsigned i = 0; i < part->face_count; ++i) {
+        const MusashiForestPlayerFace *f = part->faces + i;
+        StreetFace face = {.material = {.page = f->tpage, .clut = f->clut, .count = f->corners,
+                                        .textured = !bell, .dither = bell}, .with_offset = 1};
+        int sum = 0;
+        unsigned k;
+        for (k = 0; k < f->corners; ++k) {
+            const int *p = projected[f->vertex[k]];
+            int x = p[0] - 160, y = p[1] - 120;
+            /* Both roof and bell reject saturated projected corners. */
+            if (p[2] <= 0 || x <= -1024 || x >= 1023 || y <= -1024 || y >= 1023) break;
+            face.points[k] = (BfmForestRasterVertex){.x = x, .y = y,
+                                  .u = f->u[k], .v = f->v[k],
+                                  .rgb = bell ? colors[f->normal[k]] : UINT32_C(0x808080)};
+            sum += p[2];
+        }
+        if (k != f->corners) continue;
+        /* The original culls in projection space. Across a drawing-offset
+         * boundary, the surviving polygon can have reversed screen winding. */
+        const BfmForestRasterVertex *p = face.points;
+        if ((p[1].x-p[0].x)*(p[2].y-p[0].y) <= (p[1].y-p[0].y)*(p[2].x-p[0].x)) continue;
+        face.depth = sum / (4 * (int)f->corners);
+        enqueue(scenery, &face);
+    }
 }
 
 int bfm_village_street_scenery_prepare(BfmVillageStreetScenery *scenery,
@@ -114,6 +274,8 @@ int bfm_village_street_scenery_prepare(BfmVillageStreetScenery *scenery,
     scenery->raster = (BfmForestRaster){.tiles = tiles, .pixels = (uint32_t (*)[320])pixels,
                                         .top = 10, .bottom = 229};
     scenery->next = scenery->visible = 0;
+    prepare_landmark(scenery, view, 0);
+    prepare_landmark(scenery, view, 1);
     const double turn = 4096.0 / 6.28318530717958647693;
     int yaw = (int)lround(turn * atan2(-(double)view->axes[0][2], view->axes[0][0]));
     const int16_t center[3] = {0};
@@ -130,7 +292,7 @@ int bfm_village_street_scenery_prepare(BfmVillageStreetScenery *scenery,
         }
     }
     for (unsigned i = 0; i < scenery->count; ++i) {
-        TreeFace face;
+        StreetFace face = {.material = scenery->material};
         int sum = 0;
         unsigned k;
         for (k = 0; k < CORNERS; ++k) {
@@ -150,12 +312,7 @@ int bfm_village_street_scenery_prepare(BfmVillageStreetScenery *scenery,
         }
         if (k != CORNERS) continue;
         face.depth = sum / 16;
-        unsigned slot = scenery->visible++;
-        while (slot && scenery->faces[slot - 1].depth < face.depth) {
-            scenery->faces[slot] = scenery->faces[slot - 1];
-            --slot;
-        }
-        scenery->faces[slot] = face;
+        enqueue(scenery, &face);
     }
     return 1;
 }
@@ -170,7 +327,10 @@ void bfm_village_street_scenery_draw_to(BfmVillageStreetScenery *scenery, int de
 {
     if (!scenery) return;
     while (scenery->next < scenery->visible && scenery->faces[scenery->next].depth >= depth) {
-        bfm_forest_raster_face(&scenery->raster, &scenery->material,
-                               scenery->faces[scenery->next++].points);
+        const StreetFace *face = &scenery->faces[scenery->next++];
+        if (face->with_offset)
+            bfm_forest_raster_offset_face(&scenery->raster, &face->material, face->points, 160, 120);
+        else
+            bfm_forest_raster_face(&scenery->raster, &face->material, face->points);
     }
 }

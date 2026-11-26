@@ -40,6 +40,7 @@ BfmVillageMotion *bfm_village_motion_arrive(const BfmVillageMotion *departed,
     const uint8_t *scene, size_t scene_bytes, uint32_t room);
 /* Submit one scripted root and advance the player model once, then use place
  * on release to resume ordinary movement from the script endpoint. */
+int bfm_village_motion_porch(BfmVillageMotion *motion, const BfmBedroomRoot *root, int knock);
 int bfm_village_motion_staged(BfmVillageMotion *motion, const BfmBedroomRoot *root);
 int bfm_village_motion_place(BfmVillageMotion *motion, const BfmBedroomRoot *root);
 const BfmVillagePlayer *bfm_village_motion_player(const BfmVillageMotion *motion);

@@ -74,9 +74,15 @@ uint8_t *bfm_bedroom_player_data(const MusashiDiscMedia *disc, size_t *size)
     return read_payload(disc, "MAIN.CD", 10, 0x101, size);
 }
 
+uint8_t *bfm_archive_effect_data(const MusashiDiscMedia *disc, const char *archive,
+                                 unsigned member, size_t *size)
+{
+    return read_payload(disc, archive, member, 0x107, size);
+}
+
 uint8_t *bfm_bedroom_effect_data(const MusashiDiscMedia *disc, unsigned member, size_t *size)
 {
-    return read_payload(disc, "SC01.CD", member, 0x107, size);
+    return bfm_archive_effect_data(disc, "SC01.CD", member, size);
 }
 
 /* Village porch events are resident members separate from the field mesh. */

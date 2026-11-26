@@ -28,4 +28,11 @@ void bfm_forest_raster_face(const BfmForestRaster *surface,
                             const BfmForestRasterMaterial *material,
                             const BfmForestRasterVertex corners[4]);
 
+/* For packets stored relative to a nonzero GPU drawing offset, supply the
+ * submitted vertex coordinates. The offset result wraps to signed 11 bits. */
+void bfm_forest_raster_offset_face(const BfmForestRaster *surface,
+                                   const BfmForestRasterMaterial *material,
+                                   const BfmForestRasterVertex corners[4],
+                                   int offset_x, int offset_y);
+
 #endif

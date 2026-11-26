@@ -9,6 +9,9 @@ typedef struct BfmVillageStreetScenery BfmVillageStreetScenery;
 BfmVillageStreetScenery *bfm_village_street_scenery_load(const uint8_t *scene,
                                                         size_t bytes, uint32_t room);
 void bfm_village_street_scenery_free(BfmVillageStreetScenery *scenery);
+/* The running scene update clock drives the church bell's swing. */
+void bfm_village_street_scenery_step(BfmVillageStreetScenery *scenery,
+                                     unsigned scene_tick, unsigned progress);
 int bfm_village_street_scenery_prepare(BfmVillageStreetScenery *scenery,
                                       const BfmBedroomView *view,
                                       const uint16_t tiles[512][1024], uint32_t *pixels);

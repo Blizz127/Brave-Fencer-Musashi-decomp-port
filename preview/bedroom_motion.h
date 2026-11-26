@@ -21,7 +21,7 @@ typedef enum {
     BFM_BEDROOM_SEARCH,
     BFM_BEDROOM_SHOW_FUSION,
     BFM_BEDROOM_COLLECT, BFM_BEDROOM_RECEIVE, BFM_BEDROOM_LOWER, BFM_BEDROOM_FAREWELL, BFM_BEDROOM_NEGATIVE_REPLY,
-    BFM_BEDROOM_CABLE
+    BFM_BEDROOM_CABLE, BFM_BEDROOM_KNOCK
 } BfmBedroomAction;
 
 typedef struct {
@@ -32,6 +32,7 @@ typedef struct {
     unsigned pitch; /* Model X rotation, in 1/4096 turns. */
     unsigned draw_current; /* The active scripted gesture submits its current pose. */
     unsigned finished; /* Player action completed in this update. */
+    unsigned knock_contact; /* One update when the knocking hand strikes the door. */
 } BfmBedroomPose;
 
 /* The expanded room member and MAIN/10 type-0x101 payload (after its header)
