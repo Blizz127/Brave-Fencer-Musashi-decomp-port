@@ -10,6 +10,7 @@ int bfm_forest_manual_heading(const BfmForestCamera *camera, int x, int y, int16
 typedef struct {
     int moving, after_jump, left_support, on_bridge;
     int32_t last_descent;
+    int32_t entry_velocity; /* Initial velocity retained from a mounted entry walk. */
     unsigned motion, elapsed;
     int16_t ground_normal[3];
 } BfmForestManual;

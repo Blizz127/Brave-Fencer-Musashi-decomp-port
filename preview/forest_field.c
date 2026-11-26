@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "forest_field.h"
+#include "forest_entry.h"
 #include "forest_bridge.h"
 #include "forest_upper_trunks.h"
 #include "forest_shore.h"
@@ -36,6 +37,8 @@
 enum {
     FOREST_ROOM = 0x3008,
     FOREST_MEMBER = 77,
+    TOWER_ROOM = 0x3009,
+    TOWER_MEMBER = 80,
     FOREST_ENTRANCES = 2,
     SCENE_LIMIT = 1 << 20,
     GRID_HEADER = 32
@@ -43,13 +46,22 @@ enum {
 
 /* Scene-owned tables selected by the ordinary forest room and door loaders. */
 static const uint32_t scene_base = UINT32_C(0x80128158);
-static const uint32_t room_descriptor_slot = UINT32_C(0x80186ad0);
+static const uint32_t forest_descriptor_slot = UINT32_C(0x80186ad0);
+static const uint32_t tower_descriptor_slot = UINT32_C(0x8018350c);
 
 typedef struct {
     uint16_t position[3];
     int16_t yaw;
-    uint32_t on_enter, message;
+    uint32_t address, on_enter, message;
 } ForestEntrance;
+
+typedef struct {
+    const uint8_t *record;
+    uint16_t entry;
+    int16_t root[3], low[3], high[3];
+    const FloorFace *face;
+    int active, issued;
+} ForestGateway;
 
 /* The original scanout trails these submitted field actors and effects by two
  * updates. Their logical collision and animation states continue immediately. */
@@ -79,7 +91,9 @@ typedef struct {
 } BfmForestAtmosphereFrame;
 
 struct BfmForestField {
+    uint16_t room;
     FloorGrid grid;
+    ForestGateway gateway;
     BfmForestBridge bridge;
     BfmForestUpperTrunks *upper_trunks;
     const FloorPlane *first_descent;
@@ -193,10 +207,11 @@ static int load_entrances(BfmForestField *field, const uint8_t *scene, size_t si
         return 0;
     for (unsigned i = 0; i < FOREST_ENTRANCES; ++i) {
         const uint8_t *record = scene_record(scene, size, read32(table + i * 4), 0x18);
-        if (!record || read32(record) != FOREST_ROOM + i)
+        if (!record || read32(record) != field->room + i)
             return 0;
         for (unsigned axis = 0; axis < 3; ++axis)
             field->entrances[i].position[axis] = read16(record + 0x10 + axis * 2);
+        field->entrances[i].address = read32(table + i * 4);
         field->entrances[i].on_enter = read32(record + 8);
         field->entrances[i].message = read32(record + 12);
         field->entrances[i].yaw = (int16_t)read16(record + 0x16);
@@ -328,55 +343,101 @@ void bfm_forest_field_free(BfmForestField *field)
 }
 
 static void load_entrance_descent(BfmForestField *field);
+static void load_gateway(BfmForestField *field, const uint8_t *descriptor);
 
 BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t room)
 {
-    if (!disc || room != FOREST_ROOM)
+    if (!disc || (room != FOREST_ROOM && room != TOWER_ROOM))
         return NULL;
+    unsigned member = room == TOWER_ROOM ? TOWER_MEMBER : FOREST_MEMBER;
+    uint32_t descriptor_slot = room == TOWER_ROOM ? tower_descriptor_slot : forest_descriptor_slot;
     size_t bytes;
-    uint8_t *scene = bfm_scene_unpack_pac0(disc, "SC01.CD", FOREST_MEMBER,
+    uint8_t *scene = bfm_scene_unpack_pac0(disc, "SC01.CD", member,
                                            SCENE_LIMIT, SCENE_LIMIT, &bytes);
     if (!scene)
         return NULL;
     BfmForestField *field = calloc(1, sizeof(*field));
-    const uint8_t *slot = scene_record(scene, bytes, room_descriptor_slot, 4);
+    if (!field) {
+        free(scene);
+        return NULL;
+    }
+    field->room = room;
+    field->scene = scene;
+    field->scene_size = bytes;
+    const uint8_t *slot = scene_record(scene, bytes, descriptor_slot, 4);
     const uint8_t *descriptor = slot ? scene_record(scene, bytes, read32(slot), 0xcc) : NULL;
-    if (field && descriptor && bfm_forest_blade_load(&field->blade, scene, bytes) &&
-        load_entrances(field, scene, bytes, read32(descriptor + 0xc8)) &&
+    if (descriptor && load_entrances(field, scene, bytes, read32(descriptor + 0xc8)) &&
         load_grid(&field->grid, scene, bytes, descriptor)) {
-        load_entrance_descent(field);
-        load_opening_data(field, scene, bytes, descriptor);
         const uint8_t *mesh = scene_record(scene, bytes, read32(descriptor + 0x94), 8);
         const uint8_t *end = scene_record(scene, bytes, read32(descriptor + 0x88), GRID_HEADER);
         if (mesh && end && end > mesh)
-            field->terrain = bfm_forest_terrain_load(disc, mesh, (size_t)(end - mesh));
+            field->terrain = bfm_forest_terrain_load_member(disc, member, mesh, (size_t)(end - mesh));
         if (field->terrain && bfm_forest_terrain_set_lighting(field->terrain, descriptor, 0x98))
             field->player = musashi_forest_player_mesh_load(disc);
     }
-    if (field) {
-        field->scene = scene;
-        field->scene_size = bytes;
-        if (field->player && bfm_forest_drift_load(&field->drift, field, read32(descriptor + 0xb4)) &&
-            bfm_forest_glows_load(&field->lights, field, descriptor) &&
-            bfm_forest_fall_load(&field->fall, field, read32(descriptor + 0xb4)))
-            field->shore = bfm_forest_shore_open(field, scene, bytes, scene_base, descriptor);
-        if (field->shore && bfm_forest_guard_box_load(field, &field->guard_box)) {
-            field->shore_figures = bfm_forest_shore_figures_open(field);
-            field->light_figures = bfm_forest_glow_figures_open(field);
-            field->rifles = bfm_forest_rifles_open(field);
-            field->trail = bfm_forest_trail_open(field, field->shore);
-            field->upper_trunks = bfm_forest_upper_trunks_open(field);
-        }
-    } else {
-        free(scene);
-    }
-    if (field && (!field->shore_figures || !field->trail || !field->light_figures || !field->rifles ||
-                  !field->upper_trunks || !bfm_forest_bridge_load(&field->bridge, field) ||
-                  !bfm_forest_dust_load(&field->dust, disc))) {
+    if (!field->player) {
         bfm_forest_field_free(field);
-        field = NULL;
+        return NULL;
+    }
+    if (room == TOWER_ROOM) {
+        if (bfm_tower_blade_load(&field->blade, scene, bytes))
+            return field;
+        bfm_forest_field_free(field);
+        return NULL;
+    }
+
+    load_entrance_descent(field);
+    load_opening_data(field, scene, bytes, descriptor);
+    if (bfm_forest_blade_load(&field->blade, scene, bytes) &&
+        bfm_forest_drift_load(&field->drift, field, read32(descriptor + 0xb4)) &&
+        bfm_forest_glows_load(&field->lights, field, descriptor) &&
+        bfm_forest_fall_load(&field->fall, field, read32(descriptor + 0xb4)))
+        field->shore = bfm_forest_shore_open(field, scene, bytes, scene_base, descriptor);
+    if (field->shore && bfm_forest_guard_box_load(field, &field->guard_box)) {
+        load_gateway(field, descriptor);
+        field->shore_figures = bfm_forest_shore_figures_open(field);
+        field->light_figures = bfm_forest_glow_figures_open(field);
+        field->rifles = bfm_forest_rifles_open(field);
+        field->trail = bfm_forest_trail_open(field, field->shore);
+        field->upper_trunks = bfm_forest_upper_trunks_open(field);
+    }
+    if (!field->shore_figures || !field->trail || !field->upper_trunks || !field->light_figures ||
+        !field->rifles ||
+        !bfm_forest_bridge_load(&field->bridge, field) ||
+        !bfm_forest_dust_load(&field->dust, disc)) {
+        bfm_forest_field_free(field);
+        return NULL;
     }
     return field;
+}
+
+const uint8_t *bfm_forest_field_scene(const BfmForestField *field, size_t *size)
+{
+    if (!field || !size) return NULL;
+    *size = field->scene_size;
+    return field->scene;
+}
+
+const uint16_t (*bfm_forest_field_tiles(const BfmForestField *field))[1024]
+{
+    return field ? bfm_forest_terrain_tiles(field->terrain) : NULL;
+}
+
+const uint8_t *bfm_forest_field_entrance(const BfmForestField *field, unsigned index)
+{
+    return field && index < FOREST_ENTRANCES
+        ? bfm_forest_room_bytes(field, field->entrances[index].address, 36) : NULL;
+}
+
+int bfm_forest_draw_room(const BfmForestField *field, const BfmForestCamera *camera,
+                         const BfmForestPose *pose, const BfmForestTransform *root,
+                         uint32_t visible_parts, unsigned buffer, const BfmForestBladeFrame *blade,
+                         const BfmForestActor *actors, size_t actor_count, const BfmForestDustCard *cards, size_t card_count,
+                         uint32_t pixels[240][320])
+{
+    return field && bfm_forest_terrain_draw_entrance_with_effects(field->terrain, camera,
+        field->player, pose, root, visible_parts, &field->blade, buffer, blade,
+        actors, actor_count, cards, card_count, pixels);
 }
 
 int bfm_forest_draw_ground(BfmForestField *field, const BfmForestCamera *camera,
@@ -717,6 +778,7 @@ int bfm_forest_tick_shore_actor_with_run(BfmForestField *field, const int16_t pl
     if (bfm_forest_shore_step(field->shore, field, player, run) == BFM_SHORE_INVALID)
         return 0;
     bfm_forest_upper_trunks_tick(field->upper_trunks, player[2]);
+    bfm_forest_tick_gateway(field, player);
     bfm_forest_bridge_approach(&field->bridge, player[2]);
     bfm_forest_shore_figures_tick(field->shore_figures, player);
     if (bfm_forest_trail_step(field->trail, player) == BFM_TRAIL_INVALID) return 0;
@@ -888,6 +950,69 @@ static int64_t signed_distance(const FloorGrid *grid, FloorPlane plane, const in
            (int64_t)(s16)n->z * p[2] + grid->dist[plane.d];
 }
 
+/* The north exit's unrotated box belongs to a distance-activated room actor.
+ * The actor references the outgoing record. A bounded terrain selector in
+ * its own cell requests that record when the player crosses the doorway. */
+static void load_gateway(BfmForestField *field, const uint8_t *descriptor)
+{
+    if (read32(descriptor + 0xbc) != UINT32_C(0x8013e298))
+        return;
+    const uint8_t *table = bfm_forest_room_bytes(field, read32(descriptor + 0xc8), 8);
+    const uint8_t *box = bfm_forest_room_bytes(field, UINT32_C(0x8018707c), 16);
+    if (!table || !box || read32(box))
+        return;
+    uint32_t address = read32(table + 4);
+    const uint8_t *record = bfm_forest_room_bytes(field, address, 36);
+    if (!record || read16(record) != 0x3009)
+        return;
+    const uint8_t *row;
+    uint32_t list = read32(descriptor + 0xb8);
+    for (;;) {
+        row = bfm_forest_room_bytes(field, list, 20);
+        if (!row || !read16(row + 6))
+            return;
+        if (read16(row + 6) == 126 && read32(row + 16) == address)
+            break;
+        list += 20;
+    }
+    if (read16(row + 8) || read16(row + 10) || read16(row + 12))
+        return;
+    ForestGateway gate = {.record = record, .entry = read16(row + 14)};
+    for (unsigned i = 0; i < 3; ++i) {
+        gate.root[i] = (int16_t)read16(row + 2 * i);
+        gate.low[i] = (int16_t)read16(box + 4 + 4 * i);
+        gate.high[i] = (int16_t)read16(box + 6 + 4 * i);
+        if (gate.low[i] > 0 || gate.high[i] < 0)
+            return;
+    }
+    const FloorGrid *grid = &field->grid;
+    ContactCell cell = contact_cell(grid, gate.root);
+    for (unsigned i = 0; i < cell.count; ++i) {
+        if (!(cell.tokens[i] & 0x8000))
+            continue;
+        const FloorFace *face = contact_face(grid, cell.tokens[i]);
+        if (face->flags != 0x203 || signed_distance(grid, face->e[0], gate.root))
+            continue;
+        unsigned j = 1;
+        while (j <= 4 && signed_distance(grid, face->e[j], gate.root) >= 0)
+            ++j;
+        if (j == 5) {
+            if (gate.face)
+                return;
+            gate.face = face;
+        }
+    }
+    field->gateway = gate;
+}
+
+void bfm_forest_tick_gateway(BfmForestField *field, const int16_t player[3])
+{
+    if (field && player && field->gateway.face && !field->gateway.active) {
+        int gap = abs((int)player[2] - field->gateway.root[2]);
+        field->gateway.active = gap >= 705 && gap < 768;
+    }
+}
+
 static int same_grid_index(int16_t a, int16_t b)
 {
     return (a + 32768) / 128 == (b + 32768) / 128;
@@ -976,6 +1101,36 @@ static int64_t crossing_margin(const FloorGrid *grid, const FloorFace *face, uns
     return margin;
 }
 
+/* Contact selector 3 checks a vertical segment from three units above the
+ * feet to one unit below. Only the mounted exit owns this terrain face. */
+static const FloorFace *gateway_crossing(const BfmForestField *field,
+                                        const int16_t from[3], const int16_t to[3])
+{
+    const ForestGateway *gate = &field->gateway;
+    if (!gate->active || abs(to[0] - from[0]) > 16 || abs(to[1] - from[1]) > 16 ||
+        abs(to[2] - from[2]) > 16 ||
+        crossing_margin(&field->grid, gate->face, 4, from, to) < -EDGE_TOLERANCE)
+        return NULL;
+    int x = to[0] - gate->root[0], y = to[1] - gate->root[1], z = to[2] - gate->root[2];
+    if (x < gate->low[0] || x > gate->high[0] || z < gate->low[2] || z > gate->high[2] ||
+        y + 1 < gate->low[1] || y - 3 > gate->high[1])
+        return NULL;
+    return gate->face;
+}
+
+int bfm_forest_cross_gateway(BfmForestField *field, const int16_t before[3],
+                             const int16_t after[3], RoomTransferDescriptor *destination,
+                             uint16_t *entry)
+{
+    if (!field || !before || !after || !destination || !entry || field->gateway.issued ||
+        !gateway_crossing(field, before, after))
+        return 0;
+    bfm_forest_decode_transfer(field->gateway.record, destination);
+    *entry = field->gateway.entry;
+    field->gateway.issued = 1;
+    return 1;
+}
+
 /* The normal is Q12. Round the projected penetration and the outward
  * clearance separately, retaining the game's whole-unit contact point. */
 static int slide_wall(const FloorGrid *grid, FloorPlane plane, int16_t end[3])
@@ -1013,13 +1168,15 @@ static int slide_wall(const FloorGrid *grid, FloorPlane plane, int16_t end[3])
 /* A correction can carry the endpoint into a second wall. Revisit the
  * mounted faces in their stored order after each correction. */
 static int resolve_cell(const FloorGrid *grid, ContactCell cell, const int16_t from[3],
-                        int16_t end[3], int bounded_only)
+                        int16_t end[3], int bounded_only, const FloorFace *passage)
 {
     if (!cell.count)
         return -1;
     for (unsigned i = 0; i < cell.count; ++i) {
         u16 token = cell.tokens[i];
         const FloorFace *face = contact_face(grid, token);
+        if (face == passage)
+            continue;
         const FloorPoint *n = &grid->verts[face->e[0].v];
         if ((s16)n->y < 0 && !(face->flags & 0x300))
             continue;
@@ -1036,12 +1193,13 @@ static int resolve_cell(const FloorGrid *grid, ContactCell cell, const int16_t f
 }
 
 static int resolve_walls(const FloorGrid *grid, ContactCell start,
-                         const int16_t from[3], int16_t end[3], int bounded_only)
+                         const int16_t from[3], int16_t end[3], int bounded_only,
+                         const FloorFace *passage)
 {
     for (unsigned pass = 0; pass < 6; ++pass) {
-        int hit = resolve_cell(grid, start, from, end, bounded_only);
+        int hit = resolve_cell(grid, start, from, end, bounded_only, passage);
         if (hit == 0 && (!same_grid_index(from[0], end[0]) || !same_grid_index(from[2], end[2])))
-            hit = resolve_cell(grid, contact_cell(grid, end), from, end, bounded_only);
+            hit = resolve_cell(grid, contact_cell(grid, end), from, end, bounded_only, passage);
         if (hit <= 0)
             return hit == 0;
     }
@@ -1297,7 +1455,7 @@ BfmForestTopStep bfm_forest_raised_motion(const BfmForestField *field,
     const FloorGrid *grid = &field->grid;
     ContactCell start = contact_cell(grid, from);
     int16_t far[3] = {to[0], to[1], to[2]};
-    if (!resolve_walls(grid, start, from, far, 0))
+    if (!resolve_walls(grid, start, from, far, 0, NULL))
         return BFM_FOREST_TOP_BLOCKED;
     int span = (int)sqrt((double)(dx * dx + dz * dz));
     if (from[1] < INT16_MIN + 4 || far[1] > INT16_MAX - span - 1)
@@ -1405,7 +1563,7 @@ static int entrance_floor_step(const BfmForestField *field, const BfmForestConta
     int on_descent = descent_ground(field, previous, from);
     int bank = creek_approach(field, from, clipped);
     if ((!corridor_ground(previous) && !on_descent) || abs(previous->height - from[1]) > 4 ||
-        !resolve_walls(grid, start, from, clipped, bank))
+        !resolve_walls(grid, start, from, clipped, bank, NULL))
         return 0;
     if (!cross_descent(field, start, from, clipped)) {
         /* The previous downward probe can retain the slope across its toe.
@@ -1459,7 +1617,8 @@ int bfm_forest_corridor_step(const BfmForestField *field, const BfmForestContact
         return 0;
     const FloorGrid *grid = &field->grid;
     int16_t foot[3] = {to[0], to[1], to[2]};
-    if (!resolve_walls(grid, contact_cell(grid, from), from, foot, 1))
+    if (!resolve_walls(grid, contact_cell(grid, from), from, foot, 1,
+                       gateway_crossing(field, from, foot)))
         return 0;
     int reach = floor_sweep_span(from, foot) + 1;
     if (from[1] < INT16_MIN + reach)
@@ -1479,7 +1638,7 @@ BfmForestTopStep bfm_forest_step_on_bridge(const BfmForestField *field,
 {
     int16_t foot[3] = {to[0], to[1], to[2]};
     const FloorGrid *grid = &field->grid;
-    if (!resolve_walls(grid, contact_cell(grid, from), from, foot, 1))
+    if (!resolve_walls(grid, contact_cell(grid, from), from, foot, 1, NULL))
         return BFM_FOREST_TOP_BLOCKED;
     BfmForestContact contact;
     if (!trunk_support(field, BFM_BRIDGE_FLOOR_STRIDE, from, foot, &contact)) {
@@ -1565,7 +1724,7 @@ int bfm_forest_air_step(const BfmForestField *field, const int16_t from[3],
         return 0;
     const FloorGrid *grid = &field->grid;
     int16_t end[3] = {to[0], to[1], to[2]};
-    if (!resolve_walls(grid, contact_cell(grid, from), from, end, 1))
+    if (!resolve_walls(grid, contact_cell(grid, from), from, end, 1, NULL))
         return 0;
     BfmForestContact ground;
     int16_t upper = end[1] < from[1] ? end[1] : from[1];

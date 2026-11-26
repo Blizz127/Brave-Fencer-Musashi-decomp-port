@@ -18,6 +18,11 @@ int bfm_forest_blade_load(BfmForestBlade *blade, const uint8_t *scene, size_t by
     return load_outlines(blade, scene, bytes, 0x61900);
 }
 
+int bfm_tower_blade_load(BfmForestBlade *blade, const uint8_t *scene, size_t bytes)
+{
+    return load_outlines(blade, scene, bytes, 0x5e33c);
+}
+
 int bfm_palace_blade_load(BfmForestBlade *blade, const uint8_t *scene, size_t bytes)
 {
     return load_outlines(blade, scene, bytes, 0x60c50);

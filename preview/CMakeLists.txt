@@ -60,6 +60,11 @@ add_executable(musashi_native_boot
     forest_upper_trunks.c
     forest_bridge.c
     forest_bridge_targets.c
+    tower_camera.c
+    tower_field.c
+    tower_figures.c
+    tower_lightning.c
+    tower_sky.c
     forest_field.c
     forest_fusion_power.c
     forest_hud.c
@@ -104,6 +109,7 @@ add_executable(musashi_native_boot
     forest_message_art.c
     forest_message.c
     forest_walk.c
+    forest_gateway_transition.c
     forest_swing.c
     forest_impact.c
     forest_damage_digits.c

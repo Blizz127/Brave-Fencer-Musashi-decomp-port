@@ -75,12 +75,15 @@ static int decode_faces(const SourcePart *part, MusashiForestPlayerFace *out, in
         unsigned textured = mode & 4, gouraud = mode & 16;
         int vertex_inks = !!(p[2] & 4);
         unsigned prefix = (textured || vertex_inks) ? n : 1;
-        unsigned input = prefix + (gouraud ? n : (n+2)/2);
+        /* The raw textured scene quad carries a flat RGB word after its
+         * four UVs, then four vertex indices without a lighting normal. */
+        int raw_quad = scene_materials && mode == 0x2d && p[2] == 1;
+        unsigned input = raw_quad ? 7 : prefix + (gouraud ? n : (n+2)/2);
         unsigned output = 1 + n + (textured ? n : 0) + (gouraud || vertex_inks ? n-1 : 0);
         size_t length = (size_t)(input+1)*4;
         unsigned allowed_bits = scene_materials ? 0x1e : 0x1c;
-        if ((mode & ~allowed_bits) != 0x20 || mode == 0x24 ||
-            (p[2] && (!scene_materials || p[2] != 4 || textured ||
+        if ((!raw_quad && (mode & ~allowed_bits) != 0x20) || (!scene_materials && mode == 0x24) ||
+            (p[2] && !raw_quad && (!scene_materials || p[2] != 4 || textured ||
                       (!gouraud && !part->flat_vertex_inks && !(mode & 2)))) ||
             p[0] != output || p[1] != input || length > available) return 0;
         MusashiForestPlayerFace face = {0};
@@ -102,8 +105,9 @@ static int decode_faces(const SourcePart *part, MusashiForestPlayerFace *out, in
                 face.v[k] = body[k*4+1];
             }
             memcpy(face.corner_rgb[k], vertex_inks ? body + 4*k : face.rgb, 3);
-            face.vertex[k] = u16le(indices + (gouraud ? 4*k+2 : 2+2*k));
-            face.normal[k] = u16le(indices + (gouraud ? 4*k : 0));
+            face.vertex[k] = raw_quad ? u16le(indices + 4 + 2*k) :
+                u16le(indices + (gouraud ? 4*k+2 : 2+2*k));
+            face.normal[k] = raw_quad ? 0 : u16le(indices + (gouraud ? 4*k : 0));
             if (face.vertex[k] >= part->vertex_count || face.normal[k] >= part->normal_count)
                 return 0;
         }

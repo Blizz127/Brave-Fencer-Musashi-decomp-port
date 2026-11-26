@@ -25,6 +25,8 @@ int bfm_forest_effect_camera(const BfmForestCamera *camera, const BfmForestTrans
 
 BfmForestTerrain *bfm_forest_terrain_load(const MusashiDiscMedia *disc,
                                           const uint8_t *mesh, size_t bytes);
+BfmForestTerrain *bfm_forest_terrain_load_member(const MusashiDiscMedia *disc,
+                                          unsigned member, const uint8_t *mesh, size_t bytes);
 /* Set the active room descriptor's ambient and directional lights. */
 int bfm_forest_terrain_set_lighting(BfmForestTerrain *terrain,
                                     const uint8_t *descriptor, size_t bytes);

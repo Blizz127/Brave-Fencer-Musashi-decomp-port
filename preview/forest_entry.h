@@ -5,6 +5,9 @@
 #include "forest_field.h"
 #include "room_descriptor.h"
 
+/* Decode one complete, bounds-checked transfer record from a mounted room. */
+void bfm_forest_decode_transfer(const uint8_t record[36], RoomTransferDescriptor *out);
+
 /* Resolve the transfer requested by Cross in the active opening scene. Pass
  * the decoded first PAC section of the source member from the mounted disc. */
 int bfm_forest_entry_from_scene(const uint8_t *scene, size_t bytes, unsigned member,

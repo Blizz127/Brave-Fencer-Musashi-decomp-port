@@ -7,8 +7,16 @@
 #include "forest_terrain.h"
 #include "forest_dust.h"
 #include "gameplay_run.h"
+#include "room_descriptor.h"
 
 typedef struct BfmForestField BfmForestField;
+
+/* Update the distance-activated exit actor. After a committed movement step,
+ * report its authored transfer and separate entrance selector once. */
+void bfm_forest_tick_gateway(BfmForestField *field, const int16_t player[3]);
+int bfm_forest_cross_gateway(BfmForestField *field, const int16_t before[3],
+                             const int16_t after[3], RoomTransferDescriptor *destination,
+                             uint16_t *entry);
 
 typedef struct {
     int16_t height;
@@ -18,10 +26,19 @@ typedef struct {
     unsigned bridge;
 } BfmForestContact;
 
-/* Build the terrain, floor and player-model owners for the actual Giant Forest room
+/* Build the terrain, floor and player-model owners for the mounted field room
  * selected by the scene loader. The disc may close after a successful call. */
 BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t room);
 void bfm_forest_field_free(BfmForestField *field);
+/* Borrow this room's unpacked scene and 36-byte authored doorway. */
+const uint8_t *bfm_forest_field_scene(const BfmForestField *field, size_t *size);
+const uint16_t (*bfm_forest_field_tiles(const BfmForestField *field))[1024];
+const uint8_t *bfm_forest_field_entrance(const BfmForestField *field, unsigned index);
+int bfm_forest_draw_room(const BfmForestField *field, const BfmForestCamera *camera,
+                         const BfmForestPose *pose, const BfmForestTransform *root,
+                         uint32_t visible_parts, unsigned buffer, const BfmForestBladeFrame *blade,
+                         const BfmForestActor *actors, size_t actor_count, const BfmForestDustCard *cards, size_t card_count,
+                         uint32_t pixels[240][320]);
 int bfm_forest_draw_ground(BfmForestField *field, const BfmForestCamera *camera,
                            uint32_t pixels[240][320]);
 /* Composite the live actor and terrain in one depth order. The game supplies

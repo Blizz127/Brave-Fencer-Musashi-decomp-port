@@ -31,6 +31,7 @@ typedef struct Player {
     unsigned forest_updates;
     uint16_t forest_pressed;
     int control_message;
+    uint16_t display_room;
     SDL_Window *window;
     SDL_Renderer *renderer;
     SDL_Texture *texture;
@@ -253,6 +254,7 @@ static int start_forest(Player *p, unsigned field)
     p->forest_updates = 0;
     p->forest_pressed = 0;
     p->control_message = 0;
+    p->display_room = bfm_forest_walk_room(p->forest);
     SDL_SetWindowTitle(p->window, "Brave Fencer Musashi - Giant Forest");
     return 1;
 }
@@ -276,12 +278,19 @@ static int forest_frame(Player *p)
         ++p->forest_updates;
     }
     int control = bfm_forest_walk_control(p->forest);
-    if (control != p->control_message) {
-        if (control == 2)
+    uint16_t room = bfm_forest_walk_room(p->forest);
+    if (control != p->control_message || room != p->display_room) {
+        if (room == 0x3009) {
+            const char *title = control == 0 ? "Brave Fencer Musashi - Entering Spiral Tower" :
+                                control == 2 ? "Brave Fencer Musashi - Spiral Tower preview boundary" :
+                                               "Brave Fencer Musashi - Spiral Tower";
+            SDL_SetWindowTitle(p->window, title);
+        } else if (control == 2)
             SDL_SetWindowTitle(p->window, "Brave Fencer Musashi - Forest preview boundary");
         else if (control == 1)
             SDL_SetWindowTitle(p->window, "Brave Fencer Musashi - Giant Forest movement");
         p->control_message = control;
+        p->display_room = room;
     }
     unsigned generation = 0;
     struct ForestVoice *source = bfm_forest_walk_voice(p->forest, &generation);

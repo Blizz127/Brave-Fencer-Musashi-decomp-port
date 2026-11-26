@@ -110,12 +110,16 @@ BfmForestManualResult bfm_forest_manual_tick(BfmForestManual *state,
     if (!bfm_forest_manual_heading(camera, screen_x, screen_y, &next_yaw))
         return BFM_FOREST_MANUAL_ERROR;
     if (!state->moving) {
-        BfmForestOpeningData data;
-        if (!bfm_forest_opening_data(field, &data))
-            return BFM_FOREST_MANUAL_ERROR;
+        int32_t start = state->entry_velocity;
+        if (!start) {
+            BfmForestOpeningData data;
+            if (!bfm_forest_opening_data(field, &data))
+                return BFM_FOREST_MANUAL_ERROR;
+            start = data.initial_velocity;
+        }
         memset(actor->velocity, 0, sizeof actor->velocity);
         actor->field_24.word = actor->local_y.word = 0;
-        actor->field_2c.word = data.initial_velocity;
+        actor->field_2c.word = start;
         actor->state = actor->phase = 1;
         memcpy(state->ground_normal, ground.normal, sizeof state->ground_normal);
         state->moving = 1;

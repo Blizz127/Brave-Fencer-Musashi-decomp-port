@@ -182,7 +182,7 @@ int bfm_forest_terrain_set_lighting(BfmForestTerrain *terrain, const uint8_t *ro
     return 1;
 }
 
-BfmForestTerrain *bfm_forest_terrain_load(const MusashiDiscMedia *disc,
+BfmForestTerrain *bfm_forest_terrain_load_member(const MusashiDiscMedia *disc, unsigned member,
                                           const uint8_t *mesh, size_t bytes)
 {
     if (!disc || !mesh)
@@ -190,11 +190,17 @@ BfmForestTerrain *bfm_forest_terrain_load(const MusashiDiscMedia *disc,
     BfmForestTerrain *terrain = calloc(1, sizeof(*terrain));
     if (terrain && (!load_faces(terrain, mesh, bytes) ||
                     !bfm_scene_read_tiles(disc, "MAIN.CD", 10, terrain->tiles) ||
-                    !bfm_scene_read_tiles(disc, "SC01.CD", 77, terrain->tiles))) {
+                    !bfm_scene_read_tiles(disc, "SC01.CD", member, terrain->tiles))) {
         bfm_forest_terrain_free(terrain);
         return NULL;
     }
     return terrain;
+}
+
+BfmForestTerrain *bfm_forest_terrain_load(const MusashiDiscMedia *disc,
+                                          const uint8_t *mesh, size_t bytes)
+{
+    return bfm_forest_terrain_load_member(disc, 77, mesh, bytes);
 }
 
 const uint16_t (*bfm_forest_terrain_tiles(const BfmForestTerrain *terrain))[1024]
@@ -523,7 +529,8 @@ static int collect_model(BfmForestTerrain *terrain, const BfmForestCamera *camer
                 cross(out->points[0],out->points[1],out->points[2].x,out->points[2].y) <= 0)
                 continue;
             for (unsigned k = 0; k < ((face->mode & 16) ? face->corners : 1); ++k)
-                out->lighting[k] = light_vertex(terrain,light,&part->normals[face->normal[k]],
+                out->lighting[k] = (face->mode & 1) ? UINT32_C(0x808080) :
+                    light_vertex(terrain,light,&part->normals[face->normal[k]],
                                                 face->corner_rgb[k]);
             if (role == FOREST_PLAYER_MODEL && i < 2)
                 out->depth = nearest/4 - 1;

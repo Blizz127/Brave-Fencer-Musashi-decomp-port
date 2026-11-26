@@ -38,6 +38,12 @@ int bfm_forest_entry_from_scene(const uint8_t *scene, size_t bytes, unsigned mem
     }
     if (!door)
         return 0;
+    bfm_forest_decode_transfer(door, out);
+    return 1;
+}
+
+void bfm_forest_decode_transfer(const uint8_t door[36], RoomTransferDescriptor *out)
+{
     *out = (RoomTransferDescriptor){
         .room = read16(door), .parameter = door[2], .world = door[3],
         .resource = read32(door + 4), .room_value = read32(door + 8),
@@ -46,13 +52,12 @@ int bfm_forest_entry_from_scene(const uint8_t *scene, size_t bytes, unsigned mem
         .facing = read16(door + 22), .activate = read32(door + 24),
         .reserved1c = read32(door + 28), .finish = read32(door + 32)
     };
-    return 1;
 }
 
 BfmForestField *bfm_forest_enter(const MusashiDiscMedia *disc, const RoomTransferDescriptor *entry,
                                  ForestPlayerState *player, int16_t *model_yaw, int16_t cached_position[3])
 {
-    if (!entry || !player || !model_yaw || !cached_position || entry->world != 0)
+    if (!entry || entry->room != 0x3008 || !player || !model_yaw || !cached_position || entry->world != 0)
         return NULL;
     BfmForestField *field = bfm_forest_field_open(disc, entry->room);
     if (!field || !bfm_forest_place_player(field, entry->parameter, player, model_yaw, cached_position)) {
