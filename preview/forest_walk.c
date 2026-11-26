@@ -723,8 +723,12 @@ static int select_jump_pose(BfmForestWalk *w)
         if (!w->jump.elapsed) return 0;
         frame = bfm_forest_walkoff_pose_frame(poses, w->jump.elapsed - 1);
     } else if (w->actor.state == 3 && !w->jump.landed) {
-        /* After an aerial hit the fall starts the standing air clip anew. */
-        frame = bfm_forest_jump_pose_frame(poses, BFM_FOREST_JUMP_RISING, w->jump.elapsed);
+        /* A hurt fall restarts the interrupted air clip. Its last entry pose
+         * holds for one extra update before the falling sequence advances. */
+        unsigned entry = poses->count[BFM_FOREST_JUMP_RISING];
+        unsigned age = w->jump.elapsed;
+        frame = age <= entry ? bfm_forest_jump_pose_frame(poses, BFM_FOREST_JUMP_RISING, age) :
+                              bfm_forest_jump_pose_frame(poses, BFM_FOREST_JUMP_FALLING, age - entry + 1);
     } else {
         enum BfmForestJumpPhase phase = BFM_FOREST_JUMP_RISING;
         if (w->jump.landed) phase = BFM_FOREST_JUMP_LANDING;
@@ -973,6 +977,8 @@ static int tick_hurt(BfmForestWalk *w, unsigned received, int16_t hit_yaw,
         }
         w->at_boundary = 0;
     }
+    int airborne = w->jump.active && !w->jump.landed;
+    int32_t forward_speed = w->jump.steering ? w->actor.field_2c.word : 0;
     uint32_t frame;
     switch (bfm_forest_hurt_step(&w->hurt, &w->hurt_clip, scripted ? NULL : &w->actor,
                                 scripted ? NULL : &w->manual, &frame)) {
@@ -980,7 +986,10 @@ static int tick_hurt(BfmForestWalk *w, unsigned received, int16_t hit_yaw,
         return 1;
     case BFM_FOREST_HURT_LOCKED:
         if (scripted) return 2;
-        if (w->jump.active && !w->jump.landed) w->actor.action = 3;
+        if (airborne) {
+            w->actor.action = 3;
+            w->actor.field_2c.word = forward_speed;
+        }
         return select_pose(w, frame, w->summit_free ? w->walk.visible : w->hurt_clip.visible) ? 2 : -1;
     case BFM_FOREST_HURT_RECOVERED: {
         unsigned debit = w->pending_damage;
@@ -995,13 +1004,11 @@ static int tick_hurt(BfmForestWalk *w, unsigned received, int16_t hit_yaw,
             return 0;
         }
         if (scripted) return 2;
-        if (w->jump.active && !w->jump.landed) {
-            /* Hurt held the actor in place. Begin falling from rest at that
-             * position on the next movement update, even during a rising jump. */
-            if (!w->jump_poses.visible &&
-                !bfm_forest_jump_poses_load(w->disc, w->data.animation_table, &w->jump_poses)) return -1;
-            w->jump = (BfmForestJump){.active = 1, .descending = 1};
-            w->stride_jump = 0;
+        if (airborne) {
+            /* Hurt freezes world motion. Gravity restarts from zero, while a
+             * running hit retains its forward speed and the usual air steering. */
+            w->stride_jump = w->stride_jump || w->jump.walk_off;
+            w->jump = (BfmForestJump){.active = 1, .descending = 1, .steering = forward_speed != 0};
             w->actor.kind = w->actor.state = 3;
             return select_jump_pose(w) ? 2 : -1;
         }
@@ -1097,6 +1104,9 @@ static int step_jump(BfmForestWalk *w, const BfmForestField *room, int launched,
             w->blocked_y = y;
         } else {
             if (w->actor.kind == 3) {
+                /* Releasing direction ends the three-update carry. A fresh
+                 * direction after that starts from the stopped speed. */
+                if (!w->jump.steering) w->actor.field_2c.word = 0;
                 if (result == BFM_FOREST_JUMP_LANDED) w->actor.action = 2;
                 if (result == BFM_FOREST_JUMP_FINISHED) {
                     w->actor.kind = w->actor.state;
