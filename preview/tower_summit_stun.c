@@ -34,14 +34,14 @@ struct BfmTowerSummitStun {
 
 static int mount_catalogue(BfmTowerSummitStun *s, const MusashiDiscMedia *disc)
 {
-    const uint8_t *gain = bfm_forest_room_bytes(s->room, UINT32_C(0x8018d978) + STUN, 1);
-    const uint8_t *cost = bfm_forest_room_bytes(s->room, UINT32_C(0x8018d8dc) + STUN, 1);
+    const uint8_t *gain = bfm_forest_room_bytes(s->room, UINT32_C(0x8018d978), STUN + 1);
+    const uint8_t *cost = bfm_forest_room_bytes(s->room, UINT32_C(0x8018d8dc), STUN + 1);
     const uint8_t *duration = bfm_forest_room_bytes(s->room, UINT32_C(0x8018d8fc) + 4 * STUN, 4);
     const uint8_t *messages = bfm_forest_room_bytes(s->room, UINT32_C(0x8018d5f4) + 4 * STUN, 8);
     ForestPlayerArchive player;
     uint8_t row[8], directory[SECTOR];
     size_t total;
-    if (!gain || !*gain || !cost || !*cost || (*cost & 128) || !duration || !messages ||
+    if (!gain || !gain[STUN] || !cost || !cost[STUN] || (cost[STUN] & 128) || !duration || !messages ||
         !forest_player_archive_open(disc, &player) ||
         !forest_player_archive_read(&player, UINT32_C(0x800d3764), row, sizeof row) ||
         u32le(row + 4) != 7 || !musashi_disc_media_read_root_range(disc, "MAIN.CD",
@@ -54,8 +54,8 @@ static int mount_catalogue(BfmTowerSummitStun *s, const MusashiDiscMedia *disc)
     if (!sector || sector > total / SECTOR || !bytes || bytes % SECTOR ||
         bytes > total - (size_t)sector * SECTOR) return 0;
     s->sectors = bytes / SECTOR;
-    s->gain = *gain;
-    s->cost = *cost;
+    s->gain = gain[STUN];
+    s->cost = cost[STUN];
     s->duration = u32le(duration);
     s->message_address = u32le(messages);
     uint32_t end = u32le(messages + 4);
