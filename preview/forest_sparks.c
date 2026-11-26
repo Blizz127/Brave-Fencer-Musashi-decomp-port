@@ -17,16 +17,15 @@ void bfm_forest_sparks_start(BfmForestSparks *sparks, const int32_t origin[3],
     sparks->remaining = BFM_FOREST_STRIKE_SPARKS;
 }
 
-static void emit(BfmForestSparks *sparks, BfmGameplayRun *run, const int32_t eye[3])
+void bfm_forest_spark_start(BfmForestSpark *spark, const int32_t origin[3],
+                            const int16_t face[3][3], BfmGameplayRun *run, const int32_t eye[3])
 {
-    unsigned index = BFM_FOREST_STRIKE_SPARKS - sparks->remaining--;
-    BfmForestSpark *spark = &sparks->sparks[index];
     uint16_t roll = bfm_gameplay_random(run);
     const int16_t zero[3] = {0};
     BfmForestTransform scatter;
     bfm_forest_actor_pitch_yaw((roll & 127) * 8, 3072 + ((roll >> 8) & 127) * 8, zero, &scatter);
-    double dx = (double)eye[0] - sparks->origin[0], dy = (double)eye[1] - sparks->origin[1];
-    double dz = (double)eye[2] - sparks->origin[2];
+    double dx = (double)eye[0] - origin[0], dy = (double)eye[1] - origin[1];
+    double dz = (double)eye[2] - origin[2];
     double units = 2048.0 / acos(-1.0);
     int yaw = (int)lround(atan2(dx, dz) * units);
     int pitch = -(int)lround(atan2(dy, hypot(dx, dz)) * units);
@@ -36,29 +35,35 @@ static void emit(BfmForestSparks *sparks, BfmGameplayRun *run, const int32_t eye
     for (unsigned i = 0; i < 3; ++i) {
         int32_t direction = 0;
         for (unsigned k = 0; k < 3; ++k)
-            direction += sparks->face[i][k] * scatter.rotation[k][2];
-        spark->position[i] = sparks->origin[i];
+            direction += face[i][k] * scatter.rotation[k][2];
+        spark->position[i] = origin[i];
         spark->velocity[i] = (int16_t)floor_shift(10 * floor_shift(direction, 12), 12);
         spark->billboard[i][0] = facing.rotation[i][0];
         spark->billboard[i][1] = facing.rotation[i][1];
     }
 }
 
+void bfm_forest_spark_advance(BfmForestSpark *spark)
+{
+    if (!spark->alive) return;
+    if (spark->age == 10) {
+        spark->alive = 0;
+        return;
+    }
+    memcpy(spark->submitted, spark->position, sizeof spark->submitted);
+    for (unsigned k = 0; k < 3; ++k) spark->position[k] += spark->velocity[k];
+    ++spark->velocity[1];
+    ++spark->age;
+}
+
 void bfm_forest_sparks_tick(BfmForestSparks *sparks, BfmGameplayRun *run, const int32_t eye[3])
 {
-    for (unsigned i = 0; i < BFM_FOREST_STRIKE_SPARKS; ++i) {
-        BfmForestSpark *spark = &sparks->sparks[i];
-        if (!spark->alive) continue;
-        if (spark->age == 10) {
-            spark->alive = 0;
-            continue;
-        }
-        memcpy(spark->submitted, spark->position, sizeof spark->submitted);
-        for (unsigned k = 0; k < 3; ++k) spark->position[k] += spark->velocity[k];
-        ++spark->velocity[1];
-        ++spark->age;
+    for (unsigned i = 0; i < BFM_FOREST_STRIKE_SPARKS; ++i)
+        bfm_forest_spark_advance(&sparks->sparks[i]);
+    if (sparks->remaining && run) {
+        unsigned index = BFM_FOREST_STRIKE_SPARKS - sparks->remaining--;
+        bfm_forest_spark_start(&sparks->sparks[index], sparks->origin, sparks->face, run, eye);
     }
-    if (sparks->remaining && run) emit(sparks, run, eye);
 }
 
 static int project_shape(const BfmForestCamera *camera, const int32_t center[3],
@@ -88,34 +93,40 @@ static int project_shape(const BfmForestCamera *camera, const int32_t center[3],
     return 1;
 }
 
+unsigned bfm_forest_spark_project(const BfmForestSpark *spark, unsigned index,
+                                  const BfmForestCamera *camera, BfmForestDustCard out[2])
+{
+    if (!spark->alive || !spark->age) return 0;
+    unsigned count = 0;
+    unsigned elapsed = spark->age - 1;
+    int scale = ((index & 1) ? 1228 : 2048) + 128 * elapsed;
+    int32_t center[3];
+    int axes[3][2];
+    for (unsigned k = 0; k < 3; ++k) {
+        int64_t center_dot = 0;
+        int32_t x_dot = 0, y_dot = 0;
+        for (unsigned t = 0; t < 3; ++t) {
+            int weight = camera->rotation[k][t];
+            center_dot += (int64_t)weight * spark->submitted[t];
+            x_dot += weight * floor_shift(spark->billboard[t][0] * scale, 12);
+            y_dot += weight * floor_shift(spark->billboard[t][1] * scale, 12);
+        }
+        center[k] = camera->translation[k] + floor_shift(center_dot, 12);
+        axes[k][0] = floor_shift(x_dot, 12);
+        axes[k][1] = floor_shift(y_dot, 12);
+    }
+    /* The depth table walks equal-depth quads in reverse insertion order. */
+    for (unsigned shape = 0; shape < 2; ++shape)
+        count += project_shape(camera, center, axes, (int)shape, 192 - 16 * elapsed,
+                               2 * index + shape, &out[count]);
+    return count;
+}
+
 unsigned bfm_forest_sparks_project(const BfmForestSparks *sparks, const BfmForestCamera *camera,
                                    BfmForestDustCard out[BFM_FOREST_SPARK_CARDS])
 {
     unsigned count = 0;
-    for (unsigned i = 0; i < BFM_FOREST_STRIKE_SPARKS; ++i) {
-        const BfmForestSpark *spark = &sparks->sparks[i];
-        if (!spark->alive || !spark->age) continue;
-        unsigned elapsed = spark->age - 1;
-        int scale = ((i & 1) ? 1228 : 2048) + 128 * elapsed;
-        int32_t center[3];
-        int axes[3][2];
-        for (unsigned k = 0; k < 3; ++k) {
-            int64_t center_dot = 0;
-            int32_t x_dot = 0, y_dot = 0;
-            for (unsigned t = 0; t < 3; ++t) {
-                int weight = camera->rotation[k][t];
-                center_dot += (int64_t)weight * spark->submitted[t];
-                x_dot += weight * floor_shift(spark->billboard[t][0] * scale, 12);
-                y_dot += weight * floor_shift(spark->billboard[t][1] * scale, 12);
-            }
-            center[k] = camera->translation[k] + floor_shift(center_dot, 12);
-            axes[k][0] = floor_shift(x_dot, 12);
-            axes[k][1] = floor_shift(y_dot, 12);
-        }
-        /* The depth table walks equal-depth quads in reverse insertion order. */
-        for (unsigned shape = 0; shape < 2; ++shape)
-            count += project_shape(camera, center, axes, (int)shape, 192 - 16 * elapsed,
-                                   2 * i + shape, &out[count]);
-    }
+    for (unsigned i = 0; i < BFM_FOREST_STRIKE_SPARKS; ++i)
+        count += bfm_forest_spark_project(&sparks->sparks[i], i, camera, out + count);
     return count;
 }

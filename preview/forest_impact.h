@@ -27,6 +27,11 @@ int bfm_forest_impact_start(BfmForestImpact *impact, const BfmForestField *field
                             const int16_t contact[3], const int16_t normal[3],
                             const int32_t camera_eye[3]);
 void bfm_forest_impact_advance(BfmForestImpact *impact);
+void bfm_forest_impact_face_eye(BfmForestImpact *impact, const int32_t eye[3]);
+unsigned bfm_forest_impact_strip_project(const BfmForestImpact *impact,
+                                         const BfmForestCamera *camera, BfmForestDustCard *card);
+unsigned bfm_forest_impact_burst_project(const BfmForestImpact *impact,
+                                         const BfmForestCamera *camera, BfmForestDustCard *card);
 unsigned bfm_forest_impact_project(const BfmForestImpact *impact, const BfmForestCamera *camera,
                                    BfmForestDustCard out[BFM_FOREST_IMPACT_CARDS]);
 #endif

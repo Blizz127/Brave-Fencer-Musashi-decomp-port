@@ -25,7 +25,7 @@ struct MusashiForestPlayerMesh {
 typedef struct {
     const uint8_t *vertices, *normals, *primitives;
     size_t vertex_count, normal_count, face_count;
-    int flat_vertex_inks;
+    uint32_t object_scale;
 } SourcePart;
 
 static int component_offsets(const uint8_t table[TABLE_BYTES], size_t offsets[MUSASHI_FOREST_PLAYER_PARTS+1]) {
@@ -46,10 +46,10 @@ static int source_part(const uint8_t *p, size_t bytes, int scene_materials, Sour
      * are relative to the object directory, twelve bytes after the header. */
     if (bytes < HEADER_BYTES || u32le(p) != 0x41 || u32le(p+4) ||
         u32le(p+8) != 1) return 0;
-    /* The near-bank model and its companion mark each object with scale -1.
-     * Their mounted vertices are already expressed in the room's model units. */
+    /* The near-bank actors use scale label -1 and the rifle round uses 3.
+     * Both supply vertices already expressed in model units. */
     uint32_t scale = u32le(p+36);
-    if (scale && !(scene_materials && scale == UINT32_MAX)) return 0;
+    if (scale && !(scene_materials && (scale == UINT32_MAX || scale == 3))) return 0;
     size_t vertices = u32le(p+12), normals = u32le(p+20), primitives = u32le(p+28);
     size_t nv = u32le(p+16), nn = u32le(p+24), nf = u32le(p+32);
     size_t extent = bytes - 12;
@@ -57,7 +57,7 @@ static int source_part(const uint8_t *p, size_t bytes, int scene_materials, Sour
         normals >= extent || !nv || !nn || !nf || nf > (vertices-primitives)/4 ||
         (normals-vertices)%8 || nv != (normals-vertices)/8 ||
         (extent-normals)%8 || nn != (extent-normals)/8) return 0;
-    *out = (SourcePart){p+12+vertices, p+12+normals, p+12+primitives, nv, nn, nf, scale == UINT32_MAX};
+    *out = (SourcePart){p+12+vertices, p+12+normals, p+12+primitives, nv, nn, nf, scale};
     return 1;
 }
 
@@ -73,6 +73,21 @@ static int decode_faces(const SourcePart *part, MusashiForestPlayerFace *out, in
         if (available < 4) return 0;
         unsigned mode = p[3], n = (mode & 8) ? 4 : 3;
         unsigned textured = mode & 4, gouraud = mode & 16;
+        /* Unlit three-corner Gouraud records carry RGB at each corner and
+         * three packed vertex indices. They have no normal indices. */
+        if (part->object_scale == 3) {
+            if (available < 24 || p[0] != 6 || p[1] != 5 || p[2] != 1 || mode != 0x31) return 0;
+            MusashiForestPlayerFace face = {.mode = (uint8_t)mode, .corners = 3};
+            for (unsigned k = 0; k < 3; ++k) {
+                memcpy(face.corner_rgb[k], p + 4 + k*4, 3);
+                face.vertex[k] = u16le(p + 16 + k*2);
+                if (face.vertex[k] >= part->vertex_count) return 0;
+            }
+            memcpy(face.rgb, face.corner_rgb[0], 3);
+            out[i] = face;
+            p += 24;
+            continue;
+        }
         int vertex_inks = !!(p[2] & 4);
         unsigned prefix = (textured || vertex_inks) ? n : 1;
         /* The raw textured scene quad carries a flat RGB word after its
@@ -84,7 +99,7 @@ static int decode_faces(const SourcePart *part, MusashiForestPlayerFace *out, in
         unsigned allowed_bits = scene_materials ? 0x1e : 0x1c;
         if ((!raw_quad && (mode & ~allowed_bits) != 0x20) || (!scene_materials && mode == 0x24) ||
             (p[2] && !raw_quad && (!scene_materials || p[2] != 4 || textured ||
-                      (!gouraud && !part->flat_vertex_inks && !(mode & 2)))) ||
+                      (!gouraud && part->object_scale != UINT32_MAX && !(mode & 2)))) ||
             p[0] != output || p[1] != input || length > available) return 0;
         MusashiForestPlayerFace face = {0};
         /* Distinct vertex inks require Gouraud output even when all the

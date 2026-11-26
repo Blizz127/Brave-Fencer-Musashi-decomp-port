@@ -18,6 +18,12 @@ typedef struct {
     unsigned remaining;
 } BfmForestSparks;
 
+void bfm_forest_spark_start(BfmForestSpark *spark, const int32_t origin[3],
+                            const int16_t face[3][3], BfmGameplayRun *run, const int32_t eye[3]);
+void bfm_forest_spark_advance(BfmForestSpark *spark);
+unsigned bfm_forest_spark_project(const BfmForestSpark *spark, unsigned index,
+                                  const BfmForestCamera *camera, BfmForestDustCard out[2]);
+
 /* The displaced strike origin and orientation of the surface before strip tilt. */
 void bfm_forest_sparks_start(BfmForestSparks *sparks, const int32_t origin[3],
                              const BfmForestTransform *face);

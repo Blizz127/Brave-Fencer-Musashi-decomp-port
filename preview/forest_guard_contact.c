@@ -67,7 +67,7 @@ static void radial_normal(const int16_t point[3], const int16_t center[3], int16
 }
 
 static int resolve_segment(const BfmForestGuardBox *box, const int16_t start[3],
-                           const int16_t end[3], int16_t hit[3], int16_t normal[3])
+                           const int16_t end[3], int16_t hit[3], int16_t normal[3], int slide)
 {
     int face[3];
     int outside[3];
@@ -100,6 +100,11 @@ static int resolve_segment(const BfmForestGuardBox *box, const int16_t start[3],
             hit[coordinate] = (int16_t)position;
         }
         if (coordinate == 3) {
+            /* For body movement, keep the intended travel along an accepted face. */
+            if (slide) {
+                for (unsigned tangent = 0; tangent < 3; ++tangent)
+                    hit[tangent] = end[tangent];
+            }
             int sign = start[axis] < box->low[axis] ? -1 : 1;
             hit[axis] = (int16_t)(face[axis] + sign * 2);
             normal[axis] = (int16_t)(sign * 4095);
@@ -109,9 +114,9 @@ static int resolve_segment(const BfmForestGuardBox *box, const int16_t start[3],
     return 0;
 }
 
-int bfm_forest_guard_contact_point(const BfmForestGuardBox *box, const BfmForestTransform *root,
+static int world_contact(const BfmForestGuardBox *box, const BfmForestTransform *root,
                                    const int16_t start[3], const int16_t end[3],
-                                   int16_t center[3], int16_t contact[3], int16_t normal[3])
+                                   int16_t center[3], int16_t contact[3], int16_t normal[3], int slide)
 {
     if (!box || !root || !start || !end || !center) return 0;
     int64_t dx = (int64_t)start[0] - root->translation[0];
@@ -122,7 +127,7 @@ int bfm_forest_guard_contact_point(const BfmForestGuardBox *box, const BfmForest
     int16_t local_start[3], local_end[3], hit[3], midpoint[3], local_normal[3] = {0};
     to_local(root, start, local_start);
     to_local(root, end, local_end);
-    if (!resolve_segment(box, local_start, local_end, hit, local_normal)) return 0;
+    if (!resolve_segment(box, local_start, local_end, hit, local_normal, slide)) return 0;
     for (unsigned axis = 0; axis < 3; ++axis) {
         int sum = box->low[axis] + box->high[axis];
         midpoint[axis] = sum / 2 - (sum % 2 < 0);
@@ -135,6 +140,20 @@ int bfm_forest_guard_contact_point(const BfmForestGuardBox *box, const BfmForest
         if (normal) normal[row] = (int16_t)rotated_axis(root, local_normal, row);
     }
     return 1;
+}
+
+int bfm_forest_guard_contact_point(const BfmForestGuardBox *box, const BfmForestTransform *root,
+                                   const int16_t start[3], const int16_t end[3],
+                                   int16_t center[3], int16_t contact[3], int16_t normal[3])
+{
+    return world_contact(box, root, start, end, center, contact, normal, 0);
+}
+
+int bfm_forest_body_slide(const BfmForestGuardBox *box, const BfmForestTransform *root,
+                          const int16_t start[3], const int16_t end[3], int16_t contact[3])
+{
+    int16_t center[3];
+    return world_contact(box, root, start, end, center, contact, NULL, 1);
 }
 
 int bfm_forest_guard_contact(const BfmForestGuardBox *box, const BfmForestTransform *root,

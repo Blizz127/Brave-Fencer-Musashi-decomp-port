@@ -528,10 +528,12 @@ static int collect_model(BfmForestTerrain *terrain, const BfmForestCamera *camer
             if (j != face->corners ||
                 cross(out->points[0],out->points[1],out->points[2].x,out->points[2].y) <= 0)
                 continue;
-            for (unsigned k = 0; k < ((face->mode & 16) ? face->corners : 1); ++k)
-                out->lighting[k] = (face->mode & 1) ? UINT32_C(0x808080) :
-                    light_vertex(terrain,light,&part->normals[face->normal[k]],
-                                                face->corner_rgb[k]);
+            for (unsigned k = 0; k < ((face->mode & 16) ? face->corners : 1); ++k) {
+                const uint8_t *rgb = face->corner_rgb[k];
+                out->lighting[k] = (face->mode & 1) ?
+                    (unsigned)rgb[0] | (unsigned)rgb[1] << 8 | (unsigned)rgb[2] << 16 :
+                    light_vertex(terrain, light, &part->normals[face->normal[k]], rgb);
+            }
             if (role == FOREST_PLAYER_MODEL && i < 2)
                 out->depth = nearest/4 - 1;
             else

@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "forest_status.h"
+#include "bedroom_score.h"
 #include <string.h>
 
 static uint16_t read16(const uint8_t *p)
@@ -16,6 +17,46 @@ static int16_t signed16(const uint8_t *p)
 {
     int32_t value = read16(p);
     return (int16_t)(value > INT16_MAX ? value - 65536 : value);
+}
+
+int bfm_forest_hit_damage(const MusashiDiscMedia *disc, const BfmForestStatus *status,
+                          uint32_t player_flags, unsigned power, uint16_t *amount)
+{
+    if (!disc || !status || !amount || !power || power > UINT16_MAX) return 0;
+    uint32_t rank = read32(status->record + 0x74);
+    uint8_t defense[2];
+    if (rank >= 30 || !bfm_bedroom_resident_data(disc, UINT32_C(0x800638fe) + 16 * rank,
+                                                 defense, sizeof defense)) return 0;
+
+    unsigned reduction = power * read16(defense) / 80u;
+    unsigned damage = reduction >= power ? 1 : power - reduction;
+    if (status->record[0x49] == 5 || (player_flags & UINT32_C(0x800))) damage /= 2;
+    *amount = (uint16_t)damage;
+    return 1;
+}
+
+int bfm_forest_rifle_damage(const MusashiDiscMedia *disc, const BfmForestStatus *status,
+                            uint32_t player_flags, uint16_t *amount)
+{
+    return bfm_forest_hit_damage(disc, status, player_flags, 25, amount);
+}
+
+void bfm_forest_status_debit(BfmForestStatus *status, unsigned amount)
+{
+    if (!status) return;
+    int hp = signed16(status->record + 0x3c);
+    unsigned remaining = hp > 0 && (unsigned)hp > amount ? (unsigned)hp - amount : 0;
+    status->record[0x3c] = (uint8_t)remaining;
+    status->record[0x3d] = (uint8_t)(remaining >> 8);
+}
+
+void bfm_forest_status_spend_bp(BfmForestStatus *status, unsigned amount)
+{
+    if (!status) return;
+    unsigned bp = read16(status->record + 0x40);
+    unsigned remaining = bp > amount ? bp - amount : 0;
+    status->record[0x40] = (uint8_t)remaining;
+    status->record[0x41] = (uint8_t)(remaining >> 8);
 }
 
 int bfm_forest_status_load(const MusashiDiscMedia *disc, BfmForestStatus *out)

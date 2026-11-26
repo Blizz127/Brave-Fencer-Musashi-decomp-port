@@ -26,6 +26,18 @@ typedef struct {
     unsigned bridge;
 } BfmForestContact;
 
+typedef enum {
+    BFM_SHORE_FLOOR_UNKNOWN, BFM_SHORE_FLOOR_FLAT, BFM_SHORE_FLOOR_GRADE, BFM_SHORE_FLOOR_STEEP
+} BfmForestShoreFloor;
+/* Resolve the coastal patrol's two ground probes and any intervening wall.
+ * Flat and grade results replace whole coordinates, retaining caller-owned
+ * fractions. Steep and unknown contacts leave the proposed step intact. */
+BfmForestShoreFloor bfm_forest_shore_floor_step(const BfmForestField *field,
+                                                const int16_t from[3], int16_t to[3]);
+
+BfmForestShoreFloor bfm_forest_pursuit_floor_step(const BfmForestField *field,
+                                                  const int16_t from[3], int16_t to[3]);
+
 /* Build the terrain, floor and player-model owners for the mounted field room
  * selected by the scene loader. The disc may close after a successful call. */
 BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t room);
@@ -58,6 +70,7 @@ void bfm_forest_submit_atmosphere(BfmForestField *field, const BfmForestCamera *
 /* Advance already emitted cards and, for a real player action, its new card. */
 void bfm_forest_tick_dust(BfmForestField *field, BfmForestDustEmission event,
                           const int16_t player[3], const int32_t camera_eye[3], int yaw);
+enum { BFM_FOREST_STRIKE_RAYS = 3 };
 typedef struct {
     int connected;
     uint16_t strength;
@@ -65,11 +78,17 @@ typedef struct {
 } BfmForestHit;
 int bfm_forest_tick_sweep(BfmForestField *field, const MusashiDiscMedia *disc,
                           int begin, uint32_t logical_pose, const BfmForestTransform *previous_root);
+/* Queue a confirmed loss at the unshifted player root. Its effect draws randomness on dispatch. */
+int bfm_forest_queue_hurt_number(BfmForestField *field, const int16_t player[3], uint16_t amount);
 int bfm_forest_submit_guard_and_impact(BfmForestField *field, const BfmForestHit *hit,
                            const int32_t camera_eye[3], const BfmForestCamera *camera);
 int bfm_forest_submit_guard_and_impact_with_run(BfmForestField *field, const BfmForestHit *hit,
                            const int32_t camera_eye[3], const BfmForestCamera *camera,
                            BfmGameplayRun *run);
+/* Submit accepted ray contacts in their original order, then advance all existing field effects. */
+int bfm_forest_submit_guard_and_impacts_with_run(BfmForestField *field,
+                           const BfmForestHit *hits, size_t count, const int32_t camera_eye[3],
+                           const BfmForestCamera *camera, BfmGameplayRun *run);
 int bfm_forest_tick_shore_actor_with_run(BfmForestField *field, const int16_t player[3],
                                         BfmGameplayRun *run);
 /* Advance the room controller and its registered logs before this update's
@@ -82,16 +101,36 @@ int bfm_forest_bridge_impact(void *field, const int16_t from[3], const int16_t t
 int bfm_forest_bridge_shot(void *field, const int16_t from[3], const int16_t to[3],
                            int16_t hit[3]);
 int bfm_forest_tick_shore_actor(BfmForestField *field, const int16_t player[3]);
+/* A solid face can separate a moving segment's endpoint from the wall while
+ * preserving the tangential part of its movement. */
+unsigned bfm_forest_resolve_solid_segment(const BfmForestField *field, const int16_t from[3],
+                                          const int16_t to[3], int16_t contact[3]);
+
+/* Consume the pending soldier or rifle hit. The output is the incoming world-space yaw. */
+unsigned bfm_forest_take_player_strike(BfmForestField *field, int16_t *yaw);
+int bfm_forest_take_player_hit(BfmForestField *field, int16_t *shot_yaw);
 /* Resolve the first sword impact using the current and next action key.
  * A hit turns the player and guard. Both world-space effect outputs are optional. */
 int bfm_forest_first_strike(BfmForestField *field, const BfmForestTransform *player_root,
                             const int8_t tip[3], const int8_t next_tip[3], int16_t *yaw,
                             int16_t effect_position[3], int16_t effect_normal[3]);
-/* Apply a grounded Fusion swing's rolled strength. Another nonlethal hit is
- * eligible once the guard has recovered. A miss leaves all outputs untouched. */
+/* Apply a grounded Fusion swing to the placed shore soldier and bank riflemen.
+ * Recovered bodies accept nonlethal hits. A miss preserves the outputs. A hit
+ * returns the final contact and turns the attacker toward its body center. */
 int bfm_forest_ground_strike(BfmForestField *field, const BfmForestTransform *player_root,
                              const int8_t tip[3], const int8_t next_tip[3], uint16_t strength,
                              int16_t *yaw, int16_t effect_position[3], int16_t effect_normal[3]);
+/* Ordinary Fusion uses kinds 1 and 2 on alternating attacks. A target
+ * suppresses the same kind during recoil and can accept a different kind. */
+int bfm_forest_typed_ground_strike(BfmForestField *field, const BfmForestTransform *player_root,
+                                  const int8_t tip[3], const int8_t next_tip[3],
+                                  uint16_t strength, uint16_t attack_type, int16_t *yaw,
+                                  int16_t effect_position[3], int16_t effect_normal[3]);
+/* Return the last accepted surface on each blade ray in issuance order. */
+size_t bfm_forest_ground_strike_rays(BfmForestField *field, const BfmForestTransform *player_root,
+                                    const int8_t tip[3], const int8_t next_tip[3],
+                                    uint16_t strength, uint16_t attack_type, int16_t *yaw,
+                                    BfmForestHit hits[BFM_FOREST_STRIKE_RAYS]);
 int bfm_forest_draw_entrance_player(BfmForestField *field, const BfmForestCamera *camera,
                            const BfmForestPose *pose, const BfmForestTransform *root,
                            uint32_t visible_parts, unsigned buffer, const BfmForestBladeFrame *frame,
@@ -146,10 +185,17 @@ int bfm_forest_jump_surface(const BfmForestContact *ground);
 int bfm_forest_corridor_step(const BfmForestField *field, const BfmForestContact *previous,
                              const int16_t from[3], int16_t to[3]);
 
+/* Read the body's downward support contact on the open creek bank. */
+int bfm_forest_bank_body_normal(const BfmForestField *field, const int16_t from[3],
+                               const int16_t to[3], int16_t normal[3]);
 /* Run the original player's vertical terrain probe, on the field thread.
  * Pass signed game-world units. No hit leaves contact untouched. */
 int bfm_forest_ground(const BfmForestField *field, int16_t x, int16_t y,
                       int16_t z, BfmForestContact *contact);
+/* Sweep an airborne target along its path, or follow its support after
+ * landing. Returns zero on unsupported terrain with its outputs intact. */
+int bfm_forest_thrown_probe(const BfmForestField *field, const int16_t from[3],
+                            int16_t to[3], int follow_ground, int *grounded);
 /* Resolve a short airborne step against the mounted walls and landing surface. */
 int bfm_forest_air_step(const BfmForestField *field, const int16_t from[3],
                         int16_t to[3], BfmForestContact *contact, int *landed);

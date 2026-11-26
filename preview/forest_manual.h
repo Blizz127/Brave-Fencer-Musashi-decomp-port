@@ -71,4 +71,6 @@ BfmForestManualResult bfm_forest_manual_tick(BfmForestManual *state,
 int bfm_forest_manual_coast(const BfmForestField *field, ForestPlayerState *actor,
                             int16_t yaw, int16_t cached[3]);
 
+int bfm_forest_carry_step(const BfmForestField *field, ForestPlayerState *actor, int16_t yaw,
+                          int32_t speed, int16_t position[3]);
 #endif

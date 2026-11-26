@@ -74,12 +74,15 @@ void bfm_plat_sha256_final(BfmPlatSha256 *s, uint8_t out[32]) {
     for (i = 0; i < 32; i++) out[i] = (uint8_t)(s->h[i / 4] >> (24 - 8 * (i % 4)));
 }
 
+static char hex_digit(unsigned nibble) {
+    return (char)(nibble < 10 ? '0' + nibble : 'a' + nibble - 10);
+}
+
 void bfm_plat_sha256_to_hex(const uint8_t d[32], char out[65]) {
-    static const char hex[] = "0123456789abcdef";
     int i;
     for (i = 0; i < 32; i++) {
-        out[i * 2] = hex[d[i] >> 4];
-        out[i * 2 + 1] = hex[d[i] & 15];
+        out[i * 2] = hex_digit(d[i] >> 4);
+        out[i * 2 + 1] = hex_digit(d[i] & 15);
     }
     out[64] = '\0';
 }

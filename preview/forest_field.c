@@ -3,11 +3,14 @@
 #include "forest_entry.h"
 #include "forest_bridge.h"
 #include "forest_upper_trunks.h"
+#include "forest_rifle_wall.h"
 #include "forest_shore.h"
 #include "forest_drift.h"
 #include "forest_glow_halo.h"
 #include "forest_glow_figures.h"
 #include "forest_rifles.h"
+#include "forest_rifle_round.h"
+#include "forest_rifle_contact.h"
 #include "forest_muzzle_fan.h"
 #include "forest_fall.h"
 #include "forest_shore_motion.h"
@@ -20,10 +23,9 @@
 #include "forest_tether_trails.h"
 #include "forest_trail.h"
 #include "forest_shore_figures.h"
-#include "forest_impact.h"
-#include "forest_damage_digits.h"
+#include "forest_lift.h"
+#include "forest_strike_effects.h"
 #include "forest_sweep.h"
-#include "forest_sparks.h"
 #include "forest_opening_data.h"
 #include "forest_message_art.h"
 #include "forest_floor.h"
@@ -63,32 +65,53 @@ typedef struct {
     int active, issued;
 } ForestGateway;
 
+enum { FOREST_MELEE_GUARDS = 2 };
+
 /* The original scanout trails these submitted field actors and effects by two
  * updates. Their logical collision and animation states continue immediately. */
 typedef struct {
-    BfmForestTransform guard_root;
-    BfmForestPose guard_pose;
-    uint32_t guard_parts;
+    struct {
+        BfmForestTransform root;
+        BfmForestPose pose;
+        uint32_t parts;
+    } guard[FOREST_MELEE_GUARDS];
     BfmForestActor fusion_actor;
     BfmForestTransform fusion_root;
     BfmForestCamera camera;
-    BfmForestDustCard cards[2 + BFM_FOREST_IMPACT_CARDS + BFM_FOREST_SWEEP_CARDS + BFM_FOREST_SPARK_CARDS +
-                            BFM_FOREST_DAMAGE_NUMBERS * BFM_FOREST_DAMAGE_DIGIT_CARDS];
+    BfmForestDustCard cards[3 + BFM_FOREST_STRIKE_CARDS + BFM_FOREST_SWEEP_CARDS];
     unsigned count;
     BfmForestDustCard skill_cards[BFM_TETHER_CARDS + BFM_FOREST_MUZZLE_CARDS +
                                 BFM_GUNSHOT_FAN_CARDS + BFM_FOREST_SHOT_EFFECT_CARDS];
     size_t skill_count;
 } BfmForestSubmittedFrame;
 
+/* A live round spans 100 updates. Even a re-entering sentry needs 19
+ * updates to reach the firing key, allowing six outstanding rounds per rifle. */
+enum {
+    FOREST_BANK_ROUNDS = 6 * BFM_FOREST_BANK_RIFLES,
+    FOREST_BLADE_TARGETS = FOREST_MELEE_GUARDS + BFM_FOREST_BANK_RIFLES + BFM_FOREST_SHORE_FIGURES,
+    FOREST_BANK_BODIES = 4 + FOREST_MELEE_GUARDS + 2 * BFM_FOREST_SHORE_FIGURES,
+    FOREST_ATMOSPHERE_BODIES = BFM_FOREST_GLOWS + BFM_FOREST_BANK_RIFLES + FOREST_BANK_ROUNDS,
+    FOREST_FIELD_BODIES = FOREST_BANK_BODIES + FOREST_ATMOSPHERE_BODIES +
+                          BFM_FOREST_BRIDGE_TARGET_COUNT + BFM_FOREST_UPPER_TRUNKS
+};
+_Static_assert(FOREST_FIELD_BODIES <= BFM_FOREST_ACTOR_LIMIT,
+               "The field renderer must accommodate the submitted actor pool");
+
 typedef struct {
     unsigned count;
     BfmForestDustCard cards[BFM_FOREST_HALO_CARDS + BFM_FOREST_FALL_SLOTS + BFM_FOREST_BANK_FLASH_CARDS];
-    BfmForestActor bodies[BFM_FOREST_GLOWS + BFM_FOREST_BANK_RIFLES];
-    BfmForestTransform roots[BFM_FOREST_GLOWS + BFM_FOREST_BANK_RIFLES];
+    BfmForestActor bodies[FOREST_ATMOSPHERE_BODIES];
+    BfmForestTransform roots[FOREST_ATMOSPHERE_BODIES];
     BfmForestPose rifle_poses[BFM_FOREST_BANK_RIFLES];
     BfmForestCamera camera;
     unsigned body_count;
 } BfmForestAtmosphereFrame;
+
+typedef struct {
+    enum { SHORE_SOLDIER, RIFLE_SOLDIER, SHORE_FIGURE } kind;
+    unsigned placement;
+} ForestBladeTarget;
 
 struct BfmForestField {
     uint16_t room;
@@ -105,11 +128,15 @@ struct BfmForestField {
     BfmForestGlows lights;
     BfmForestGlowFigures *light_figures;
     BfmForestRifles *rifles;
+    BfmForestRifleRoundArt *round_art;
+    BfmForestRifleRound rounds[FOREST_BANK_ROUNDS];
+    unsigned player_hit_power;
+    int16_t player_hit_yaw;
     BfmForestMuzzleFan flashes[BFM_FOREST_BANK_RIFLES];
     BfmForestFall fall;
     BfmForestAtmosphereFrame atmosphere[3];
     unsigned next_atmosphere;
-    BfmForestShore *shore;
+    BfmForestShore *shore, *bank_patrol;
     BfmForestLessonGuard *lesson_guard;
     BfmFusionModel *fusion_model;
     BfmForestTetherTrails tether_trails;
@@ -118,13 +145,12 @@ struct BfmForestField {
     BfmForestShotEffects shot_effects;
     const BfmForestActor *fusion_actor;
     BfmForestGuardBox guard_box;
+    ForestBladeTarget targets[FOREST_BLADE_TARGETS];
     int first_shore_hit;
     BfmForestTrail *trail;
     BfmForestShoreFigures *shore_figures;
-    BfmForestImpact impact;
-    BfmForestDamageDigits damage_numbers[BFM_FOREST_DAMAGE_NUMBERS];
+    BfmForestStrikeEffects strikes;
     BfmForestSweep sweep;
-    BfmForestSparks sparks;
     BfmForestSubmittedFrame submitted[3];
     unsigned next_frame;
     BfmForestOpeningData opening;
@@ -178,6 +204,11 @@ static const uint8_t *scene_record(const uint8_t *scene, size_t size,
         address - scene_base > size - length)
         return NULL;
     return scene + (address - scene_base);
+}
+
+BfmForestShoreFigures *bfm_forest_lift_figures(BfmForestField *field)
+{
+    return field ? field->shore_figures : NULL;
 }
 
 const uint8_t *bfm_forest_room_bytes(const BfmForestField *field, uint32_t address,
@@ -320,6 +351,7 @@ static int load_grid(FloorGrid *grid, const uint8_t *scene, size_t size,
 void bfm_forest_field_free(BfmForestField *field)
 {
     if (field) {
+        bfm_forest_rifle_round_art_free(field->round_art);
         bfm_forest_rifles_free(field->rifles);
         bfm_forest_glow_figures_free(field->light_figures);
         bfm_forest_upper_trunks_free(field->upper_trunks);
@@ -328,6 +360,7 @@ void bfm_forest_field_free(BfmForestField *field)
         bfm_forest_trail_free(field->trail);
         bfm_forest_lesson_guard_free(field->lesson_guard);
         bfm_fusion_model_free(field->fusion_model);
+        bfm_forest_shore_free(field->bank_patrol);
         bfm_forest_shore_free(field->shore);
         bfm_forest_terrain_free(field->terrain);
         free(field->scene);
@@ -344,6 +377,36 @@ void bfm_forest_field_free(BfmForestField *field)
 
 static void load_entrance_descent(BfmForestField *field);
 static void load_gateway(BfmForestField *field, const uint8_t *descriptor);
+
+/* These placements register in room-list order along the first bank. */
+static int load_blade_targets(BfmForestField *field, const uint8_t *descriptor)
+{
+    const unsigned entries = 12;
+    uint32_t list = read32(descriptor + 0xb8);
+    const uint8_t *records = bfm_forest_room_bytes(field, list, entries * 20);
+    if (!records) return 0;
+    unsigned figures = 0, rifles = 0, shore = 0, count = 0;
+    for (unsigned i = 0; i < entries; ++i) {
+        const uint8_t *row = records + 20 * i;
+        unsigned kind = (uint16_t)read16(row + 6), variant = (uint16_t)read16(row + 8);
+        ForestBladeTarget target;
+        if (kind == 12 && variant == 0) {
+            if (figures == BFM_FOREST_SHORE_FIGURES) return 0;
+            target = (ForestBladeTarget){SHORE_FIGURE, figures++};
+        } else if (kind == 47 && variant == 0) {
+            if (shore >= FOREST_MELEE_GUARDS) return 0;
+            if (shore == 1) {
+                field->bank_patrol = bfm_forest_shore_open_patrol(field->shore, row);
+                if (!field->bank_patrol) return 0;
+            }
+            target = (ForestBladeTarget){SHORE_SOLDIER, shore++};
+        } else if (kind == 47 && variant == 0x500 + rifles && rifles < BFM_FOREST_BANK_RIFLES) {
+            target = (ForestBladeTarget){RIFLE_SOLDIER, rifles++};
+        } else continue;
+        field->targets[count++] = target;
+    }
+    return count == FOREST_BLADE_TARGETS && shore == FOREST_MELEE_GUARDS;
+}
 
 BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t room)
 {
@@ -393,16 +456,18 @@ BfmForestField *bfm_forest_field_open(const MusashiDiscMedia *disc, uint16_t roo
         bfm_forest_glows_load(&field->lights, field, descriptor) &&
         bfm_forest_fall_load(&field->fall, field, read32(descriptor + 0xb4)))
         field->shore = bfm_forest_shore_open(field, scene, bytes, scene_base, descriptor);
-    if (field->shore && bfm_forest_guard_box_load(field, &field->guard_box)) {
+    if (field->shore && bfm_forest_guard_box_load(field, &field->guard_box) &&
+        load_blade_targets(field, descriptor)) {
         load_gateway(field, descriptor);
         field->shore_figures = bfm_forest_shore_figures_open(field);
         field->light_figures = bfm_forest_glow_figures_open(field);
         field->rifles = bfm_forest_rifles_open(field);
+        field->round_art = bfm_forest_rifle_round_art_open(field);
         field->trail = bfm_forest_trail_open(field, field->shore);
         field->upper_trunks = bfm_forest_upper_trunks_open(field);
     }
     if (!field->shore_figures || !field->trail || !field->upper_trunks || !field->light_figures ||
-        !field->rifles ||
+        !field->rifles || !field->round_art ||
         !bfm_forest_bridge_load(&field->bridge, field) ||
         !bfm_forest_dust_load(&field->dust, disc)) {
         bfm_forest_field_free(field);
@@ -482,6 +547,13 @@ void bfm_forest_submit_atmosphere(BfmForestField *field, const BfmForestCamera *
             body->pose = &frame->rifle_poses[i];
         }
     }
+    for (unsigned i = 0; i < FOREST_BANK_ROUNDS; ++i) {
+        BfmForestActor *body = &frame->bodies[frame->body_count];
+        /* Round poses are immutable room art. The frame retains the selected
+         * key here and saves the moving root and camera below. */
+        if (bfm_forest_rifle_round_actor(&field->rounds[i], field->round_art, body))
+            ++frame->body_count;
+    }
     for (unsigned i = 0; i < frame->body_count; ++i) {
         frame->roots[i] = *frame->bodies[i].root;
         frame->bodies[i].root = &frame->roots[i];
@@ -527,17 +599,43 @@ static int strike_world_point(const BfmForestTransform *root, const int local[3]
     return 1;
 }
 
-static int resolve_shore_strike(BfmForestField *field, const BfmForestTransform *player_root,
-                                const int8_t tip[3], const int8_t next_tip[3], int16_t *yaw,
-                                int16_t effect_position[3], int16_t effect_normal[3],
-                                const uint16_t *strength)
+/* For the first-strike preview the shore soldier is the sole target. */
+static int contact_target(BfmForestField *field, const ForestBladeTarget *target,
+                          const int16_t start[3], const int16_t end[3], uint16_t yaw,
+                          const uint16_t *strength, uint16_t type, int16_t center[3],
+                          int16_t point[3], int16_t normal[3])
 {
-    if (!field || !player_root || !tip || !next_tip || !yaw || (!strength && field->first_shore_hit))
+    if (!strength && (target->kind != SHORE_SOLDIER || target->placement)) return 0;
+    if (target->kind == SHORE_FIGURE)
+        return bfm_forest_shore_figure_contact(field->shore_figures, target->placement, start, end,
+                                               type, *strength, (int16_t)yaw, center, point, normal);
+    BfmForestShore *soldier = target->placement ? field->bank_patrol : field->shore;
+    const BfmForestActor *actor = target->kind == SHORE_SOLDIER
+        ? bfm_forest_shore_actor(soldier) : bfm_forest_rifle_actor(field->rifles, target->placement);
+    if (!actor || !bfm_forest_guard_contact_point(&field->guard_box, actor->root,
+                                                  start, end, center, point, normal)) return 0;
+    if (!strength) {
+        bfm_forest_shore_recoil(field->shore, yaw);
+        field->first_shore_hit = 1;
+    } else if (target->kind == SHORE_SOLDIER) {
+        if (!bfm_forest_shore_take_typed_hit(soldier, yaw, *strength, type)) return 0;
+    } else if (!bfm_forest_rifle_take_hit(field->rifles, target->placement, yaw, *strength, type)) {
         return 0;
-    const BfmForestActor *guard = bfm_forest_shore_actor(field->shore);
+    }
+    bfm_forest_dust_recoil_start(&field->dust, actor->root->translation, yaw);
+    return 1;
+}
+
+static size_t scan_ground_strike(BfmForestField *field, const BfmForestTransform *player_root,
+                                const int8_t tip[3], const int8_t next_tip[3], int16_t *yaw,
+                                BfmForestHit hits[BFM_FOREST_STRIKE_RAYS],
+                                const uint16_t *strength, uint16_t attack_type)
+{
+    if (!field || !player_root || !tip || !next_tip || !yaw || !hits || (!strength && field->first_shore_hit))
+        return 0;
     const int origin[3] = {0, -30, 0};
     int16_t start[3], end[3], center[3];
-    if (!guard || !strike_world_point(player_root, origin, start)) return 0;
+    if (!strike_world_point(player_root, origin, start)) return 0;
     int points[3][3], squared = 0;
     for (unsigned axis = 0; axis < 3; ++axis) {
         int delta = (int)next_tip[axis] - tip[axis];
@@ -549,45 +647,83 @@ static int resolve_shore_strike(BfmForestField *field, const BfmForestTransform 
     /* The field adds two probes when its quantized distance reaches 65.
      * Across signed-byte endpoints the first qualifying squared length is 4288. */
     unsigned probes = squared >= 4288 ? 3 : 1;
+    unsigned struck = 0;
+    uint16_t incoming_yaw = (uint16_t)*yaw;
+    size_t hit_count = 0;
     for (unsigned i = 0; i < probes; ++i) {
-        int16_t position[3], normal[3];
-        if (!strike_world_point(player_root, points[i], end) ||
-            !bfm_forest_guard_contact_point(&field->guard_box, guard->root, start, end,
-                                            center, position, normal))
-            continue;
-        uint16_t incoming_yaw = (uint16_t)*yaw;
-        if (strength) {
-            if (!bfm_forest_shore_take_hit(field->shore, (uint16_t)*yaw, *strength)) return 0;
-        } else {
-            bfm_forest_shore_recoil(field->shore, (uint16_t)*yaw);
-            field->first_shore_hit = 1;
+        BfmForestHit ray = {0};
+        if (!strike_world_point(player_root, points[i], end)) continue;
+        for (unsigned j = 0; j < FOREST_BLADE_TARGETS; ++j) {
+            if (struck & (1u << j)) continue;
+            int16_t position[3], normal[3];
+            int hit = contact_target(field, &field->targets[j], start, end, incoming_yaw,
+                                     strength, attack_type, center, position, normal);
+            if (!hit) continue;
+            memcpy(end, position, sizeof end);
+            if (hit == 4) {
+                if (ray.connected) memcpy(ray.position, position, sizeof position);
+                continue;
+            }
+            struck |= 1u << j;
+            *yaw = (int16_t)bfm_forest_shore_bearing(player_root->translation[0] - center[0],
+                                                     player_root->translation[2] - center[2]);
+            ray.connected = 1;
+            if (strength) ray.strength = *strength;
+            memcpy(ray.position, position, sizeof position);
+            memcpy(ray.normal, normal, sizeof normal);
         }
-        bfm_forest_dust_recoil_start(&field->dust, guard->root->translation, incoming_yaw);
-        *yaw = (int16_t)bfm_forest_shore_bearing(player_root->translation[0] - center[0],
-                                                 player_root->translation[2] - center[2]);
-        for (unsigned axis = 0; axis < 3; ++axis) {
-            if (effect_position) effect_position[axis] = position[axis];
-            if (effect_normal) effect_normal[axis] = normal[axis];
-        }
-        return 1;
+        if (ray.connected) hits[hit_count++] = ray;
     }
-    return 0;
+    return hit_count;
+}
+
+static int resolve_ground_strike(BfmForestField *field, const BfmForestTransform *player_root,
+                                 const int8_t tip[3], const int8_t next_tip[3], int16_t *yaw,
+                                 int16_t effect_position[3], int16_t effect_normal[3],
+                                 const uint16_t *strength, uint16_t attack_type)
+{
+    BfmForestHit hits[BFM_FOREST_STRIKE_RAYS];
+    size_t count = scan_ground_strike(field, player_root, tip, next_tip, yaw, hits, strength, attack_type);
+    if (!count) return 0;
+    const BfmForestHit *last = &hits[count - 1];
+    if (effect_position) memcpy(effect_position, last->position, sizeof last->position);
+    if (effect_normal) memcpy(effect_normal, last->normal, sizeof last->normal);
+    return 1;
+}
+
+size_t bfm_forest_ground_strike_rays(BfmForestField *field, const BfmForestTransform *player_root,
+                                    const int8_t tip[3], const int8_t next_tip[3],
+                                    uint16_t strength, uint16_t attack_type, int16_t *yaw,
+                                    BfmForestHit hits[BFM_FOREST_STRIKE_RAYS])
+{
+    if (attack_type != 1 && attack_type != 2) return 0;
+    return scan_ground_strike(field, player_root, tip, next_tip, yaw, hits, &strength, attack_type);
 }
 
 int bfm_forest_first_strike(BfmForestField *field, const BfmForestTransform *player_root,
                             const int8_t tip[3], const int8_t next_tip[3], int16_t *yaw,
                             int16_t effect_position[3], int16_t effect_normal[3])
 {
-    return resolve_shore_strike(field, player_root, tip, next_tip, yaw,
-                                effect_position, effect_normal, NULL);
+    return resolve_ground_strike(field, player_root, tip, next_tip, yaw,
+                                effect_position, effect_normal, NULL, 0);
 }
 
 int bfm_forest_ground_strike(BfmForestField *field, const BfmForestTransform *player_root,
                              const int8_t tip[3], const int8_t next_tip[3], uint16_t strength,
                              int16_t *yaw, int16_t effect_position[3], int16_t effect_normal[3])
 {
-    return resolve_shore_strike(field, player_root, tip, next_tip, yaw,
-                                effect_position, effect_normal, &strength);
+    return resolve_ground_strike(field, player_root, tip, next_tip, yaw,
+                                effect_position, effect_normal, &strength, 1);
+}
+
+int bfm_forest_typed_ground_strike(BfmForestField *field, const BfmForestTransform *player_root,
+                                  const int8_t tip[3], const int8_t next_tip[3],
+                                  uint16_t strength, uint16_t attack_type, int16_t *yaw,
+                                  int16_t effect_position[3], int16_t effect_normal[3])
+{
+    if (attack_type != 1 && attack_type != 2) return 0;
+    return resolve_ground_strike(field, player_root, tip, next_tip, yaw,
+                                 effect_position, effect_normal, &strength, attack_type);
 }
 
 int bfm_forest_tick_sweep(BfmForestField *field, const MusashiDiscMedia *disc,
@@ -595,6 +731,11 @@ int bfm_forest_tick_sweep(BfmForestField *field, const MusashiDiscMedia *disc,
 {
     if (begin) return bfm_forest_sweep_begin(&field->sweep, field);
     return bfm_forest_sweep_step(&field->sweep, disc, logical_pose, previous_root);
+}
+
+int bfm_forest_queue_hurt_number(BfmForestField *field, const int16_t player[3], uint16_t amount)
+{
+    return field && player && bfm_forest_strike_effects_queue_hurt(&field->strikes, field, player, amount);
 }
 
 int bfm_forest_submit_guard_and_impact(BfmForestField *field, const BfmForestHit *hit,
@@ -607,39 +748,40 @@ int bfm_forest_submit_guard_and_impact_with_run(BfmForestField *field, const Bfm
                            const int32_t camera_eye[3], const BfmForestCamera *camera,
                            BfmGameplayRun *run)
 {
-    if (hit->connected) {
-        if (!bfm_forest_impact_start(&field->impact, field, hit->position, hit->normal,
-                                     camera_eye)) return 0;
-        if (run) bfm_forest_sparks_start(&field->sparks, field->impact.origin, &field->impact.face);
-    } else {
-        bfm_forest_dust_recoil_advance(&field->dust);
-        bfm_forest_impact_advance(&field->impact);
+    return bfm_forest_submit_guard_and_impacts_with_run(field, hit,
+                hit && hit->connected ? 1 : 0, camera_eye, camera, run);
+}
+
+int bfm_forest_submit_guard_and_impacts_with_run(BfmForestField *field,
+                           const BfmForestHit *hits, size_t count, const int32_t camera_eye[3],
+                           const BfmForestCamera *camera, BfmGameplayRun *run)
+{
+    if (!field || !camera || !camera_eye || (count && !hits)) return 0;
+    int connected = 0;
+    for (size_t i = 0; i < count; ++i) {
+        if (!hits[i].connected) continue;
+        if (!bfm_forest_strike_effects_queue(&field->strikes, field, &hits[i], camera_eye)) return 0;
+        connected = 1;
     }
-    bfm_forest_sparks_tick(&field->sparks, run, camera_eye);
+    if (!connected) bfm_forest_dust_recoil_advance(&field->dust);
     BfmForestSubmittedFrame *frame = &field->submitted[field->next_frame];
     frame->camera = *camera;
     frame->count = bfm_forest_dust_recoil_project(&field->dust, camera, frame->cards);
-    if (bfm_forest_marker_project(bfm_forest_shore_marker(field->shore), camera,
-                                  &frame->cards[frame->count])) ++frame->count;
-    frame->count += bfm_forest_impact_project(&field->impact, camera, frame->cards + frame->count);
-    frame->count += bfm_forest_sparks_project(&field->sparks, camera, frame->cards + frame->count);
-    frame->count += bfm_forest_sweep_project(&field->sweep, camera, frame->cards + frame->count);
-    BfmForestDamageDigits *available = NULL;
-    for (unsigned i = 0; i < BFM_FOREST_DAMAGE_NUMBERS; ++i) {
-        BfmForestDamageDigits *number = &field->damage_numbers[i];
-        bfm_forest_damage_digits_advance(number);
-        frame->count += bfm_forest_damage_digits_project(number, camera, frame->cards + frame->count);
-        if (!number->amount && !available) available = number;
+    BfmForestShore *guards[FOREST_MELEE_GUARDS] = {field->shore, field->bank_patrol};
+    for (unsigned i = 0; i < FOREST_MELEE_GUARDS; ++i) {
+        if (bfm_forest_marker_project(bfm_forest_shore_marker(guards[i]), camera,
+                                      &frame->cards[frame->count])) ++frame->count;
     }
-    /* An existing number may draw its final frame on the next hit. The
-     * new number first draws one update after that contact. */
-    if (hit->connected && available &&
-        !bfm_forest_damage_digits_start(available, field, hit->position, hit->strength)) return 0;
-    const BfmForestActor *guard = bfm_forest_shore_actor(field->shore);
-    frame->guard_parts = guard ? guard->visible_parts : 0;
-    if (guard) {
-        frame->guard_root = *guard->root;
-        frame->guard_pose = *guard->pose;
+    frame->count += bfm_forest_strike_effects_step(&field->strikes, camera_eye, camera, run,
+                                                  frame->cards + frame->count);
+    frame->count += bfm_forest_sweep_project(&field->sweep, camera, frame->cards + frame->count);
+    for (unsigned i = 0; i < FOREST_MELEE_GUARDS; ++i) {
+        const BfmForestActor *guard = bfm_forest_shore_actor(guards[i]);
+        frame->guard[i].parts = guard ? guard->visible_parts : 0;
+        if (guard) {
+            frame->guard[i].root = *guard->root;
+            frame->guard[i].pose = *guard->pose;
+        }
     }
     frame->skill_count = bfm_forest_tether_trails_project(&field->tether_trails, camera,
                                                           frame->skill_cards, BFM_TETHER_CARDS);
@@ -766,6 +908,20 @@ int bfm_forest_tick_shore_actor(BfmForestField *field, const int16_t player[3])
     return bfm_forest_tick_shore_actor_with_run(field, player, NULL);
 }
 
+unsigned bfm_forest_take_player_strike(BfmForestField *field, int16_t *yaw)
+{
+    if (!field || !yaw || !field->player_hit_power) return 0;
+    unsigned power = field->player_hit_power;
+    *yaw = field->player_hit_yaw;
+    field->player_hit_power = 0;
+    return power;
+}
+
+int bfm_forest_take_player_hit(BfmForestField *field, int16_t *shot_yaw)
+{
+    return bfm_forest_take_player_strike(field, shot_yaw) != 0;
+}
+
 int bfm_forest_tick_shore_actor_with_run(BfmForestField *field, const int16_t player[3],
                                         BfmGameplayRun *run)
 {
@@ -775,7 +931,8 @@ int bfm_forest_tick_shore_actor_with_run(BfmForestField *field, const int16_t pl
     bfm_forest_fall_set_other_slots(&field->fall, drift_count, drift_count);
     bfm_forest_fall_tick_emitter(&field->fall, run, player);
     bfm_forest_glows_move(&field->lights, player[2], run);
-    if (bfm_forest_shore_step(field->shore, field, player, run) == BFM_SHORE_INVALID)
+    if (bfm_forest_shore_step(field->bank_patrol, field, player, run) == BFM_SHORE_INVALID ||
+        bfm_forest_shore_step(field->shore, field, player, run) == BFM_SHORE_INVALID)
         return 0;
     bfm_forest_upper_trunks_tick(field->upper_trunks, player[2]);
     bfm_forest_tick_gateway(field, player);
@@ -783,8 +940,40 @@ int bfm_forest_tick_shore_actor_with_run(BfmForestField *field, const int16_t pl
     bfm_forest_shore_figures_tick(field->shore_figures, player);
     if (bfm_forest_trail_step(field->trail, player) == BFM_TRAIL_INVALID) return 0;
     if (run) {
-        for (unsigned i = 0; i < BFM_FOREST_BANK_RIFLES; ++i)
-            if (!bfm_forest_rifle_tick(field->rifles, i, player[2], run, NULL)) return 0;
+        BfmForestTransform body = {0};
+        for (unsigned axis = 0; axis < 3; ++axis) body.translation[axis] = player[axis];
+        BfmForestShore *guards[FOREST_MELEE_GUARDS] = {field->bank_patrol, field->shore};
+        for (unsigned i = 0; i < FOREST_MELEE_GUARDS && !field->player_hit_power; ++i) {
+            int16_t yaw;
+            const BfmForestTransform *strike = bfm_forest_shore_strike(guards[i], &yaw);
+            if (strike && bfm_forest_soldier_hits_player(field, strike, &body)) {
+                field->player_hit_power = 11;
+                field->player_hit_yaw = yaw;
+            }
+        }
+        for (unsigned i = 0; i < FOREST_BANK_ROUNDS; ++i) {
+            BfmForestRifleRound *round = &field->rounds[i];
+            if (!round->active) continue;
+            int blocked = bfm_forest_rifle_round_blocked(round, field);
+            int contact = !blocked && bfm_forest_rifle_hits_player(field, &round->root, &body, 0);
+            if (contact && !field->player_hit_power) {
+                field->player_hit_power = 25;
+                field->player_hit_yaw = round->yaw;
+            }
+            bfm_forest_rifle_round_tick(round, field->round_art, blocked || contact);
+        }
+        for (unsigned i = 0; i < BFM_FOREST_BANK_RIFLES; ++i) {
+            BfmForestRifleShot shot;
+            int result = bfm_forest_rifle_tick(field->rifles, i, player[2], run, &shot);
+            if (!result) return 0;
+            if (result == 2) {
+                unsigned slot = 0;
+                while (slot < FOREST_BANK_ROUNDS && field->rounds[slot].active) ++slot;
+                if (slot == FOREST_BANK_ROUNDS ||
+                    !bfm_forest_rifle_round_issue(&field->rounds[slot], field->round_art, &shot))
+                    return 0;
+            }
+        }
     }
     unsigned scatter = bfm_forest_trail_scatter(field->trail);
     if (run && scatter) {
@@ -805,8 +994,7 @@ int bfm_forest_draw_entrance_player(BfmForestField *field, const BfmForestCamera
                            uint32_t pixels[240][320])
 {
     if (!field || !pose || !root) return 0;
-    BfmForestActor actors[9 + BFM_FOREST_GLOWS + BFM_FOREST_BANK_RIFLES +
-                          BFM_FOREST_BRIDGE_TARGET_COUNT + BFM_FOREST_UPPER_TRUNKS];
+    BfmForestActor actors[FOREST_FIELD_BODIES];
     size_t count = 0;
     for (unsigned i = 0; i < BFM_FOREST_UPPER_TRUNKS; ++i) {
         const BfmForestActor *trunk = bfm_forest_upper_trunk(field->upper_trunks, i);
@@ -820,14 +1008,18 @@ int bfm_forest_draw_entrance_player(BfmForestField *field, const BfmForestCamera
     if (lesson) actors[count++] = *lesson;
     const BfmForestActor *trunk = bfm_forest_trail_trunk(field->trail);
     if (trunk) actors[count++] = *trunk;
-    count += bfm_forest_shore_figures_actors(field->shore_figures, actors + count, 4);
+    count += bfm_forest_shore_figures_actors(field->shore_figures, actors + count,
+                                            2 * BFM_FOREST_SHORE_FIGURES);
     const BfmForestActor *crossing = bfm_forest_trail_guard(field->trail);
     if (crossing) actors[count++] = *crossing;
     const BfmForestSubmittedFrame *submitted = &field->submitted[field->next_frame];
     if (submitted->fusion_actor.visible_parts) actors[count++] = submitted->fusion_actor;
-    if (submitted->guard_parts)
-        actors[count++] = (BfmForestActor){bfm_forest_shore_guard_mesh(field->shore),
-            &submitted->guard_pose, &submitted->guard_root, submitted->guard_parts, &submitted->camera};
+    for (unsigned i = 0; i < FOREST_MELEE_GUARDS; ++i) {
+        if (submitted->guard[i].parts)
+            actors[count++] = (BfmForestActor){bfm_forest_shore_guard_mesh(field->shore),
+                &submitted->guard[i].pose, &submitted->guard[i].root,
+                submitted->guard[i].parts, &submitted->camera};
+    }
     BfmForestDustCard cards[BFM_FOREST_EFFECT_CARDS + BFM_TETHER_CARDS +
                             BFM_FOREST_MUZZLE_CARDS + BFM_GUNSHOT_FAN_CARDS + BFM_FOREST_SHOT_EFFECT_CARDS];
     unsigned card_count = bfm_forest_dust_project(&field->dust, camera, cards);
@@ -1131,6 +1323,46 @@ int bfm_forest_cross_gateway(BfmForestField *field, const int16_t before[3],
     return 1;
 }
 
+static const FloorPlane *shore_floor_crossing(const FloorGrid *grid, const int16_t near[3],
+                                             const int16_t far[3], int cross_grade, unsigned *next_face)
+{
+    ContactCell cell = contact_cell(grid, near);
+    for (unsigned i = *next_face; i < cell.count; ++i) {
+        u16 token = cell.tokens[i];
+        const FloorFace *face = contact_face(grid, token);
+        const FloorPoint *n = &grid->verts[face->e[0].v];
+        int tolerance = (s16)n->y < -3584 ? 0x1800 : EDGE_TOLERANCE;
+        if ((s16)n->y >= 0 ||
+            crossing_margin(grid, face, (token & 0x8000) ? 4 : 3, near, far) < -tolerance)
+            continue;
+        *next_face = i + 1;
+        return face->flags || (n->x && !cross_grade) ? NULL : &face->e[0];
+    }
+    return NULL;
+}
+
+static BfmForestShoreFloor shore_floor_kind(const FloorGrid *grid, const FloorPlane *plane,
+                                          int allow_reverse_grade)
+{
+    if (!plane) return BFM_SHORE_FLOOR_UNKNOWN;
+    const FloorPoint *n = &grid->verts[plane->v];
+    int nx = (s16)n->x, ny = (s16)n->y, nz = (s16)n->z;
+    if (nx) {
+        /* The dry trail also slopes across the direction of travel. */
+        if (ny == -2 * abs(nx) && (!nz || abs(abs(nx) - 2 * abs(nz)) <= 1))
+            return BFM_SHORE_FLOOR_GRADE;
+        return BFM_SHORE_FLOOR_UNKNOWN;
+    }
+    if (ny < -3584) {
+        if (!nz) return BFM_SHORE_FLOOR_FLAT;
+        if (ny == 4 * nz || ny == 2 * nz || (allow_reverse_grade && ny == -2 * nz))
+            return BFM_SHORE_FLOOR_GRADE;
+    }
+    if (ny >= -3019 && ny < -1400 && abs(nz) == -ny)
+        return BFM_SHORE_FLOOR_STEEP;
+    return BFM_SHORE_FLOOR_UNKNOWN;
+}
+
 /* The normal is Q12. Round the projected penetration and the outward
  * clearance separately, retaining the game's whole-unit contact point. */
 static int slide_wall(const FloorGrid *grid, FloorPlane plane, int16_t end[3])
@@ -1363,6 +1595,126 @@ static int follow_corridor_floor(const FloorGrid *grid, ContactCell cell,
     end[1] = (int16_t)y;
     end[2] = (int16_t)z;
     return 1;
+}
+
+/* Remove the whole-unit penetration, then move far enough along the
+ * mounted face normal to clear the support. Each coordinate rounds its
+ * displacement toward zero, including the small lateral correction. */
+static int project_shore_floor(const FloorGrid *grid, const FloorPlane *plane, int depth,
+                               int16_t end[3])
+{
+    const FloorPoint *n = &grid->verts[plane->v];
+    int nx = (s16)n->x, ny = (s16)n->y, nz = (s16)n->z;
+    int64_t bias = grid->dist[plane->d], far_y = end[1] + depth;
+    int64_t distance = (int64_t)nx * end[0] + ny * far_y + (int64_t)nz * end[2] + bias;
+    int64_t length_sq = (int64_t)nx * nx + (int64_t)ny * ny + (int64_t)nz * nz;
+    int64_t projected_x = end[0] - distance * nx / length_sq;
+    int64_t projected_y = far_y - distance * ny / length_sq;
+    int64_t projected_z = end[2] - distance * nz / length_sq;
+    for (int step = 3;; ++step) {
+        int64_t x = projected_x + step * nx / 4096;
+        int64_t y = projected_y + step * ny / 4096;
+        int64_t z = projected_z + step * nz / 4096;
+        if (x < INT16_MIN || x > INT16_MAX || y < INT16_MIN || y > INT16_MAX ||
+            z < INT16_MIN || z > INT16_MAX)
+            return 0;
+        if (nx * x + ny * y + nz * z + bias >= (ny < -3584 ? 0x1800 : EDGE_TOLERANCE)) {
+            end[0] = (int16_t)x;
+            end[1] = (int16_t)y;
+            end[2] = (int16_t)z;
+            return 1;
+        }
+    }
+}
+
+int bfm_forest_bank_body_normal(const BfmForestField *field, const int16_t from[3],
+                               const int16_t to[3], int16_t normal[3])
+{
+    if (!field || !from || !to || !normal || !field->far_bank_cells ||
+        from[2] < field->bank_end_z + 128 || abs(to[0] - from[0]) > 16 ||
+        abs(to[2] - from[2]) > 16 || from[1] < INT16_MIN + 4) return 0;
+    /* The body probes eight units below its intended foot. The terrain
+     * sweep also extends the sample according to horizontal travel. */
+    int depth = 8 + floor_sweep_span(from, to) + 1;
+    if (to[1] > INT16_MAX - depth) return 0;
+    int16_t near[3] = {from[0], (int16_t)(from[1] - 4), from[2]};
+    int16_t far[3] = {to[0], (int16_t)(to[1] + depth), to[2]};
+    unsigned cursor = 0;
+    const FloorPlane *plane = shore_floor_crossing(&field->grid, near, far, 1, &cursor);
+    if (!plane) return 0;
+    const FloorPoint *axis = &field->grid.verts[plane->v];
+    normal[0] = (int16_t)axis->x;
+    normal[1] = (int16_t)axis->y;
+    normal[2] = (int16_t)axis->z;
+    return 1;
+}
+
+enum ShoreWalker { SHORE_PATROL, SHORE_PURSUIT, SHORE_PLAYER };
+
+static BfmForestShoreFloor shore_floor_step(const BfmForestField *field,
+                                            const int16_t from[3], int16_t to[3],
+                                            enum ShoreWalker walker)
+{
+    int max_step = walker == SHORE_PLAYER ? 16 : walker == SHORE_PURSUIT ? 8 : 5;
+    if (!field || !from || !to || from[1] < INT16_MIN + 4 ||
+        abs(to[0] - from[0]) > max_step || abs(to[2] - from[2]) > max_step)
+        return BFM_SHORE_FLOOR_UNKNOWN;
+    int depth = floor_sweep_span(from, to) + 1;
+    if (to[1] > INT16_MAX - depth) return BFM_SHORE_FLOOR_UNKNOWN;
+
+    const FloorGrid *grid = &field->grid;
+    int16_t near[3] = {from[0], (int16_t)(from[1] - 4), from[2]};
+    int16_t far[3] = {to[0], (int16_t)(to[1] + depth), to[2]};
+    unsigned next_face = 0;
+    const FloorPlane *first = shore_floor_crossing(grid, near, far, walker == SHORE_PLAYER, &next_face);
+    BfmForestShoreFloor approach = shore_floor_kind(grid, first, walker != SHORE_PLAYER);
+    int16_t projected[3] = {to[0], to[1], to[2]};
+    if ((approach != BFM_SHORE_FLOOR_FLAT && approach != BFM_SHORE_FLOOR_GRADE) ||
+        !project_shore_floor(grid, first, depth, projected))
+        return BFM_SHORE_FLOOR_UNKNOWN;
+    if (walker == SHORE_PLAYER) {
+        /* The primary sweep can leave a flat and enter a side grade in
+         * the same grid cell. Each later face sees the adjusted endpoint. */
+        const FloorPlane *next;
+        while ((next = shore_floor_crossing(grid, near, projected, 1, &next_face))) {
+            BfmForestShoreFloor surface = shore_floor_kind(grid, next, 0);
+            if ((surface != BFM_SHORE_FLOOR_FLAT && surface != BFM_SHORE_FLOOR_GRADE) ||
+                !project_shore_floor(grid, next, 0, projected))
+                return BFM_SHORE_FLOOR_UNKNOWN;
+        }
+    }
+    const FloorFace *passage = walker == SHORE_PLAYER ? gateway_crossing(field, from, projected) : NULL;
+    if (!resolve_walls(grid, contact_cell(grid, near), near, projected, 1, passage) ||
+        projected[1] > INT16_MAX - 6)
+        return BFM_SHORE_FLOOR_UNKNOWN;
+
+    int16_t below[3] = {projected[0], (int16_t)(projected[1] + 6), projected[2]};
+    next_face = 0;
+    const FloorPlane *second = shore_floor_crossing(grid, projected, below, walker == SHORE_PLAYER, &next_face);
+    BfmForestShoreFloor footing = shore_floor_kind(grid, second, walker != SHORE_PLAYER);
+    if (footing == BFM_SHORE_FLOOR_STEEP || footing == BFM_SHORE_FLOOR_UNKNOWN)
+        return footing;
+
+    int16_t first_x = projected[0], first_y = projected[1], first_z = projected[2];
+    if (!project_shore_floor(grid, second, 6, projected)) return BFM_SHORE_FLOOR_UNKNOWN;
+    to[0] = first_x;
+    /* The runner keeps the primary height when the short probe below the
+     * foot already touches another face. The patrol follows that probe. */
+    to[1] = walker == SHORE_PLAYER ? first_y : projected[1];
+    to[2] = first_z;
+    return approach == BFM_SHORE_FLOOR_GRADE ? approach : footing;
+}
+
+BfmForestShoreFloor bfm_forest_shore_floor_step(const BfmForestField *field,
+                                                const int16_t from[3], int16_t to[3])
+{
+    return shore_floor_step(field, from, to, SHORE_PATROL);
+}
+
+BfmForestShoreFloor bfm_forest_pursuit_floor_step(const BfmForestField *field,
+                                                  const int16_t from[3], int16_t to[3])
+{
+    return shore_floor_step(field, from, to, SHORE_PURSUIT);
 }
 
 /* Both sides of the raised obstacle carry the rim's material. Only their
@@ -1609,6 +1961,15 @@ int bfm_forest_corridor_step(const BfmForestField *field, const BfmForestContact
 {
     if (!field || !previous || !from || !to)
         return 0;
+    /* The far bank's ordinary flats and grades use successive terrain
+     * sweeps for advancing actors. The second probe can find the next
+     * incline while the first is still on the flat. */
+    if (field->far_bank_cells && from[2] >= field->bank_end_z + 128 &&
+        from[1] == to[1] && !previous->flags && abs(previous->height - from[1]) <= 4) {
+        BfmForestShoreFloor support = shore_floor_step(field, from, to, SHORE_PLAYER);
+        if (support == BFM_SHORE_FLOOR_FLAT || support == BFM_SHORE_FLOOR_GRADE)
+            return 1;
+    }
     if (entrance_floor_step(field, previous, from, to))
         return 1;
     if (from[1] != to[1] || !dry_trail_surface(previous) ||
@@ -1773,4 +2134,189 @@ int bfm_forest_air_step(const BfmForestField *field, const int16_t from[3],
     *contact = ground;
     *landed = hit;
     return 1;
+}
+
+/* Resolve the earliest indexed plain floor that the body segment
+ * enters. Keep the separate integer rounding of normal projection and
+ * outward clearance, including on tilted creek banks. */
+static int thrown_ground_cell(const FloorGrid *grid, ContactCell cell,
+                              const int16_t from[3], int16_t end[3])
+{
+    for (unsigned i = 0; i < cell.count; ++i) {
+        uint16_t token = cell.tokens[i];
+        const FloorFace *face = contact_face(grid, token);
+        FloorPlane plane = face->e[0];
+        const FloorPoint *vertex = &grid->verts[plane.v];
+        int n[] = {(int16_t)vertex->x, (int16_t)vertex->y, (int16_t)vertex->z};
+        int clearance = n[1] < -3584 ? 6144 : 12032;
+        if (crossing_margin(grid, face, (token & 0x8000) ? 4 : 3, from, end) < -clearance)
+            continue;
+        if (face->flags || n[1] >= -0xbcb) return -1;
+        int64_t penetration = -signed_distance(grid, plane, end);
+        int64_t length = (int64_t)n[0] * n[0] + (int64_t)n[1] * n[1] + (int64_t)n[2] * n[2];
+        int64_t projected[3];
+        for (unsigned axis = 0; axis < 3; ++axis)
+            projected[axis] = end[axis] + penetration * n[axis] / length;
+        /* Start three normal units out. Integer truncation at a shallow
+         * angle may require more clearance to exit the face. */
+        int64_t distance = grid->dist[plane.d];
+        for (unsigned axis = 0; axis < 3; ++axis)
+            distance += projected[axis] * n[axis];
+        int64_t step = 3;
+        if (distance < clearance) {
+            int64_t minimum = ((clearance - distance) * 4096 + length - 1) / length;
+            if (minimum > step) step = minimum;
+        }
+        for (;; ++step) {
+            for (unsigned axis = 0; axis < 3; ++axis) {
+                int64_t value = projected[axis] + (int64_t)step * n[axis] / 4096;
+                if (value < INT16_MIN || value > INT16_MAX) return -1;
+                end[axis] = (int16_t)value;
+            }
+            if (signed_distance(grid, plane, end) >= clearance) break;
+        }
+        return 1;
+    }
+    return 0;
+}
+
+static int thrown_segment(const BfmForestField *field, const int16_t from[3],
+                          int16_t to[3], int *grounded)
+{
+    if (!field || !from || !to || !grounded || abs(to[0] - from[0]) >= 128 ||
+        abs(to[2] - from[2]) >= 128) return 0;
+    const FloorGrid *grid = &field->grid;
+    int16_t end[3];
+    memcpy(end, to, sizeof end);
+    ContactCell start = contact_cell(grid, from);
+    if (!start.count) return 0;
+    int touched = 0;
+    for (unsigned pass = 0; pass < 6; ++pass) {
+        int cross_x = !same_grid_index(from[0], end[0]);
+        int cross_z = !same_grid_index(from[2], end[2]);
+        if (cross_x && cross_z) return 0;
+        int hit = thrown_ground_cell(grid, start, from, end);
+        if (!hit && (cross_x || cross_z)) {
+            ContactCell finish = contact_cell(grid, end);
+            if (!finish.count) return 0;
+            hit = thrown_ground_cell(grid, finish, from, end);
+        }
+        if (hit < 0) return 0;
+        if (!hit) {
+            memcpy(to, end, sizeof end);
+            *grounded = touched;
+            return 1;
+        }
+        touched = 1;
+    }
+    return 0;
+}
+
+/* A resting target follows the bank with a travel-length floor sweep,
+ * then a short support probe. An airborne target tests its exact path. */
+int bfm_forest_thrown_probe(const BfmForestField *field, const int16_t from[3],
+                            int16_t to[3], int follow_ground, int *grounded)
+{
+    if (!follow_ground) return thrown_segment(field, from, to, grounded);
+    if (!from || !to || !grounded) return 0;
+    int span = floor_sweep_span(from, to);
+    if (from[1] < INT16_MIN + 4 || to[1] > INT16_MAX - span - 1) return 0;
+    int16_t near[3] = {from[0], (int16_t)(from[1] - 4), from[2]};
+    int16_t far[3] = {to[0], (int16_t)(to[1] + span + 1), to[2]};
+    int hit;
+    if (!thrown_segment(field, near, far, &hit) || !hit || far[1] > INT16_MAX - 6) return 0;
+    int16_t support[3] = {far[0], (int16_t)(far[1] + 6), far[2]};
+    if (!thrown_segment(field, far, support, &hit) || !hit) return 0;
+    /* The support probe owns height only. */
+    far[1] = support[1];
+    memcpy(to, far, sizeof far);
+    *grounded = 1;
+    return 1;
+}
+
+/* Rifle rounds test the segment against the room faces listed in the
+ * starting cell. A solid plane preserves tangential motion and separates
+ * the endpoint from the face in whole world units. */
+static int separate_rifle_endpoint(const FloorGrid *grid, FloorPlane plane,
+                                   int clearance, int16_t end[3])
+{
+    const FloorPoint *vector = &grid->verts[plane.v];
+    const int n[3] = {(s16)vector->x, (s16)vector->y, (s16)vector->z};
+    int64_t squared = (int64_t)n[0] * n[0] + (int64_t)n[1] * n[1] + (int64_t)n[2] * n[2];
+    if (!squared) return 0;
+    int64_t depth = -signed_distance(grid, plane, end);
+    int surface[3];
+    int64_t projected = grid->dist[plane.d];
+    for (unsigned i = 0; i < 3; ++i) {
+        surface[i] = end[i] + (int)(depth * n[i] / squared);
+        projected += (int64_t)surface[i] * n[i];
+    }
+    /* Each whole displacement rounds toward the plane. Start at the first
+     * step that could clear it before this rounding. */
+    int64_t needed = ((clearance - projected) * 4096 + squared - 1) / squared;
+    for (int64_t step = needed > 3 ? needed : 3; ; ++step) {
+        for (unsigned i = 0; i < 3; ++i) {
+            int64_t coordinate = surface[i] + step * n[i] / 4096;
+            if (coordinate < INT16_MIN || coordinate > INT16_MAX) return 0;
+            end[i] = (int16_t)coordinate;
+        }
+        if (signed_distance(grid, plane, end) >= clearance)
+            return 1;
+    }
+}
+
+unsigned bfm_forest_resolve_solid_segment(const BfmForestField *field, const int16_t from[3],
+                               const int16_t to[3], int16_t impact[3])
+{
+    if (!field || !from || !to) return 0;
+    const FloorGrid *grid = &field->grid;
+    ContactCell cell = contact_cell(grid, from);
+    int16_t endpoint[3];
+    memcpy(endpoint, to, sizeof(endpoint));
+    unsigned flags = 0, material = 0;
+    for (unsigned retry = 0; retry < 6; ++retry) {
+        int corrected = 0;
+        for (unsigned i = 0; i < cell.count; ++i) {
+            u16 token = cell.tokens[i];
+            const FloorFace *face = contact_face(grid, token);
+            if (face->flags & 0x100) continue;
+            int ny = (s16)grid->verts[face->e[0].v].y;
+            unsigned sides = token & 0x8000 ? 4 : 3;
+            int clearance = ny < -3584 ? 6144 : EDGE_TOLERANCE;
+            if (crossing_margin(grid, face, sides, from, endpoint) < -clearance)
+                continue;
+            unsigned surface = face->flags & 255;
+            if (face->flags & 0x200) {
+                material = surface;
+                continue;
+            }
+            if (!separate_rifle_endpoint(grid, face->e[0], clearance, endpoint)) {
+                if (impact) memcpy(impact, from, sizeof(endpoint));
+                return 0x2000 | material;
+            }
+            if (ny < -3019) {
+                flags |= 0x2000;
+                material = surface;
+            } else {
+                flags = (flags & 0x2000) | (ny < -1400 ? 0x4000u : 0x8000u);
+                if (surface) material = surface;
+            }
+            corrected = 1;
+            break;
+        }
+        if (!corrected) break;
+        if (retry == 5) {
+            memcpy(endpoint, from, sizeof(endpoint));
+            flags = 0x2000;
+        }
+    }
+    if (material == 2 || material == 27) flags |= 0x1000;
+    if (impact && (flags || material)) memcpy(impact, endpoint, sizeof(endpoint));
+    return flags | material;
+}
+
+unsigned bfm_forest_rifle_wall(const BfmForestField *field, const int16_t from[3],
+                               const int16_t to[3], int16_t impact[3])
+{
+    return bfm_forest_resolve_solid_segment(field, from, to, impact);
 }

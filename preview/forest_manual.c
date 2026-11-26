@@ -312,3 +312,17 @@ void bfm_forest_jump_resume(BfmForestManual *manual, const BfmForestJump *jump,
     if (actor->state == 1)
         manual->moving = manual->after_jump = 1;
 }
+
+int bfm_forest_carry_step(const BfmForestField *field, ForestPlayerState *actor, int16_t yaw,
+                          int32_t speed, int16_t position[3])
+{
+    BfmForestContact ground;
+    if (!bfm_forest_ground(field, position[0], position[1], position[2], &ground)) return 0;
+    ForestPlayerState next = *actor;
+    next.field_24.word = next.local_y.word = 0;
+    next.field_2c.word = speed;
+    if (!bfm_forest_level_velocity(&next, 0, yaw, 0) ||
+        step_on_floor(field, &ground, &next, position, 0, ground.bridge) != BFM_FOREST_TOP_GROUNDED) return 0;
+    *actor = next;
+    return 1;
+}

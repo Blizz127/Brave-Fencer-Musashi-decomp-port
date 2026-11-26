@@ -25,6 +25,9 @@ void bfm_forest_hud_tick(BfmForestHud *hud);
 /* Supply current speed charge and a 0..128 absorption meter, or -1
  * when the player has no tether. Both actions use the same HUD well. */
 void bfm_forest_hud_gauges(BfmForestHud *hud, unsigned charge, int absorption);
+/* Sample HP and BP after the forest simulation update. The bar and its
+ * digits share the value submitted two updates before the displayed frame. */
+void bfm_forest_hud_submit_points(BfmForestHud *hud, const BfmForestStatus *status);
 void bfm_forest_hud_draw(const BfmForestHud *hud, const BfmForestStatus *status,
                          uint32_t pixels[240][320]);
 

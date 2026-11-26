@@ -18,6 +18,9 @@ typedef struct {
     uint16_t glyph[MAX_NAME];
     unsigned count;
 } Label;
+typedef struct {
+    int16_t hp, bp;
+} DisplayPoints;
 struct BfmForestHud {
     const uint16_t (*tiles)[1024];
     Sprite panel[5];
@@ -26,6 +29,8 @@ struct BfmForestHud {
     uint16_t orb[7], digit[10];
     unsigned inset, remaining, hiding, modal;
     unsigned field_gauges, fill, green, charge_color;
+    DisplayPoints points[3];
+    int points_ready;
 };
 typedef struct {
     const BfmForestHud *hud;
@@ -156,6 +161,32 @@ void bfm_forest_hud_tick(BfmForestHud *hud)
         else hud->inset -= hud->remaining;
         --hud->remaining;
     }
+}
+
+static int16_t approach_points(int displayed, int current)
+{
+    int difference = current - displayed;
+    int step = difference > 10 || difference < -10 ? 2 : 1;
+    if (difference > 0) return (int16_t)(displayed + step);
+    if (difference < 0) return (int16_t)(displayed - step);
+    return (int16_t)displayed;
+}
+
+void bfm_forest_hud_submit_points(BfmForestHud *hud, const BfmForestStatus *status)
+{
+    if (!hud || !status) return;
+    BfmForestStatusValues v = bfm_forest_status_values(status);
+    if (!hud->points_ready) {
+        DisplayPoints initial = {v.hp, v.bp};
+        for (unsigned i = 0; i < 3; ++i) hud->points[i] = initial;
+        hud->points_ready = 1;
+        return;
+    }
+    DisplayPoints previous = hud->points[2];
+    hud->points[0] = hud->points[1];
+    hud->points[1] = previous;
+    hud->points[2] = (DisplayPoints){approach_points(previous.hp, v.hp),
+                                     approach_points(previous.bp, v.bp)};
 }
 
 static uint32_t rgb(unsigned color)
@@ -296,6 +327,10 @@ void bfm_forest_hud_draw(const BfmForestHud *hud, const BfmForestStatus *status,
 {
     if (!hud || !status || !pixels || hud->inset == 55) return;
     BfmForestStatusValues v = bfm_forest_status_values(status);
+    if (hud->points_ready) {
+        v.hp = hud->points[0].hp;
+        v.bp = hud->points[0].bp;
+    }
     Canvas c = {hud,pixels};
     int inset = (int)hud->inset, x = 217+inset, y = 201+inset;
     ornaments(&c,&v,inset);

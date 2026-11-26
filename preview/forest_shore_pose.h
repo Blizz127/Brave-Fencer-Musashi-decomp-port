@@ -10,4 +10,8 @@
 int bfm_forest_shore_pose(const BfmForestField *field, unsigned state,
                           unsigned state_tick, BfmForestPose *out);
 
+/* Decode a key of the mounted shore model, including its response clips. */
+int bfm_forest_shore_clip_pose(const BfmForestField *field, uint32_t clip_address,
+                               unsigned index, BfmForestPose *out);
+
 #endif

@@ -63,6 +63,9 @@ add_executable(musashi_native_boot
     forest_entry.c
     forest_drift.c
     forest_rifles.c
+    forest_rifle_round.c
+    forest_rifle_contact.c
+    forest_hurt.c
     forest_muzzle_fan.c
     forest_glow_figures.c
     forest_glows.c
@@ -105,6 +108,9 @@ add_executable(musashi_native_boot
     forest_guard_contact.c
     forest_trail.c
     forest_shore_motion.c
+    forest_shore_behavior.c
+    forest_shore_response.c
+    forest_shore_throw.c
     forest_shore_figures.c
     forest_shore_pose.c
     forest_pose.c
@@ -124,11 +130,13 @@ add_executable(musashi_native_boot
     forest_message.c
     forest_walk.c
     forest_gateway_transition.c
+    forest_lift.c
     forest_swing.c
     forest_impact.c
     forest_damage_digits.c
     forest_sweep.c
     forest_sparks.c
+    forest_strike_effects.c
     scene_payload.c
     "${bfm_root}/pc_port/forest_player_archive.c"
     "${bfm_root}/pc_port/forest_player_mesh.c"

@@ -7,16 +7,23 @@
 typedef enum {
     BFM_SHORE_WALK,
     BFM_SHORE_NOTICE,
-    BFM_SHORE_RECOIL
+    BFM_SHORE_RECOIL,
+    BFM_SHORE_TURN,
+    BFM_SHORE_PURSUIT,
+    BFM_SHORE_STRIKE,
+    BFM_SHORE_PAUSE,
+    BFM_SHORE_FOLLOW_THROUGH
 } BfmForestShorePhase;
 
 typedef struct {
     int16_t position[3];
     int32_t y_q16, recoil_vy_q16;
     uint16_t x_fraction, z_fraction;
-    uint16_t yaw;
+    uint16_t yaw, turn_target, travel_yaw;
     unsigned frame, notice_delay;
-    unsigned patrol_timer; /* Walking variant zero keeps the interval originally chosen at entry. */
+    unsigned patrol_timer; /* Patrol interval, or remaining updates while turning. */
+    unsigned walk_updates, pursuit_age, travel_speed;
+    int noticed_player;
     BfmForestShorePhase phase;
 } BfmForestShoreMotion;
 
@@ -30,6 +37,6 @@ unsigned bfm_forest_shore_bearing(int x, int z);
 int bfm_forest_shore_recoil_height(BfmForestShoreMotion *motion, const BfmForestField *field);
 /* The owner supplies the current mounted clip count. */
 int bfm_forest_shore_tick(BfmForestShoreMotion *motion, const BfmForestField *field,
-                          const int16_t player[3], unsigned selected_frame_count);
+                          const int16_t player[3], unsigned selected_frame_count, BfmGameplayRun *run);
 
 #endif

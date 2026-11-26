@@ -228,20 +228,35 @@ static void material(BfmForestDustCard *card, const BfmForestImpactAnimation *a,
     }
 }
 
+void bfm_forest_impact_face_eye(BfmForestImpact *impact, const int32_t eye[3])
+{
+    toward_eye(impact->origin, eye, impact->burst_origin);
+}
+
+unsigned bfm_forest_impact_strip_project(const BfmForestImpact *impact,
+                                         const BfmForestCamera *camera, BfmForestDustCard *card)
+{
+    if (impact->cell >= impact->strip.count) return 0;
+    const uint8_t *d = impact->strip.descriptor;
+    if (!impact_strip_project(impact->strip_rotation, impact->origin, camera,
+                              s16le(d + 8), s16le(d + 10), d[2], d[3], card)) return 0;
+    material(card, &impact->strip, impact->cell, 23, 0);
+    return 1;
+}
+
+unsigned bfm_forest_impact_burst_project(const BfmForestImpact *impact,
+                                         const BfmForestCamera *camera, BfmForestDustCard *card)
+{
+    if (impact->cell >= impact->burst.count ||
+        !burst_project(impact->burst_origin, camera, impact->burst.descriptor, card)) return 0;
+    material(card, &impact->burst, impact->cell, 22, 1);
+    return 1;
+}
+
 unsigned bfm_forest_impact_project(const BfmForestImpact *impact, const BfmForestCamera *camera,
                                    BfmForestDustCard out[BFM_FOREST_IMPACT_CARDS])
 {
-    if (!impact || !camera || !camera->projection || !out || impact->cell >= impact->burst.count)
-        return 0;
-    unsigned count = 0;
-    if (impact->cell < impact->strip.count) {
-        const uint8_t *d = impact->strip.descriptor;
-        if (impact_strip_project(impact->strip_rotation, impact->origin, camera,
-                                 s16le(d + 8), s16le(d + 10), d[2], d[3], &out[count])) {
-            material(&out[count++], &impact->strip, impact->cell, 23, 0);
-        }
-    }
-    if (burst_project(impact->burst_origin, camera, impact->burst.descriptor, &out[count]))
-        material(&out[count++], &impact->burst, impact->cell, 22, 1);
-    return count;
+    if (!impact || !camera || !camera->projection || !out) return 0;
+    unsigned count = bfm_forest_impact_strip_project(impact, camera, out);
+    return count + bfm_forest_impact_burst_project(impact, camera, out + count);
 }
