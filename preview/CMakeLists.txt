@@ -5,6 +5,7 @@ set(bfm_root "${CMAKE_CURRENT_SOURCE_DIR}/..")
 add_executable(musashi_native_boot
     player.c
     gameplay_run.c
+    chapter_completion.c
     desktop_voice.c
     palace_effects.c
     palace_score.c
@@ -186,6 +187,7 @@ add_executable(musashi_native_boot
     castle_drawbridge_view.c
     steam_knight.c
     steam_knight_event.c
+    steam_knight_finale.c
     steam_knight_effects.c
     steam_knight_entry_light.c
     steam_knight_cast.c

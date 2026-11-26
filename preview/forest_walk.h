@@ -39,6 +39,8 @@ BfmRetryAudioEvent bfm_forest_walk_retry_audio(const BfmForestWalk *walk);
 uint16_t bfm_forest_walk_room(const BfmForestWalk *walk);
 /* Take the entry offered by the completed castle crossing once. */
 int bfm_forest_walk_take_boss_request(BfmForestWalk *walk, RoomTransferDescriptor *destination);
+/* Issued once after the final Steam Knight scene departs. */
+int bfm_forest_walk_take_chapter_request(BfmForestWalk *walk);
 /* True on the update that requests the grounded Fusion sound. */
 int bfm_forest_walk_gunshot_sound(const BfmForestWalk *walk);
 int bfm_forest_walk_swing_sound(const BfmForestWalk *walk);

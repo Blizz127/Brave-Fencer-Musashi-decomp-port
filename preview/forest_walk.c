@@ -347,13 +347,12 @@ BfmForestWalk *bfm_forest_walk_open(const MusashiDiscMedia *disc,const RoomTrans
     w->look_z = -(int)lround(cos(w->yaw * radians) * 4096) / 32;
     ForestPlayerArchive archive;
     w->hud = bfm_forest_open_hud(w->field, disc);
-    if (!w->hud || !bfm_forest_status_load(disc, &w->gameplay->player) || !bfm_forest_opening_data(w->field,&w->data) ||
+    if (!w->hud || !bfm_gameplay_new_player(w->gameplay, disc) || !bfm_forest_opening_data(w->field,&w->data) ||
         !forest_player_archive_open(disc,&archive) || !setup_cameras(w) ||
         !load_motion(&archive,w->data.animation_table,IDLE,&w->idle) ||
         !load_motion(&archive,w->data.animation_table,WALK,&w->walk) ||
         !load_motion(&archive,w->data.animation_table,RUN,&w->run)) goto fail;
     w->motion=IDLE; w->elapsed=1;
-    w->gameplay->has_player = 1;
     if(update_pose(w)) return w;
 fail:
     bfm_forest_walk_free(w); return NULL;
@@ -379,6 +378,7 @@ int bfm_forest_walk_bind_gameplay(BfmForestWalk *w, BfmGameplayRun *run)
     if (!run) run = &w->standalone_gameplay;
     if (!run->has_player || run == &w->standalone_gameplay) {
         run->player = w->gameplay->player;
+        run->banks = w->gameplay->banks;
         run->has_player = 1;
     }
     w->gameplay = run;
@@ -2179,6 +2179,11 @@ static int tick_drawbridge(BfmForestWalk *w)
     }
     w->visible = (w->visible & ~weapon_parts) | equipped;
     return 1;
+}
+
+int bfm_forest_walk_take_chapter_request(BfmForestWalk *w)
+{
+    return w && bfm_steam_knight_take_chapter(w->steam_knight);
 }
 
 int bfm_forest_walk_take_boss_request(BfmForestWalk *w, RoomTransferDescriptor *destination)

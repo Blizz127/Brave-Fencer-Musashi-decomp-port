@@ -10,6 +10,7 @@
 #include "steam_knight_core_damage.h"
 #include "steam_knight_core_origin.h"
 #include "steam_knight_carry.h"
+#include "steam_knight_finale.h"
 #include "steam_knight_hero_motion.h"
 #include "steam_knight_boss_hud.h"
 #include "forest_hud.h"
@@ -46,6 +47,9 @@ struct BfmSteamKnight {
         BfmSteamKnightLanding landing;
         unsigned neutral_age, jump_age;
     } street;
+    BfmSteamKnightFinale finale;
+    unsigned final_pickup_phase, launch_action;
+    int chapter_pending;
     unsigned transfer_age, arrival_wait;
     unsigned core_hp, core_max;
     unsigned round, weak_stage, weak_age, core_struck, recovery_left;
@@ -197,13 +201,26 @@ static int transfer_tick(BfmSteamKnight *s)
         }
     } else {
         unsigned edges;
+        int was_held = s->carry.held;
         if (!bfm_steam_carry_tick(&s->carry, s->hero, s->machine, &edges)) return 0;
+        if (was_held && s->carry.thrown)
+            s->launch_action = bfm_steam_hero_sample(s->hero)->action;
         if (edges & BFM_STEAM_THROW_LIFTABLE) {
             s->body_stage = 8;
+            if (s->round == 2) s->weak_stage = 4;
             s->transfer_age = 0;
         }
         if ((edges & BFM_STEAM_THROW_GATE_CROSSED) &&
             !bfm_steam_knight_field_break_gate(s->field, s->round + 1)) return 0;
+        if (edges & BFM_STEAM_THROW_WEST_FALL) {
+            BfmSteamFinalImpact hit = {.round = s->round, .phase = s->final_pickup_phase,
+                .chassis_stage = 13, .chassis_hp = s->core_hp, .launch_action = s->launch_action,
+                .grounded_launch = s->carry.thrown, .struck_last_structure = s->carry.path.crossed};
+            memcpy(hit.hero, bfm_steam_hero_sample(s->hero)->feet, sizeof hit.hero);
+            if (!bfm_steam_finale_begin(&s->finale, &hit, &s->carry.lift)) return 0;
+            s->body_stage = hit.chassis_stage;
+            return 1;
+        }
         if ((edges & BFM_STEAM_THROW_HERO_REPOSITION) && s->round < 2) {
             int16_t feet[3] = {-128, -2052, s->round == 0 ? -1280 : 1664};
             if (!bfm_steam_hero_place(s->hero, feet, 2048)) return 0;
@@ -289,8 +306,8 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
     bfm_steam_knight_field_track_arena(s->field, s->round, s->body_stage, previous, machine_position);
     BfmForestCamera camera;
     hall_camera(s, &camera);
-    if (s->body_stage == 8)
-        bfm_steam_carry_try_grab(&s->carry, s->hero, pressed);
+    if (s->body_stage == 8 && bfm_steam_carry_try_grab(&s->carry, s->hero, pressed) &&
+        s->round == 2) s->final_pickup_phase = BFM_STEAM_FINAL_THROW;
     BfmSteamKnightHeroStrike strike = {0};
     BfmSteamFlameRay rays[BFM_ROTATION_RAYS];
     size_t ray_count = 0;
@@ -333,6 +350,39 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
     return 1;
 }
 
+static int final_scene_tick(BfmSteamKnight *s)
+{
+    if (s->finale.retired) return 0;
+    ++s->event.age;
+    ++s->event.stage_age;
+    unsigned edges;
+    if (!bfm_steam_carry_tick(&s->carry, s->hero, s->machine, &edges)) return -1;
+    BfmSteamFinalBodyEvent contact = BFM_STEAM_FINAL_NO_CONTACT;
+    if (edges & BFM_STEAM_THROW_WEST_REPLAY) contact = BFM_STEAM_FINAL_REPLAY;
+    else if (edges & BFM_STEAM_THROW_WEST_IMPACT) contact = BFM_STEAM_FINAL_PIT_LANDING;
+    else if (edges & BFM_STEAM_THROW_HERO_REPOSITION) contact = BFM_STEAM_FINAL_LEDGE;
+    BfmSteamFinalHero previous = s->finale.hero_motion;
+    int result = bfm_steam_finale_tick(&s->finale, &s->event, contact);
+    if (result < 0) return -1;
+    if (previous != BFM_STEAM_FINAL_HERO_TOSS && s->finale.hero_motion == BFM_STEAM_FINAL_HERO_TOSS)
+        bfm_forest_status_spend_bp(&s->event.run->player, 4);
+    if (result == BFM_STEAM_FINALE_ENTERED_AFTERMATH &&
+        !bfm_gameplay_advance_figures(s->event.run)) {
+        s->finale.failed = 1;
+        return -1;
+    }
+    bfm_steam_knight_boss_hud_tick(&s->boss_hud, s->finale.display_hp);
+    if (result == BFM_STEAM_FINALE_RETIRED) s->chapter_pending = 1;
+    return s->finale.retired ? 0 : 1;
+}
+
+int bfm_steam_knight_take_chapter(BfmSteamKnight *s)
+{
+    if (!s || !s->chapter_pending) return 0;
+    s->chapter_pending = 0;
+    return 1;
+}
+
 static int presentation_tick(BfmSteamKnight *s, uint16_t pressed, uint16_t held,
                              int32_t initial_walk_velocity)
 {
@@ -369,8 +419,10 @@ int bfm_steam_knight_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uin
     if (!s) return -1;
     BfmSteamKnightEvent *e = &s->event;
     s->swing_sound = s->hit_sound = 0;
-    int advanced = s->hero ? duel_tick(s, x, y, pressed, held)
-                           : presentation_tick(s, pressed, held, initial_walk_velocity);
+    int advanced;
+    if (s->finale.phase != BFM_STEAM_FINAL_INACTIVE) advanced = final_scene_tick(s);
+    else if (s->hero) advanced = duel_tick(s, x, y, pressed, held);
+    else advanced = presentation_tick(s, pressed, held, initial_walk_velocity);
     if (advanced <= 0) return advanced;
     if (!s->ring_started && bfm_steam_event_ring_started(e)) {
         int16_t center[3] = {e->position[0], e->position[1], (int16_t)(e->position[2] - 20)};
@@ -394,7 +446,8 @@ int bfm_steam_knight_hit_sound(const BfmSteamKnight *s) { return s && s->hit_sou
 
 int bfm_steam_knight_control(const BfmSteamKnight *s)
 {
-    return s && (s->hero || s->event.stage == BFM_STEAM_READY || s->event.stage == BFM_STEAM_ROTATING);
+    return s && s->finale.phase == BFM_STEAM_FINAL_INACTIVE &&
+           (s->hero || s->event.stage == BFM_STEAM_READY || s->event.stage == BFM_STEAM_ROTATING);
 }
 
 uint16_t bfm_steam_knight_room(const BfmSteamKnight *s)
@@ -412,6 +465,13 @@ int bfm_steam_knight_hero(const BfmSteamKnight *s, int16_t feet[3], int16_t *hea
 {
     if (!s || s->event.age < PLACE_HERO || !feet || !heading || !running || !motion_tick)
         return 0;
+    if (s->finale.phase != BFM_STEAM_FINAL_INACTIVE) {
+        memcpy(feet, s->finale.hero, sizeof s->finale.hero);
+        *heading = bfm_steam_hero_sample(s->hero)->heading;
+        *running = s->finale.hero_motion == BFM_STEAM_FINAL_HERO_WALK;
+        *motion_tick = s->finale.motion_age;
+        return 1;
+    }
     if (s->hero) {
         const BfmSteamKnightHeroSample *sample = bfm_steam_hero_sample(s->hero);
         memcpy(feet, sample->feet, sizeof sample->feet);
@@ -435,6 +495,7 @@ int bfm_steam_knight_hero(const BfmSteamKnight *s, int16_t feet[3], int16_t *hea
 uint32_t bfm_steam_knight_body(const BfmSteamKnight *s)
 {
     if (!s) return 0;
+    if (s->finale.phase != BFM_STEAM_FINAL_INACTIVE) return bfm_steam_finale_body(&s->finale);
     if (s->hero) return bfm_steam_hero_sample(s->hero)->body;
     if (s->event.shot == BFM_STEAM_REPLY_CAMERA)
         return s->rotation.keys[s->rotation.held].body;
@@ -546,8 +607,10 @@ int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
         bfm_forest_hud_draw(s->hud, &s->event.run->player, pixels);
     const uint16_t (*tiles)[1024] = bfm_forest_terrain_tiles(bfm_steam_knight_field_terrain(s->field));
     if (bfm_steam_event_title(&s->event)) bfm_steam_knight_boss_title(tiles, pixels);
-    if (s->event.stage == BFM_STEAM_DUEL)
+    if (s->event.stage == BFM_STEAM_DUEL && (s->finale.phase == BFM_STEAM_FINAL_INACTIVE ||
+        bfm_steam_finale_boss_hud(&s->finale)))
         bfm_steam_knight_boss_status(&s->boss_hud, tiles, s->event.stage_age, pixels);
+    if (s->finale.phase != BFM_STEAM_FINAL_INACTIVE) bfm_steam_finale_flash(&s->finale, pixels);
     if (s->event.message) {
         const BfmForestMessageFrame *frame = bfm_forest_message_frame(s->event.message);
         bfm_bedroom_message_art_draw_side(s->art, frame, 160, 0, pixels);

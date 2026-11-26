@@ -10,4 +10,7 @@ void bfm_inn_profile_menu(BfmInnProfile *profile, BfmSaveMenu *menu);
 const char *bfm_inn_profile_save(BfmInnProfile *profile, unsigned file, const BfmSaveRecord *record,
                                  const MusashiDiscMedia *disc);
 
+const char *bfm_chapter_profile_save(BfmInnProfile *profile, unsigned file,
+                                     const BfmSaveRecord *record, const MusashiDiscMedia *disc);
+
 #endif

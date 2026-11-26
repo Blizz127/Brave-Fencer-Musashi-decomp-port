@@ -119,7 +119,22 @@ void bfm_bedroom_bind_run(BfmBedroom *room, BfmGameplayRun *run)
 {
     if (!room || !run) return;
     bfm_bedroom_bind_story_flags(room, run->story_flags);
+    const BfmSaveRecord *record = &room->entry.state;
+    memcpy(run->banks.figure_prices, record->figure_prices, sizeof record->figure_prices);
+    memcpy(run->banks.variables, record->variables, sizeof record->variables);
+    memcpy(run->banks.timestamps, record->timestamps, sizeof record->timestamps);
+    run->player = room->status;
+    run->has_player = 1;
     room->run = run;
+}
+
+BfmBedroom *bfm_bedroom_open_chapter(const MusashiDiscMedia *disc, const BfmSaveRecord *record,
+                                     BfmGameplayRun *run)
+{
+    if (!run) return NULL;
+    BfmBedroom *room = bfm_bedroom_open(disc, record);
+    if (room) bfm_bedroom_bind_run(room, run);
+    return room;
 }
 
 void bfm_bedroom_free(BfmBedroom *room)

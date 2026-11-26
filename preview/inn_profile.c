@@ -92,3 +92,10 @@ const char *bfm_inn_profile_save(BfmInnProfile *profile, unsigned file, const Bf
     if (!profile) return "This card is read-only.";
     return bfm_inn_card_save(profile->image, file, record, checked_commit, profile, disc);
 }
+
+const char *bfm_chapter_profile_save(BfmInnProfile *profile, unsigned file,
+                                     const BfmSaveRecord *record, const MusashiDiscMedia *disc)
+{
+    if (!profile) return "This card is read-only.";
+    return bfm_chapter_card_save(profile->image, file, record, checked_commit, profile, disc);
+}
