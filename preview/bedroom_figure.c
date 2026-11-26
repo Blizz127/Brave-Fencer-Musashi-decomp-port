@@ -639,13 +639,13 @@ int bfm_bedroom_visitor_add(const BfmBedroomVisitor *visitor, BfmBedroomFigure *
                            const int position[3], int heading, uint32_t pose_address)
 {
     return bfm_bedroom_visitor_add_scaled(visitor, figure, view, index, position, heading,
-                                         pose_address, 4096, 4096);
+                                         pose_address, 4096, 4096, NULL);
 }
 
 int bfm_bedroom_visitor_add_scaled(const BfmBedroomVisitor *visitor, BfmBedroomFigure *figure,
                            const BfmBedroomView *view, unsigned index,
                            const int position[3], int heading, uint32_t pose_address,
-                           unsigned horizontal_q12, unsigned vertical_q12)
+                           unsigned horizontal_q12, unsigned vertical_q12, const BfmBedroomRoot *ground)
 {
     if (horizontal_q12 > 4096 || vertical_q12 < 4096 || vertical_q12 > 12288) return 0;
     if (!visitor || !figure || !view || !position || index >= 2 || !visitor->model[index] || figure->next ||
@@ -658,8 +658,12 @@ int bfm_bedroom_visitor_add_scaled(const BfmBedroomVisitor *visitor, BfmBedroomF
         offset = pose_address - visitor_scene_origin;
         if (offset > visitor->bytes || parts > (visitor->bytes - offset)/8) return 0;
     }
-    for (unsigned k = 0; k < 3; ++k)
+    for (unsigned k = 0; k < 3; ++k) {
         if (position[k] < INT16_MIN || position[k] > INT16_MAX) return 0;
+        if (ground && ground->shadow_visible &&
+            (ground->shadow_normal[k] < -4096 || ground->shadow_normal[k] > 4096 ||
+             ground->shadow_normal[1] >= 0)) return 0;
+    }
     if (!reserve_faces(figure, (parts ? visitor->faces[index] : 0) + 1)) return 0;
     int sine, cosine;
     angle((unsigned)heading,&sine,&cosine);
@@ -674,15 +678,21 @@ int bfm_bedroom_visitor_add_scaled(const BfmBedroomVisitor *visitor, BfmBedroomF
     memcpy(eye.r,view->axes,sizeof(eye.r));
     memcpy(eye.t,view->translation,sizeof(eye.t));
     Transform base = compose(&eye,&root);
-    /* The visitors walk on the bedroom floor. Their sprite faces downward
-     * and takes room lighting before its texels subtract from the floor. */
-    const MusashiForestPlayerVector underside = {0,4096,0};
-    const uint8_t neutral[3] = {128,128,128};
-    uint32_t ink = shade(figure,figure->direction,&underside,neutral);
-    BfmBedroomBody caster = {.heading=(int)((2048u-(unsigned)heading) & 4095u),.shadow_normal={0,-4096,0}};
-    memcpy(caster.position,position,sizeof(caster.position));
-    memcpy(caster.shadow_position,position,sizeof(caster.shadow_position));
-    collect_shadow(figure,view,&eye,&caster,&visitor->shadow,12288,ink);
+    if (!ground || ground->shadow_visible) {
+        const MusashiForestPlayerVector underside = {0,4096,0};
+        const uint8_t neutral[3] = {128,128,128};
+        uint32_t ink = shade(figure,figure->direction,&underside,neutral);
+        BfmBedroomBody caster = {.heading=(int)((2048u-(unsigned)heading) & 4095u),
+                                 .shadow_normal={0,-4096,0}};
+        for (unsigned k = 0; k < 3; ++k) {
+            caster.shadow_position[k] = ground ? ground->shadow_xyz[k] : position[k];
+            /* This independent floor sprite keeps its authored size even when
+             * the caster is above the ground or has disappeared. */
+            caster.position[k] = caster.shadow_position[k];
+            if (ground) caster.shadow_normal[k] = ground->shadow_normal[k];
+        }
+        collect_shadow(figure,view,&eye,&caster,&visitor->shadow,12288,ink);
+    }
     figure->visitors_added |= 1u << index;
     const uint8_t *pose = visitor->scene + offset;
     for (unsigned i = 0; i < parts; ++i, pose += 8) {

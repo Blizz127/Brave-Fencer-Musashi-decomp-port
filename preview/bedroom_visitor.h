@@ -2,6 +2,7 @@
 #ifndef BFM_BEDROOM_VISITOR_H
 #define BFM_BEDROOM_VISITOR_H
 #include "bedroom_figure.h"
+#include "bedroom_travel.h"
 
 typedef struct BfmBedroomVisitor BfmBedroomVisitor;
 
@@ -17,9 +18,11 @@ int bfm_bedroom_visitor_add(const BfmBedroomVisitor *visitor, BfmBedroomFigure *
                            const int position[3], int heading, uint32_t pose_address);
 /* Scale local X/Z together and Y independently around the standing root.
  * The floor shadow keeps its normal size. A zero horizontal scale submits
- * only that shadow, without requiring a body pose. */
+ * only that shadow, without requiring a body pose. A supplied ground probe
+ * determines its contact point, orientation and visibility; NULL retains
+ * the ordinary visitor's level-ground shadow. */
 int bfm_bedroom_visitor_add_scaled(const BfmBedroomVisitor *visitor, BfmBedroomFigure *figure,
                            const BfmBedroomView *view, unsigned index,
                            const int position[3], int heading, uint32_t pose_address,
-                           unsigned horizontal_q12, unsigned vertical_q12);
+                           unsigned horizontal_q12, unsigned vertical_q12, const BfmBedroomRoot *ground);
 #endif
