@@ -2478,12 +2478,19 @@ static int creek_water_descent(const BfmForestField *field, const int16_t from[3
         u16 token = cell.tokens[i];
         const FloorFace *face = contact_face(grid, token);
         unsigned sides = (token & 0x8000) ? 4 : 3;
-        if ((s16)grid->verts[face->e[0].v].y >= 0) continue;
-        if (gap && &face->e[0] != water &&
+        const FloorPlane plane = face->e[0];
+        const FloorPoint *n = &grid->verts[plane.v];
+        if ((s16)n->y >= 0) continue;
+        /* Adjacent marked tiles may share this water plane at a cell
+         * edge. Compare the plane equation and material, not its address. */
+        int same_water = face->flags == ground->flags &&
+                         !n->x && (s16)n->y == ground->normal[1] && !n->z &&
+                         grid->dist[plane.d] == grid->dist[water->d];
+        if (gap && !same_water &&
             crossing_margin(grid, face, sides, near, far) >= -EDGE_TOLERANCE)
             return 0;
         if (crossing_margin(grid, face, sides, from, probe) < -EDGE_TOLERANCE) continue;
-        if (&face->e[0] == water) {
+        if (same_water) {
             reached = 1;
         } else {
             int64_t start = signed_distance(grid, face->e[0], from);
