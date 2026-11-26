@@ -4,7 +4,8 @@
 enum {
     CAP_OPEN = 0x2,
     BROKEN_SIDES = 0x60000,
-    FIRST_HALF_SPENT = 0x80000
+    FIRST_HALF_SPENT = 0x80000,
+    STREET_CORNER_LANDED = 0x800
 };
 
 int bfm_steam_knight_core_strike(const BfmSteamKnightCoreState *body, unsigned *struck,
@@ -13,11 +14,18 @@ int bfm_steam_knight_core_strike(const BfmSteamKnightCoreState *body, unsigned *
                                  const int16_t from[3], const int16_t ends[][3], size_t count,
                                  uint16_t strength, BfmSteamKnightCoreHit *hit)
 {
-    if (!body || !struck || *struck || !hit || !strength || body->round > 1 ||
-        body->body_stage != 11 || !(body->flags & BROKEN_SIDES) ||
+    if (!body || !struck || *struck || !hit || !strength || body->round > 2 ||
         body->hp <= 0 || body->hp > body->max_hp) return 0;
 
-    int floor_hp = body->flags & FIRST_HALF_SPENT ? 0 : body->max_hp / 2;
+    int street = body->round == 2;
+    int floor_hp;
+    if (street) {
+        if (body->body_stage != 6 || body->weak_stage != 2 || (body->flags & 6) != CAP_OPEN) return 0;
+        floor_hp = body->flags & STREET_CORNER_LANDED ? 0 : 128;
+    } else {
+        if (body->body_stage != 11 || !(body->flags & BROKEN_SIDES)) return 0;
+        floor_hp = body->flags & FIRST_HALF_SPENT ? 0 : body->max_hp / 2;
+    }
     if (body->hp <= floor_hp) return 0;
 
     BfmSteamKnightCoreSurface surface;
@@ -41,13 +49,15 @@ int bfm_steam_knight_core_strike(const BfmSteamKnightCoreState *body, unsigned *
             result.response = BFM_STEAM_CORE_DAMAGED;
         } else {
             result.hp_after = floor_hp;
-            result.clear_flags = BROKEN_SIDES;
-            if (floor_hp > 0) {
+            if (street) {
+                result.response = floor_hp ? BFM_STEAM_CORE_DAMAGED : BFM_STEAM_CORE_DEPLETED;
+            } else if (floor_hp > 0) {
+                result.clear_flags = BROKEN_SIDES;
                 result.response = BFM_STEAM_CORE_HALF_DEPLETED;
                 result.set_flags = FIRST_HALF_SPENT;
             } else {
                 result.response = BFM_STEAM_CORE_DEPLETED;
-                result.clear_flags |= FIRST_HALF_SPENT;
+                result.clear_flags = BROKEN_SIDES | FIRST_HALF_SPENT;
             }
         }
     }

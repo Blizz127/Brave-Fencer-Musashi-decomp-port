@@ -149,6 +149,11 @@ static int core_attachment(const BfmSteamKnight *s, BfmForestTransform *attachme
 {
     int waist = s->weak_stage == 2;
     unsigned extension = waist ? 24 : 0;
+    if (waist && s->round == 2 && s->body_stage == 6) {
+        extension = 24 - s->street.landing.core_extension;
+        if (exposed) *exposed = extension == 0;
+        return bfm_steam_knight_core_transform(s->machine, 1, extension, attachment);
+    }
     unsigned key, held_updates;
     int recovering = 0;
     if (waist && bfm_steam_knight_machine_knee_pose(s->machine, &key, &held_updates, &recovering)) {
@@ -162,7 +167,13 @@ static int core_attachment(const BfmSteamKnight *s, BfmForestTransform *attachme
 static int core_contact(BfmSteamKnight *s, const BfmSteamKnightHeroStrike *strike,
                         uint16_t amount)
 {
-    if (s->body_stage != 11 || s->weak_stage == 3 || s->recovery_left) return 1;
+    int street = s->round == 2 && s->body_stage == 6;
+    if (!street && s->body_stage != 11) return 1;
+    if (s->weak_stage == 3 || s->recovery_left) return 1;
+    /* The free blade intersects the socket after the machine lands and
+     * extends its waist. A separate actor owns the liftable chassis. */
+    if (street && (s->street.landing.core_extension != 24 || s->carry.held ||
+                   (strike->type != 1 && strike->type != 2))) return 1;
     BfmSteamKnightCoreState body = {s->round, s->body_stage, s->weak_stage,
                                     s->battle_flags, (int)s->core_hp, (int)s->core_max};
     BfmForestTransform attachment;
@@ -185,7 +196,7 @@ static int core_contact(BfmSteamKnight *s, const BfmSteamKnightHeroStrike *strik
         s->body_stage = 10;
         s->transfer_age = 0;
     }
-    return damage_number(s, hit.contact.point, amount);
+    return damage_number(s, hit.contact.point, street ? (uint16_t)(body.hp - hit.hp_after) : amount);
 }
 
 static int transfer_tick(BfmSteamKnight *s)
@@ -593,7 +604,7 @@ int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
     size_t count = s->event.shot == BFM_STEAM_ENTRY_CAMERA
                  ? bfm_steam_entry_light(&camera, s->event.age, cards) : 0;
     count += bfm_steam_knight_flames_project(&s->flames, &camera, cards + count);
-    if (s->weak_stage == 2 && s->body_stage == 11) {
+    if (s->weak_stage == 2 && (s->body_stage == 11 || (s->round == 2 && s->body_stage == 6))) {
         BfmForestTransform core;
         int exposed;
         if (!core_attachment(s, &core, &exposed)) return 0;
