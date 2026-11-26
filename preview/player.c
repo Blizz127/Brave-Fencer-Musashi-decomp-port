@@ -245,6 +245,30 @@ static int present(Player *p) {
     return 1;
 }
 
+static int bedroom_frame(Player *p) {
+    if (!bfm_bedroom_draw(p->bedroom, (uint32_t (*)[320])p->pixels)) return -1;
+    if (bfm_bedroom_endpoint(p->bedroom))
+        status_line(p, bfm_bedroom_end_message(p->bedroom));
+    return 1;
+}
+
+static int present_catchup_room(Player *p, uint64_t batch_start, uint64_t updates,
+                                uint64_t *next_present) {
+    uint64_t start = SDL_GetTicks64();
+    if (start < *next_present) return 1;
+    if (!surface(p, OPENING_W, OPENING_H) || bedroom_frame(p) < 0 || !present(p)) return 0;
+
+    /* While paying off missed 30 Hz updates, submit each picture if the
+     * renderer can keep twice that pace. Otherwise allow a room tick, and
+     * at least the cost of the last submission, for more game updates. */
+    uint64_t end = SDL_GetTicks64();
+    if ((end - batch_start) * 60u > updates * 1001u) {
+        uint64_t cost = end - start;
+        *next_present = end + SDL_max(cost, (1001u + 29u) / 30u);
+    }
+    return 1;
+}
+
 /* Only the ordinary opening event supplies the source member. Its two
  * supported rooms queue distinct authored transfers to the same forest. */
 static int start_forest(Player *p, unsigned field)
@@ -316,7 +340,7 @@ static int play(Player *p, char *error, size_t size) {
         uint64_t now = SDL_GetTicks64();
         uint64_t tick = now * 30u / 1001u;
         unsigned fields = (unsigned)((now - p->phase_start) * 60u / 1001u);
-        int frame;
+        int frame, room_advanced = 0;
         if (p->flow.phase == BFM_TITLE_OPENING && p->opening && !p->opening_finished) {
             int began = bfm_opening_advance_court(p->opening, p->disc, fields, error, size);
             if (began < 0) return 2;
@@ -382,7 +406,13 @@ static int play(Player *p, char *error, size_t size) {
                     p->bedroom = NULL;
                     bfm_title_begin(&p->flow, p->held | p->pressed);
                 } else {
+                    uint64_t next_present = 0;
                     for (uint64_t t = last_logic; t < tick; ++t) {
+                        if (t != last_logic &&
+                            !present_catchup_room(p, now, t - last_logic, &next_present)) {
+                            snprintf(error, size, "Could not present the mounted room during catch-up.");
+                            return 2;
+                        }
                         unsigned pressed = t == last_logic ? p->pressed : 0;
                         int direction = (pressed & PAD_UP) ? -1 : !!(pressed & PAD_DOWN);
                         int held = (p->held & PAD_UP) ? -1 : !!(p->held & PAD_DOWN);
@@ -412,6 +442,7 @@ static int play(Player *p, char *error, size_t size) {
                         bfm_desktop_voice_forest(p->voice, voice, generation,
                                                  bfm_bedroom_voice_ready_field(p->bedroom));
                     }
+                    room_advanced = 1;
                 }
             } else {
                 bfm_title_input(&p->flow, p->held | p->pressed);
@@ -445,7 +476,8 @@ static int play(Player *p, char *error, size_t size) {
         }
         int unchanged = last_phase == (int)p->flow.phase && last_choice == (int)p->flow.choice &&
                         last_prompt == p->flow.prompt_visible && last_save_view == save_view &&
-                        (!(files || bedroom) || fields / 2 == last_field / 2) && (!opening || fields == last_field);
+                        (!files || fields / 2 == last_field / 2) && !room_advanced &&
+                        (!opening || fields == last_field);
         if (unchanged || p->opening_finished) {
             if (p->redraw && !present(p)) {
                 snprintf(error, size, "Could not refresh the display: %s", SDL_GetError());
@@ -524,10 +556,7 @@ static int play(Player *p, char *error, size_t size) {
                 continue;
             }
         } else if (bedroom) {
-            frame = bfm_bedroom_draw(p->bedroom, (uint32_t (*)[320])p->pixels);
-            if (frame && bfm_bedroom_endpoint(p->bedroom))
-                status_line(p, bfm_bedroom_end_message(p->bedroom));
-            if (!frame) frame = -1;
+            frame = bedroom_frame(p);
         } else if (files) {
             bfm_save_menu_draw(p->save_art, &p->saves, fields, (uint32_t (*)[320])p->pixels);
             frame = 1;
