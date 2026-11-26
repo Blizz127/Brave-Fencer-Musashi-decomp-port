@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "forest_score.h"
+#include "bedroom_score.h"
 #include "palace_sound_bank.h"
 #include "spu_envelope.h"
 #include "spu_sample.h"
@@ -9,10 +10,12 @@
 #include <string.h>
 
 enum { VOICES = 24, SAMPLES = 256, CHANNELS = 16, DEVICE_RATE = 44100 };
+enum ScoreFamily { OTHER_SCORE, LIBRARY_SCORE, VILLAGE_SCORE };
+
 typedef struct {
     const BfmDecodedSpuSample *sample;
     uint64_t phase;
-    unsigned channel, key, center, pitch, left, right, bend_range[2];
+    unsigned channel, key, center, tuning, pitch, left, right, bend_range[2];
     int releasing;
     BfmSpuEnvelope envelope;
 } Note;
@@ -22,7 +25,9 @@ typedef struct {
     BfmDecodedSpuSample samples[SAMPLES];
     Note notes[VOICES];
     unsigned program[CHANNELS], pan[CHANNELS], wheel[CHANNELS];
-    int samples_ready, library_wheel;
+    int samples_ready;
+    enum ScoreFamily family;
+    uint8_t pitch_tables[2 * (84 + 128)];
 } Orchestra;
 
 struct BfmForestScore {
@@ -42,12 +47,28 @@ static int16_t limit_sample(int64_t n)
     return (int16_t)(n < INT16_MIN ? INT16_MIN : n > INT16_MAX ? INT16_MAX : n);
 }
 
-static unsigned note_pitch(unsigned key, unsigned center, unsigned wheel, unsigned range)
+static unsigned table_word(const uint8_t *p)
 {
+    return (unsigned)p[0] | (unsigned)p[1] << 8;
+}
+
+static unsigned note_pitch(const Orchestra *o, const Note *note, unsigned wheel)
+{
+    if (o->family == VILLAGE_SCORE) {
+        /* The sequence player combines the mounted semitone and fractional
+         * pitch tables. A tone's fine offset is in 1/256-semitone units. */
+        int displacement = ((int)wheel - 64) * 4 * (int)note->bend_range[wheel > 64];
+        int index = (60 + (int)note->key - (int)note->center) * 256 +
+                    (int)note->tuning + displacement;
+        if (index < 0 || index > 83 * 256) return 16383;
+        unsigned base = table_word(o->pitch_tables + 2 * (index >> 8));
+        unsigned fraction = table_word(o->pitch_tables + 2 * 84 + (index & 254));
+        return base * fraction >> 15;
+    }
     /* The upward and downward pitch steps were measured at the original device. */
-    double bend = wheel < 64 ? ((int)wheel - 64) * (int)range / 64.0 : 0;
+    double bend = wheel < 64 ? ((int)wheel - 64) * (int)note->bend_range[0] / 64.0 : 0;
     if (wheel == 67) bend = 17.0 / 128.0;
-    double interval = (int)key - (int)center + bend;
+    double interval = (int)note->key - (int)note->center + bend;
     double pitch = 4096.0 * exp2(interval / 12.0);
     return pitch > 16383 ? 16383 : (unsigned)pitch;
 }
@@ -86,7 +107,8 @@ static int start_note(Orchestra *o, const BfmSqvEvent *e)
     for (unsigned t = 0; t < count; ++t) {
         const BfmPalaceTone *tone = &tones[t];
         if (tone->bank_gain != 127 || tone->program_gain != 127 || tone->tone_gain != 127 ||
-            tone->bank_pan != 64 || tone->tuning != 0) return 0;
+            tone->bank_pan != 64 ||
+            (tone->tuning != 0 && o->family != VILLAGE_SCORE)) return 0;
         const BfmDecodedSpuSample *s = instrument(o, tone->sample);
         if (!s) return 0;
         unsigned slot = 0;
@@ -95,11 +117,12 @@ static int start_note(Orchestra *o, const BfmSqvEvent *e)
         Note *n = &o->notes[slot];
         *n = (Note){.sample = s, .channel = e->channel, .key = e->number};
         unsigned wheel = o->wheel[e->channel];
-        if (!o->library_wheel && wheel != 64) return 0;
+        if (o->family == OTHER_SCORE && wheel != 64) return 0;
         n->center = tone->center;
+        n->tuning = (uint8_t)tone->tuning;
         n->bend_range[0] = tone->bend_range[0];
         n->bend_range[1] = tone->bend_range[1];
-        n->pitch = note_pitch(e->number, tone->center, wheel, tone->bend_range[0]);
+        n->pitch = note_pitch(o, n, wheel);
         int pan = (int)o->pan[e->channel] + (int)tone->program_pan + (int)tone->tone_pan - 128;
         if (pan < 1 || pan > 127) return 0;
         n->left = ear_level(e->value, pan > 64 ? (unsigned)(127 - pan) : 63);
@@ -109,11 +132,11 @@ static int start_note(Orchestra *o, const BfmSqvEvent *e)
     return 1;
 }
 
-static int initial_parameter(const BfmSqvEvent *e)
+static int initial_parameter(const BfmSqvEvent *e, enum ScoreFamily family)
 {
     return e->tick == 0 && e->channel == 0 &&
         (((e->number == 98 || e->number == 99) && e->value == 16) ||
-         (e->number == 6 && e->value == 55));
+         (e->number == 6 && (e->value == 55 || (family == VILLAGE_SCORE && e->value == 45))));
 }
 
 /* The paired controller marks the beginning of the forest phrase on its first traversal. */
@@ -149,9 +172,9 @@ static int event(Orchestra *o, const BfmSqvEvent *e)
         for (unsigned i = 0; i < VOICES; ++i) {
             Note *n = &o->notes[i];
             if (!n->sample || n->channel != e->channel || n->releasing) continue;
-            if (!o->library_wheel && e->number != 64 && (n->bend_range[0] != 3 || n->bend_range[1] != 3)) return 0;
-            if (!o->library_wheel && e->number < 64 && (n->key != 65 || n->center != 64)) return 0;
-            n->pitch = note_pitch(n->key, n->center, e->number, n->bend_range[0]);
+            if (o->family == OTHER_SCORE && e->number != 64 && (n->bend_range[0] != 3 || n->bend_range[1] != 3)) return 0;
+            if (o->family == OTHER_SCORE && e->number < 64 && (n->key != 65 || n->center != 64)) return 0;
+            n->pitch = note_pitch(o, n, e->number);
         }
         return 1;
     case BFM_SQV_PROGRAM:
@@ -199,7 +222,8 @@ static void mix_frame(Orchestra *o, int left_right[2])
 static int known_wheel(const Orchestra *o, unsigned channel, unsigned program, unsigned wheel)
 {
     if (wheel == 64) return 1;
-    if (o->library_wheel) return channel == 0 && program == 0 && wheel >= 43 && wheel < 64;
+    if (o->family == VILLAGE_SCORE) return channel == 5 && program == 0 && wheel >= 22 && wheel < 64;
+    if (o->family == LIBRARY_SCORE) return channel == 0 && program == 0 && wheel >= 43 && wheel < 64;
     if (channel == 1 && program == 2) return wheel == 67;
     if (channel == 7 && program == 6)
         return wheel == 60 || wheel == 56 || wheel == 52 || wheel == 48 || wheel == 43;
@@ -235,7 +259,7 @@ static int prepare_schedule(BfmForestScore *score)
             ++i;
             continue;
         }
-        if (e->kind == BFM_SQV_END || (e->kind == BFM_SQV_CONTROL && !initial_parameter(e)) ||
+        if (e->kind == BFM_SQV_END || (e->kind == BFM_SQV_CONTROL && !initial_parameter(e, score->orchestra.family)) ||
             (e->kind == BFM_SQV_PITCH_BEND && !known_wheel(&score->orchestra, e->channel, program[e->channel], e->number))) {
             uint64_t frames = elapsed * score->rate / denominator;
             if (!frames || frames > SIZE_MAX / (2 * sizeof(int16_t))) return 0;
@@ -272,9 +296,12 @@ static int next_device_sample(BfmForestScore *score, int stereo[2])
             uint64_t due = score->deadlines[score->event];
             if (due > score->clock) break;
             const BfmSqvEvent *e = &score->track.events[score->event++];
-            if (e->kind == BFM_SQV_PITCH_BEND && e->channel == 7 && e->number < 64) {
+            if (e->kind == BFM_SQV_PITCH_BEND &&
+                (score->orchestra.family == VILLAGE_SCORE || (e->channel == 7 && e->number < 64))) {
                 /* Only the last wheel consumed in one score update reaches
                  * the device. Two neighboring ticks can share this write. */
+                if (score->orchestra.family == VILLAGE_SCORE)
+                    score->orchestra.wheel[e->channel] = e->number; /* New notes read the current wheel. */
                 uint64_t remainder = due % score->field_duration;
                 uint64_t until = (score->field_phase + score->field_duration - remainder) % score->field_duration;
                 score->bend_deadline = due + until;
@@ -323,7 +350,12 @@ static BfmForestScore *load_score(const MusashiDiscMedia *disc, unsigned rate, c
     if (!score) return NULL;
     score->rate = rate;
     score->gain = gain;
-    score->orchestra.library_wheel = !strcmp(archive, "SC01.CD") && member == 75 && track == 0;
+    if (!strcmp(archive, "SC01.CD") && member == 75 && track == 0) score->orchestra.family = LIBRARY_SCORE;
+    if (!strcmp(archive, "SC03.CD") && member == 0) {
+        score->orchestra.family = VILLAGE_SCORE;
+        if (!bfm_bedroom_resident_data(disc, UINT32_C(0x8006ab30), score->orchestra.pitch_tables,
+                                       sizeof(score->orchestra.pitch_tables))) goto fail;
+    }
     if (bfm_sqv_archive_track_load(disc, archive, member, track, &score->track) != BFM_SQV_OK ||
         !prepare_schedule(score)) goto fail;
     score->orchestra.bank = bfm_archive_sound_bank_load(disc, archive, member);

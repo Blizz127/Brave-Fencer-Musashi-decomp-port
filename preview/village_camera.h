@@ -1,0 +1,21 @@
+/* SPDX-License-Identifier: MIT */
+#ifndef BFM_VILLAGE_CAMERA_H
+#define BFM_VILLAGE_CAMERA_H
+
+#include <stdint.h>
+
+typedef struct {
+    int eye[3], target[3], focal;
+    int radius, yaw, following;
+} BfmVillageCamera;
+
+/* The descending cable entrance prepares the initial view before the first
+ * field update. The player coordinates are in room space. */
+void bfm_village_camera_begin(BfmVillageCamera *camera, const int16_t xyz[3]);
+
+/* Call once per 30 Hz update, after player movement. The room's handoff
+ * event switches the camera from the cable to the player. */
+void bfm_village_camera_step(BfmVillageCamera *camera, const int16_t xyz[3],
+                             int follow_event);
+
+#endif

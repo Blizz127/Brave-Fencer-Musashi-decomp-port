@@ -22,6 +22,15 @@ add_executable(musashi_native_boot
     cable_sound.c
     cable_sparks.c
     castle_cable.c
+    village_arrival.c
+    village_arrival_motion.c
+    village_camera.c
+    village_field.c
+    village_gate.c
+    village_greeting.c
+    village_impact_sound.c
+    village_residents.c
+    village_sky.c
     bedroom_score.c
     bedroom_award.c
     bedroom_effects.c

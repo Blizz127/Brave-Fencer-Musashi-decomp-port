@@ -6,6 +6,8 @@
 #include <stdint.h>
 
 enum { BFM_FIELD_SCENE_CAPACITY = 1 << 20 };
+size_t bfm_read_archive_field_scene(const MusashiDiscMedia *disc, const char *archive,
+                                    unsigned member, uint8_t scene[BFM_FIELD_SCENE_CAPACITY]);
 size_t bfm_read_field_scene(const MusashiDiscMedia *disc, unsigned member,
                             uint8_t scene[BFM_FIELD_SCENE_CAPACITY]);
 
@@ -27,6 +29,7 @@ int bfm_bedroom_field_camera(BfmBedroomField *field, const uint8_t *scene,
 int bfm_bedroom_field_orbit(BfmBedroomField *field, const int target[3], int yaw,
                             int distance, int pitch, int immediate, unsigned divisor);
 int bfm_bedroom_field_cable_view(BfmBedroomField *field, const int target[3], int yaw, int pitch);
+int bfm_bedroom_field_set_focal(BfmBedroomField *field, unsigned focal);
 void bfm_bedroom_field_viewpoint(BfmBedroomField *field, const int eye[3], const int target[3],
                                  int immediate, unsigned divisor);
 void bfm_bedroom_field_step(BfmBedroomField *field);

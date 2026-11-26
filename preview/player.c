@@ -380,9 +380,10 @@ static int play(Player *p, char *error, size_t size) {
                         unsigned pressed = t == last_logic ? p->pressed : 0;
                         int direction = (pressed & PAD_UP) ? -1 : !!(pressed & PAD_DOWN);
                         int held = (p->held & PAD_UP) ? -1 : !!(p->held & PAD_DOWN);
-                        int result = bfm_bedroom_step_pad(p->bedroom,
+                        int horizontal = !!(p->held & PAD_RIGHT) - !!(p->held & PAD_LEFT);
+                        int result = bfm_bedroom_step_directions(p->bedroom,
                                     pressed & (PAD_CIRCLE | PAD_CROSS | PAD_TRIANGLE),
-                                    pressed & PAD_CIRCLE, direction, held, pressed & PAD_CROSS, pressed & PAD_TRIANGLE);
+                                    pressed & PAD_CIRCLE, direction, held, pressed & PAD_CROSS, pressed & PAD_TRIANGLE, horizontal);
                         if (!result) {
                             snprintf(error, size, "Could not advance the mounted bedroom scene.");
                             return 2;
@@ -392,6 +393,7 @@ static int play(Player *p, char *error, size_t size) {
                         int slider_event;
                         struct BfmCableSound *slider=bfm_bedroom_slider(p->bedroom,&slider_event);
                         bfm_desktop_voice_slider(p->voice,slider,slider_event);
+                        bfm_desktop_voice_landing(p->voice, bfm_bedroom_landing(p->bedroom));
                         unsigned command;
                         struct BfmBedroomEffects *effects = bfm_bedroom_effect(p->bedroom, &command);
                         bfm_desktop_voice_room_effect(p->voice, effects, command);

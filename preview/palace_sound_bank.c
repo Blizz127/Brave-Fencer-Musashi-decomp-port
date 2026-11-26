@@ -84,6 +84,9 @@ static BfmPalaceBank *read_score_bank(const MusashiDiscMedia *disc, const char *
         (!strcmp(archive, "SC03.CD") && member == 68)) {
         if (middle < 12 || last <= middle || last > bytes - 8) return NULL;
         final_track = 4 + last;
+    } else if (!strcmp(archive, "SC03.CD") && member == 0) {
+        if (middle < 12 || middle > bytes - 8 || last) return NULL;
+        final_track = 4 + middle;
     } else {
         int single = member == 78 || (!strcmp(archive, "SC03.CD") && member == 67);
         if (!single || middle || last) return NULL;

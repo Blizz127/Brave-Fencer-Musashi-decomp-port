@@ -37,8 +37,9 @@ BfmForestScore *bfm_bedroom_score_load(const MusashiDiscMedia *disc, unsigned se
         unsigned count = word(header);
         if (!count || count > size / 8) return NULL;
         if (file < count) {
+            int village = i == 3 && file == 0 && (selector == 0x0f || selector == 0x10);
             int station = i == 3 && file == 67 && selector == 0x32;
-            if (!(station || (i == 1 && file == 75) || (i == 3 && file == 68)) || id < 0x100 || id >= 0x200 ||
+            if (!(village || station || (i == 1 && file == 75) || (i == 3 && file == 68)) || id < 0x100 || id >= 0x200 ||
                 !bfm_bedroom_resident_data(disc,0x80068b5cu+16*(id-0x100),command,sizeof command) ||
                 half(command)!=4 || half(command+2)>127) return NULL;
             if (i == 1) return bfm_library_score_load(disc, 37800, half(command+6), half(command+2));

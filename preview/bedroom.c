@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 #include "bedroom.h"
 #include "castle_cable.h"
+#include "village_arrival.h"
+#include "village_impact_sound.h"
 #include "cable_sound.h"
 #include "library_books.h"
 #include "bedroom_award.h"
@@ -39,6 +41,9 @@ struct BfmBedroom {
     int library, command_room, gesture;
     unsigned command_delay, selected_command;
     BfmCastleCable *cable;
+    BfmVillageArrival *village;
+    BfmVillageImpactSound *landing_sound;
+    unsigned village_updates, village_score_wait;
     BfmCableSound *slider_sound;
     int slider_event;
     unsigned village_trip, cable_tick;
@@ -65,7 +70,7 @@ struct BfmBedroom {
     BfmForestMessageArt *message_art;
     ForestVoice *voice;
     const MusashiDiscMedia *disc;
-    BfmForestScore *scores[4], *prepared_score, *current_score;
+    BfmForestScore *scores[5], *prepared_score, *current_score;
     unsigned score_count, effect_request;
     BfmBedroomEffects *effects;
     uint32_t room_sound_group;
@@ -123,6 +128,8 @@ void bfm_bedroom_free(BfmBedroom *room)
     bfm_forest_message_art_free(room->message_art);
     bfm_forest_voice_free(room->voice);
     bfm_castle_cable_free(room->cable);
+    bfm_village_arrival_free(room->village);
+    bfm_village_impact_sound_free(room->landing_sound);
     bfm_cable_sound_free(room->slider_sound);
     bfm_forest_hud_free(room->hud);
     bfm_bedroom_effects_free(room->effects);
@@ -572,6 +579,75 @@ static int finish_castle_command(BfmBedroom *room)
  * 30 Hz room updates from the accepted Village command. */
 enum { COURT_WIPE = 34, STATION_START = 168, LAST_STATION_UPDATE = 263, STATION_WIPE = 269, VILLAGE_PENDING = 359 };
 
+static void advance_voice(BfmBedroom *room)
+{
+    unsigned old_status = bfm_forest_voice_status(room->voice);
+    bfm_forest_voice_step(room->voice);
+    if (old_status == BFM_FOREST_VOICE_PENDING &&
+        bfm_forest_voice_status(room->voice) == BFM_FOREST_VOICE_PLAYING)
+        room->voice_ready_field = 2 * room->update;
+}
+
+static const BfmForestMessageFrame *advance_message(BfmBedroom *room, int confirm_edge,
+                                                     int reveal_edge, int *result)
+{
+    const BfmForestMessageFrame *frame = bfm_field_message_tick(room->message,
+                                bfm_forest_voice_status(room->voice), confirm_edge, reveal_edge);
+    if (!frame) return NULL;
+    if (frame->events & BFM_FOREST_VOICE_STOP) {
+        bfm_forest_voice_stop(room->voice);
+        *result = BFM_BEDROOM_VOICE_STOPPED;
+    }
+    if ((frame->events & BFM_FOREST_VOICE_REQUEST) &&
+        bfm_forest_voice_request(room->voice, frame->voice_bank, frame->voice_cue))
+        ++room->generation;
+    return frame;
+}
+
+static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int x, int y)
+{
+    int result = BFM_BEDROOM_ADVANCED;
+    advance_voice(room);
+    if (room->message) {
+        const BfmForestMessageFrame *frame = advance_message(room, confirm_edge, reveal_edge, &result);
+        if (!frame) return 0;
+        if (frame->events & BFM_FOREST_MESSAGE_CLOSED) {
+            bfm_forest_message_free(room->message);
+            room->message = NULL;
+            if (!bfm_village_arrival_continue(room->village)) return 0;
+        }
+    }
+    if (room->village_score_wait && --room->village_score_wait == 0) {
+        if (!apply(room, BFM_BED_SOUND_READY, 0) || !bfm_village_arrival_continue(room->village))
+            return 0;
+    }
+    if (!bfm_village_arrival_step(room->village, x, y)) return 0;
+    const BfmVillagePlayer *player = bfm_village_arrival_player(room->village);
+    if (player->events & BFM_VILLAGE_CAMERA) {
+        unsigned minute = half(room->entry.state.progress + 0x1a);
+        if (!apply(room, BFM_BED_SOUND_CHANGE, minute >= 420 && minute < 1140 ? 0x0f : 0x10))
+            return 0;
+        /* The observed village handoff admits the waiting actor on the
+         * 45th room update after the camera change and bank request. */
+        room->village_score_wait = 45;
+    }
+    if (player->events & BFM_VILLAGE_OPEN_MESSAGE) {
+        if (room->message) return 0;
+        room->message = bfm_village_arrival_speech(room->village);
+        if (!room->message) return 0;
+    }
+    if (player->events & BFM_VILLAGE_SHOW_HUD) bfm_forest_hud_show(room->hud);
+    bfm_forest_hud_tick(room->hud);
+    uint32_t (*frame)[320] = room->frames[room->presented];
+    if (!bfm_village_arrival_draw(room->village, room->story_flags,
+                room->message ? bfm_forest_message_frame(room->message) : NULL, frame)) return 0;
+    bfm_forest_hud_draw(room->hud, &room->status, frame);
+    room->presented = (room->presented + 1) % 3;
+    ++room->village_updates;
+    ++room->update;
+    return result;
+}
+
 static int cable_trip_step(BfmBedroom *room)
 {
     unsigned tick = ++room->cable_tick;
@@ -592,18 +668,31 @@ static int cable_trip_step(BfmBedroom *room)
         room->presented=(room->presented+1)%3;
     if (tick == STATION_START+1) room->slider_event=1;
     if (tick == STATION_START+77) room->slider_event=-1;
-    if (tick == VILLAGE_PENDING) room->village_trip=2;
+    if (tick == VILLAGE_PENDING) {
+        memcpy(room->entry.state.flags, room->story_flags, sizeof room->entry.state.flags);
+        room->village = bfm_village_arrival_open(room->disc, &room->entry, room->main,
+                                                room->main_bytes, room->tiles);
+        if (!room->village) return 0;
+        bfm_forest_voice_free(room->voice);
+        room->voice = bfm_bedroom_voice_load(room->disc);
+        room->landing_sound = bfm_village_impact_sound_load(room->disc);
+        if (!room->voice || !room->landing_sound) return 0;
+        room->current_score = NULL;
+        bfm_bedroom_hud_hide(room->hud);
+        memcpy(room->status.record, room->entry.state.progress, sizeof room->status.record);
+        memset(room->frames, 0, sizeof room->frames);
+    }
     ++room->update;
     return BFM_BEDROOM_ADVANCED;
 }
 
-int bfm_bedroom_step_pad(BfmBedroom *room, int confirm_edge, int reveal_edge,
-                         int direction, int held, int accept_edge, int back_edge)
+int bfm_bedroom_step_directions(BfmBedroom *room, int confirm_edge, int reveal_edge,
+                                int direction, int held, int accept_edge, int back_edge, int horizontal)
 {
     room->effect_request = 0;
     room->slider_event = 0;
     int result = BFM_BEDROOM_ADVANCED;
-    if (room->village_trip==2) return result;
+    if (room->village) return village_step(room, confirm_edge, reveal_edge, horizontal * 127, held * 127);
     if (room->village_trip && room->cable_tick>=COURT_WIPE) return cable_trip_step(room);
     if (room->village_trip) {
         ++room->cable_tick;
@@ -713,26 +802,13 @@ int bfm_bedroom_step_pad(BfmBedroom *room, int confirm_edge, int reveal_edge,
         if (!bfm_bedroom_reaction_start(&room->reaction, room->scene, room->scene_bytes)) return 0;
         room->notice_pending = 0;
     }
-    unsigned old_status = bfm_forest_voice_status(room->voice);
-    bfm_forest_voice_step(room->voice);
-    if (old_status == BFM_FOREST_VOICE_PENDING &&
-        bfm_forest_voice_status(room->voice) == BFM_FOREST_VOICE_PLAYING)
-        room->voice_ready_field = 2 * room->update;
+    advance_voice(room);
     BfmBedroomAction speech_action = BFM_BEDROOM_NONE;
     if (room->message) {
         int choice = bfm_field_message_choose(room->message, direction, confirm_edge && !accept_edge, accept_edge);
         if (choice) room->effect_request = accept_edge ? BFM_ROOM_ACCEPT_SOUND : BFM_ROOM_MOVE_SOUND;
-        const BfmForestMessageFrame *f = bfm_field_message_tick(room->message,
-                                     bfm_forest_voice_status(room->voice), confirm_edge, reveal_edge);
+        const BfmForestMessageFrame *f = advance_message(room, confirm_edge, reveal_edge, &result);
         if (!f) return 0;
-        if (f->events & BFM_FOREST_VOICE_STOP) {
-            bfm_forest_voice_stop(room->voice);
-            result = BFM_BEDROOM_VOICE_STOPPED;
-        }
-        if (f->events & BFM_FOREST_VOICE_REQUEST) {
-            if (bfm_forest_voice_request(room->voice, f->voice_bank, f->voice_cue))
-                ++room->generation;
-        }
         /* The room polls four game flags set by this window's script. Musashi
          * returns to his idle stance, looks in three directions for sixteen
          * updates each, faces the doorway, then gestures as he speaks. */
@@ -843,6 +919,13 @@ int bfm_bedroom_step_pad(BfmBedroom *room, int confirm_edge, int reveal_edge,
     return result;
 }
 
+BfmVillageImpactSound *bfm_bedroom_landing(const BfmBedroom *room)
+{
+    if (room->village && (bfm_village_arrival_player(room->village)->events & BFM_VILLAGE_HIT))
+        return room->landing_sound;
+    return NULL;
+}
+
 BfmCableSound *bfm_bedroom_slider(const BfmBedroom *room, int *event)
 {
     *event=room->slider_event;
@@ -858,6 +941,13 @@ BfmBedroomEffects *bfm_bedroom_effect(const BfmBedroom *room, unsigned *command)
 BfmForestScore *bfm_bedroom_score(const BfmBedroom *room)
 {
     return room ? room->current_score : NULL;
+}
+
+int bfm_bedroom_step_pad(BfmBedroom *room, int confirm_edge, int reveal_edge,
+                         int direction, int held, int accept_edge, int back_edge)
+{
+    return bfm_bedroom_step_directions(room, confirm_edge, reveal_edge, direction,
+                                       held, accept_edge, back_edge, 0);
 }
 
 int bfm_bedroom_step_controls(BfmBedroom *room,int confirm_edge,int reveal_edge,int direction,int accept_edge)
@@ -879,6 +969,7 @@ int bfm_bedroom_step(BfmBedroom *room)
 int bfm_bedroom_draw(BfmBedroom *room, uint32_t pixels[240][320])
 {
     memcpy(pixels, room->frames[room->presented], sizeof room->frames[0]);
+    if (room->village) return 1;
     if (room->village_trip) {
         unsigned tick=room->cable_tick;
         int entering=tick>=STATION_START && tick<STATION_START+19;
@@ -937,7 +1028,7 @@ const char *bfm_bedroom_end_message(const BfmBedroom *room)
 
 int bfm_bedroom_endpoint(const BfmBedroom *room)
 {
-    return room->village_trip ? room->village_trip==2 : room->message_closed && room->drain==2;
+    return !room->village_trip && room->message_closed && room->drain==2;
 }
 
 struct ForestVoice *bfm_bedroom_voice(BfmBedroom *room, unsigned *generation)

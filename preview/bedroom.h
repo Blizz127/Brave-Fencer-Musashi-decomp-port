@@ -13,6 +13,8 @@ void bfm_bedroom_free(BfmBedroom *room);
 enum { BFM_BEDROOM_ADVANCED = 1, BFM_BEDROOM_VOICE_STOPPED };
 int bfm_bedroom_step(BfmBedroom *room);
 /* A stop result asks the desktop to cancel the queued voice output. */
+int bfm_bedroom_step_directions(BfmBedroom *room, int confirm_edge, int reveal_edge,
+                                int direction, int held, int accept_edge, int back_edge, int horizontal);
 int bfm_bedroom_step_pad(BfmBedroom *room, int confirm_edge, int reveal_edge,
                          int direction, int held, int accept_edge, int back_edge);
 int bfm_bedroom_step_controls(BfmBedroom *room, int confirm_edge, int reveal_edge,
@@ -21,6 +23,7 @@ int bfm_bedroom_step_input(BfmBedroom *room, int confirm_edge, int reveal_edge);
 int bfm_bedroom_draw(BfmBedroom *room, uint32_t pixels[240][320]);
 struct BfmBedroomEffects *bfm_bedroom_effect(const BfmBedroom *room, unsigned *command);
 struct BfmForestScore *bfm_bedroom_score(const BfmBedroom *room);
+struct BfmVillageImpactSound *bfm_bedroom_landing(const BfmBedroom *room);
 struct BfmCableSound *bfm_bedroom_slider(const BfmBedroom *room, int *event);
 int bfm_bedroom_endpoint(const BfmBedroom *room);
 const char *bfm_bedroom_end_message(const BfmBedroom *room);

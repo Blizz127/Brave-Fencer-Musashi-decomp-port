@@ -133,12 +133,12 @@ static size_t expand(const uint8_t *src, size_t bytes, uint8_t *out)
     return 0;
 }
 
-size_t bfm_read_field_scene(const MusashiDiscMedia *disc, unsigned member,
-                            uint8_t scene[BFM_FIELD_SCENE_CAPACITY])
+size_t bfm_read_archive_field_scene(const MusashiDiscMedia *disc, const char *archive,
+                                    unsigned member, uint8_t scene[BFM_FIELD_SCENE_CAPACITY])
 {
     uint8_t header[SECTOR];
     size_t size;
-    if (!disc || !scene || !musashi_disc_media_read_root_range(disc, "SC01.CD", 0,
+    if (!disc || !archive || !scene || !musashi_disc_media_read_root_range(disc, archive, 0,
                                                                header, sizeof(header), &size))
         return 0;
     if (le32(header) > (SECTOR - 8) / 8 || member >= le32(header)) return 0;
@@ -147,7 +147,7 @@ size_t bfm_read_field_scene(const MusashiDiscMedia *disc, unsigned member,
     if (!start || start > size / SECTOR) return 0;
     size_t offset = (size_t)start * SECTOR;
     if (member_bytes > size - offset || member_bytes < SECTOR ||
-        !musashi_disc_media_read_root_range(disc, "SC01.CD", offset, header, sizeof(header), &size) ||
+        !musashi_disc_media_read_root_range(disc, archive, offset, header, sizeof(header), &size) ||
         memcmp(header, "PAC", 4) || le32(header + 4) != 4)
         return 0;
     uint32_t span = le32(header + 12);
@@ -155,27 +155,37 @@ size_t bfm_read_field_scene(const MusashiDiscMedia *disc, unsigned member,
     size_t bytes = span - SECTOR;
     uint8_t *packed = malloc(bytes);
     size_t result = 0;
-    if (packed && musashi_disc_media_read_root_range(disc, "SC01.CD", offset + SECTOR,
+    if (packed && musashi_disc_media_read_root_range(disc, archive, offset + SECTOR,
                                                      packed, bytes, &size))
         result = expand(packed, bytes, scene);
     free(packed);
     return result;
 }
 
+size_t bfm_read_field_scene(const MusashiDiscMedia *disc, unsigned member,
+                            uint8_t scene[BFM_FIELD_SCENE_CAPACITY])
+{
+    return bfm_read_archive_field_scene(disc, "SC01.CD", member, scene);
+}
+
 static int take_face(Face *face, const uint8_t *entry, const uint8_t *material,
                      size_t vertex_count, unsigned corners)
 {
-    unsigned palette = le16(material + 6), page = le16(material + 10);
-    unsigned depth = (page >> 7) & 3;
-    if (material[3] != entry[3] || depth > 1) return 0;
-    face->texture_bits = depth ? 8 : 4;
-    memcpy(face->rgb, material, 3);
-    face->page_x = (uint16_t)((page & 15) * 64);
-    face->page_y = (uint16_t)((page & 16) * 16);
-    face->palette_x = (uint16_t)((palette & 63) * 16);
-    face->palette_y = (uint16_t)(palette >> 6);
-    if (face->palette_x > 1024 - (1u << face->texture_bits) ||
-        face->palette_y >= 512) return 0;
+    if (material) {
+        unsigned palette = le16(material + 6), page = le16(material + 10);
+        unsigned depth = (page >> 7) & 3;
+        if (material[3] != entry[3] || depth > 1) return 0;
+        face->texture_bits = depth ? 8 : 4;
+        face->page_x = (uint16_t)((page & 15) * 64);
+        face->page_y = (uint16_t)((page & 16) * 16);
+        face->palette_x = (uint16_t)((palette & 63) * 16);
+        face->palette_y = (uint16_t)(palette >> 6);
+        if (face->palette_x > 1024 - (1u << face->texture_bits) ||
+            face->palette_y >= 512) return 0;
+    } else {
+        face->texture_bits = 0;
+    }
+    memcpy(face->rgb, material ? material : entry, sizeof(face->rgb));
     face->count = (uint8_t)corners;
     face->depth_bias = (uint8_t)(le16(entry + 10) & 1u);
     for (unsigned j = 0; j < corners; ++j) {
@@ -185,8 +195,10 @@ static int take_face(Face *face, const uint8_t *entry, const uint8_t *material,
         unsigned vertex = vertex_ref / 8;
         if (vertex >= vertex_count) return 0;
         face->vertices[j] = (uint16_t)vertex;
-        unsigned uv_at = j < 2 ? 4 + j * 4 : 12 + (j - 2) * 2;
-        face->uv[j] = (Texel){material[uv_at], material[uv_at + 1]};
+        if (material) {
+            unsigned uv_at = j < 2 ? 4 + j * 4 : 12 + (j - 2) * 2;
+            face->uv[j] = (Texel){material[uv_at], material[uv_at + 1]};
+        }
     }
     return 1;
 }
@@ -217,13 +229,17 @@ static int load_mesh(Palace *palace, const uint8_t *scene, size_t size, size_t d
         if (le32(group + 16) != next || count > (available - next) / 12) return 0;
         for (size_t i = 0; i < count; ++i, next += 12) {
             const uint8_t *entry = root + next;
-            if (entry[3] == 0x28) continue; /* Interior flat quad outside this shot. */
-            if (entry[3] != 0x24 && entry[3] != 0x2c) return 0;
-            unsigned offset = le16(entry);
-            if (offset % 16 || offset >= vertices - materials || palace->face_count == MAX_FACES)
-                return 0;
-            if (!take_face(&palace->faces[palace->face_count], entry, root + materials + offset,
-                           palace->vertex_count, entry[3] == 0x24 ? 3 : 4))
+            unsigned kind = entry[3];
+            if (kind != 0x20 && kind != 0x24 && kind != 0x28 && kind != 0x2c) return 0;
+            const uint8_t *material = NULL;
+            if (kind & 4) {
+                unsigned offset = le16(entry);
+                if (offset % 16 || offset >= vertices - materials) return 0;
+                material = root + materials + offset;
+            }
+            if (palace->face_count == MAX_FACES ||
+                !take_face(&palace->faces[palace->face_count], entry, material,
+                           palace->vertex_count, (kind & 8) ? 4 : 3))
                 return 0;
             ++palace->face_count;
         }
@@ -528,10 +544,20 @@ static void triangle(const uint16_t tiles[512][1024], const Face *face,
     unsigned bits = face->texture_bits, word_shift = bits == 8 ? 1 : 2;
     unsigned word_mask = (1u << word_shift) - 1, index_mask = (1u << bits) - 1;
     int modulates = face->rgb[0] != 128 || face->rgb[1] != 128 || face->rgb[2] != 128;
+    uint32_t flat = 0;
+    if (!bits) {
+        uint16_t ink = (face->rgb[0] >> 3) | ((face->rgb[1] >> 3) << 5) |
+                       ((face->rgb[2] >> 3) << 10);
+        flat = color(ink);
+    }
     for (int y = top; y <= bottom; ++y) {
         for (int x = left; x <= right; ++x) {
             int wa = edge(b, c, x, y), wb = edge(c, a, x, y), wc = area - wa - wb;
             if (wa < !include_a || wb < !include_b || wc < !include_c) continue;
+            if (!bits) {
+                pixels[y * SCREEN_W + x] = flat;
+                continue;
+            }
             unsigned u = (unsigned)(((int64_t)wa * uv[0].u + (int64_t)wb * uv[1].u +
                                      (int64_t)wc * uv[2].u + area / 2) / area);
             unsigned v = (unsigned)(((int64_t)wa * uv[0].v + (int64_t)wb * uv[1].v +
@@ -792,6 +818,14 @@ int bfm_bedroom_field_orbit(BfmBedroomField *field, const int target[3], int yaw
 int bfm_bedroom_field_cable_view(BfmBedroomField *field, const int target[3], int yaw, int pitch)
 {
     return position_orbit(field, target, yaw, -2000, -pitch, 1, 1);
+}
+
+int bfm_bedroom_field_set_focal(BfmBedroomField *field, unsigned focal)
+{
+    if (!field || !focal || focal > 32767) return 0;
+    field->focal = focal;
+    field->view.focal = (int)focal;
+    return 1;
 }
 
 void bfm_bedroom_field_viewpoint(BfmBedroomField *field, const int eye[3], const int target[3],
