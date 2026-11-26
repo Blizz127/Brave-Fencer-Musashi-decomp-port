@@ -6,6 +6,7 @@
 #include "forest_trail.h"
 #include "forest_shore_figures.h"
 #include "forest_impact.h"
+#include "forest_sweep.h"
 #include "forest_opening_data.h"
 #include "forest_message_art.h"
 #include "forest_floor.h"
@@ -41,7 +42,7 @@ typedef struct {
     BfmForestPose guard_pose;
     uint32_t guard_parts;
     BfmForestCamera camera;
-    BfmForestDustCard cards[2 + BFM_FOREST_IMPACT_CARDS]; /* recoil dust, notice and contact */
+    BfmForestDustCard cards[2 + BFM_FOREST_IMPACT_CARDS + BFM_FOREST_SWEEP_CARDS];
     unsigned count;
 } BfmForestSubmittedFrame;
 
@@ -58,6 +59,7 @@ struct BfmForestField {
     BfmForestTrail *trail;
     BfmForestShoreFigures *shore_figures;
     BfmForestImpact impact;
+    BfmForestSweep sweep;
     BfmForestSubmittedFrame submitted[3];
     unsigned next_frame;
     BfmForestOpeningData opening;
@@ -355,11 +357,12 @@ static int strike_world_point(const BfmForestTransform *root, const int local[3]
     return 1;
 }
 
-int bfm_forest_first_strike(BfmForestField *field, const BfmForestTransform *player_root,
-                            const int8_t tip[3], const int8_t next_tip[3], int16_t *yaw,
-                            int16_t effect_position[3], int16_t effect_normal[3])
+static int resolve_shore_strike(BfmForestField *field, const BfmForestTransform *player_root,
+                                const int8_t tip[3], const int8_t next_tip[3], int16_t *yaw,
+                                int16_t effect_position[3], int16_t effect_normal[3],
+                                const uint16_t *strength)
 {
-    if (!field || !player_root || !tip || !next_tip || !yaw || field->first_shore_hit)
+    if (!field || !player_root || !tip || !next_tip || !yaw || (!strength && field->first_shore_hit))
         return 0;
     const BfmForestActor *guard = bfm_forest_shore_actor(field->shore);
     const int origin[3] = {0, -30, 0};
@@ -377,18 +380,51 @@ int bfm_forest_first_strike(BfmForestField *field, const BfmForestTransform *pla
      * Across signed-byte endpoints the first qualifying squared length is 4288. */
     unsigned probes = squared >= 4288 ? 3 : 1;
     for (unsigned i = 0; i < probes; ++i) {
+        int16_t position[3], normal[3];
         if (!strike_world_point(player_root, points[i], end) ||
             !bfm_forest_guard_contact_point(&field->guard_box, guard->root, start, end,
-                                            center, effect_position, effect_normal))
+                                            center, position, normal))
             continue;
-        bfm_forest_dust_recoil_start(&field->dust, guard->root->translation, *yaw);
-        bfm_forest_shore_recoil(field->shore, (uint16_t)*yaw);
+        uint16_t incoming_yaw = (uint16_t)*yaw;
+        if (strength) {
+            if (!bfm_forest_shore_take_hit(field->shore, (uint16_t)*yaw, *strength)) return 0;
+        } else {
+            bfm_forest_shore_recoil(field->shore, (uint16_t)*yaw);
+            field->first_shore_hit = 1;
+        }
+        bfm_forest_dust_recoil_start(&field->dust, guard->root->translation, incoming_yaw);
         *yaw = (int16_t)bfm_forest_shore_bearing(player_root->translation[0] - center[0],
                                                  player_root->translation[2] - center[2]);
-        field->first_shore_hit = 1;
+        for (unsigned axis = 0; axis < 3; ++axis) {
+            if (effect_position) effect_position[axis] = position[axis];
+            if (effect_normal) effect_normal[axis] = normal[axis];
+        }
         return 1;
     }
     return 0;
+}
+
+int bfm_forest_first_strike(BfmForestField *field, const BfmForestTransform *player_root,
+                            const int8_t tip[3], const int8_t next_tip[3], int16_t *yaw,
+                            int16_t effect_position[3], int16_t effect_normal[3])
+{
+    return resolve_shore_strike(field, player_root, tip, next_tip, yaw,
+                                effect_position, effect_normal, NULL);
+}
+
+int bfm_forest_ground_strike(BfmForestField *field, const BfmForestTransform *player_root,
+                             const int8_t tip[3], const int8_t next_tip[3], uint16_t strength,
+                             int16_t *yaw, int16_t effect_position[3], int16_t effect_normal[3])
+{
+    return resolve_shore_strike(field, player_root, tip, next_tip, yaw,
+                                effect_position, effect_normal, &strength);
+}
+
+int bfm_forest_tick_sweep(BfmForestField *field, const MusashiDiscMedia *disc,
+                          int begin, uint32_t logical_pose, const BfmForestTransform *previous_root)
+{
+    if (begin) return bfm_forest_sweep_begin(&field->sweep, field);
+    return bfm_forest_sweep_step(&field->sweep, disc, logical_pose, previous_root);
 }
 
 int bfm_forest_submit_guard_and_impact(BfmForestField *field, const BfmForestHit *hit,
@@ -407,6 +443,7 @@ int bfm_forest_submit_guard_and_impact(BfmForestField *field, const BfmForestHit
     if (bfm_forest_marker_project(bfm_forest_shore_marker(field->shore), camera,
                                   &frame->cards[frame->count])) ++frame->count;
     frame->count += bfm_forest_impact_project(&field->impact, camera, frame->cards + frame->count);
+    frame->count += bfm_forest_sweep_project(&field->sweep, camera, frame->cards + frame->count);
     const BfmForestActor *guard = bfm_forest_shore_actor(field->shore);
     frame->guard_parts = guard ? guard->visible_parts : 0;
     if (guard) {
@@ -419,7 +456,13 @@ int bfm_forest_submit_guard_and_impact(BfmForestField *field, const BfmForestHit
 
 int bfm_forest_tick_shore_actor(BfmForestField *field, const int16_t player[3])
 {
-    if (!field || !player || bfm_forest_shore_step(field->shore, field, player) == BFM_SHORE_INVALID)
+    return bfm_forest_tick_shore_actor_with_run(field, player, NULL);
+}
+
+int bfm_forest_tick_shore_actor_with_run(BfmForestField *field, const int16_t player[3],
+                                        BfmGameplayRun *run)
+{
+    if (!field || !player || bfm_forest_shore_step(field->shore, field, player, run) == BFM_SHORE_INVALID)
         return 0;
     bfm_forest_shore_figures_tick(field->shore_figures, player);
     return bfm_forest_trail_step(field->trail, player) != BFM_TRAIL_INVALID;

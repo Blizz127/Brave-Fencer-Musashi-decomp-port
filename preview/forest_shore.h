@@ -11,10 +11,13 @@ BfmForestShore *bfm_forest_shore_open(const BfmForestField *field,
 void bfm_forest_shore_free(BfmForestShore *shore);
 /* Call before the guard update on a confirmed nonlethal first hit. */
 void bfm_forest_shore_recoil(BfmForestShore *shore, uint16_t attacker_yaw);
+/* Apply the incoming strength once the field confirms a distinct hit.
+ * Covers nonlethal hits outside an active recoil. Other cases return zero. */
+int bfm_forest_shore_take_hit(BfmForestShore *shore, uint16_t attacker_yaw, uint16_t strength);
 /* Outside the supported bank, the field can continue independently. */
 typedef enum { BFM_SHORE_INVALID, BFM_SHORE_UPDATED, BFM_SHORE_UNRESOLVED } BfmForestShoreUpdate;
 BfmForestShoreUpdate bfm_forest_shore_step(BfmForestShore *shore, const BfmForestField *field,
-                          const int16_t player[3]);
+                          const int16_t player[3], BfmGameplayRun *run);
 /* Active notice on this placed guard, in the same update as its model. */
 const BfmForestMarker *bfm_forest_shore_marker(const BfmForestShore *shore);
 const BfmForestActor *bfm_forest_shore_actor(const BfmForestShore *shore);

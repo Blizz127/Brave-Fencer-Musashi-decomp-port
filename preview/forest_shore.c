@@ -8,13 +8,14 @@
 
 struct BfmForestShore {
     int16_t spawn[3];
+    uint16_t health;
     int active, beyond_bank;
     MusashiForestPlayerMesh *mesh;
     BfmForestGuardClip walk, notice, recoil;
     BfmForestShoreMotion motion;
     int recoil_pending;
     BfmForestMarker marker;
-    int marker_key_seen, previously_close;
+    int marker_key_seen;
     BfmForestTransform root;
     BfmForestPose pose;
     BfmForestActor draw;
@@ -31,8 +32,13 @@ BfmForestShore *bfm_forest_shore_open(const BfmForestField *field,
     const uint8_t *placement = bfm_forest_room_bytes(field, list + 2 * 20, 20);
     if (!placement || u16le(placement + 6) != 47 || u16le(placement + 8) ||
         u16le(placement + 12)) return NULL;
+    /* The admitted placement has variant zero. Its soldier descriptor
+     * starts with the health assigned when this guard appears. */
+    const uint8_t *stats = bfm_forest_room_bytes(field, UINT32_C(0x8018abc0), 2);
+    if (!stats || s16le(stats) <= 0) return NULL;
     BfmForestShore *shore = calloc(1, sizeof *shore);
     if (!shore) return NULL;
+    shore->health = u16le(stats);
     for (unsigned i = 0; i < 3; ++i) shore->spawn[i] = s16le(placement + 2 * i);
     unsigned parts;
     shore->mesh = musashi_forest_player_mesh_from_table(scene, bytes, origin,
@@ -47,15 +53,28 @@ BfmForestShore *bfm_forest_shore_open(const BfmForestField *field,
     return shore;
 }
 
-void bfm_forest_shore_recoil(BfmForestShore *shore, uint16_t attacker_yaw)
+static void start_recoil(BfmForestShore *shore, uint16_t attacker_yaw)
 {
-    if (!shore || !shore->active || shore->beyond_bank || shore->motion.phase == BFM_SHORE_RECOIL)
-        return;
     shore->motion.yaw = (uint16_t)((attacker_yaw + 2048) & 4095);
     shore->motion.phase = BFM_SHORE_RECOIL;
     shore->motion.frame = 0;
     shore->motion.recoil_vy_q16 = 0;
     shore->recoil_pending = 1;
+}
+
+void bfm_forest_shore_recoil(BfmForestShore *shore, uint16_t attacker_yaw)
+{
+    if (bfm_forest_shore_actor(shore) && shore->motion.phase != BFM_SHORE_RECOIL)
+        start_recoil(shore, attacker_yaw);
+}
+
+int bfm_forest_shore_take_hit(BfmForestShore *shore, uint16_t attacker_yaw, uint16_t strength)
+{
+    if (!bfm_forest_shore_actor(shore) || shore->motion.phase == BFM_SHORE_RECOIL || strength >= shore->health)
+        return 0;
+    shore->health -= strength;
+    start_recoil(shore, attacker_yaw);
+    return 1;
 }
 
 static const BfmForestGuardClip *current_clip(const BfmForestShore *shore)
@@ -72,29 +91,20 @@ void bfm_forest_shore_free(BfmForestShore *shore)
     }
 }
 
-/* In the ordinary frontal encounter the first notice key 11 coincides
- * with the grounded player's approach into this measured separation.
- * Issue only on that observed combination, once for this placed guard. */
-static int step_marker(BfmForestShore *shore, const BfmForestField *field,
-                       const int16_t player[3])
+/* On entering the first notice action, the guard starts a 25-update timer.
+ * Its mounted animation reaches key 11 when the action observes 15 ticks left. */
+static int step_marker(BfmForestShore *shore, const BfmForestField *field)
 {
     const BfmForestShoreMotion *m = &shore->motion;
     bfm_forest_marker_advance(&shore->marker, m->position);
-    if (m->phase != BFM_SHORE_NOTICE || shore->marker_key_seen) return 1;
-    int64_t dx = (int)m->position[0] - player[0], dz = (int)m->position[2] - player[2];
-    int close = m->position[1] == player[1] && dz > 0 &&
-                dx * dx + dz * dz <= 38 * 38 + 134 * 134;
-    if (m->frame == 11) {
-        shore->marker_key_seen = 1;
-        if (close && !shore->previously_close)
-            return bfm_forest_marker_start(&shore->marker, field, m->position);
-    }
-    shore->previously_close = close;
-    return 1;
+    if (m->phase != BFM_SHORE_NOTICE || m->frame != 11 || shore->marker_key_seen)
+        return 1;
+    shore->marker_key_seen = 1;
+    return bfm_forest_marker_start(&shore->marker, field, m->position);
 }
 
 BfmForestShoreUpdate bfm_forest_shore_step(BfmForestShore *shore, const BfmForestField *field,
-                          const int16_t player[3])
+                          const int16_t player[3], BfmGameplayRun *run)
 {
     if (!shore || !field || !player) return BFM_SHORE_INVALID;
     if (shore->beyond_bank) return BFM_SHORE_UNRESOLVED;
@@ -128,8 +138,11 @@ BfmForestShoreUpdate bfm_forest_shore_step(BfmForestShore *shore, const BfmFores
     bfm_forest_actor_root(motion->yaw, motion->position, &shore->root);
     /* The first hit pose draws at the preceding standing height. */
     if (first_hit) shore->root.translation[1] = prior_y;
+    /* Creating this placed soldier chooses a patrol timer. The admitted
+     * walking and notice actions do not consult its value. */
+    if (!shore->active && run) bfm_gameplay_random(run);
     shore->active = 1;
-    return step_marker(shore, field, player) ? BFM_SHORE_UPDATED : BFM_SHORE_INVALID;
+    return step_marker(shore, field) ? BFM_SHORE_UPDATED : BFM_SHORE_INVALID;
 }
 
 const BfmForestActor *bfm_forest_shore_actor(const BfmForestShore *shore)

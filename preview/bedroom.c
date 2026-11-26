@@ -43,6 +43,7 @@ struct BfmBedroom {
     uint32_t (*books_background)[320];
     uint16_t tiles[512][1024];
     BfmBedroomEntry entry;
+    uint8_t *story_flags;
     BfmBedroomScript script;
     BfmBedroomField *field;
     BfmBedroomMotion *motion;
@@ -91,6 +92,14 @@ static const uint8_t *data_range(const BfmBedroom *room, uint32_t address, size_
         address - scene_base > room->scene_bytes - size) return NULL;
     return room->scene + (address - scene_base);
 }
+
+void bfm_bedroom_bind_story_flags(BfmBedroom *room, uint8_t flags[64])
+{
+    if (!room || !flags || room->story_flags == flags) return;
+    memcpy(flags, room->story_flags, sizeof room->entry.state.flags);
+    room->story_flags = flags;
+}
+
 void bfm_bedroom_free(BfmBedroom *room)
 {
     if (!room) return;
@@ -120,6 +129,7 @@ BfmBedroom *bfm_bedroom_open(const MusashiDiscMedia *disc, const BfmSaveRecord *
     if (!room) return NULL;
     room->disc = disc;
     room->entry = entry;
+    room->story_flags = room->entry.state.flags;
     room->waking = 1;
     room->scene = malloc(BFM_FIELD_SCENE_CAPACITY);
     if (!room->scene) goto failed;
@@ -171,9 +181,9 @@ BfmBedroom *bfm_bedroom_open(const MusashiDiscMedia *disc, const BfmSaveRecord *
     /* The early-story actor starts its program with progress 10 and clears
      * four transient scene flags in the restored live record. */
     room->entry.state.variables[226] = 0;
-    room->entry.state.flags[303 / 8] |= (uint8_t)(1u << (303 % 8));
+    room->story_flags[303 / 8] |= (uint8_t)(1u << (303 % 8));
     for (unsigned flag = 293; flag <= 296; ++flag)
-        room->entry.state.flags[flag >> 3] &= (uint8_t)~(1u << (flag & 7));
+        room->story_flags[flag >> 3] &= (uint8_t)~(1u << (flag & 7));
     return room;
 failed:
     bfm_bedroom_free(room);
@@ -183,6 +193,7 @@ failed:
 static int enter_library(BfmBedroom *r)
 {
     BfmBedroomEntry entry=r->entry;
+    memcpy(entry.state.flags, r->story_flags, sizeof entry.state.flags);
     const uint8_t *destination=data_range(r,0x80185e5cu,sizeof(entry.state.destination));
     if (!bfm_library_entry(r->disc,destination,&entry)) return 0;
     bfm_bedroom_field_free(r->field); r->field=NULL;
@@ -223,6 +234,7 @@ static int enter_library(BfmBedroom *r)
     if (!walk_duration || !bfm_bedroom_motion_step(r->motion, BFM_BEDROOM_ENTER, &r->pose) ||
         !bfm_bedroom_travel_entrance(r->travel, word(walk_duration))) return 0;
     entry.state.flags[303 / 8] &= (uint8_t)~(1u << (303 % 8));
+    memcpy(r->story_flags, entry.state.flags, sizeof entry.state.flags);
     r->entry=entry;
     r->library=1;
     r->entry_wait=4;
@@ -432,16 +444,16 @@ static int render_scene(BfmBedroom *room, const BfmBedroomPose *pose, uint32_t p
          * while the early-story room controls Musashi. */
         body.visible_parts = UINT32_C(0x7fffffff) &
                              ~((UINT32_C(1) << 22) | (UINT32_C(1) << 25));
-        if (pose->show_weapon && !(room->entry.state.flags[303 / 8] & (1u << (303 % 8)))) {
+        if (pose->show_weapon && !(room->story_flags[303 / 8] & (1u << (303 % 8)))) {
             if (room->library) {
                 body.blade = &room->blade;
                 body.blade_tick = room->update ^ 1u;
-                body.green_blade = (room->entry.state.flags[129 / 8] >> (129 % 8)) & 1u;
+                body.green_blade = (room->story_flags[129 / 8] >> (129 % 8)) & 1u;
             }
             body.visible_parts &= ~(UINT32_C(1) << 21);
             body.visible_parts |= UINT32_C(1) << 22;
         }
-        if (!(room->entry.state.flags[128 / 8] & 1))
+        if (!(room->story_flags[128 / 8] & 1))
             body.visible_parts &= ~(UINT32_C(1) << 24);
         for (unsigned axis = 0; axis < 3; ++axis) {
             body.position[axis] = root->xyz[axis];
@@ -521,7 +533,7 @@ int bfm_bedroom_step_pad(BfmBedroom *room, int confirm_edge, int reveal_edge,
                 if (!entry || !data_range(room, word(entry), 1)) return 0;
                 room->script.book = selection;
                 if (book == 1)
-                    room->entry.state.flags[232 / 8] |= 1u << (232 % 8);
+                    room->story_flags[232 / 8] |= 1u << (232 % 8);
                 room->chapter_text = word(entry);
                 room->books_closing = 1;
             }

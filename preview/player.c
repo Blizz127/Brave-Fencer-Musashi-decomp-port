@@ -7,6 +7,7 @@
 #include "title_flow.h"
 #include "save_menu.h"
 #include "forest_walk.h"
+#include "gameplay_run.h"
 #include "bedroom.h"
 
 #include <stdio.h>
@@ -25,6 +26,7 @@ typedef struct Player {
     void *title, *opening;
     DesktopVoice *voice;
     BfmForestWalk *forest;
+    BfmGameplayRun gameplay;
     uint64_t forest_start;
     unsigned forest_updates;
     uint16_t forest_pressed;
@@ -112,7 +114,10 @@ static void phase_changed(Player *p) {
     switch (p->flow.phase) {
     case BFM_TITLE_PROMPT: caption = "Brave Fencer Musashi"; break;
     case BFM_TITLE_MENU: caption = "Brave Fencer Musashi - Start / Continue"; break;
-    case BFM_TITLE_LOADING: caption = "Brave Fencer Musashi - Loading New Game"; break;
+    case BFM_TITLE_LOADING:
+        memset(p->gameplay.story_flags, 0, sizeof p->gameplay.story_flags);
+        caption = "Brave Fencer Musashi - Loading New Game";
+        break;
     case BFM_TITLE_OPENING: caption = "Brave Fencer Musashi - Opening"; break;
     case BFM_TITLE_BEDROOM: caption = "Brave Fencer Musashi - Castle bedroom"; break;
     case BFM_TITLE_FILES:
@@ -237,6 +242,7 @@ static int start_forest(Player *p, unsigned field)
     uint64_t forest_field;
     p->forest = bfm_opening_take_forest(p->opening, p->disc, field, &forest_field);
     if (!p->forest) return 0;
+    bfm_forest_walk_bind_gameplay(p->forest, &p->gameplay);
     bfm_opening_free(p->opening);
     p->opening = NULL;
     p->forest_start = forest_field ? p->phase_start + (forest_field * 1001 + 59) / 60
@@ -337,7 +343,10 @@ static int play(Player *p, char *error, size_t size) {
                 }
                 if (previous == BFM_SAVE_CONFIRM && p->saves.page == BFM_SAVE_BOUNDARY) {
                     p->bedroom = bfm_bedroom_open(p->disc, &p->saves.records[p->saves.selected]);
-                    if (p->bedroom) p->saves.page = BFM_SAVE_LOADED;
+                    if (p->bedroom) {
+                        bfm_bedroom_bind_story_flags(p->bedroom, p->gameplay.story_flags);
+                        p->saves.page = BFM_SAVE_LOADED;
+                    }
                 } else if (previous == BFM_SAVE_LOADED && p->saves.page == BFM_SAVE_PICK) {
                     bfm_bedroom_free(p->bedroom);
                     p->bedroom = NULL;

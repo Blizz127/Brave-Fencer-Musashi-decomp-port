@@ -6,6 +6,7 @@
 #include "forest_player_state.h"
 #include "forest_terrain.h"
 #include "forest_dust.h"
+#include "gameplay_run.h"
 
 typedef struct BfmForestField BfmForestField;
 
@@ -40,14 +41,23 @@ typedef struct {
     int connected;
     int16_t position[3], normal[3];
 } BfmForestHit;
+int bfm_forest_tick_sweep(BfmForestField *field, const MusashiDiscMedia *disc,
+                          int begin, uint32_t logical_pose, const BfmForestTransform *previous_root);
 int bfm_forest_submit_guard_and_impact(BfmForestField *field, const BfmForestHit *hit,
                            const int32_t camera_eye[3], const BfmForestCamera *camera);
+int bfm_forest_tick_shore_actor_with_run(BfmForestField *field, const int16_t player[3],
+                                        BfmGameplayRun *run);
 int bfm_forest_tick_shore_actor(BfmForestField *field, const int16_t player[3]);
 /* Resolve the first sword impact using the current and next action key.
  * A hit turns the player and guard. Both world-space effect outputs are optional. */
 int bfm_forest_first_strike(BfmForestField *field, const BfmForestTransform *player_root,
                             const int8_t tip[3], const int8_t next_tip[3], int16_t *yaw,
                             int16_t effect_position[3], int16_t effect_normal[3]);
+/* Apply a grounded Fusion swing's rolled strength. Another nonlethal hit is
+ * eligible once the guard has recovered. A miss leaves all outputs untouched. */
+int bfm_forest_ground_strike(BfmForestField *field, const BfmForestTransform *player_root,
+                             const int8_t tip[3], const int8_t next_tip[3], uint16_t strength,
+                             int16_t *yaw, int16_t effect_position[3], int16_t effect_normal[3]);
 int bfm_forest_draw_entrance_player(BfmForestField *field, const BfmForestCamera *camera,
                            const BfmForestPose *pose, const BfmForestTransform *root,
                            uint32_t visible_parts, unsigned buffer, const BfmForestBladeFrame *frame,

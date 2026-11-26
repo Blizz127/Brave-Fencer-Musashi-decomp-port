@@ -4,6 +4,7 @@ find_package(SDL2 2.0.18 REQUIRED CONFIG)
 set(bfm_root "${CMAKE_CURRENT_SOURCE_DIR}/..")
 add_executable(musashi_native_boot
     player.c
+    gameplay_run.c
     desktop_voice.c
     palace_effects.c
     palace_score.c
@@ -47,6 +48,7 @@ add_executable(musashi_native_boot
     forest_entry.c
     forest_dust.c
     forest_field.c
+    forest_fusion_power.c
     forest_hud.c
     forest_status.c
     forest_manual.c
@@ -72,6 +74,7 @@ add_executable(musashi_native_boot
     forest_walk.c
     forest_swing.c
     forest_impact.c
+    forest_sweep.c
     scene_payload.c
     "${bfm_root}/pc_port/forest_player_archive.c"
     "${bfm_root}/pc_port/forest_player_mesh.c"

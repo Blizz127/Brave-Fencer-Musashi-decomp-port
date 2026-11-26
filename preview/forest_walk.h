@@ -2,6 +2,7 @@
 #ifndef BFM_FOREST_WALK_H
 #define BFM_FOREST_WALK_H
 #include "forest_entry.h"
+#include "gameplay_run.h"
 
 typedef struct BfmForestWalk BfmForestWalk;
 
@@ -10,6 +11,8 @@ enum { BFM_FOREST_CROSS = 1u << 14, BFM_FOREST_SQUARE = 1u << 15 };
 /* The door owns this short automatic walk. Caller hands over the transfer
  * resolved from its active opening scene when the chapter card has finished. */
 BfmForestWalk *bfm_forest_walk_open(const MusashiDiscMedia *disc, const RoomTransferDescriptor *entry);
+/* Attach the application-owned gameplay stream before player control starts. */
+void bfm_forest_walk_bind_gameplay(BfmForestWalk *walk, BfmGameplayRun *run);
 /* Completed world updates at the first forest pose. A caller without the
  * departing scene's clock can still use action-triggered effects. */
 void bfm_forest_walk_inherit_clock(BfmForestWalk *walk, uint16_t first_tick);

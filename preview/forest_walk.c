@@ -4,6 +4,7 @@
 #include "forest_motion.h"
 #include "forest_manual.h"
 #include "forest_swing.h"
+#include "forest_fusion_power.h"
 #include "forest_hud.h"
 #include "forest_message.h"
 #include "forest_message_art.h"
@@ -27,6 +28,8 @@ typedef struct {
 
 struct BfmForestWalk {
     BfmForestField *field;
+    BfmGameplayRun standalone_gameplay;
+    BfmGameplayRun *gameplay;
     const MusashiDiscMedia *disc;
     ForestPlayerState actor;
     BfmForestOpeningData data;
@@ -45,9 +48,10 @@ struct BfmForestWalk {
     BfmForestHud *hud;
     int player_control, input_x, input_y;
     int jump_pressed, jump_held, control_polled;
-    int attack_pressed, swing_sound, hit_sound, swing_recover, swing_connected;
+    int attack_pressed, swing_sound, hit_sound, swing_connected;
     unsigned swing_age;
     BfmForestSwing swing;
+    BfmForestFusionPower fusion_power;
     int at_boundary, blocked_x, blocked_y;
     BfmForestMessage *message;
     BfmForestMessageArt *message_art;
@@ -229,6 +233,7 @@ BfmForestWalk *bfm_forest_walk_open(const MusashiDiscMedia *disc,const RoomTrans
 {
     if (!entry || entry->parameter!=0) return NULL;
     BfmForestWalk *w=calloc(1,sizeof *w); if(!w) return NULL;
+    w->gameplay = &w->standalone_gameplay;
     w->entry_world_tick = -1;
     w->disc=disc; w->field=bfm_forest_enter(disc,entry,&w->actor,&w->yaw,w->cached);
     w->entrance_yaw=w->yaw;
@@ -245,6 +250,11 @@ BfmForestWalk *bfm_forest_walk_open(const MusashiDiscMedia *disc,const RoomTrans
     if(update_pose(w)) return w;
 fail:
     bfm_forest_walk_free(w); return NULL;
+}
+
+void bfm_forest_walk_bind_gameplay(BfmForestWalk *w, BfmGameplayRun *run)
+{
+    if (w) w->gameplay = run ? run : &w->standalone_gameplay;
 }
 
 void bfm_forest_walk_inherit_clock(BfmForestWalk *w, uint16_t first_tick)
@@ -400,13 +410,23 @@ static int select_jump_pose(BfmForestWalk *w)
 
 /* The grounded attack stops movement. The end of the mounted strike window
  * allows a new direction to take over while the last keys are playing. */
-static int tick_swing(BfmForestWalk *w, int x, int y, BfmForestDustEmission *dust,
-                      BfmForestHit *hit)
+static int tick_swing(BfmForestWalk *w, int x, int y, int attack_pressed,
+                      BfmForestDustEmission *dust, BfmForestHit *hit)
 {
-    if (w->actor.state != 5) {
-        if (!w->swing.count && !bfm_forest_swing_load(w->disc, &w->swing)) return 0;
+    /* A new Square after four active updates can restart an ordinary slash
+     * that missed. Connected combo follow-ups have their own actions. */
+    int repeat_miss = attack_pressed && !w->swing_connected && w->actor.strike_updates >= 4 &&
+                      w->swing_age + 1 < w->swing.count;
+    int starting = w->actor.state != 5 || repeat_miss;
+    if (starting) {
+        if (!w->swing.count &&
+            (!bfm_forest_fusion_power_load(w->disc, w->field, &w->fusion_power) ||
+             !bfm_forest_swing_load(w->disc, &w->swing))) return 0;
         w->swing_age = 0;
-        w->swing_recover = 0;
+        w->actor.field_1a8 = 0;
+        w->actor.strike_updates = 0;
+        w->actor.ordinary_strike_toggle ^= 1;
+        w->actor.strike_index = w->actor.ordinary_strike_toggle ? 0 : 1;
         w->swing_connected = 0;
         w->swing_sound = 1;
         w->actor.state = 5;
@@ -418,16 +438,26 @@ static int tick_swing(BfmForestWalk *w, int x, int y, BfmForestDustEmission *dus
         ++w->swing_age;
     }
     const BfmForestSwingFrame *key = bfm_forest_swing_frame(&w->swing, w->swing_age);
-    if (key && key->marker && !key->window) w->swing_recover = 1;
-    if (!key || ((x || y) && w->swing_recover)) {
+    w->actor.field_1a8 = key && key->window;
+    if (!key || ((x || y) && !w->actor.field_1a8 && w->actor.strike_updates)) {
         w->actor.state = 0;
         return tick_ground(w, x, y, 1, dust) > 0;
     }
-    if (key->window && !w->swing_connected) {
+    /* Initializing the action installs its motion and clears contact state.
+     * Strength belongs to the subsequent active updates. */
+    if (starting) return 1;
+    /* The grounded action rolls strength before testing the blade. A miss
+     * or a recovering target still advances the shared gameplay stream. */
+    uint16_t strength;
+    if (!bfm_forest_fusion_strength(&w->fusion_power, &w->status, w->actor.strike_index,
+                                    bfm_gameplay_story_flag(w->gameplay, 0x81),
+                                    bfm_gameplay_random(w->gameplay), &strength)) return 0;
+    if (w->actor.field_1a8) ++w->actor.strike_updates;
+    if (w->actor.field_1a8 && !w->swing_connected) {
         const BfmForestSwingFrame *next = bfm_forest_swing_frame(&w->swing, w->swing_age + 1);
         if (!next) return 0;
-        hit->connected = bfm_forest_first_strike(w->field, &w->root, key->tip, next->tip,
-                                                &w->yaw, hit->position, hit->normal);
+        hit->connected = bfm_forest_ground_strike(w->field, &w->root, key->tip, next->tip,
+                                                  strength, &w->yaw, hit->position, hit->normal);
         if (hit->connected < 0) return 0;
         w->swing_connected = hit->connected;
     }
@@ -443,6 +473,8 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
 {
     BfmForestDustEmission dust = BFM_FOREST_DUST_NONE;
     BfmForestHit hit = {0};
+    BfmForestTransform previous_root = w->root;
+    uint32_t sweep_pose = 0;
     int continuing_stride = (x || y) && x == w->stride_x && y == w->stride_y;
     w->stride_x = w->stride_y = 0;
     bfm_forest_hud_tick(w->hud);
@@ -460,7 +492,8 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
         !bfm_forest_walkoff_poses_load(w->disc, w->data.animation_table, &w->stride_poses))
         return -1;
     if (swinging) {
-        if (!tick_swing(w, x, y, &dust, &hit)) return -1;
+        if (!tick_swing(w, x, y, attack_pressed, &dust, &hit)) return -1;
+        if (w->actor.state == 5) sweep_pose = w->swing.frames[w->swing_age].pose;
     } else if (launched) {
         w->stride_jump = continuing_stride;
         if (w->stride_jump) {
@@ -504,7 +537,8 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
     }
     bfm_forest_voice_step(w->voice);
     ++w->tick;
-    if (!follow(w) || !bfm_forest_tick_shore_actor(w->field, w->cached) ||
+    if (!bfm_forest_tick_sweep(w->field, w->disc, w->swing_sound, sweep_pose, &previous_root) ||
+        !follow(w) || !bfm_forest_tick_shore_actor_with_run(w->field, w->cached, w->gameplay) ||
         !bfm_forest_submit_guard_and_impact(w->field, &hit, w->eye, &w->camera))
         return -1;
     w->hit_sound = hit.connected;

@@ -5,6 +5,8 @@
 
 typedef struct BfmBedroom BfmBedroom;
 BfmBedroom *bfm_bedroom_open(const MusashiDiscMedia *disc, const BfmSaveRecord *record);
+/* Adopt the restored room flags into the process-owned bank after loading. */
+void bfm_bedroom_bind_story_flags(BfmBedroom *room, uint8_t flags[64]);
 void bfm_bedroom_free(BfmBedroom *room);
 enum { BFM_BEDROOM_ADVANCED = 1, BFM_BEDROOM_VOICE_STOPPED };
 int bfm_bedroom_step(BfmBedroom *room);

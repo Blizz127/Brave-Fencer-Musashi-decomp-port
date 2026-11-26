@@ -48,7 +48,8 @@ typedef struct {
     u16 field_16e;
     u8 pad170[0x1a8 - 0x170];
     u8 field_1a8;
-    u8 pad1a9[0x1f4 - 0x1a9];
+    u8 strike_updates, strike_index, ordinary_strike_toggle;
+    u8 pad1ac[0x1f4 - 0x1ac];
     u32 status_mask;
     u32 scene_callback;
     u8 pad1fc[0x204 - 0x1fc];
