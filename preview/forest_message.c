@@ -76,7 +76,7 @@ static int print_update(BfmForestMessage *m)
             ++m->cursor;
             break;
         case 0x02: /* Open dialogue border */
-            if (left < 2 || !set_style(m, arg[0]) || (arg[1] != 1 && arg[1] != 2)) return 0;
+            if (left < 2 || !set_style(m, arg[0]) || (arg[1] < 1 || arg[1] > 3)) return 0;
             f->portrait = arg[1];
             m->cursor += 2;
             f->border_step = 2;
@@ -151,7 +151,7 @@ static int print_update(BfmForestMessage *m)
             m->cursor += 2;
             break;
         case 0x15:
-            if (m->voice_interrupted && !m->timer) break;
+            if (!m->timer) break;
             m->phase = WAIT_TIMER;
             return 1;
         case 0x18:

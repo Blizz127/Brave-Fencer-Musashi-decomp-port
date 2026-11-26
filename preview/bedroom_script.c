@@ -55,7 +55,9 @@ int bfm_bedroom_script_tick(BfmBedroomScript *s, int player_queue_idle, int mess
             switch (arg) {
             case 0x801807d8u: event = BFM_BED_UPRIGHT; break;
             case 0x80180a38u: event = BFM_BED_VISITORS_ENTER; break;
-            case 0x80180b04u: event = BFM_BED_VISITOR_SPEAKS; break;
+            case 0x80180b04u: event = BFM_BED_RIBSON_SPEAKS; break;
+            case 0x80180b14u: event = BFM_BED_RIBSON_RESTS; break;
+            case 0x80180b24u: event = BFM_BED_BUTLER_SPEAKS; break;
             default: goto invalid;
             }
             break;
@@ -70,7 +72,8 @@ int bfm_bedroom_script_tick(BfmBedroomScript *s, int player_queue_idle, int mess
         case 0x03: event = BFM_BED_WALK; break;
         case 0x05: event = BFM_BED_RETREAT; break;
         case 0x1d: event = BFM_BED_NOTICE; break;
-        case 0x37: event = BFM_BED_SPEAKER; break;
+        case 0x37: event = BFM_BED_VISITOR_LAYOUT; break;
+        case 0x38: event = BFM_BED_PLAYER_LAYOUT; break;
         case 0x07: event = BFM_BED_TURN; break;
         case 0x3a: event = BFM_BED_WINDOW_POSITION; break;
         case 0x00:

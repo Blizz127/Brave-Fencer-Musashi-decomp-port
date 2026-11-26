@@ -23,8 +23,7 @@ typedef struct {
     BfmBedroomVisitorPose frame;
     VisitorState state;
     uint32_t route_cursor, animation, cursor;
-    unsigned hold, ticks, speech_delay;
-    int speech_requested;
+    unsigned hold, ticks, speech_delay, requested_clip;
     int64_t x, z, vx, vz;
 } Visitor;
 
@@ -138,12 +137,12 @@ static int step(const BfmBedroomVisitors *v, Visitor *p, const VisitorClass *cl)
     case FOLLOWING:
         return travel(v, p, cl);
     case ARRIVED:
-        if (p->speech_requested) {
+        if (p->requested_clip) {
             if (!p->speech_delay) p->speech_delay = 8;
             else if (!--p->speech_delay) {
-                const uint8_t *entry = span(v, cl->speech_table + 4, 4);
+                const uint8_t *entry = span(v, cl->speech_table + 4 * p->requested_clip, 4);
                 if (!entry) return 0;
-                p->speech_requested = 0;
+                p->requested_clip = 0;
                 return animate(v, p, cl, word(entry));
             }
         }
@@ -182,9 +181,17 @@ int bfm_bedroom_visitors_spawn(BfmBedroomVisitors *v)
     return 1;
 }
 
+void bfm_bedroom_visitors_request(BfmBedroomVisitors *v, BfmBedroomVisitorCue cue)
+{
+    if (!v || (unsigned)cue > BFM_VISITOR_BUTLER_SPEAK) return;
+    Visitor *actor = &v->people[cue == BFM_VISITOR_BUTLER_SPEAK ? 1 : 0];
+    if (actor->state != ABSENT)
+        actor->requested_clip = cue == BFM_VISITOR_RIBSON_REST ? 2 : 1;
+}
+
 void bfm_bedroom_visitors_speak(BfmBedroomVisitors *v)
 {
-    if (v && v->people[0].state != ABSENT) v->people[0].speech_requested = 1;
+    bfm_bedroom_visitors_request(v, BFM_VISITOR_RIBSON_SPEAK);
 }
 
 int bfm_bedroom_visitors_step(BfmBedroomVisitors *v)

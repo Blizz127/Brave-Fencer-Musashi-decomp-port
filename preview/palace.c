@@ -673,10 +673,23 @@ void bfm_bedroom_field_free(BfmBedroomField *field)
     free(field);
 }
 
-static int field_sine(int angle)
+/* The room camera uses the paired fixed-point rotation coefficients. A
+ * reflected quarter starts with its final sample, phase 1023. Signed angles
+ * select the magnitude first and change the sign of the sine. */
+static int field_quarter_axis(unsigned units)
 {
-    const double turn = 6.28318530717958647693;
-    return (int)lround(sin(angle * (turn / 4096.0)) * 4096.0);
+    unsigned phase = units & 1023u;
+    if (units & 1024u) phase = 1023u - phase;
+    int value = (int)lround(4096 * sin(phase * (6.28318530717958647693 / 4096)));
+    return units & 2048u ? -value : value;
+}
+
+static void field_rotation(int angle, int *sine, int *cosine)
+{
+    unsigned magnitude = (unsigned)abs(angle);
+    int value = field_quarter_axis(magnitude);
+    *sine = angle < 0 ? -value : value;
+    *cosine = field_quarter_axis(magnitude + 1024u);
 }
 
 static void refresh_bedroom_view(BfmBedroomField *field)
@@ -696,8 +709,9 @@ int bfm_bedroom_field_camera(BfmBedroomField *field, const uint8_t *scene,
     if (!field || !p || !actor_origin) return 0;
     int yaw = signed16(p + 8), distance = signed16(p + 10), pitch = signed16(p + 12);
     if (distance <= 0) return 0;
-    int cx = field_sine(1024 - pitch), sx = field_sine(pitch);
-    int sy = field_sine(yaw), cy = field_sine(1024 + yaw);
+    int sx, cx, sy, cy;
+    field_rotation(pitch, &sx, &cx);
+    field_rotation(yaw, &sy, &cy);
     int arm[3] = {floor_div((int64_t)sy * cx, 4096), sx, floor_div((int64_t)cy * cx, 4096)};
     int coordinates[6];
     for (unsigned i = 0; i < 3; ++i) {

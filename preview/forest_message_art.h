@@ -22,4 +22,7 @@ void bfm_forest_message_art_draw(const BfmForestMessageArt *art,
                                  uint32_t pixels[240][320]);
 void bfm_bedroom_message_art_draw(const BfmForestMessageArt *art, const BfmForestMessageFrame *frame,
                                   int speaker_x, uint32_t pixels[240][320]);
+/* The active room command selects the side and positions the tail in screen space. */
+void bfm_bedroom_message_art_draw_side(const BfmForestMessageArt *art, const BfmForestMessageFrame *frame,
+                                       int speaker_x, int portrait_on_right, uint32_t pixels[240][320]);
 #endif

@@ -17,6 +17,10 @@
 #include <string.h>
 
 static const uint32_t scene_base = UINT32_C(0x80128158);
+typedef struct {
+    int offset_x, portrait_on_right;
+} BedroomWindowLayout;
+
 struct BfmBedroom {
     uint8_t *scene, *main;
     size_t scene_bytes;
@@ -35,7 +39,8 @@ struct BfmBedroom {
     BfmForestMessageArt *message_art;
     ForestVoice *voice;
     unsigned generation, message_closed, look_count;
-    int waking, notice_pending, visitor_window, window_position;
+    int waking, notice_pending, visitor_window, butler_speaking;
+    BedroomWindowLayout player_layout, visitor_layout;
     BfmBedroomAction requested, pending;
     BfmBedroomPose pose;
     int camera_actor[3];
@@ -148,12 +153,24 @@ static int apply(void *context, BfmBedroomEvent event, uint32_t operand)
         room->camera_actor[0] = 136;
         room->camera_actor[2] = 96;
         return bfm_bedroom_visitors_spawn(room->visitors);
-    case BFM_BED_VISITOR_SPEAKS:
-        bfm_bedroom_visitors_speak(room->visitors);
+    case BFM_BED_RIBSON_SPEAKS:
+        bfm_bedroom_visitors_request(room->visitors, BFM_VISITOR_RIBSON_SPEAK);
         break;
-    case BFM_BED_SPEAKER:
-        room->window_position = (int16_t)operand;
+    case BFM_BED_RIBSON_RESTS:
+        bfm_bedroom_visitors_request(room->visitors, BFM_VISITOR_RIBSON_REST);
         break;
+    case BFM_BED_BUTLER_SPEAKS:
+        bfm_bedroom_visitors_request(room->visitors, BFM_VISITOR_BUTLER_SPEAK);
+        room->butler_speaking = 1;
+        break;
+    case BFM_BED_VISITOR_LAYOUT:
+    case BFM_BED_PLAYER_LAYOUT: {
+        BedroomWindowLayout *layout = event == BFM_BED_VISITOR_LAYOUT ?
+                                      &room->visitor_layout : &room->player_layout;
+        layout->offset_x = (int16_t)operand;
+        layout->portrait_on_right = (operand >> 16) != 0;
+        break;
+    }
     case BFM_BED_CUE:
     case BFM_BED_WINDOW_POSITION:
         break;
@@ -226,9 +243,13 @@ static int render_scene(BfmBedroom *room, const BfmBedroomPose *pose, uint32_t p
         bfm_bedroom_reaction_depth(&room->reaction, view, root->xyz) };
     bfm_bedroom_field_draw(room->field, room->tiles, draw.pixels,
                            pose->pose ? draw_actors_to : NULL, &draw);
-    if (room->visitor_window && room->message)
-        bfm_bedroom_message_art_draw(room->message_art, bfm_forest_message_frame(room->message),
-                                     159 + room->window_position, pixels);
+    if (!room->waking && room->message) {
+        const BedroomWindowLayout *layout = room->visitor_window ?
+                                            &room->visitor_layout : &room->player_layout;
+        int anchor = (layout->portrait_on_right ? 159 : 160) + layout->offset_x;
+        bfm_bedroom_message_art_draw_side(room->message_art, bfm_forest_message_frame(room->message),
+                                         anchor, layout->portrait_on_right, pixels);
+    }
     bfm_bedroom_fade_draw(&room->fade, pixels);
     return 1;
 }
@@ -282,13 +303,12 @@ int bfm_bedroom_step_input(BfmBedroom *room, int confirm_edge, int reveal_edge)
         }
         if (flags & (1u << 2)) speech_action = BFM_BEDROOM_SEARCH;
         if (f->events & BFM_FOREST_MESSAGE_CLOSED) {
-            if (room->visitor_window)
-                room->message_closed = 1;
-            else {
-                bfm_forest_message_free(room->message);
-                room->message = NULL;
-                room->waking = 0;
-            }
+            /* The next room event returns the butler to rest before it cuts
+             * back to Musashi for a new exchange. Hold the cleared visitor view. */
+            room->message_closed = room->visitor_window && room->butler_speaking;
+            bfm_forest_message_free(room->message);
+            room->message = NULL;
+            room->waking = 0;
         }
     }
     const BfmBedroomView *view = bfm_bedroom_field_view(room->field);
@@ -337,7 +357,7 @@ int bfm_bedroom_step(BfmBedroom *room)
 int bfm_bedroom_draw(BfmBedroom *room, uint32_t pixels[240][320])
 {
     memcpy(pixels, room->frames[room->presented], sizeof room->frames[0]);
-    if (room->message && !room->visitor_window) {
+    if (room->message && room->waking) {
         const BfmBedroomRoot *root = bfm_bedroom_travel_root(room->travel);
         int projection[3];
         if (!bfm_bedroom_project(bfm_bedroom_field_view(room->field), root->xyz, projection)) return 0;

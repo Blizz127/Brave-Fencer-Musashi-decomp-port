@@ -11,9 +11,8 @@ enum { TAIL_OFFSET = 0x2030, FONT_OFFSET = 0x24cbc, CONTOUR_OFFSET = 0x257fc,
 struct BfmForestMessageArt {
     BfmDialoguePoint contour[2][CORNERS], inset[2][CORNERS];
     uint8_t glyph[GLYPHS][FONT_HEIGHT];
-    uint32_t portrait[2][40][32], tail[16][16], ink[16];
+    uint32_t portrait[3][40][32], tail[16][16], ink[16];
     uint32_t paper, highlight, outline;
-    unsigned right_portrait;
 };
 
 static unsigned le16(const uint8_t *p)
@@ -81,10 +80,12 @@ static int read_art(BfmForestMessageArt *art, const MusashiDiscMedia *disc,
             unsigned index = (tail[y * 64 + x/2] >> (4 * (x & 1))) & 15;
             art->tail[y][x] = bubble[index] ? rgb(bubble[index]) : 0;
         }
-    for (unsigned face = 0; face < 2; ++face) {
-        unsigned left = face ? 456 : 624;
+    /* Musashi is in the shared atlas. The two courtiers occupy successive
+     * portrait slots in the room upload, each with its own palette. */
+    for (unsigned face = 0; face < 3; ++face) {
+        unsigned left = face ? 448 + 8 * face : 624;
         unsigned top = face ? 400 : 416;
-        unsigned palette = face ? 457 : 296;
+        unsigned palette = face ? 456 + face : 296;
         for (unsigned y = 0; y < 40; ++y)
             for (unsigned x = 0; x < 32; ++x) {
                 unsigned packed = tiles[top + y][left + x/4];
@@ -96,8 +97,7 @@ static int read_art(BfmForestMessageArt *art, const MusashiDiscMedia *disc,
 }
 
 static BfmForestMessageArt *load_art(const MusashiDiscMedia *disc, const uint8_t *scene,
-                                     size_t bytes, const uint16_t tiles[512][1024], size_t inset,
-                                     unsigned right)
+                                     size_t bytes, const uint16_t tiles[512][1024], size_t inset)
 {
     if (!disc || !scene || !tiles || inset > bytes || bytes - inset < 4 * CORNERS)
         return NULL;
@@ -106,7 +106,6 @@ static BfmForestMessageArt *load_art(const MusashiDiscMedia *disc, const uint8_t
         free(art);
         return NULL;
     }
-    if (art) art->right_portrait = right;
     return art;
 }
 
@@ -114,14 +113,14 @@ BfmForestMessageArt *bfm_forest_message_art_load(const MusashiDiscMedia *disc,
                                                 const uint8_t *scene, size_t bytes,
                                                 const BfmForestTerrain *terrain)
 {
-    return load_art(disc, scene, bytes, bfm_forest_terrain_tiles(terrain), FOREST_INSET, 0);
+    return load_art(disc, scene, bytes, bfm_forest_terrain_tiles(terrain), FOREST_INSET);
 }
 
 BfmForestMessageArt *bfm_bedroom_message_art_load(const MusashiDiscMedia *disc,
                                                   const uint8_t *scene, size_t bytes,
                                                   const uint16_t tiles[512][1024])
 {
-    return load_art(disc, scene, bytes, tiles, BEDROOM_INSET, 1);
+    return load_art(disc, scene, bytes, tiles, BEDROOM_INSET);
 }
 
 void bfm_forest_message_art_free(BfmForestMessageArt *art)
@@ -140,9 +139,8 @@ static int coordinate(int round, int pointed, int mix, int scale)
     return floor_div((round + floor_div((pointed - round) * mix, 4)) * scale, 4096);
 }
 
-static void draw_message(const BfmForestMessageArt *art, int tail_x,
-                                 const BfmForestMessageFrame *frame,
-                                 uint32_t pixels[240][320])
+static void draw_message(const BfmForestMessageArt *art, int tail_x, int right,
+                         const BfmForestMessageFrame *frame, uint32_t pixels[240][320])
 {
     if (!art || !frame || !pixels || !frame->border_step || frame->border_step > 8 ||
         frame->jagged_mix > 4)
@@ -151,22 +149,22 @@ static void draw_message(const BfmForestMessageArt *art, int tail_x,
     BfmDialoguePoint border[CORNERS], inset[CORNERS];
     for (unsigned i = 0; i < CORNERS; ++i) {
         BfmDialoguePoint a = art->contour[0][i], b = art->contour[1][i];
-        if (art->right_portrait) {
+        if (right) {
             a.x = -a.x;
             b.x = -b.x;
         }
         border[i].x = 160 + coordinate(a.x, b.x, mix, step * 904);
         border[i].y = 44 + coordinate(a.y, b.y, mix, step * 4096 / 6);
         BfmDialoguePoint delta = art->inset[mix > 2][i];
-        if (art->right_portrait) delta.x = -delta.x;
+        if (right) delta.x = -delta.x;
         inset[i] = (BfmDialoguePoint){border[i].x + delta.x, border[i].y + delta.y};
     }
     bfm_dialogue_contour(border, inset, art->paper, art->highlight, art->outline, 10, pixels);
-    unsigned tail_width = art->right_portrait ? 16u : 15u;
+    unsigned tail_width = right ? 16u : 15u;
     if (!mix && step == 8 && tail_x >= 0 && tail_x <= 320 - (int)tail_width) {
         for (unsigned y = 0; y < 11; ++y)
             for (unsigned x = 0; x < tail_width; ++x) {
-                BfmDialoguePoint uv = art->right_portrait ? bfm_dialogue_reflected_texel(x, y, 16, 11, 15) :
+                BfmDialoguePoint uv = right ? bfm_dialogue_reflected_texel(x, y, 16, 11, 15) :
                                                           (BfmDialoguePoint){(int)x, (int)(y*15+5)/11};
                 uint32_t color = art->tail[uv.y][uv.x];
                 if (color) pixels[76+y][tail_x+x] = color;
@@ -174,12 +172,13 @@ static void draw_message(const BfmForestMessageArt *art, int tail_x,
     }
     if (!frame->text_visible)
         return;
+    unsigned face = frame->portrait == 2 || frame->portrait == 3 ? frame->portrait - 1 : 0;
     for (unsigned y = 0; y < 40; ++y)
         for (unsigned x = 0; x < 32; ++x) {
-            BfmDialoguePoint uv = art->right_portrait ? bfm_dialogue_reflected_texel(x, y, 32, 40, 39) :
+            BfmDialoguePoint uv = right ? bfm_dialogue_reflected_texel(x, y, 32, 40, 39) :
                                                       (BfmDialoguePoint){(int)x, (int)y};
-            uint32_t color = art->portrait[frame->portrait == 2][uv.y][uv.x];
-            if (color) pixels[24+y][(art->right_portrait ? 256 : 32)+x] = color;
+            uint32_t color = art->portrait[face][uv.y][uv.x];
+            if (color) pixels[24+y][(right ? 256 : 32)+x] = color;
         }
     for (unsigned row = 0; row < 3; ++row)
         for (unsigned col = 0; col < 36; ++col) {
@@ -190,19 +189,25 @@ static void draw_message(const BfmForestMessageArt *art, int tail_x,
             for (unsigned y = 0; y < FONT_HEIGHT; ++y)
                 for (unsigned x = 0; x < 6; ++x)
                     if (glyph[y] & (128u >> x))
-                        pixels[24 + 14*row + y][(art->right_portrait ? 32 : 72) + 6*col + x] = art->ink[cell.ink];
+                        pixels[24 + 14*row + y][(right ? 32 : 72) + 6*col + x] = art->ink[cell.ink];
         }
 }
 
 void bfm_forest_message_art_draw(const BfmForestMessageArt *art, const BfmForestMessageFrame *frame,
                                  uint32_t pixels[240][320])
 {
-    draw_message(art, 160, frame, pixels);
+    draw_message(art, 160, 0, frame, pixels);
 }
 
 void bfm_bedroom_message_art_draw(const BfmForestMessageArt *art, const BfmForestMessageFrame *frame,
                                   int speaker_x, uint32_t pixels[240][320])
 {
-    /* Right-facing tail ends at the speaker's projected position. */
-    draw_message(art, speaker_x - 17, frame, pixels);
+    bfm_bedroom_message_art_draw_side(art, frame, speaker_x, 1, pixels);
+}
+
+void bfm_bedroom_message_art_draw_side(const BfmForestMessageArt *art, const BfmForestMessageFrame *frame,
+                                       int speaker_x, int portrait_on_right, uint32_t pixels[240][320])
+{
+    int left = portrait_on_right ? speaker_x - 17 : speaker_x;
+    draw_message(art, left, portrait_on_right, frame, pixels);
 }
