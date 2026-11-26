@@ -319,6 +319,11 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
     if (!bfm_steam_weapons_tick(&s->weapons, ray_count ? &rays[ray_count - 1] : NULL)) return -1;
     if (previous_action == 13 && player->action == 14)
         bfm_forest_status_spend_bp(&e->run->player, 4);
+    /* The status instruments begin sliding out on the third update of
+     * the west-wall throw. The machine's own gauge stays on screen. */
+    if (s->final_pickup_phase == BFM_STEAM_FINAL_THROW && s->carry.held &&
+        player->action == 14 && player->elapsed == 3)
+        bfm_bedroom_hud_hide(s->hud);
     if (s->body_stage == 8 && !bfm_steam_carry_check_brace(&s->carry, s->hero, previous))
         return -1;
     if (strike.issued) {
