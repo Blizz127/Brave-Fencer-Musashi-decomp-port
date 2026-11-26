@@ -1,9 +1,50 @@
 /* SPDX-License-Identifier: MIT */
 #include "steam_knight_flail.h"
+#include "../pc_port/forest_player_bytes.h"
 #include <limits.h>
 #include <math.h>
 
 enum { WORLD_ONE = 65536, FLOOR_Y = -2048 };
+
+int bfm_steam_flail_contacts_load(BfmSteamFlailContacts *out, const uint8_t *scene, size_t bytes)
+{
+    const uint32_t base = UINT32_C(0x80128158);
+    const uint32_t shape[] = {UINT32_C(0x80192290), UINT32_C(0x801963fc)};
+    if (!out || !scene) return 0;
+    BfmSteamFlailContacts value;
+    BfmForestGuardBox *boxes[] = {&value.hero, &value.head};
+    for (unsigned i = 0; i < 2; ++i) {
+        size_t offset = shape[i] - base;
+        if (offset > bytes || bytes - offset < 16 || u32le(scene + offset)) return 0;
+        for (unsigned axis = 0; axis < 3; ++axis) {
+            boxes[i]->low[axis] = s16le(scene + offset + 4 + 4 * axis);
+            boxes[i]->high[axis] = s16le(scene + offset + 6 + 4 * axis);
+            if (boxes[i]->low[axis] >= boxes[i]->high[axis]) return 0;
+        }
+    }
+    *out = value;
+    return 1;
+}
+
+int bfm_steam_flail_player_hit(const BfmSteamFlailContacts *contacts, int marker,
+                              const int16_t position[3], const BfmForestTransform *hero,
+                              int16_t contact[3], int16_t normal[3])
+{
+    if (!contacts || marker >= 0 || !position || !hero || !contact || !normal) return 0;
+    const BfmForestGuardBox *head = &contacts->head;
+    for (int tier = 0; tier < 2; ++tier) {
+        int y = position[1] + head->high[1] - 8 - 32 * tier;
+        for (int lane = 0; lane < 4; ++lane) {
+            int z = position[2] + head->low[0] + 32 * lane;
+            int16_t from[3] = {(int16_t)(position[0] + head->low[0]), (int16_t)y, (int16_t)z};
+            int16_t to[3] = {(int16_t)(position[0] + head->high[0]), (int16_t)y, (int16_t)z};
+            int16_t center[3];
+            if (bfm_forest_guard_contact_point(&contacts->hero, hero, from, to, center,
+                                               contact, normal)) return 1;
+        }
+    }
+    return 0;
+}
 
 int bfm_steam_flail_wind(const BfmForestTransform *socket, unsigned *reach,
                          unsigned *angle, BfmForestTransform *head)

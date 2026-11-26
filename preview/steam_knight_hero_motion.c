@@ -18,6 +18,9 @@ struct BfmSteamKnightHeroMotion {
     BfmForestSwing swing;
     BfmForestCast charge_poses;
     BfmForestHurtClip hurt;
+    BfmForestHurt mace_reaction;
+    uint16_t mace_damage;
+    int mace_recovered;
     const BfmForestLiftData *lift_data;
     BfmForestLift lift;
     BfmLiftStep lift_step;
@@ -405,6 +408,61 @@ int bfm_steam_hero_recoil(BfmSteamKnightHeroMotion *h, int16_t heading)
     return 1;
 }
 
+int bfm_steam_hero_mace_hit(BfmSteamKnightHeroMotion *h, const MusashiDiscMedia *disc,
+                            const BfmForestStatus *player, int16_t hit_yaw,
+                            uint16_t power, uint16_t *shown)
+{
+    if (!h || !disc || !player || !shown || !power) return -1;
+    *shown = 0;
+    if (h->jump.active || h->lift_data || h->actor.field_a8 || h->mace_recovered ||
+        h->mace_reaction.active || h->actor.state == RECOIL ||
+        h->actor.kind == RECOIL || h->actor.kind == 26 ||
+        (h->actor.scene_callback && !(h->actor.scene_callback & UINT32_C(0x02000000))))
+        return 0;
+    uint16_t damage;
+    if (!bfm_forest_hit_damage(disc, player, h->actor.flags, power, &damage) ||
+        !bfm_forest_hurt_begin(&h->mace_reaction, h->sample.heading, hit_yaw)) return -1;
+    h->mace_damage = *shown = damage;
+    /* Charging delegates to the ordinary actor update when interrupted. */
+    h->actor.state = RECOIL;
+    return 1;
+}
+
+static int mace_step(BfmSteamKnightHeroMotion *h)
+{
+    unsigned key = h->mace_reaction.next_key;
+    uint32_t pose;
+    BfmForestHurtResult state = bfm_forest_hurt_step(&h->mace_reaction, &h->hurt,
+                                                    &h->actor, &h->ground, &pose);
+    if (state == BFM_FOREST_HURT_RECOVERED) {
+        rest(h);
+        h->mace_recovered = 1;
+        return 1;
+    }
+    if (state != BFM_FOREST_HURT_LOCKED) return 0;
+    h->sample.body = pose;
+    h->sample.motion = STILL;
+    h->sample.elapsed = key;
+    return 1;
+}
+
+int bfm_steam_hero_mace_debit(BfmSteamKnightHeroMotion *h, BfmForestStatus *player)
+{
+    if (!h || !player) return -1;
+    if (!h->mace_recovered) {
+        if (h->actor.field_a8) --h->actor.field_a8;
+        return 0;
+    }
+    unsigned damage = h->mace_damage;
+    if (h->actor.flags & UINT32_C(0x02000000))
+        damage = bfm_forest_status_values(player).max_hp;
+    bfm_forest_status_debit(player, damage);
+    h->mace_damage = 0;
+    h->mace_recovered = 0;
+    h->actor.field_a8 = 32;
+    return 1;
+}
+
 static int recoil_step(BfmSteamKnightHeroMotion *h)
 {
     /* The two witnessed airborne impacts launch the same vertical arc. */
@@ -442,7 +500,9 @@ int bfm_steam_hero_tick(BfmSteamKnightHeroMotion *h, const BfmForestCamera *came
     h->lift_step = BFM_LIFT_PLAY;
     h->previous_brace = h->braced;
     h->braced = 0;
-    if (h->lift_data) {
+    if (h->mace_reaction.active) {
+        ok = mace_step(h);
+    } else if (h->lift_data) {
         ok = carry(h, camera, x, y, pressed);
     } else if (h->actor.state == RECOIL) {
         ok = recoil_step(h);

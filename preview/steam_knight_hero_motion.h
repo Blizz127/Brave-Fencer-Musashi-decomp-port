@@ -75,5 +75,14 @@ BfmSteamHeroLumina bfm_steam_hero_lumina(BfmSteamKnightHeroMotion *hero,
 /* An independently established physical impact may interrupt the current
  * action. Heading is the world-space direction of knockback. The caller owns HP. */
 int bfm_steam_hero_recoil(BfmSteamKnightHeroMotion *hero, int16_t heading);
+/* Submit a confirmed ordinary gauntlet hit before the player's input update.
+ * Returns 1 when accepted, 0 while protected or outside this ground reaction,
+ * and -1 on a data error. The accepted amount is available for the HUD effect. */
+int bfm_steam_hero_mace_hit(BfmSteamKnightHeroMotion *hero, const MusashiDiscMedia *disc,
+                            const BfmForestStatus *player, int16_t hit_yaw,
+                            uint16_t power, uint16_t *shown);
+/* Call once after each ordinary encounter update, including held charge.
+ * Returns 1 on the recovery update that debits HP and starts protection. */
+int bfm_steam_hero_mace_debit(BfmSteamKnightHeroMotion *hero, BfmForestStatus *player);
 
 #endif

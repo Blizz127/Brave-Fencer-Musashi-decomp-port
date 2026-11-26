@@ -3,11 +3,23 @@
 #define BFM_STEAM_KNIGHT_FLAIL_H
 #include "steam_knight_street_route.h"
 #include "forest_pose.h"
+#include "forest_guard_contact.h"
 
 typedef struct {
     int32_t position[3], velocity[3]; /* signed 16.16 world units */
     int marker, active;
 } BfmSteamKnightFlail;
+
+typedef struct {
+    BfmForestGuardBox hero, head;
+} BfmSteamFlailContacts;
+
+int bfm_steam_flail_contacts_load(BfmSteamFlailContacts *out, const uint8_t *scene, size_t bytes);
+/* Test the two tiers of four world-space segments on a free shot against
+ * the actual player model. The chosen mark bypasses the player service. */
+int bfm_steam_flail_player_hit(const BfmSteamFlailContacts *contacts, int marker,
+                              const int16_t position[3], const BfmForestTransform *hero,
+                              int16_t contact[3], int16_t normal[3]);
 
 typedef enum {
     BFM_STEAM_FLAIL_INVALID, BFM_STEAM_FLAIL_MOVING, BFM_STEAM_FLAIL_GROUNDED, BFM_STEAM_FLAIL_AT_MARKER

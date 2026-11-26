@@ -61,6 +61,7 @@ struct BfmSteamKnight {
         BfmSteamCorner corner;
         int enter_corner;
         BfmSteamKnightFlail flail;
+        BfmSteamFlailContacts flail_contacts;
         BfmForestTransform head;
         int16_t endpoint[3];
         unsigned reach, orbit, settled_age;
@@ -112,6 +113,7 @@ BfmSteamKnight *bfm_steam_knight_open(const MusashiDiscMedia *disc,
     if (!s->art || !s->hostages || !s->machine || !s->hud ||
         !bfm_steam_knight_armor_load(&s->armor, scene, size) ||
         !bfm_steam_street_route_load(&s->street.route, scene, size) ||
+        !bfm_steam_flail_contacts_load(&s->street.flail_contacts, scene, size) ||
         !bfm_steam_knight_core_boxes_load(&s->core_boxes, scene, size) ||
         !bfm_steam_carry_load(&s->carry, disc, scene, size) ||
         !bfm_steam_knight_armor_load_power(disc, scene, size, &s->power) ||
@@ -142,12 +144,16 @@ void bfm_steam_knight_free(BfmSteamKnight *s)
 
 static void hall_camera(const BfmSteamKnight *s, BfmForestCamera *camera);
 
-static int damage_number(BfmSteamKnight *s, const int16_t point[3], uint16_t amount)
+static int damage_number(BfmSteamKnight *s, const int16_t point[3], uint16_t amount, int hurt)
 {
     for (size_t i = 0; i < BFM_STEAM_ARMOR_PLATES; ++i) {
         if (s->numbers[i].digits.amount) continue;
-        if (!bfm_forest_damage_digits_start_data(&s->numbers[i].digits, s->damage_palette,
+        if (!bfm_forest_damage_digits_start_data(&s->numbers[i].digits, s->damage_palette + hurt,
                                                 point, amount)) return 0;
+        if (hurt) {
+            s->numbers[i].digits.hurt = 1;
+            bfm_forest_damage_digits_scatter(&s->numbers[i].digits, bfm_gameplay_random(s->event.run));
+        }
         s->numbers[i].delay = 2;
         break;
     }
@@ -165,7 +171,7 @@ static int plate_contact(BfmSteamKnight *s, uint16_t amount)
     }
     if (s->hit.before > s->hit.after)
         bfm_steam_knight_machine_flash_armor(s->machine, s->hit.joint);
-    return damage_number(s, s->hit.point, amount);
+    return damage_number(s, s->hit.point, amount, 0);
 }
 
 static int core_attachment(const BfmSteamKnight *s, BfmForestTransform *attachment, int *exposed)
@@ -243,7 +249,7 @@ static int core_contact(BfmSteamKnight *s, const BfmSteamKnightHeroStrike *strik
         s->body_stage = 10;
         s->transfer_age = 0;
     }
-    return damage_number(s, hit.contact.point, hit.accepted);
+    return damage_number(s, hit.contact.point, hit.accepted, 0);
 }
 
 static int transfer_tick(BfmSteamKnight *s)
@@ -423,6 +429,21 @@ static int street_begin_jump(BfmSteamKnight *s, int rebound)
     return street_jump_frame(s);
 }
 
+static int apply_flail_contact(BfmSteamKnight *s, const int16_t head[3])
+{
+    const BfmSteamKnightHeroSample *player = bfm_steam_hero_sample(s->hero);
+    BfmForestTransform root;
+    bfm_forest_actor_root((unsigned)player->heading, player->feet, &root);
+    int16_t contact[3], normal[3];
+    if (!bfm_steam_flail_player_hit(&s->street.flail_contacts, s->street.flail.marker,
+                                   head, &root, contact, normal)) return 1;
+    uint16_t shown;
+    /* This mace registers a grounded impact with hit yaw zero. */
+    int accepted = bfm_steam_hero_mace_hit(s->hero, s->disc, &s->event.run->player, 0, 10, &shown);
+    if (accepted < 0) return 0;
+    return !accepted || damage_number(s, player->feet, shown, 1);
+}
+
 static int street_shot_frame(BfmSteamKnight *s)
 {
     int marked = s->street.selected.action == BFM_STREET_MARKED_SHOT;
@@ -468,8 +489,12 @@ static int street_shot_frame(BfmSteamKnight *s)
     if (s->street.resting) return 1;
     BfmSteamFlailStep step = bfm_steam_flail_step(&s->street.flail, &s->street.route);
     if (step == BFM_STEAM_FLAIL_INVALID) return 0;
-    for (unsigned i = 0; i < 3; ++i)
+    int16_t head[3];
+    for (unsigned i = 0; i < 3; ++i) {
         s->street.head.translation[i] = s->street.flail.position[i] >> 16;
+        head[i] = (int16_t)s->street.head.translation[i];
+    }
+    if (!marked && !apply_flail_contact(s, head)) return 0;
     if (step == BFM_STEAM_FLAIL_MOVING) return 1;
     if (step == BFM_STEAM_FLAIL_AT_MARKER) {
         int which = s->street.selected.marker;
@@ -562,6 +587,11 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
     bfm_forest_voice_step(s->voice);
     bfm_steam_knight_machine_step_light(s->machine);
     bfm_steam_knight_machine_present(s->machine, e->stage_age);
+    /* Existing world numbers advance before any new impact in this update. */
+    for (size_t i = 0; i < BFM_STEAM_ARMOR_PLATES; ++i) {
+        if (s->numbers[i].delay) --s->numbers[i].delay;
+        else if (s->numbers[i].digits.amount) bfm_forest_damage_digits_advance(&s->numbers[i].digits);
+    }
     if (s->weak_stage == 3) {
         ++s->weak_age;
         if (s->weak_age == 17) bfm_steam_knight_machine_open_cover(s->machine);
@@ -581,10 +611,6 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
     } else if (s->body_stage == 1)
         bfm_steam_knight_machine_track_hero(s->machine, bfm_steam_hero_sample(s->hero)->feet);
     if (s->recovery_left && !--s->recovery_left) s->body_stage = 1;
-    for (size_t i = 0; i < BFM_STEAM_ARMOR_PLATES; ++i) {
-        if (s->numbers[i].delay) --s->numbers[i].delay;
-        else if (s->numbers[i].digits.amount) bfm_forest_damage_digits_advance(&s->numbers[i].digits);
-    }
     int16_t previous[3], machine_position[3];
     const BfmSteamKnightHeroSample *player = bfm_steam_hero_sample(s->hero);
     unsigned previous_action = player->action;
@@ -611,6 +637,9 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
         if ((lumina == BFM_STEAM_LUMINA_PASS || lumina == BFM_STEAM_LUMINA_SLASH) &&
             !bfm_steam_hero_tick(s->hero, &camera, x, y, pressed, held, &strike)) return -1;
     }
+    int recovered = bfm_steam_hero_mace_debit(s->hero, &e->run->player);
+    if (recovered < 0) return -1;
+    if (recovered && bfm_forest_status_values(&e->run->player).hp <= 0) return 0;
     if (s->street.enter_corner) {
         /* The player crosses to the street corner while the marked machine
          * jumps to its own separate target across the pavement. */
