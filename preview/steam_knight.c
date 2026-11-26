@@ -187,6 +187,26 @@ static int core_attachment(const BfmSteamKnight *s, BfmForestTransform *attachme
     return bfm_steam_knight_core_transform(s->machine, waist, extension, attachment);
 }
 
+static int select_western_house(const BfmSteamKnight *s)
+{
+    int next = s->street.marker;
+    return (s->battle_flags & 0x800u) && next >= 0 && next < BFM_STREET_MARKERS &&
+           s->street.route.marker_tags[next] == 5 ? next : -1;
+}
+
+static int pass_western_house(BfmSteamKnight *s, int16_t x)
+{
+    int phase = bfm_steam_street_roll_phase(&s->street.route, s->street.roll_marker,
+                                           s->battle_flags, x);
+    if (!phase) return 1;
+    if (s->street.roll_marker != s->street.marker || phase != 29 ||
+        !bfm_steam_knight_field_break_house(s->field, 4)) return 0;
+    s->street.phase = phase;
+    ++s->street.marker;
+    s->street.roll_marker = -1;
+    return 1;
+}
+
 static int core_contact(BfmSteamKnight *s, const BfmSteamKnightHeroStrike *strike,
                         uint16_t amount, unsigned *struck)
 {
@@ -219,11 +239,7 @@ static int core_contact(BfmSteamKnight *s, const BfmSteamKnightHeroStrike *strik
     s->battle_flags = (s->battle_flags & ~hit.clear_flags) | hit.set_flags;
     if (hit.response == BFM_STEAM_CORE_DEPLETED) {
         if (!bfm_steam_carry_knockdown(&s->carry, s->machine, s->round)) return 0;
-        s->street.roll_marker = -1;
-        int marker = s->street.marker;
-        if (s->round == 2 && (s->battle_flags & 0x800u) &&
-            marker < BFM_STREET_MARKERS && s->street.route.marker_tags[marker] == 5)
-            s->street.roll_marker = marker;
+        s->street.roll_marker = s->round == 2 ? select_western_house(s) : -1;
         s->body_stage = 10;
         s->transfer_age = 0;
     }
@@ -247,14 +263,10 @@ static int transfer_tick(BfmSteamKnight *s)
         int was_held = s->carry.held;
         if (!bfm_steam_carry_tick(&s->carry, s->hero, s->machine, &edges)) return 0;
         if (s->round == 2 && s->body_stage == 10) {
-            int phase = bfm_steam_street_roll_phase(&s->street.route, s->street.roll_marker,
-                                                    s->battle_flags, s->carry.path.body[0]);
-            if (phase) {
-                if (s->street.roll_marker != s->street.marker || phase != 29 ||
-                    !bfm_steam_knight_field_break_house(s->field, 4)) return 0;
-                s->street.phase = phase;
-                ++s->street.marker;
-                s->street.roll_marker = -1;
+            if (!pass_western_house(s, s->carry.path.body[0])) return 0;
+            if (s->carry.path.body[0] < s->street.route.west_limit) {
+                s->battle_flags |= 8;
+                s->street.route.pending_walks = 0;
             }
         }
         if (was_held && s->carry.thrown) {
@@ -480,13 +492,15 @@ static int street_choose(BfmSteamKnight *s)
                                        s->street.marker, choice)) return 0;
     if (choice->action == BFM_STREET_JUMP || choice->action == BFM_STREET_MARKED_JUMP ||
         choice->action == BFM_STREET_CHOICE_SEVEN) return street_begin_jump(s, 0);
-    if (choice->action == BFM_STREET_FORWARD) {
+    if (choice->action == BFM_STREET_FORWARD || choice->action == BFM_STREET_LEFT) {
         int32_t root[3];
         if (!bfm_steam_knight_machine_root_q12(s->machine, root) ||
             !bfm_steam_street_walk_begin(&s->street.walk, root, s->battle_flags)) return 0;
         s->body_stage = 2;
         s->battle_flags |= 0x1001;
-        return bfm_steam_knight_machine_street_walk(s->machine, 0, root, 0);
+        s->street.roll_marker = select_western_house(s);
+        return bfm_steam_knight_machine_street_walk(s->machine, 0, root,
+                                                    s->street.walk.west ? 3072 : 0);
     }
     s->street.neutral_age = 0;
     if (choice->action == BFM_STREET_SHOT || choice->action == BFM_STREET_MARKED_SHOT) {
@@ -514,10 +528,17 @@ static int street_tick(BfmSteamKnight *s)
     }
     if (s->body_stage == 2) {
         BfmSteamKnightStreetWalk *walk = &s->street.walk;
-        BfmSteamKnightStreetStep step = bfm_steam_street_walk_tick(walk, s->street.route.depth_limit);
+        int16_t boundary = walk->west ? s->street.route.west_limit : s->street.route.depth_limit;
+        BfmSteamKnightStreetStep step = bfm_steam_street_walk_tick(walk, boundary);
         if (step == BFM_STREET_WALK_INVALID ||
-            !bfm_steam_knight_machine_street_walk(s->machine, walk->age, walk->root_q12, 0)) return 0;
+            !bfm_steam_knight_machine_street_walk(s->machine, walk->age, walk->root_q12,
+                                                  walk->west ? 3072 : 0)) return 0;
+        if (walk->west && !pass_western_house(s, (int16_t)(walk->root_q12[0] >> 12))) return 0;
         if (step == BFM_STREET_WALK_MOVING) return 1;
+        if (step == BFM_STREET_WALK_CROSSED_WEST) {
+            s->battle_flags |= 8;
+            s->street.route.pending_walks = 0;
+        }
         if (step == BFM_STREET_WALK_CROSSED_DEPTH)
             bfm_steam_street_depth_crossed(&s->street.route, &s->battle_flags);
         return street_choose(s);

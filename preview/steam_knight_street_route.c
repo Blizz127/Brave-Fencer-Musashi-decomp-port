@@ -19,14 +19,15 @@ int bfm_steam_street_route_load(BfmSteamKnightStreetRoute *out,
                                 const uint8_t *scene, size_t bytes)
 {
     const uint8_t *slot = row(scene, bytes, UINT32_C(0x801959e8), 4);
-    const uint8_t *depth = row(scene, bytes, UINT32_C(0x80195acc), 2);
+    const uint8_t *limits = row(scene, bytes, UINT32_C(0x80195acc), 4);
     const uint8_t *markers = row(scene, bytes, UINT32_C(0x80195af4), 8 * (BFM_STREET_MARKERS + 1));
-    if (!out || !slot || !depth || !markers || (int16_t)half(markers + 8 * BFM_STREET_MARKERS + 4) != -1)
+    if (!out || !slot || !limits || !markers || (int16_t)half(markers + 8 * BFM_STREET_MARKERS + 4) != -1)
         return 0;
     uint32_t table = half(slot) | (uint32_t)half(slot + 2) << 16;
     if ((table & 3u) || table > UINT32_MAX - 4u * BFM_STREET_ROWS) return 0;
     BfmSteamKnightStreetRoute route = {0};
-    route.depth_limit = (int16_t)half(depth);
+    route.depth_limit = (int16_t)half(limits);
+    route.west_limit = (int16_t)half(limits + 2);
     for (unsigned i = 0; i < BFM_STREET_MARKERS; ++i) {
         const uint8_t *mark = markers + 8*i;
         route.marker_tags[i] = (int16_t)half(mark + 4);
@@ -167,9 +168,10 @@ int bfm_steam_street_jump_target(const BfmSteamKnightStreetRoute *route, int mar
 int bfm_steam_street_walk_begin(BfmSteamKnightStreetWalk *walk, const int32_t root_q12[3],
                                 uint32_t body_flags)
 {
-    if (!walk || !root_q12 || (body_flags & 0x800u)) return 0;
+    if (!walk || !root_q12) return 0;
     BfmSteamKnightStreetWalk value = {
         .root_q12 = {root_q12[0], root_q12[1], root_q12[2]},
+        .west = !!(body_flags & 0x800u),
         .ticks = body_flags & 0x2000u ? 24u : 48u,
         .step_q12 = body_flags & 0x2000u ? 7 * 2048 : 7 * 1024
     };
@@ -178,14 +180,21 @@ int bfm_steam_street_walk_begin(BfmSteamKnightStreetWalk *walk, const int32_t ro
 }
 
 BfmSteamKnightStreetStep bfm_steam_street_walk_tick(BfmSteamKnightStreetWalk *walk,
-                                                    int16_t limit_z)
+                                                    int16_t boundary)
 {
-    if (!walk || !walk->ticks || walk->age >= walk->ticks || walk->step_q12 <= 0 ||
-        walk->root_q12[2] > INT32_MAX - walk->step_q12) return BFM_STREET_WALK_INVALID;
-    walk->root_q12[2] += walk->step_q12;
+    if (!walk || !walk->ticks || walk->age >= walk->ticks || walk->step_q12 <= 0)
+        return BFM_STREET_WALK_INVALID;
+    unsigned axis = walk->west ? 0 : 2;
+    int64_t next = (int64_t)walk->root_q12[axis] + (walk->west ? -walk->step_q12 : walk->step_q12);
+    if (next < INT32_MIN || next > INT32_MAX) return BFM_STREET_WALK_INVALID;
+    walk->root_q12[axis] = (int32_t)next;
     ++walk->age;
     /* Bounds compare the signed integer coordinate, including any overshoot. */
-    if ((int64_t)walk->root_q12[2] >= ((int32_t)limit_z + 1) * INT64_C(4096)) {
+    if (walk->west && next < (int64_t)boundary * 4096) {
+        walk->ticks = walk->age;
+        return BFM_STREET_WALK_CROSSED_WEST;
+    }
+    if (!walk->west && next >= ((int32_t)boundary + 1) * INT64_C(4096)) {
         walk->ticks = walk->age;
         return BFM_STREET_WALK_CROSSED_DEPTH;
     }

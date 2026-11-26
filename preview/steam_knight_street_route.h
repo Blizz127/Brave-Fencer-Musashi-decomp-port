@@ -6,11 +6,12 @@
 typedef struct {
     int32_t root_q12[3];
     unsigned age, ticks;
+    int west;
     int32_t step_q12;
 } BfmSteamKnightStreetWalk;
 typedef enum {
     BFM_STREET_WALK_INVALID, BFM_STREET_WALK_MOVING, BFM_STREET_WALK_EXPIRED,
-    BFM_STREET_WALK_CROSSED_DEPTH
+    BFM_STREET_WALK_CROSSED_DEPTH, BFM_STREET_WALK_CROSSED_WEST
 } BfmSteamKnightStreetStep;
 
 enum { BFM_STREET_ROWS = 32, BFM_STREET_MARKERS = 4 };
@@ -21,7 +22,7 @@ typedef struct {
     struct { int16_t delay; uint16_t action; } rows[BFM_STREET_ROWS];
     unsigned length, cursor;
     uint16_t pending_walks;
-    int16_t delay, depth_limit, marker_tags[BFM_STREET_MARKERS];
+    int16_t delay, depth_limit, west_limit, marker_tags[BFM_STREET_MARKERS];
     BfmSteamStreetMarker markers[BFM_STREET_MARKERS];
 } BfmSteamKnightStreetRoute;
 typedef enum {
@@ -46,15 +47,15 @@ void bfm_steam_street_depth_crossed(BfmSteamKnightStreetRoute *route, uint32_t *
 int bfm_steam_street_jump_target(const BfmSteamKnightStreetRoute *route, int marker,
     unsigned jumps_left, uint32_t flags, const int16_t action_start[3],
     const int16_t body[3], const int16_t hero[3], int16_t xz[2]);
-/* The defeated chassis consumes the armed western house row when its current
- * signed X first passes that plane. Zero means no scene change. */
+/* During a westward stride or roll the chassis can cross the selected
+ * house row. Zero means the street phase stays unchanged. */
 int bfm_steam_street_roll_phase(const BfmSteamKnightStreetRoute *route, int marker,
                                uint32_t flags, int16_t x);
 /* Age zero displays the first pose at the inherited fractional actor root. */
 int bfm_steam_street_walk_begin(BfmSteamKnightStreetWalk *walk, const int32_t root_q12[3],
                                 uint32_t body_flags);
-/* Expiry runs the action chooser. On depth crossing, the encounter owner sets
- * the 0x400 condition and clears any remaining queued walking strides. */
+/* On crossing the depth or west boundary the caller updates the route flags,
+ * retires queued strides, and runs the ordinary action chooser. */
 BfmSteamKnightStreetStep bfm_steam_street_walk_tick(BfmSteamKnightStreetWalk *walk,
-                                                    int16_t limit_z);
+                                                    int16_t boundary);
 #endif
