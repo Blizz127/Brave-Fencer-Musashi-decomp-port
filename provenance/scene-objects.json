@@ -7921,6 +7921,32 @@
       "origin": "Existing owner-authored MAIN member 12 C, independently rebuilt and matched against US SC01 member 77. The forest movement path samples the probed point and updates the actor coordinates on contact.",
       "source_sha256": "7b1725871f4ca304c957c2bc6a9eccea20a36862539585297c0e993916614cd5",
       "span_sha256": "ce0f359ad05ded980e5a6df6c82bd82232897bf5fd7ae54be00aec95176765d0"
+    },
+    {
+      "name": "func_80146CA0",
+      "region": "sc01_0077",
+      "vram": 2148822176,
+      "size": 20,
+      "source": "src/overlays/sc02_0035/80146ca0.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Existing owner-authored SC02 member 35 C independently rebuilt for US Giant Forest member 77. Increments the actor’s unsigned 16-bit counter and returns the incremented value before truncation.",
+      "source_sha256": "031d152690f2de4c5f54c14665880e96cfa509f5d2738df52392da6e3733993b",
+      "span_sha256": "48f83abea95a08de3b5f669cc42a0963c90a48bfc373780e3722bfe50e47cc8f"
+    },
+    {
+      "name": "func_80146DB8",
+      "region": "sc01_0077",
+      "vram": 2148822456,
+      "size": 48,
+      "source": "src/overlays/sc02_0035/80146db8.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Existing owner-authored SC02 member 35 C independently rebuilt for US Giant Forest member 77. Passes the three signed components of a vector to the actor update routine and returns its result.",
+      "source_sha256": "cd8c7e706a6e9af1961927c0033de50932ec3f83696791312cd7566069a55877",
+      "span_sha256": "6ccd09feb33454bcffd5d0bd9c517597bb68cb968a6d4a75420368e6c091eb0c"
     }
   ]
 }
