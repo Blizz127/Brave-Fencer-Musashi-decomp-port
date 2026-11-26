@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { WIDTH = 64, CELLS = WIDTH * WIDTH, DIRECTORY = CELLS * 4, ROOF_CELLS = 4 };
+enum { WIDTH = 64, CELLS = WIDTH * WIDTH, DIRECTORY = CELLS * 4, ROOF_CELLS = 4, CRATER_CELLS = 12 };
 
 typedef struct {
     const uint8_t *data;
@@ -32,11 +32,12 @@ static void write32(uint8_t *p, uint32_t value)
 }
 
 static int read_cells(const uint8_t *record, size_t bytes, unsigned count,
-                      RoofCell roof[ROOF_CELLS], Span *materials)
+                      RoofCell roof[CRATER_CELLS], Span *materials)
 {
     enum { HEADER = 16, ENTRY = 12 };
     size_t index_bytes = count * ENTRY;
-    if (bytes < HEADER + index_bytes || read32(record) != 0x43 ||
+    if ((count != 2 && count != ROOF_CELLS && count != CRATER_CELLS) ||
+        bytes < HEADER + index_bytes || read32(record) != 0x43 ||
         read32(record + 4) != 0 || read32(record + 8) != count) return 0;
     const uint8_t *body = record + HEADER;
     size_t start = read32(record + 12);
@@ -57,8 +58,12 @@ static int read_cells(const uint8_t *record, size_t bytes, unsigned count,
     int next_column = roof[0].index % WIDTH != WIDTH - 1 &&
                       roof[1].index == roof[0].index + 1;
     if (count == 2) return next_column || roof[1].index == roof[0].index + WIDTH;
-    return next_column && roof[2].index == roof[0].index + WIDTH &&
-           roof[3].index == roof[2].index + 1;
+    unsigned columns = count == CRATER_CELLS ? 3 : 2;
+    size_t first = roof[0].index;
+    if (first % WIDTH + columns > WIDTH) return 0;
+    for (unsigned i = 1; i < count; ++i)
+        if (roof[i].index != first + i / columns * WIDTH + i % columns) return 0;
+    return 1;
 }
 
 /* A replacement face can select a material in its own appended packet table.
@@ -111,7 +116,7 @@ static uint8_t *replace_cells(const uint8_t *base_mesh, size_t base_size,
     if (!base_mesh || !replacement || base_size < 8 + DIRECTORY ||
         base_size > UINT32_MAX || replacement_size > UINT32_MAX - base_size ||
         read32(base_mesh) != 0x42 || base_mesh[4] != 0) return NULL;
-    RoofCell roof[ROOF_CELLS];
+    RoofCell roof[CRATER_CELLS];
     Span local;
     if (!read_cells(replacement, replacement_size, count, roof, &local)) return NULL;
 
@@ -198,4 +203,10 @@ uint8_t *bfm_steam_knight_house_mesh(const uint8_t *mesh, size_t bytes,
     if (read32(record + 16) != first_cell * 4 ||
         read32(record + 28) != (first_cell + 1) * 4) return NULL;
     return replace_cells(mesh, bytes, record, size, house == 2 ? 2 : 4, out_size);
+}
+
+uint8_t *bfm_steam_knight_crater_mesh(const uint8_t *mesh, size_t bytes,
+                                      const uint8_t *record, size_t size, size_t *out_size)
+{
+    return replace_cells(mesh, bytes, record, size, CRATER_CELLS, out_size);
 }

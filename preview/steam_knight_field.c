@@ -22,6 +22,7 @@ struct BfmSteamKnightField {
     size_t damaged_size;
     unsigned open_gates;
     unsigned broken_houses;
+    int crater_ready;
     int arena_ready;
     unsigned arena_round, arena_stage;
     int16_t stomp_origin_x, stomp_origin_z;
@@ -193,6 +194,20 @@ int bfm_steam_knight_field_break_house(BfmSteamKnightField *field, unsigned hous
     return 1;
 }
 
+int bfm_steam_knight_field_open_crater(BfmSteamKnightField *field)
+{
+    if (!field || !field->damaged_mesh) return 0;
+    if (field->crater_ready) return 1;
+    const size_t size = 2512;
+    const uint8_t *record = scene_range(field, UINT32_C(0x801df3b4), size);
+    size_t bytes = 0;
+    uint8_t *pending = bfm_steam_knight_crater_mesh(field->damaged_mesh, field->damaged_size,
+                                                     record, size, &bytes);
+    if (!pending || !install_damaged_mesh(field, pending, bytes)) return 0;
+    field->crater_ready = 1;
+    return 1;
+}
+
 void bfm_steam_knight_field_free(BfmSteamKnightField *field)
 {
     if (!field) return;
@@ -227,6 +242,22 @@ static void camera_at(BfmForestCamera *camera, const int16_t eye[3])
         for (unsigned j = 0; j < 3; ++j) dot -= camera->rotation[i][j] * eye[j];
         camera->translation[i] = dot / 4096 - (dot % 4096 < 0);
     }
+}
+
+void bfm_steam_knight_aftermath_camera(BfmForestCamera *camera, int show_ledge)
+{
+    if (!camera) return;
+    /* Photo-fitted views across the mounted pit. The second shot pulls back
+     * and includes Musashi on the lip as he speaks. */
+    int sine = show_ledge ? 3855 : 3852;
+    int cosine = show_ledge ? 1383 : 1394;
+    *camera = (BfmForestCamera){
+        .rotation = {{0, 0, 4096}, {sine, cosine, 0}, {-cosine, sine, 0}},
+        .projection = 279
+    };
+    const int16_t pit_eye[3] = {-2214, -1723, 2909};
+    const int16_t ledge_eye[3] = {-1363, -2611, 2944};
+    camera_at(camera, show_ledge ? ledge_eye : pit_eye);
 }
 
 void bfm_steam_knight_entrance_camera(BfmForestCamera *camera)

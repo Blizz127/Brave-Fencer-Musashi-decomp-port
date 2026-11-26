@@ -813,9 +813,15 @@ static int final_scene_tick(BfmSteamKnight *s)
     if (edges & BFM_STEAM_THROW_WEST_REPLAY) contact = BFM_STEAM_FINAL_REPLAY;
     else if (edges & BFM_STEAM_THROW_WEST_IMPACT) contact = BFM_STEAM_FINAL_PIT_LANDING;
     else if (edges & BFM_STEAM_THROW_HERO_REPOSITION) contact = BFM_STEAM_FINAL_LEDGE;
+    BfmSteamFinalPhase previous_phase = s->finale.phase;
     BfmSteamFinalHero previous = s->finale.hero_motion;
     int result = bfm_steam_finale_tick(&s->finale, &s->event, contact);
     if (result < 0) return -1;
+    if (previous_phase == BFM_STEAM_FINAL_BLAST && s->finale.phase == BFM_STEAM_FINAL_WHITE &&
+        !bfm_steam_knight_field_open_crater(s->field)) {
+        s->finale.failed = 1;
+        return -1;
+    }
     if (previous != BFM_STEAM_FINAL_HERO_TOSS && s->finale.hero_motion == BFM_STEAM_FINAL_HERO_TOSS)
         bfm_forest_status_spend_bp(&s->event.run->player, 4);
     if (result == BFM_STEAM_FINALE_ENTERED_AFTERMATH &&
@@ -983,7 +989,9 @@ static void hall_camera(const BfmSteamKnight *s, BfmForestCamera *camera)
         [BFM_STEAM_MACHINE_CAMERA] = bfm_steam_knight_machine_camera,
         [BFM_STEAM_DUEL_CAMERA] = bfm_steam_knight_duel_camera
     };
-    if (bfm_steam_event_title(&s->event)) {
+    if (s->finale.phase == BFM_STEAM_FINAL_WHITE || s->finale.phase == BFM_STEAM_FINAL_AFTERMATH) {
+        bfm_steam_knight_aftermath_camera(camera, bfm_steam_finale_crater_shot(&s->finale));
+    } else if (bfm_steam_event_title(&s->event)) {
         unsigned ground_age = s->event.landing_age > 24 ? s->event.landing_age - 24 : 0;
         bfm_steam_knight_title_camera(camera, ground_age * 2);
     } else if (s->event.stage == BFM_STEAM_DUEL && !s->event.stage_age && !s->resumed_duel)
