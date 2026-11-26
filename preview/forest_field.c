@@ -2034,6 +2034,27 @@ static inline const FloorPlane *raised_support(const FloorGrid *grid, ContactCel
     return raised_motion_support(grid, cell, near, far, NULL, NULL);
 }
 
+/* Project whole-unit penetration and lateral clearance separately, with the
+ * foot two units above the rounded contact height. */
+static int project_whole_foot(const FloorGrid *grid, const FloorPlane *plane,
+                              const int16_t far[3], int16_t foot[3])
+{
+    const FloorPoint *v = &grid->verts[plane->v];
+    int nx = (s16)v->x, ny = (s16)v->y, nz = (s16)v->z;
+    int64_t norm = nx * nx + ny * ny + nz * nz;
+    int64_t depth = -signed_distance(grid, *plane, far);
+    int64_t x = far[0] + nx * depth / norm + nx * 3 / 4096;
+    int64_t y = far[1] + grid_floor(2 * ny * depth + norm, 2 * norm) - 2;
+    int64_t z = far[2] + nz * depth / norm + nz * 3 / 4096;
+    if (x < INT16_MIN || x > INT16_MAX || y < INT16_MIN || y > INT16_MAX ||
+        z < INT16_MIN || z > INT16_MAX)
+        return 0;
+    foot[0] = (int16_t)x;
+    foot[1] = (int16_t)y;
+    foot[2] = (int16_t)z;
+    return 1;
+}
+
 BfmForestTopStep bfm_forest_raised_motion(const BfmForestField *field,
     const BfmForestContact *previous, const int16_t from[3], int16_t to[3],
     const uint32_t start_pos[3], const uint32_t end_pos[3])
@@ -2070,33 +2091,21 @@ BfmForestTopStep bfm_forest_raised_motion(const BfmForestField *field,
         return BFM_FOREST_TOP_BLOCKED;
     }
 
-    /* The foot sweeps to the far point below the proposed step. Project onto
-     * the contacted surface. Resolve lateral penetration and clearance as
-     * separate integer steps, with two units above the rounded plane height. */
-    const FloorPoint *v = &grid->verts[plane->v];
-    int nx = (s16)v->x, ny = (s16)v->y, nz = (s16)v->z;
-    int64_t norm = nx * nx + ny * ny + nz * nz;
-    int64_t depth = -signed_distance(grid, *plane, far);
-    int64_t x = far[0] + nx * depth / norm + nx * 3 / 4096;
-    int64_t y = far[1] + grid_floor(2 * ny * depth + norm, 2 * norm) - 2;
-    int64_t z = far[2] + nz * depth / norm + nz * 3 / 4096;
-    if (x < INT16_MIN || x > INT16_MAX || y < INT16_MIN || y > INT16_MAX ||
-        z < INT16_MIN || z > INT16_MAX)
+    int16_t foot[3];
+    if (!project_whole_foot(grid, plane, far, foot))
         return BFM_FOREST_TOP_BLOCKED;
     BfmForestContact ground;
-    if (!bfm_forest_ground(field, (int16_t)x, (int16_t)y, (int16_t)z, &ground))
+    if (!bfm_forest_ground(field, foot[0], foot[1], foot[2], &ground))
         return BFM_FOREST_TOP_BLOCKED;
     BfmForestTopStep result;
     if (raised_normal(ground.flags, ground.normal[0], ground.normal[1], ground.normal[2]) &&
-        abs(ground.height - (int)y) <= 4)
+        abs(ground.height - foot[1]) <= 4)
         result = BFM_FOREST_TOP_GROUNDED;
-    else if (corridor_ground(&ground) && !ground.normal[2] && ground.height > y + 4)
+    else if (corridor_ground(&ground) && !ground.normal[2] && ground.height > foot[1] + 4)
         result = BFM_FOREST_TOP_LEFT;
     else
         return BFM_FOREST_TOP_BLOCKED;
-    to[0] = (int16_t)x;
-    to[1] = (int16_t)y;
-    to[2] = (int16_t)z;
+    memcpy(to, foot, sizeof foot);
     return result;
 }
 
@@ -2447,6 +2456,137 @@ int bfm_forest_walks_off_creek_bank(const BfmForestField *field, const int16_t f
     int16_t foot[3] = {end[0], end[1], end[2]};
     return resolve_walls(grid, contact_cell(grid, from), from, foot, WALL_SCAN_BOUNDED, NULL) &&
            !memcmp(foot, end, sizeof foot);
+}
+
+/* Only the level-X, downhill 45-degree face between the first dry bank
+ * and its marked channel supports this slide. Neighboring diagonal banks
+ * and the far uphill lip have different normals. */
+static const FloorPlane *creek_grade_at(const BfmForestField *field, const int16_t p[3])
+{
+    BfmForestContact g;
+    if (!creek_cell(field, p) || p[2] >= field->bank_end_z + 64 ||
+        !bfm_forest_ground(field, p[0], field->bank_height, p[2], &g) ||
+        g.bridge || g.flags || g.slope != 0x4000 || g.normal[0] ||
+        g.normal[1] >= 0 || g.normal[2] != -g.normal[1])
+        return NULL;
+    return support_plane(&field->grid, contact_cell(&field->grid, p), &g, p);
+}
+
+static int creek_stride_clear(const BfmForestField *field, const int16_t from[3],
+                              const int16_t end[3])
+{
+    if (!field || !from || !end || field->room != FOREST_ROOM || !creek_cell(field, end) ||
+        !same_grid_index(from[0], end[0]) ||
+        abs(end[0] - from[0]) > 16 || abs(end[2] - from[2]) > 16 ||
+        abs(end[1] - from[1]) > 32)
+        return 0;
+    int16_t checked[3] = {end[0], end[1], end[2]};
+    return resolve_walls(&field->grid, contact_cell(&field->grid, from), from, checked,
+                         WALL_SCAN_BOUNDED, NULL) && !memcmp(checked, end, sizeof checked);
+}
+
+/* The grid contact is two units above the physical face. The sliding foot
+ * on this grade is two further vertical units clear of that contact. */
+static int creek_grade_foot_y(const FloorGrid *grid, const FloorPlane *plane, int z)
+{
+    const FloorPoint *n = &grid->verts[plane->v];
+    return (int)grid_floor((int64_t)(s16)n->z * z + grid->dist[plane->d], -(s16)n->y) - 4;
+}
+
+static int above_creek_water(const BfmForestField *field, const int16_t p[3])
+{
+    BfmForestContact g;
+    return bfm_forest_ground(field, p[0], field->bank_height, p[2], &g) &&
+           first_creek_water(field, p, &g) && p[1] < g.height;
+}
+
+static int project_creek_stride(const BfmForestField *field, const FloorPlane *plane,
+                                const int16_t from[3], int depth, int16_t end[3])
+{
+    int16_t far[3] = {end[0], end[1], end[2]}, foot[3];
+    if (far[1] > INT16_MAX - depth) return 0;
+    far[1] += (int16_t)depth;
+    if (!project_whole_foot(&field->grid, plane, far, foot)) return 0;
+    int y = creek_grade_foot_y(&field->grid, plane, foot[2]);
+    if (y < INT16_MIN || y > INT16_MAX) return 0;
+    foot[1] = (int16_t)y;
+    if (!creek_stride_clear(field, from, foot)) return 0;
+    const FloorPlane *next = creek_grade_at(field, foot);
+    if (next != plane && (next || foot[2] <= from[2] || !above_creek_water(field, foot)))
+        return 0;
+    memcpy(end, foot, sizeof foot);
+    return 1;
+}
+
+int bfm_forest_creek_bank_stride(const BfmForestField *field, const int16_t from[3], int16_t end[3])
+{
+    if (!bfm_forest_walks_off_creek_bank(field, from, end)) return 0;
+    const FloorPlane *plane = creek_grade_at(field, end);
+    if (!plane) return 0;
+    int drop = creek_grade_foot_y(&field->grid, plane, end[2]) + 2 - from[1];
+    if (drop > 4) return 1;
+    if (drop < 1) return 0;
+    return project_creek_stride(field, plane, from, floor_sweep_span(from, end) + 1, end) ? 2 : 0;
+}
+
+/* The failed air sweep can end exactly on the physical face. Test the
+ * bounded intersection at equality as well as a sweep through the plane. */
+static int hits_creek_face(const FloorGrid *grid, const FloorFace *face, unsigned sides,
+                           const int16_t from[3], const int16_t end[3])
+{
+    if (signed_distance(grid, face->e[0], end) != 0)
+        return crossing_margin(grid, face, sides, from, end) >= -EDGE_TOLERANCE;
+    if (signed_distance(grid, face->e[0], from) <= 0) return 0;
+    for (unsigned i = 1; i <= sides; ++i)
+        if (signed_distance(grid, face->e[i], end) < -EDGE_TOLERANCE) return 0;
+    return 1;
+}
+
+int bfm_forest_creek_slope_contact(const BfmForestField *field, const int16_t from[3],
+                                   int16_t end[3])
+{
+    if (!creek_stride_clear(field, from, end) || end[1] <= from[1] ||
+        !same_grid_index(from[2], end[2])) return 0;
+    const FloorGrid *grid = &field->grid;
+    const FloorPlane *plane = creek_grade_at(field, end);
+    if (!plane) return 0;
+    ContactCell cell = contact_cell(grid, end);
+    int64_t start = signed_distance(grid, *plane, from);
+    int64_t travel = start - signed_distance(grid, *plane, end);
+    int reached = 0;
+    for (unsigned i = 0; i < cell.count; ++i) {
+        u16 token = cell.tokens[i];
+        const FloorFace *face = contact_face(grid, token);
+        if ((s16)grid->verts[face->e[0].v].y >= 0 ||
+            !hits_creek_face(grid, face, (token & 0x8000) ? 4 : 3, from, end)) continue;
+        if (&face->e[0] == plane) {
+            reached = 1;
+        } else {
+            int64_t a = signed_distance(grid, face->e[0], from);
+            int64_t b = a - signed_distance(grid, face->e[0], end);
+            if (a * travel <= start * b) return 0;
+        }
+    }
+    return reached && project_creek_stride(field, plane, from, 0, end);
+}
+
+int bfm_forest_creek_slope_step(const BfmForestField *field, const int16_t from[3], int16_t end[3])
+{
+    if (!creek_stride_clear(field, from, end) || end[2] < from[2] ||
+        !same_grid_index(from[2], end[2])) return 0;
+    const FloorGrid *grid = &field->grid;
+    const FloorPlane *plane = creek_grade_at(field, from);
+    if (plane) {
+        if (abs(from[1] - creek_grade_foot_y(grid, plane, from[2])) > 1) return 0;
+        return project_creek_stride(field, plane, from, 0, end);
+    }
+    /* One supported update can carry the foot past the bounded toe. On
+     * the following update it is above the adjacent water; the caller
+     * integrates free fall from the current foot with its airborne speed. */
+    if (!above_creek_water(field, from) || from[2] < INT16_MIN + 16) return 0;
+    int16_t behind[3] = {from[0], from[1], (int16_t)(from[2] - 16)};
+    plane = creek_grade_at(field, behind);
+    return plane && abs(from[1] - creek_grade_foot_y(grid, plane, from[2])) <= 1 ? 2 : 0;
 }
 
 /* Classify only a descending sweep onto the selected bounded water face.

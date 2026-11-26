@@ -980,7 +980,7 @@ static int tick_hurt(BfmForestWalk *w, unsigned received, int16_t hit_yaw,
         }
         w->at_boundary = 0;
     }
-    int airborne = w->jump.active && !w->jump.landed;
+    int airborne = w->jump.active && !w->jump.landed && !w->jump.creek_slide;
     int32_t forward_speed = w->jump.steering ? w->actor.field_2c.word : 0;
     uint32_t frame;
     switch (bfm_forest_hurt_step(&w->hurt, &w->hurt_clip, scripted ? NULL : &w->actor,
@@ -1007,6 +1007,11 @@ static int tick_hurt(BfmForestWalk *w, unsigned received, int16_t hit_yaw,
             return 0;
         }
         if (scripted) return 2;
+        if (w->jump.creek_slide) {
+            w->actor.kind = w->actor.state = 4;
+            w->actor.action = w->actor.phase = 1;
+            return 2;
+        }
         if (airborne) {
             /* Hurt freezes world motion. Gravity restarts from zero, while a
              * running hit retains its forward speed and the usual air steering. */
@@ -1146,6 +1151,9 @@ static int step_jump(BfmForestWalk *w, const BfmForestField *room, int launched,
             &w->actor, &w->camera, x, y, jump_held, &w->yaw, w->cached,
             w->has_dry_bank && room == w->field);
         w->at_boundary = result == BFM_FOREST_JUMP_BOUNDARY;
+        if (w->jump.creek_slide && !w->stride_poses.visible &&
+            !bfm_forest_walkoff_poses_load(w->disc, w->data.animation_table, &w->stride_poses))
+            return 0;
         if (result == BFM_FOREST_JUMP_WATER) {
             w->water_age = 1;
             w->actor.kind = w->actor.state = 3;
@@ -1243,6 +1251,7 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
     unsigned power = bfm_forest_take_player_strike(w->field, &hit_yaw);
     /* A separate guard's hit may still debit HP during the creek action.
      * Keep the bank and the scripted water movement when that hit ends. */
+    if (w->actor.state == 4) bfm_forest_fall_begin(&w->jump, &w->manual, &w->actor);
     int result = tick_hurt(w, power, hit_yaw, w->water_age != 0, &dust);
     if (result <= 0) return result;
     if (result == 1) {
