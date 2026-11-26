@@ -23,9 +23,9 @@ int bfm_palace_blade_load(BfmForestBlade *blade, const uint8_t *scene, size_t by
     return load_outlines(blade, scene, bytes, 0x60c50);
 }
 
-int bfm_library_blade_load(BfmForestBlade *blade, const uint8_t *scene, size_t bytes)
+int bfm_castle_blade_load(BfmForestBlade *blade, const uint8_t *scene, size_t bytes, size_t offset)
 {
-    return load_outlines(blade, scene, bytes, 0x5a574);
+    return load_outlines(blade, scene, bytes, offset);
 }
 
 static int normalize(double v[3])

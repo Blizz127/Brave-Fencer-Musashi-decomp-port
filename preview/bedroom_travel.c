@@ -221,15 +221,16 @@ static int contact(const Floor *f, const int16_t start[3], const int next[3],
     return 0;
 }
 
-BfmBedroomTravel *bfm_bedroom_travel_open(const uint8_t *scene, size_t bytes, uint32_t room_address)
+BfmBedroomTravel *bfm_bedroom_travel_open(const uint8_t *scene, size_t bytes, uint32_t room_address, unsigned entrance)
 {
     if (!scene) return NULL;
     const uint8_t *room = mounted(scene, bytes, room_address, 0xcc);
     if (!room) return NULL;
-    const uint8_t *list = mounted(scene, bytes, u32(room + 0xc8), 4);
+    if (entrance > 255) return NULL;
+    const uint8_t *list = mounted(scene, bytes, u32(room + 0xc8), 4*(entrance+1));
     const uint8_t *grid = mounted(scene, bytes, u32(room + 0x88), 32);
     if (!list || !grid) return NULL;
-    const uint8_t *entry = mounted(scene, bytes, u32(list), 24);
+    const uint8_t *entry = mounted(scene, bytes, u32(list+4*entrance), 24);
     if (!entry) return NULL;
     BfmBedroomTravel *t = calloc(1, sizeof *t);
     if (!t) return NULL;
@@ -279,7 +280,6 @@ int bfm_bedroom_travel_entrance(BfmBedroomTravel *t, unsigned updates)
 {
     if (!t || !updates || updates > 255 || t->root.busy) return 0;
     t->entrance_ticks = updates;
-    t->saved_yaw = (int)t->root.yaw;
     t->entry_action = 1;
     begin(t, START_WALK);
     return 1;
@@ -371,7 +371,9 @@ static int walk_step(BfmBedroomTravel *t, const int32_t eye[3], const int32_t ta
     }
     if (!eye || !target) return 0;
     int camera = (direction((int64_t)target[0]-eye[0], (int64_t)target[2]-eye[2]) + 2048) & 4095;
-    int facing = t->entrance_ticks ? t->saved_yaw : direction(dx, dz) + 2048;
+    /* A doorway synthesizes its next input from the actor's current heading.
+     * Quantizing that input can change the heading again on the next tick. */
+    int facing = t->entrance_ticks ? (int)t->root.yaw : direction(dx, dz) + 2048;
     int relative = (facing - camera) & 4088;
     int pad_x = sine(relative) / 32, pad_z = sine(relative + 1024) / 32;
     if (pad_x > 127) pad_x = 127;

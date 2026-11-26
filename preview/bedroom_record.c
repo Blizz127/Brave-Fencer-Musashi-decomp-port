@@ -111,23 +111,26 @@ int bfm_bedroom_entry(const MusashiDiscMedia *disc, const BfmSaveRecord *record,
     return 1;
 }
 
-int bfm_library_entry(const MusashiDiscMedia *disc, const uint8_t *transfer, BfmBedroomEntry *entry)
+int bfm_castle_room_entry(const MusashiDiscMedia *disc, const uint8_t *transfer, BfmBedroomEntry *entry)
 {
     /* The bedroom sends the normal entrance descriptor; the early-story
      * library shares its file numbering with the mounted global directory. */
-    enum { LIBRARY_RESOURCE = 57 };
+    if (!disc || !transfer || !entry) return 0;
+    uint32_t target = word(transfer);
+    if (target != 0x3002u && target != 0x00043000u) return 0;
+    unsigned resource = target == 0x3002u ? 57 : 53;
     uint8_t row[8], count[4];
     size_t total, start, length;
-    if (!disc || !transfer || !entry || word(transfer) != 0x3002u ||
-        !musashi_disc_media_read_root_range(disc, "MAIN.CD", 0, count, sizeof count, &total) ||
-        word(count) > LIBRARY_RESOURCE) return 0;
-    unsigned member = LIBRARY_RESOURCE - word(count);
-    if (member != 8 || !descriptor(disc, "SC01.CD", member, &start, &length) ||
-        !musashi_disc_media_read_root_range(disc, "LIST.CD", 16+8*LIBRARY_RESOURCE,
+    if (!musashi_disc_media_read_root_range(disc, "MAIN.CD", 0, count, sizeof count, &total) ||
+        word(count) > resource) return 0;
+    unsigned member = resource - word(count);
+    if (member != (target == 0x3002u ? 8u : 4u) ||
+        !descriptor(disc, "SC01.CD", member, &start, &length) ||
+        !musashi_disc_media_read_root_range(disc, "LIST.CD", 16+8*resource,
                                            row, sizeof row, &total) ||
         word(row) != start / SECTOR || word(row+4) != length) return 0;
     memcpy(entry->state.destination, transfer, sizeof(entry->state.destination));
-    entry->state.progress[8] = 2;
+    if (target == 0x3002u) entry->state.progress[8] = 2;
     entry->scene_member = member;
     return 1;
 }

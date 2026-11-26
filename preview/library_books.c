@@ -9,7 +9,7 @@ struct BfmLibraryBooks {
     size_t bytes;
     uint8_t font[2][256];
     unsigned depth, row[PANELS], repeat, ink, warning;
-    int held;
+    int held, command;
 };
 static unsigned half(const uint8_t *p) { return (unsigned)p[0] | (unsigned)p[1] << 8; }
 static uint32_t word(const uint8_t *p) { return half(p) | (uint32_t)half(p+2) << 16; }
@@ -24,20 +24,22 @@ static unsigned count(const BfmLibraryBooks *b, unsigned panel)
     const uint8_t *shape = data(b, 0x8019ed0cu + 2*b->row[1], 2);
     return shape && shape[1] == 1 && shape[0] <= MAX_ROWS ? shape[0] : 0;
 }
-BfmLibraryBooks *bfm_library_books_open(const MusashiDiscMedia *disc,const uint8_t *scene,size_t bytes)
+BfmLibraryBooks *bfm_castle_menu_open(const MusashiDiscMedia *disc,const uint8_t *scene,size_t bytes, int command)
 {
     if (!disc || !scene) return NULL;
     BfmLibraryBooks *b = calloc(1,sizeof *b);
     if (!b) return NULL;
     b->scene=scene;
     b->bytes=bytes;
-    const uint8_t *root=data(b,0x8019ee94u,4);
-    const uint8_t *panels=root ? data(b,word(root),32*PANELS) : NULL;
+    b->command = command;
+    unsigned length = command ? 1 : PANELS;
+    const uint8_t *root=data(b,command ? 0x8018c12cu : 0x8019ee94u,4);
+    const uint8_t *panels=root ? data(b,word(root),32*length) : NULL;
     if (!panels || !bfm_bedroom_resident_data(disc,0x800636d8u,b->font[0],sizeof b->font[0]) ||
         !bfm_bedroom_resident_data(disc,0x80063818u,b->font[1],sizeof b->font[1])) goto invalid;
-    for (unsigned i=0; i<PANELS; ++i) {
+    for (unsigned i=0; i<length; ++i) {
         const uint8_t *p=b->panels[i]=panels+32*i;
-        if (half(p)!=(i==0 ? 3u : i+6u) || p[3]!=1 || !p[2] || p[2]>MAX_ROWS ||
+        if (half(p)!=(command ? 1u : i==0 ? 3u : i+6u) || p[3]!=1 || !p[2] || p[2]>MAX_ROWS ||
             half(p+12)!=8 || half(p+14)!=2 || !data(b,word(p+4),96) ||
             !data(b,word(p+8),32) || !data(b,word(p+20),2) ||
             !data(b,word(p+24),4*p[2]) || !data(b,word(p+28),4*p[2])) goto invalid;
@@ -47,13 +49,16 @@ invalid:
     free(b);
     return NULL;
 }
+unsigned bfm_castle_command_selection(const BfmLibraryBooks *b) { return b->row[0]; }
 unsigned bfm_library_books_selection(const BfmLibraryBooks *b)
 {
     return (b->row[1]+1)*256 + b->row[2]+1;
 }
-void bfm_library_books_resume(BfmLibraryBooks *b)
+void bfm_library_books_resume(BfmLibraryBooks *b, int contents)
 {
-    b->depth = 2;
+    b->depth = contents ? 2 : 0;
+    if (!contents) b->row[0] = b->row[1] = b->row[2] = 0;
+    b->warning = 0;
     b->ink = b->repeat = 0;
     b->held = 0;
 }
@@ -67,6 +72,10 @@ int bfm_library_books_input(BfmLibraryBooks *b,int direction,int held,int cross,
         return BFM_BOOKS_ACTIVE;
     }
     if (cross) {
+        if (b->command) {
+            if (b->row[0]!=3) *effect=0x474;
+            return BFM_COMMAND_SELECTED;
+        }
         if (!b->depth && b->row[0]) {
             *effect=0x474;
             return BFM_BOOKS_QUIT;
@@ -211,9 +220,9 @@ int bfm_library_books_draw(const BfmLibraryBooks *b,const BfmForestMessageArt *a
 {
     if (!b || !panel(b,0,tiles,pixels)) return 0;
     if (b->depth && (!panel(b,1,tiles,pixels) || !panel(b,2,tiles,pixels))) return 0;
-    uint32_t addr=b->warning ? 0x8019f69cu : 0x8019f660u;
-    const uint8_t *question=data(b,addr,3), *box=data(b,0x8019f010u,12);
-    const uint8_t *portrait=data(b,0x8019e8b8u,20);
+    uint32_t addr=b->command ? 0x8018c300u : b->warning ? 0x8019f69cu : 0x8019f660u;
+    const uint8_t *question=data(b,addr,3), *box=data(b,b->command ? 0x8018c2b0u : 0x8019f010u,12);
+    const uint8_t *portrait=data(b,b->command ? 0x8018bb6cu : 0x8019e8b8u,20);
     return question && box && portrait &&
            bfm_library_question_draw(art,box,portrait,tiles,question,b->bytes-(addr-base),b->ink,pixels);
 }

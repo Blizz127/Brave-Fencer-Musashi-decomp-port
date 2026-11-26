@@ -16,8 +16,8 @@ BfmForestMessageArt *bfm_forest_message_art_load(const MusashiDiscMedia *disc,
 BfmForestMessageArt *bfm_bedroom_message_art_load(const MusashiDiscMedia *disc,
                                                   const uint8_t *scene, size_t bytes,
                                                   const uint16_t tiles[512][1024]);
-BfmForestMessageArt *bfm_library_message_art_load(const MusashiDiscMedia *disc, const uint8_t *scene,
-                                                  size_t bytes, const uint16_t tiles[512][1024]);
+BfmForestMessageArt *bfm_castle_message_art_load(const MusashiDiscMedia *disc, const uint8_t *scene,
+                                                  size_t bytes, const uint16_t tiles[512][1024], size_t inset);
 void bfm_forest_message_art_free(BfmForestMessageArt *art);
 void bfm_forest_message_art_draw(const BfmForestMessageArt *art,
                                  const BfmForestMessageFrame *frame,

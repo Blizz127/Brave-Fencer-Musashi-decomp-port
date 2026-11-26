@@ -641,7 +641,8 @@ void bfm_palace_draw(Palace *palace, const uint16_t tiles[512][1024],
 struct BfmBedroomField {
     Palace geometry;
     int current[6], target[6], active;
-    unsigned pan_divisor;
+    unsigned pan_divisor, focal;
+    const uint8_t *panorama_map, *panorama_atlas;
     BfmBedroomView view;
 };
 
@@ -655,7 +656,7 @@ static const uint8_t *field_data(const uint8_t *scene, size_t bytes,
 }
 
 BfmBedroomField *bfm_bedroom_field_load(const uint8_t *scene, size_t bytes,
-                                        uint32_t room_address)
+                                        uint32_t room_address, unsigned focal)
 {
     const uint8_t *room = field_data(scene, bytes, room_address, 0x98);
     if (!room) return NULL;
@@ -666,7 +667,49 @@ BfmBedroomField *bfm_bedroom_field_load(const uint8_t *scene, size_t bytes,
         free(field);
         return NULL;
     }
+    if (field) field->focal = focal;
     return field;
+}
+
+int bfm_bedroom_field_panorama(BfmBedroomField *field, const uint8_t *scene, size_t bytes, uint32_t room)
+{
+    const uint8_t *root = field_data(scene, bytes, room, 0x34);
+    if (!field || !root) return 0;
+    const uint8_t *map = field_data(scene,bytes,le32(root+0x30),8);
+    const uint8_t *atlas = field_data(scene,bytes,le32(root+0x28),8);
+    if (!map || !atlas || map[4]!=20 || map[5]!=7 || map[6]!=16 || map[7]!=16) return 0;
+    unsigned count = le16(atlas+4);
+    if (!count || !field_data(scene,bytes,le32(root+0x28),8+8u*count) ||
+        !field_data(scene,bytes,le32(root+0x30),8+2u*map[4]*map[5])) return 0;
+    for (unsigned i=0; i<(unsigned)map[4]*map[5]; ++i)
+        if (le16(map+8+2*i)>=count) return 0;
+    for (unsigned i=0; i<count; ++i) {
+        const uint8_t *tile = atlas+8+8*i;
+        if ((le16(tile+6)&0x180) || tile[0]>240 || tile[1]>240 || (le16(tile+2)>>6)>=512) return 0;
+    }
+    field->panorama_map=map;
+    field->panorama_atlas=atlas;
+    return 1;
+}
+
+static void draw_panorama(const BfmBedroomField *field, const uint16_t tiles[512][1024], uint32_t *pixels)
+{
+    const uint8_t *map = field->panorama_map;
+    if (!map) return;
+    for (unsigned y=10; y<(unsigned)map[5]*16; ++y) {
+        for (unsigned col=0; col<map[4]; ++col) {
+            unsigned index = le16(map+8+2*((y/16)*map[4]+col));
+            const uint8_t *tile = field->panorama_atlas+8+8*index;
+            unsigned page=le16(tile+6), clut=le16(tile+2);
+            unsigned v=((page&16u)<<4)+tile[1]+y%16;
+            const uint16_t *palette=&tiles[clut>>6][(clut&63)*16];
+            for (unsigned x=0; x<16; ++x) {
+                unsigned u=tile[0]+x;
+                unsigned bits=tiles[v][(page&15)*64+u/4]>>(4*(u%4));
+                pixels[320*y+col*16+x]=color(palette[bits&15]);
+            }
+        }
+    }
 }
 
 void bfm_bedroom_field_free(BfmBedroomField *field)
@@ -698,7 +741,7 @@ static void refresh_bedroom_view(BfmBedroomField *field)
     const int *p = field->current;
     if (p[0] == p[3] && p[2] == p[5]) return;
     Pose pose = {{p[0], p[1], p[2]}, {p[3], p[4], p[5]}};
-    field->view = make_view(pose.eye, look_at(pose, 1), 400);
+    field->view = make_view(pose.eye, look_at(pose, 1), field->focal);
     memcpy(field->view.target, p + 3, sizeof(field->view.target));
 }
 
@@ -775,6 +818,7 @@ void bfm_bedroom_field_draw(BfmBedroomField *field, const uint16_t tiles[512][10
                             uint32_t *pixels, void (*draw_to)(void *, int), void *user)
 {
     if (!field || !field->active || !tiles || !pixels) return;
+    draw_panorama(field,tiles,pixels);
     project_vertices(&field->geometry, &field->view);
     draw_mesh(&field->geometry, tiles, pixels, 0, NULL, draw_to, user);
 }

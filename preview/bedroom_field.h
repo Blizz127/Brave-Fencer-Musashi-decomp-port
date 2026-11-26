@@ -18,7 +18,8 @@ typedef struct {
 /* The room address and event actor origin belong to the active mounted room.
  * The event camera operands are read by the caller from its mounted script. */
 BfmBedroomField *bfm_bedroom_field_load(const uint8_t *scene, size_t bytes,
-                                        uint32_t room_address);
+                                        uint32_t room_address, unsigned focal);
+int bfm_bedroom_field_panorama(BfmBedroomField *field, const uint8_t *scene, size_t bytes, uint32_t room);
 void bfm_bedroom_field_free(BfmBedroomField *field);
 int bfm_bedroom_field_camera(BfmBedroomField *field, const uint8_t *scene,
                              size_t bytes, uint32_t camera_address,

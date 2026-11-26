@@ -54,6 +54,7 @@ int bfm_bedroom_script_tick(BfmBedroomScript *s, int player_queue_idle, int mess
             if (!apply(context, BFM_BED_TRANSFER, arg)) goto invalid;
             return 1;
         case 0x0c: event = BFM_BED_FAREWELL; break;
+        case 0x0d: event = BFM_BED_NEGATIVE_REPLY; break;
         case 0x20: event = BFM_BED_CAMERA_RELEASE; break;
         case 0x22:
         case 0x21:
@@ -113,7 +114,7 @@ int bfm_bedroom_script_tick(BfmBedroomScript *s, int player_queue_idle, int mess
                     s->cursor += 8;
                     continue;
                 }
-            } else if (arg == 0x80180ad0u && s->answer && s->answer <= 2) {
+            } else if ((arg == 0x80180ad0u || arg == 0x8017f6b0u) && s->answer && s->answer <= 2) {
                 if (s->answer == 1) {
                     s->cursor += 8;
                     continue;

@@ -24,7 +24,7 @@ struct BfmForestHud {
     Label ability[ABILITY_COUNT];
     uint8_t vitality[20], dial[20], weekday[7];
     uint16_t orb[7], digit[10];
-    unsigned inset, remaining, hiding;
+    unsigned inset, remaining, hiding, modal;
 };
 typedef struct {
     const BfmForestHud *hud;
@@ -139,6 +139,10 @@ void bfm_bedroom_hud_hide(BfmForestHud *hud)
         hud->remaining = 10;
     }
 }
+void bfm_castle_hud_command(BfmForestHud *hud)
+{
+    if (hud) hud->modal = 1;
+}
 void bfm_forest_hud_tick(BfmForestHud *hud)
 {
     if (hud && hud->remaining) {
@@ -210,13 +214,15 @@ static void ornaments(Canvas *c, const BfmForestStatusValues *v, int inset)
         s[3].uv = (s[3].uv & 255) | 160u << 8;
     if (v->bp >= 0)
         s[4].uv = (s[4].uv & 255) | (v->bp < 100 ? (unsigned)c->hud->vitality[v->bp/5] << 8 : 0);
+    /* The field HUD places the meter 256 pixels lower in a modal menu. */
+    int meter_y = c->hud->modal ? 256 : 0;
     int charge = v->charge * 3 / 8;
-    rectangle(c,8-inset,129+inset,8,72,rgb(v->charge ? 0x5108 : 0x2108));
-    rectangle(c,8-inset,201+inset-charge,8,charge,rgb(0x085f));
+    rectangle(c,8-inset,meter_y+129+inset,8,72,rgb(v->charge ? 0x5108 : 0x2108));
+    rectangle(c,8-inset,meter_y+201+inset-charge,8,charge,rgb(0x085f));
     /* Frames overlap the orbs and the charge well in this layer. */
     for (int i = 4; i >= 0; --i) {
         s[i].x += i < 3 ? -inset : inset;
-        s[i].y += inset;
+        s[i].y += inset + (i == 2 ? meter_y : 0);
         sprite(c,&s[i],384);
     }
 }

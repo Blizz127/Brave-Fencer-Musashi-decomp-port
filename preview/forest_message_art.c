@@ -129,10 +129,10 @@ BfmForestMessageArt *bfm_bedroom_message_art_load(const MusashiDiscMedia *disc,
     return load_art(disc, scene, bytes, tiles, BEDROOM_INSET);
 }
 
-BfmForestMessageArt *bfm_library_message_art_load(const MusashiDiscMedia *disc, const uint8_t *scene,
-                                                  size_t bytes, const uint16_t tiles[512][1024])
+BfmForestMessageArt *bfm_castle_message_art_load(const MusashiDiscMedia *disc, const uint8_t *scene,
+                                                  size_t bytes, const uint16_t tiles[512][1024], size_t inset)
 {
-    return load_art(disc, scene, bytes, tiles, 0x57d08);
+    return load_art(disc, scene, bytes, tiles, inset);
 }
 
 void bfm_forest_message_art_free(BfmForestMessageArt *art)

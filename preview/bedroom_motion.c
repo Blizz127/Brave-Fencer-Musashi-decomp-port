@@ -235,7 +235,8 @@ static int update(BfmBedroomMotion *m, BfmBedroomAction action)
         m->activity = action == BFM_BEDROOM_RECEIVE ? QUIET : COLLECTING;
         break;
     case BFM_BEDROOM_FAREWELL:
-        start(&m->body, 0x800d59ecu);
+    case BFM_BEDROOM_NEGATIVE_REPLY:
+        start(&m->body, action == BFM_BEDROOM_FAREWELL ? 0x800d59ecu : 0x800d599cu);
         if (!advance(m, &m->body, 1)) return 0;
         m->frame.draw_current = 1;
         m->activity = COLLECTING;
@@ -347,11 +348,11 @@ int bfm_bedroom_motion_face(const BfmBedroomMotion *m, uint16_t tiles[512][1024]
     return m && tiles && (!m->face_upload || upload(m, m->face_upload, 2, tiles));
 }
 
-int bfm_bedroom_orb_palette(const BfmBedroomMotion *m, unsigned orb, uint16_t tiles[512][1024])
+int bfm_bedroom_orb_palette(const BfmBedroomMotion *m, uint32_t table, unsigned orb, uint16_t tiles[512][1024])
 {
     uint32_t address;
     if (orb & 0x80) orb = 7;
-    return m && tiles && orb <= 7 && word(m, 0x80185b78u + 4*orb, &address) &&
+    return m && tiles && orb <= 7 && word(m, table + 4*orb, &address) &&
            upload(m, address, 1, tiles);
 }
 
