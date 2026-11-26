@@ -6,11 +6,12 @@
 
 enum {
     FIRST_EXCHANGE = 0x40d4, RETURN_EXCHANGE = 0x4144,
-    RETURN_WELCOME = 0x42f4, SERVICE_QUESTION = 0x4e7c,
+    AFTER_SERVICE_EXCHANGE = 0x416c, DECLINE_ROW = 0x41f0, FAREWELL_ROW = 0x4200,
+    RETURN_WELCOME = 0x42f4, AFTER_SERVICE_PROMPT = 0x43c8, SERVICE_QUESTION = 0x4e7c,
     SERVICE_BOX = 0x99690, VISITED = 276
 };
 static const uint32_t module_origin = UINT32_C(0x801ef468);
-enum GreetingPhase { TALK, ASK, SERVICE, END_AT_COUNTER };
+enum GreetingPhase { TALK, ASK, SERVICE, AFTER_SERVICE, FAREWELL, DEPART, END_AT_COUNTER };
 
 struct BfmInnGreeting {
     const uint8_t *module, *service_box;
@@ -20,7 +21,7 @@ struct BfmInnGreeting {
     BfmForestMessageFrame update;
     enum GreetingPhase phase;
     unsigned age;
-    int hero, first, updated;
+    int hero, first, used_service, updated;
 };
 
 static int open_text(BfmInnGreeting *talk, size_t offset, int hero)
@@ -79,7 +80,19 @@ void bfm_inn_greeting_free(BfmInnGreeting *talk)
 }
 
 int bfm_inn_greeting_service(const BfmInnGreeting *talk) { return talk && talk->phase == SERVICE; }
-int bfm_inn_greeting_leaving(const BfmInnGreeting *talk) { return talk && talk->phase == END_AT_COUNTER; }
+int bfm_inn_greeting_leaving(const BfmInnGreeting *talk) { return talk && talk->phase == DEPART; }
+int bfm_inn_greeting_finished(const BfmInnGreeting *talk) { return talk && talk->phase == END_AT_COUNTER; }
+
+int bfm_inn_greeting_finish_service(BfmInnGreeting *talk)
+{
+    if (!bfm_inn_greeting_service(talk) ||
+        !open_row(talk, AFTER_SERVICE_EXCHANGE, AFTER_SERVICE_PROMPT)) return 0;
+    talk->used_service = 1;
+    talk->phase = AFTER_SERVICE;
+    talk->age = 0;
+    return 1;
+}
+
 const BfmForestMessageFrame *bfm_inn_greeting_frame(const BfmInnGreeting *talk)
 {
     return talk ? bfm_forest_message_frame(talk->message) : NULL;
@@ -103,11 +116,22 @@ static int finish_window(BfmInnGreeting *talk, unsigned answer)
         }
         return 1;
     }
+    case AFTER_SERVICE:
+        if (!open_row(talk, talk->row + 8, 0)) return 0;
+        talk->phase = ASK;
+        return 1;
     case ASK:
         if (!answer || answer > 3) return 0;
-        /* Only the first response has a verified continuation through the
-         * service menu. The parent keeps the indoor view at the preview end. */
+        if (answer == 3) {
+            if (!open_row(talk, talk->used_service ? FAREWELL_ROW : DECLINE_ROW, 0)) return 0;
+            talk->phase = FAREWELL;
+            return 1;
+        }
+        /* The chat response still stops at the counter. */
         talk->phase = answer == 1 ? SERVICE : END_AT_COUNTER;
+        break;
+    case FAREWELL:
+        talk->phase = DEPART;
         break;
     default:
         return 0;
@@ -123,7 +147,8 @@ int bfm_inn_greeting_step(BfmInnGreeting *talk, uint16_t pressed, unsigned voice
     if (!talk) return 0;
     talk->updated = 0;
     ++talk->age;
-    if (!talk->message) return talk->phase == SERVICE || talk->phase == END_AT_COUNTER;
+    if (!talk->message)
+        return talk->phase == SERVICE || talk->phase == END_AT_COUNTER || talk->phase == DEPART;
     int direction = !!(pressed & 0x40) - !!(pressed & 0x10);
     int confirm = !!(pressed & 0x7000);
     bfm_field_message_choose(talk->message, direction, confirm && !(pressed & 0x4000), pressed & 0x4000);
@@ -189,7 +214,7 @@ int bfm_inn_greeting_draw(const BfmInnGreeting *talk, int dialogue, const BfmFor
 {
     if (!talk || !art || !tiles || !pixels) return 0;
     if (talk->phase == SERVICE) return draw_service(talk, dialogue, art, tiles, pixels);
-    if (talk->phase == END_AT_COUNTER) return 1;
+    if (talk->phase == END_AT_COUNTER || talk->phase == DEPART) return 1;
     const BfmForestMessageFrame *frame = bfm_inn_greeting_frame(talk);
     if (!frame) return 0;
     BfmForestMessageFrame shown = *frame;

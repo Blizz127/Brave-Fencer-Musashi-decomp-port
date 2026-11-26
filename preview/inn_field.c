@@ -6,18 +6,20 @@
 #include "village_field.h"
 #include "village_clock.h"
 #include "forest_message_art.h"
+#include "forest_gateway_transition.h"
 #include "scene_tiles.h"
 
 #include <stdlib.h>
 #include <string.h>
 
 static const uint32_t scene_base = UINT32_C(0x80128158);
-enum { KEEPER_POSITION = 0x40cc, WALK_TARGET = 0x4100, ROOM_OFFSET = 0x4218,
-       ROOM_HP = 0x9969c, ROOM_RATE = 0x996a8 };
+enum { EXIT_TARGET = 0x260, KEEPER_POSITION = 0x40cc, WALK_TARGET = 0x4100, ROOM_OFFSET = 0x4218,
+       ROOM_HP = 0x9969c, ROOM_RATE = 0x996a8,
+       EXIT_FADE = 21, EXIT_MOUNT = 38 };
 
 struct BfmInnField {
     uint8_t scene[BFM_FIELD_SCENE_CAPACITY];
-    const uint8_t *module;
+    const uint8_t *module, *outside;
     size_t scene_size, module_size;
     uint8_t *main;
     BfmSaveRecord *record;
@@ -30,7 +32,7 @@ struct BfmInnField {
     BfmInnGreeting *greeting;
     BfmForestMessageArt *art;
     uint16_t (*tiles)[1024];
-    unsigned age, voice_status;
+    unsigned age, voice_status, exit_age;
     int finished, updated_greeting, paid;
 };
 
@@ -88,6 +90,7 @@ BfmInnField *bfm_inn_field_open(const MusashiDiscMedia *disc, const uint8_t *tra
     const uint8_t *outside = source(inn, entries + 2 * 4, 36);
     if (!entry || u32le(entry) != 0x2017 || !outside || u32le(outside) != 0xa1010)
         goto fail;
+    inn->outside = outside;
     size_t main_size;
     inn->main = bfm_bedroom_player_data(disc, &main_size);
     if (!inn->main || !bfm_village_field_load_lower(&inn->field, disc, inn->scene,
@@ -119,18 +122,20 @@ int bfm_inn_field_step(BfmInnField *inn, uint16_t pressed)
 {
     if (!inn) return 0;
     inn->updated_greeting = 0;
-    if (inn->finished) return 1;
+    if (inn->finished || inn->exit_age == EXIT_MOUNT) return 1;
     ++inn->age;
     const BfmBedroomRoot *player = bfm_bedroom_travel_root(inn->travel);
     BfmBedroomAction action = BFM_BEDROOM_NONE;
+    if (bfm_inn_greeting_leaving(inn->greeting)) ++inn->exit_age;
     if (player->busy) {
         if (!bfm_bedroom_travel_step(inn->travel, inn->camera.eye, inn->camera.target)) return 0;
         switch (player->locomotion_edge) {
         case BFM_TRAVEL_WALK: action = BFM_BEDROOM_WALK; break;
         case BFM_TRAVEL_STAND:
             action = BFM_BEDROOM_REST;
-            bfm_bedroom_travel_face_point(inn->travel, s16le(inn->module + KEEPER_POSITION),
-                                          s16le(inn->module + KEEPER_POSITION + 4));
+            if (!bfm_inn_greeting_leaving(inn->greeting))
+                bfm_bedroom_travel_face_point(inn->travel, s16le(inn->module + KEEPER_POSITION),
+                                              s16le(inn->module + KEEPER_POSITION + 4));
             break;
         case BFM_TRAVEL_FALL: action = BFM_BEDROOM_FALL; break;
         case BFM_TRAVEL_LAND: action = BFM_BEDROOM_LAND; break;
@@ -140,11 +145,17 @@ int bfm_inn_field_step(BfmInnField *inn, uint16_t pressed)
         inn->greeting = bfm_inn_greeting_open(inn->module, inn->module_size, inn->scene,
                                               (size_t)(inn->module - inn->scene), inn->record);
         if (!inn->greeting) return 0;
-    } else {
+    } else if (!bfm_inn_greeting_leaving(inn->greeting)) {
         if (!bfm_inn_greeting_step(inn->greeting, pressed, inn->voice_status)) return 0;
         inn->updated_greeting = 1;
-        /* Only accepting hospitality has a verified continuation here. */
-        if (bfm_inn_greeting_leaving(inn->greeting)) inn->finished = 1;
+        if (bfm_inn_greeting_leaving(inn->greeting)) {
+            /* The farewell starts a scripted walk from the counter to the
+             * interior door. The exterior transfer runs while Musashi walks. */
+            const uint8_t *door = inn->module + EXIT_TARGET;
+            if (!bfm_bedroom_travel_walk(inn->travel, s16le(door), s16le(door + 4), 0))
+                return 0;
+        }
+        if (bfm_inn_greeting_finished(inn->greeting)) inn->finished = 1;
     }
     return bfm_bedroom_motion_step(inn->motion, action, &inn->pose) &&
            bfm_bedroom_motion_face(inn->motion, inn->tiles);
@@ -231,9 +242,22 @@ void bfm_inn_finish_room201(BfmInnField *inn)
     bfm_village_clock_rest(inn->record, 8);
 }
 
-void bfm_inn_field_leave(BfmInnField *inn)
+int bfm_inn_field_leave(BfmInnField *inn)
 {
-    if (bfm_inn_field_service(inn)) inn->finished = 1;
+    return bfm_inn_field_service(inn) && bfm_inn_greeting_finish_service(inn->greeting);
+}
+
+void bfm_inn_field_shade(const BfmInnField *inn, uint32_t pixels[240][320])
+{
+    if (!inn || inn->exit_age <= EXIT_FADE) return;
+    /* The exit darkens the room and the overlaid HUD uniformly. */
+    BfmForestGatewayFrame fade = {.shade = 2 * (inn->exit_age - EXIT_FADE)};
+    bfm_forest_gateway_transition_shade(&fade, pixels);
+}
+
+const uint8_t *bfm_inn_field_departure(const BfmInnField *inn)
+{
+    return inn && inn->exit_age == EXIT_MOUNT ? inn->outside : NULL;
 }
 
 int bfm_inn_field_finished(const BfmInnField *inn)

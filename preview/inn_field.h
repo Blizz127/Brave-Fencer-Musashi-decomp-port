@@ -19,7 +19,11 @@ void bfm_inn_field_voice_status(BfmInnField *inn, unsigned status);
 unsigned bfm_inn_room_price(const BfmInnField *inn, unsigned room);
 int bfm_inn_pay_room201(BfmInnField *inn);
 void bfm_inn_finish_room201(BfmInnField *inn);
-void bfm_inn_field_leave(BfmInnField *inn);
-/* Current proven endpoint; keep drawing the counter until the menu returns to title. */
+int bfm_inn_field_leave(BfmInnField *inn);
+/* Apply the doorway fade after the indoor scene and HUD have been drawn. */
+void bfm_inn_field_shade(const BfmInnField *inn, uint32_t pixels[240][320]);
+/* Borrow the mounted lower-village transfer once the indoor walk and fade finish. */
+const uint8_t *bfm_inn_field_departure(const BfmInnField *inn);
+/* The chat branch currently ends at the counter. */
 int bfm_inn_field_finished(const BfmInnField *inn);
 #endif

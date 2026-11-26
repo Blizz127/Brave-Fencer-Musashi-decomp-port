@@ -22,8 +22,10 @@ const BfmForestMessageFrame *bfm_inn_greeting_frame(const BfmInnGreeting *talk);
 /* The most recent tick, including voice events from a window that closed. */
 const BfmForestMessageFrame *bfm_inn_greeting_update(const BfmInnGreeting *talk);
 int bfm_inn_greeting_service(const BfmInnGreeting *talk);
-/* The selected response reached the end of this preview at the counter. */
+/* Quit on the services menu returns to the innkeeper's follow-up question. */
+int bfm_inn_greeting_finish_service(BfmInnGreeting *talk);
 int bfm_inn_greeting_leaving(const BfmInnGreeting *talk);
+int bfm_inn_greeting_finished(const BfmInnGreeting *talk);
 int bfm_inn_greeting_draw(const BfmInnGreeting *talk, int dialogue, const BfmForestMessageArt *art,
                           const uint16_t tiles[512][1024], uint32_t pixels[240][320]);
 #endif
