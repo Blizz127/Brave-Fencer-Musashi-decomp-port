@@ -15,12 +15,16 @@ typedef struct {
     BfmForestTalkPhase phase;
     uint32_t script, frame, visible, entry_visible;
     int8_t blade_anchors[2][3];
-    unsigned cursor, standing_step, standing_cycles;
+    unsigned cursor, standing_step, standing_cycles, face_slot;
     int complete;
 } BfmForestSpeechActor;
 
 int bfm_forest_speech_actor_begin(BfmForestSpeechActor *actor, const BfmForestField *field,
                                   const MusashiDiscMedia *disc, uint32_t parts,
+                                  BfmForestPose *pose);
+/* Advance a dialogue actor on its current mounted motion. A nonzero script
+ * changes the motion before this update's ordinary animation service. */
+int bfm_forest_speech_motion_tick(BfmForestSpeechActor *actor, uint32_t script,
                                   BfmForestPose *pose);
 /* The two authored message events select gestures. The second gesture's
  * animation endpoint advances the actor again. Closing the message releases it. */

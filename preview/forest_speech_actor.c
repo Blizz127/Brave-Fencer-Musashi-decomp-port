@@ -69,9 +69,16 @@ static int advance(BfmForestSpeechActor *actor, BfmForestPose *pose, int stop_at
                 return 0;
             actor->cursor = (unsigned)value;
             break;
-        case 15: /* The default player appearance selected by this door. */
-            if (!operand(actor, &value) || value)
+        case 7: /* An action marker shares the following body key. */
+            break;
+        case 15: /* Facial texture sequence selected alongside the body. */
+            if (!operand(actor, &value) || value > 7)
                 return 0;
+            actor->face_slot = value;
+            break;
+        case 16:
+            actor->visible |= UINT32_C(1) << 22;
+            actor->visible &= ~(UINT32_C(1) << 21);
             break;
         case 17:
             /* The two blade mesh parts exchange visibility in this gesture. */
@@ -107,6 +114,14 @@ static int select_motion(BfmForestSpeechActor *actor, uint32_t script, BfmForest
     actor->complete = 0;
     /* Selecting a motion displays its first pose. The scripted actor then
      * receives its normal animation service later in the same update. */
+    return advance(actor, pose, 0);
+}
+
+int bfm_forest_speech_motion_tick(BfmForestSpeechActor *actor, uint32_t script,
+                                  BfmForestPose *pose)
+{
+    if (!actor || !actor->field || !pose ||
+        (script && !select_motion(actor, script, pose))) return 0;
     return advance(actor, pose, 0);
 }
 
