@@ -8083,6 +8083,19 @@
       "origin": "Clean-room C from the US Spiral Tower courtyard overlay. Updates the pressed plate, awards its room credit once and advances the room after the fourth plate.",
       "source_sha256": "d254e6785f9fd50d3b0806a66551dd2230d796c1a6ace26c388163882e7af869",
       "span_sha256": "f79445258afc04c0d2607a1c9884f6d42adf155b9566e46c18942dcd3df1b575"
+    },
+    {
+      "name": "func_80184944",
+      "region": "sc01_0077",
+      "vram": 2149075268,
+      "size": 100,
+      "source": "src/overlays/sc01_0077/80184944.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the owned USA scene overlay. Acquires the actor model and advances to state one, or retires the actor if acquisition fails.",
+      "source_sha256": "b5e0381ac6980a4a9d4090e680407fc19e3319a99a56054988922e92d47f2b10",
+      "span_sha256": "e81e0e7dc5d6f73a892d46da032f54ffd2545a3fc134c83ea75f91b860759bdb"
     }
   ]
 }
