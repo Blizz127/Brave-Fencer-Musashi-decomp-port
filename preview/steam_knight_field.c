@@ -32,6 +32,7 @@ struct BfmSteamKnightField {
     unsigned west_turn, west_delay;
     int west_requested;
     BfmForestCamera arena_view;
+    int32_t arena_focus[3];
     MusashiForestPlayerMesh *hero;
     RoomTransferDescriptor entrance;
 };
@@ -484,7 +485,8 @@ void bfm_steam_knight_field_track_arena(BfmSteamKnightField *field, unsigned rou
         bias_x = (int)lround((2.0 * view->rotation[0][0] + 5.0 * view->rotation[0][2]) / 4096.0);
         bias_z = (int)lround((2.0 * view->rotation[0][2] - 5.0 * view->rotation[0][0]) / 4096.0);
     }
-    const int focus[3] = {target_x + bias_x, target_y, target_z + bias_z};
+    const int32_t focus[3] = {target_x + bias_x, target_y, target_z + bias_z};
+    memcpy(field->arena_focus, focus, sizeof focus);
     int16_t eye[3];
     for (unsigned i = 0; i < 3; ++i)
         eye[i] = (int16_t)lround(focus[i] - field->arena_radius * view->rotation[2][i] / 4096.0);
@@ -503,4 +505,24 @@ void bfm_steam_knight_field_arena_camera(const BfmSteamKnightField *field,
         *camera = field->arena_view;
     else
         bfm_steam_knight_duel_camera(camera);
+}
+
+static void restore_duel_points(BfmForestStatus *status)
+{
+    /* The arena restores health and BP while retaining the earned wallet,
+     * play clock, equipment and story state. */
+    memcpy(status->record + 0x3c, status->record + 0x3a, 2);
+    memcpy(status->record + 0x40, status->record + 0x3e, 2);
+}
+
+BfmRetryScreen *bfm_steam_knight_field_defeat(BfmSteamKnightField *field,
+    const MusashiDiscMedia *disc, BfmGameplayRun *run, const int16_t feet[3],
+    unsigned yaw, uint32_t visible_parts)
+{
+    if (!field || !field->arena_ready) return NULL;
+    const uint8_t *data = scene_range(field, UINT32_C(0x80192c50), BFM_RETRY_ROOM_DATA_BYTES);
+    BfmRetryMountedRoom room = {.terrain = field->terrain, .hero = field->hero,
+        .data = data, .bytes = BFM_RETRY_ROOM_DATA_BYTES, .restore_status = restore_duel_points};
+    return bfm_retry_screen_open_mounted(disc, &room, run, &field->arena_view,
+                                         field->arena_focus, feet, yaw, visible_parts);
 }

@@ -1368,6 +1368,7 @@ BfmRetryAudioEvent bfm_forest_walk_retry_audio(const BfmForestWalk *w)
 {
     if (!w) return BFM_RETRY_AUDIO_NONE;
     if (w->retry) return bfm_retry_screen_audio_event(w->retry);
+    if (w->steam_knight) return BFM_RETRY_AUDIO_NONE;
     if (w->retry_music_track && w->drawbridge) {
         BfmDrawbridgeMusic event = bfm_castle_drawbridge_music(w->drawbridge);
         if (event == BFM_DRAWBRIDGE_MUSIC_FADE) return BFM_RETRY_AUDIO_FADE_FIELD;
@@ -2260,8 +2261,53 @@ static int reenter_forest(BfmForestWalk *w)
     return 1;
 }
 
+static int update_hall_hero(BfmForestWalk *w)
+{
+    int16_t feet[3], heading;
+    unsigned elapsed;
+    int running;
+    if (bfm_steam_knight_hero(w->steam_knight, feet, &heading, &running, &elapsed)) {
+        restore_whole_position(w, feet);
+        w->yaw = heading;
+        w->support_y = w->support_z = 0;
+        w->actor.state = running;
+        w->actor.phase = 1;
+        w->motion = running ? RUN : IDLE;
+        w->elapsed = elapsed;
+        const uint32_t weapon_parts = UINT32_C(0x3f) << 21;
+        uint32_t equipped = w->hall_equipment;
+        uint32_t special = bfm_steam_knight_body(w->steam_knight);
+        if (special) {
+            equipped &= ~((UINT32_C(1) << 21) | (UINT32_C(1) << 24));
+            equipped |= (UINT32_C(1) << 22) | (UINT32_C(1) << 25);
+            if (!select_pose(w, special, w->visible)) return 0;
+        } else if (!update_pose(w)) return 0;
+        w->visible = (w->visible & ~weapon_parts) | equipped;
+    }
+    return 1;
+}
+
 static int resume_chapter(BfmForestWalk *w)
 {
+    if (w->steam_knight) {
+        BfmSteamKnight *old = w->steam_knight;
+        BfmSteamKnight *next = bfm_steam_knight_resume(old, w->data.initial_velocity);
+        if (!next) return 0;
+        w->steam_knight = next;
+        if (!update_hall_hero(w)) {
+            w->steam_knight = old;
+            bfm_steam_knight_free(next);
+            return 0;
+        }
+        /* The outgoing screen borrows the defeated visit's terrain. */
+        bfm_retry_screen_free(w->retry);
+        w->retry = NULL;
+        bfm_steam_knight_free(old);
+        w->reentry_age = 1;
+        w->control_polled = w->jump_pressed = w->jump_held = 0;
+        w->input_x = w->input_y = 0;
+        return 1;
+    }
     if (!w->summit) return reenter_forest(w);
     BfmForestHud *hud = bfm_forest_open_hud(w->field, w->disc);
     if (!hud) return 0;
@@ -2313,16 +2359,26 @@ int bfm_forest_walk_tick_controller(BfmForestWalk *w, int x, int y, uint16_t pre
             bfm_forest_status_defeated(&w->gameplay->player);
             w->fatal_hit = 0;
         }
-        if (!w->summit && bfm_retry_screen_keep_world(w->retry)) {
+        if (w->steam_knight && bfm_steam_knight_retire_actor(w->steam_knight)) return 1;
+        if (!w->steam_knight && !w->summit && bfm_retry_screen_keep_world(w->retry)) {
             w->yaw = (int16_t)bfm_retry_screen_yaw(w->retry);
             if (!follow(w)) return -1;
             bfm_retry_screen_update_outgoing_view(w->retry, &w->camera, w->target);
         }
         int ready = bfm_retry_screen_step(w->retry, held, pressed);
         if (ready < 0) return -1;
-        bfm_forest_hud_tick(w->hud);
-        bfm_forest_hud_submit_points(w->hud, &w->gameplay->player);
+        if (w->steam_knight) bfm_steam_knight_defeat_hud_tick(w->steam_knight);
+        else {
+            bfm_forest_hud_tick(w->hud);
+            bfm_forest_hud_submit_points(w->hud, &w->gameplay->player);
+        }
         if (ready && !resume_chapter(w)) return -1;
+        return 1;
+    }
+    if (w && w->reentry_age && w->steam_knight) {
+        int ready = bfm_steam_knight_load_retry(w->steam_knight);
+        if (ready < 0) return -1;
+        if (ready) w->reentry_age = 0;
         return 1;
     }
     if (w && w->reentry_age && !w->summit) {
@@ -2344,33 +2400,18 @@ int bfm_forest_walk_tick_controller(BfmForestWalk *w, int x, int y, uint16_t pre
         return 1;
     }
     if (w && w->steam_knight) {
+        int hp = bfm_forest_status_values(&w->gameplay->player).hp;
         int stepped = bfm_steam_knight_tick(w->steam_knight, x, y, pressed, held, w->data.initial_velocity);
+        if (stepped >= 0 && hp > 0 && bfm_forest_status_values(&w->gameplay->player).hp <= 0) {
+            w->retry = bfm_steam_knight_open_defeat(w->steam_knight, w->visible);
+            if (!w->retry) return -1;
+            w->fatal_hit = 1;
+            return 1;
+        }
         if (stepped <= 0) return stepped;
         ++w->tick;
-        int16_t feet[3], heading;
-        unsigned elapsed;
-        int running;
-        if (bfm_steam_knight_hero(w->steam_knight, feet, &heading, &running, &elapsed)) {
-            restore_whole_position(w, feet);
-            w->yaw = heading;
-            w->support_y = w->support_z = 0;
-            w->actor.state = running;
-            w->actor.phase = 1;
-            w->motion = running ? RUN : IDLE;
-            w->elapsed = elapsed;
-            const uint32_t weapon_parts = UINT32_C(0x3f) << 21;
-            uint32_t equipped = w->hall_equipment;
-            uint32_t special = bfm_steam_knight_body(w->steam_knight);
-            if (special) {
-                equipped &= ~((UINT32_C(1) << 21) | (UINT32_C(1) << 24));
-                equipped |= (UINT32_C(1) << 22) | (UINT32_C(1) << 25);
-                if (!select_pose(w, special, w->visible)) return -1;
-            } else if (!update_pose(w)) return -1;
-            w->visible = (w->visible & ~weapon_parts) | equipped;
-            if (!bfm_steam_knight_step_effects(w->steam_knight, &w->root, w->lumina_anchors))
-                return -1;
-        }
-        return 1;
+        if (!update_hall_hero(w)) return -1;
+        return bfm_steam_knight_step_effects(w->steam_knight, &w->root, w->lumina_anchors) ? 1 : -1;
     }
     if (w && w->drawbridge) {
         int stepped = tick_drawbridge(w);
@@ -2430,8 +2471,10 @@ int bfm_forest_walk_draw(BfmForestWalk *w,uint32_t pixels[240][320])
 {
     if(!w || !pixels) return 0;
     for(unsigned y=0;y<240;y++) for(unsigned x=0;x<320;x++) pixels[y][x]=UINT32_C(0xff000000);
-    if(!w->tick || (w->summit && w->reentry_age && w->reentry_age < 8)) return 1;
+    if (!w->tick || (!w->steam_knight && w->summit && w->reentry_age && w->reentry_age < 8))
+        return 1;
     if (w->retry) {
+        if (w->steam_knight) return bfm_steam_knight_draw_defeat(w->steam_knight, w->retry, pixels);
         if (bfm_retry_screen_keep_world(w->retry)) {
             unsigned parity = w->tick & 1u;
             int drawn = w->summit ?

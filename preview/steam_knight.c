@@ -45,6 +45,8 @@ struct BfmSteamKnight {
     } numbers[BFM_STEAM_CHARGE_SLOTS];
     const uint8_t *damage_palette;
     int swing_sound, hit_sound;
+    int defeated, resumed_duel;
+    unsigned retire_updates, reload_age;
     BfmSteamKnightBossHud boss_hud;
     BfmSteamKnightCoreBoxes core_boxes;
     BfmSteamKnightCarry carry;
@@ -145,6 +147,89 @@ void bfm_steam_knight_free(BfmSteamKnight *s)
 }
 
 static void hall_camera(const BfmSteamKnight *s, BfmForestCamera *camera);
+
+BfmRetryScreen *bfm_steam_knight_open_defeat(BfmSteamKnight *s, uint32_t visible)
+{
+    if (!s || !s->hero || s->defeated || s->event.stage != BFM_STEAM_DUEL ||
+        s->finale.phase != BFM_STEAM_FINAL_INACTIVE ||
+        bfm_forest_status_values(&s->event.run->player).hp > 0) return NULL;
+    const BfmSteamKnightHeroSample *hero = bfm_steam_hero_sample(s->hero);
+    BfmRetryScreen *screen = bfm_steam_knight_field_defeat(s->field, s->disc, s->event.run,
+                                                          hero->feet, hero->heading, visible);
+    if (screen) {
+        s->defeated = 1;
+        /* The 300E transfer begins on the next update and releases the
+         * defeated actor on the second, before the shared fall takes over. */
+        s->retire_updates = 2;
+        s->swing_sound = s->hit_sound = 0;
+    }
+    return screen;
+}
+
+BfmSteamKnight *bfm_steam_knight_resume(const BfmSteamKnight *defeated, int32_t initial_velocity)
+{
+    if (!defeated || !defeated->defeated || !defeated->hero) return NULL;
+    BfmGameplayRun *run = defeated->event.run;
+    if (bfm_forest_status_values(&run->player).hp <= 0) return NULL;
+    const RoomTransferDescriptor *door = bfm_steam_knight_field_entrance(defeated->field);
+    BfmSteamKnight *s = bfm_steam_knight_open(defeated->disc, door, run);
+    if (!s) return NULL;
+    const int16_t feet[] = {-152, -2050, -3368};
+    size_t bytes;
+    const uint8_t *scene = bfm_steam_knight_field_scene(s->field, &bytes);
+    if (!bfm_steam_knight_field_open_roof(s->field)) goto fail;
+    s->hero = bfm_steam_hero_open(s->disc, scene, bytes, feet, 2048, initial_velocity);
+    if (!s->hero) goto fail;
+    bfm_steam_knight_machine_reveal(s->machine);
+    bfm_steam_knight_machine_present(s->machine, 0);
+    bfm_steam_knight_machine_handover(s->machine);
+    int16_t body[3];
+    if (!bfm_steam_knight_machine_world_root(s->machine, body)) goto fail;
+    bfm_steam_knight_field_track_arena(s->field, 0, 1, feet, body);
+    s->battle_flags = 0x41;
+    s->resumed_duel = s->ring_started = 1;
+    s->event.stage = BFM_STEAM_DUEL;
+    s->event.shot = BFM_STEAM_DUEL_CAMERA;
+    memcpy(s->event.position, feet, sizeof feet);
+    s->event.heading = 2048;
+    return s;
+fail:
+    bfm_steam_knight_free(s);
+    return NULL;
+}
+
+int bfm_steam_knight_retire_actor(BfmSteamKnight *s)
+{
+    if (!s || !s->retire_updates) return 0;
+    --s->retire_updates;
+    return 1;
+}
+
+void bfm_steam_knight_defeat_hud_tick(BfmSteamKnight *s)
+{
+    if (s && s->defeated) {
+        bfm_forest_hud_tick(s->hud);
+        bfm_forest_hud_submit_points(s->hud, &s->event.run->player);
+    }
+}
+
+/* The transfer displays the incoming arena before its actors take input. */
+int bfm_steam_knight_load_retry(BfmSteamKnight *s)
+{
+    if (!s || !s->resumed_duel) return -1;
+    if (s->reload_age >= 203) return 1;
+    ++s->reload_age;
+    if (s->reload_age == 191) {
+        bfm_forest_hud_show(s->hud);
+        s->hud_shown = 1;
+    }
+    if (s->hud_shown) {
+        bfm_forest_hud_gauges(s->hud, s->event.run->player.record[0x47], -1);
+        bfm_forest_hud_submit_points(s->hud, &s->event.run->player);
+        bfm_forest_hud_tick(s->hud);
+    }
+    return s->reload_age == 203;
+}
 
 static int damage_number(BfmSteamKnight *s, const int16_t point[3], uint16_t amount, int hurt)
 {
@@ -613,6 +698,7 @@ static int duel_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uint16_t
     if (!core_ready) --s->core_lock;
     ++e->age;
     ++e->stage_age;
+    if (s->resumed_duel && !s->round && e->stage_age == 8) s->battle_flags &= ~0x40u;
     bfm_forest_voice_step(s->voice);
     bfm_steam_knight_machine_step_light(s->machine);
     bfm_steam_knight_machine_present(s->machine, e->stage_age);
@@ -790,12 +876,13 @@ int bfm_steam_knight_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uin
     else if (s->hero) advanced = duel_tick(s, x, y, pressed, held);
     else advanced = presentation_tick(s, pressed, held, initial_walk_velocity);
     if (advanced <= 0) return advanced;
+    if (s->resumed_duel && s->reload_age < 257) ++s->reload_age;
     if (!s->ring_started && bfm_steam_event_ring_started(e)) {
         int16_t center[3] = {e->position[0], e->position[1], (int16_t)(e->position[2] - 20)};
         bfm_steam_knight_flames_start(&s->flames, center);
         s->ring_started = 1;
     }
-    if (bfm_steam_event_hud(e)) {
+    if ((s->resumed_duel && e->stage_age < 3) || bfm_steam_event_hud(e)) {
         if (!s->hud_shown) {
             bfm_forest_hud_show(s->hud);
             s->hud_shown = 1;
@@ -805,7 +892,7 @@ int bfm_steam_knight_tick(BfmSteamKnight *s, int x, int y, uint16_t pressed, uin
         bfm_forest_hud_tick(s->hud);
     }
     /* The hall becomes active after selection, placement and its entry fade. */
-    if (e->age > HALL_LIVE && !s->finale.exit_started && e->run->player.record[8] == 0)
+    if ((s->hero || e->age > HALL_LIVE) && !s->finale.exit_started && e->run->player.record[8] == 0)
         bfm_gameplay_advance_playtime(e->run->player.record, 1);
     return 1;
 }
@@ -821,18 +908,23 @@ int bfm_steam_knight_control(const BfmSteamKnight *s)
 
 uint16_t bfm_steam_knight_room(const BfmSteamKnight *s)
 {
-    return s && s->event.age >= SELECT_HALL ? 0x300e : 0x300d;
+    return s && (s->hero || s->event.age >= SELECT_HALL) ? 0x300e : 0x300d;
 }
 
 unsigned bfm_steam_knight_shade(const BfmSteamKnight *s)
 {
-    return s ? bfm_steam_event_shade(&s->event) : 31;
+    if (!s) return 31;
+    if (s->resumed_duel && s->reload_age < 205) {
+        if (s->reload_age < 190) return 31;
+        return 29u - 2u * (s->reload_age - 190);
+    }
+    return s->hero ? 0 : bfm_steam_event_shade(&s->event);
 }
 
 int bfm_steam_knight_hero(const BfmSteamKnight *s, int16_t feet[3], int16_t *heading,
                           int *running, unsigned *motion_tick)
 {
-    if (!s || s->event.age < PLACE_HERO || !feet || !heading || !running || !motion_tick)
+    if (!s || (!s->hero && s->event.age < PLACE_HERO) || !feet || !heading || !running || !motion_tick)
         return 0;
     if (s->finale.phase != BFM_STEAM_FINAL_INACTIVE) {
         memcpy(feet, s->finale.hero, sizeof s->finale.hero);
@@ -894,7 +986,7 @@ static void hall_camera(const BfmSteamKnight *s, BfmForestCamera *camera)
     if (bfm_steam_event_title(&s->event)) {
         unsigned ground_age = s->event.landing_age > 24 ? s->event.landing_age - 24 : 0;
         bfm_steam_knight_title_camera(camera, ground_age * 2);
-    } else if (s->event.stage == BFM_STEAM_DUEL && !s->event.stage_age)
+    } else if (s->event.stage == BFM_STEAM_DUEL && !s->event.stage_age && !s->resumed_duel)
         bfm_steam_knight_machine_camera(camera);
     else if (s->hero)
         bfm_steam_knight_field_arena_camera(s->field, camera);
@@ -989,19 +1081,33 @@ int bfm_steam_knight_draw(BfmSteamKnight *s, const BfmForestPose *pose,
     if (!bfm_steam_knight_field_draw(s->field, &camera, pose, root, visible,
             has_blade ? &s->weapons.fusion : NULL, has_blade ? &blade : NULL, s->event.age & 1,
             actors, actor_count, cards, count, pixels)) return 0;
-    if (s->hud_shown && bfm_steam_event_hud(&s->event))
+    if (!s->defeated && s->hud_shown &&
+        ((s->resumed_duel && s->event.stage_age < 3) || bfm_steam_event_hud(&s->event)))
         bfm_forest_hud_draw(s->hud, &s->event.run->player, pixels);
     const uint16_t (*tiles)[1024] = bfm_forest_terrain_tiles(bfm_steam_knight_field_terrain(s->field));
     if (bfm_steam_event_title(&s->event)) bfm_steam_knight_boss_title(tiles, pixels);
-    if (s->event.stage == BFM_STEAM_DUEL && (s->finale.phase == BFM_STEAM_FINAL_INACTIVE ||
-        bfm_steam_finale_boss_hud(&s->finale)))
-        bfm_steam_knight_boss_status(&s->boss_hud, tiles, s->event.stage_age, pixels);
+    if (s->event.stage == BFM_STEAM_DUEL &&
+        (s->finale.phase == BFM_STEAM_FINAL_INACTIVE || bfm_steam_finale_boss_hud(&s->finale))) {
+        if (s->resumed_duel)
+            bfm_steam_knight_boss_retry_status(&s->boss_hud, tiles, s->reload_age, pixels);
+        else
+            bfm_steam_knight_boss_status(&s->boss_hud, tiles, s->event.stage_age, pixels);
+    }
     if (s->finale.phase != BFM_STEAM_FINAL_INACTIVE) bfm_steam_finale_flash(&s->finale, pixels);
     if (s->event.message) {
         const BfmForestMessageFrame *frame = bfm_forest_message_frame(s->event.message);
         bfm_bedroom_message_art_draw_side(s->art, frame, 160, 0, pixels);
     }
     return 1;
+}
+
+int bfm_steam_knight_draw_defeat(BfmSteamKnight *s, BfmRetryScreen *screen,
+                                uint32_t pixels[240][320])
+{
+    if (!s || !s->defeated || !screen) return 0;
+    if (bfm_retry_screen_keep_world(screen) &&
+        !bfm_steam_knight_draw(s, NULL, NULL, 0, NULL, NULL, pixels)) return 0;
+    return bfm_retry_screen_draw(screen, s->hud, s->art, pixels);
 }
 
 ForestVoice *bfm_steam_knight_voice(BfmSteamKnight *s, unsigned *generation)

@@ -10,6 +10,16 @@ BfmSteamKnight *bfm_steam_knight_open(const MusashiDiscMedia *disc,
     const RoomTransferDescriptor *request, BfmGameplayRun *run);
 int bfm_steam_knight_take_chapter(BfmSteamKnight *s);
 void bfm_steam_knight_free(BfmSteamKnight *encounter);
+BfmRetryScreen *bfm_steam_knight_open_defeat(BfmSteamKnight *encounter, uint32_t visible_parts);
+/* Replace the defeated visit after its normal dialogue and room transfer. */
+BfmSteamKnight *bfm_steam_knight_resume(const BfmSteamKnight *defeated,
+                                        int32_t initial_walk_velocity);
+int bfm_steam_knight_draw_defeat(BfmSteamKnight *encounter, BfmRetryScreen *screen,
+                                uint32_t pixels[240][320]);
+int bfm_steam_knight_retire_actor(BfmSteamKnight *encounter);
+void bfm_steam_knight_defeat_hud_tick(BfmSteamKnight *encounter);
+/* Advance one loading update, returning one when ordinary control resumes. */
+int bfm_steam_knight_load_retry(BfmSteamKnight *encounter);
 int bfm_steam_knight_tick(BfmSteamKnight *encounter, int x, int y, uint16_t pressed, uint16_t held,
                           int32_t initial_walk_velocity);
 /* Advance room effects once after the player's selected model and blade anchors are current. */

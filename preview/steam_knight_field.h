@@ -2,6 +2,7 @@
 #ifndef BFM_STEAM_KNIGHT_FIELD_H
 #define BFM_STEAM_KNIGHT_FIELD_H
 #include "forest_dust.h"
+#include "retry_screen.h"
 #include "room_descriptor.h"
 
 typedef struct BfmSteamKnightField BfmSteamKnightField;
@@ -33,6 +34,10 @@ void bfm_steam_knight_field_track_arena(BfmSteamKnightField *field, unsigned rou
                                        const int16_t body[3]);
 void bfm_steam_knight_field_arena_camera(const BfmSteamKnightField *field,
                                         BfmForestCamera *camera);
+/* The current arena supplies the outgoing lens and its mounted retry art. */
+BfmRetryScreen *bfm_steam_knight_field_defeat(BfmSteamKnightField *field,
+    const MusashiDiscMedia *disc, BfmGameplayRun *run, const int16_t feet[3],
+    unsigned yaw, uint32_t visible_parts);
 /* Open the roof and expose the mounted room backdrop. The change is idempotent. */
 int bfm_steam_knight_field_open_roof(BfmSteamKnightField *field);
 /* Gates 1 through 3 open in order after the roof. Repeating a gate is safe. */
