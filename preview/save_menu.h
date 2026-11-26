@@ -13,7 +13,10 @@ typedef struct {
     uint64_t money;
 } BfmSaveRow;
 
-typedef enum { BFM_SAVE_PICK, BFM_SAVE_CONFIRM, BFM_SAVE_BOUNDARY, BFM_SAVE_LOADED } BfmSavePage;
+typedef enum {
+    BFM_SAVE_PICK, BFM_SAVE_CONFIRM, BFM_SAVE_BOUNDARY, BFM_SAVE_LOADED,
+    BFM_SAVE_CARD_LOADING, BFM_SAVE_CARD_READING, BFM_SAVE_NO_DATA
+} BfmSavePage;
 typedef struct {
     BfmSaveRow rows[4];
     BfmSaveRecord records[4];

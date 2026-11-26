@@ -63,12 +63,22 @@ static BfmSaveRow read_row(const uint8_t *summary, const uint8_t *payload)
 static void read_directory(BfmSaveMenu *menu, CardImage image)
 {
     static const char name[] = "BASLUS-00726MUSASHI";
-    CardEntry entry;
-    CardResult result = card_open(image, name, &entry);
-    if (result == CARD_NOT_FOUND) return;
+    CardEntry entries[CARD_MAX_FILES];
+    size_t count;
+    if (card_list(image, entries, &count) != CARD_OK) {
+        menu->issue = "Unreadable memory card or game file.";
+        return;
+    }
+    if (count == 0) {
+        menu->page = BFM_SAVE_CARD_LOADING;
+        return;
+    }
+    size_t i = 0;
+    while (i < count && strcmp(entries[i].name, name)) ++i;
+    if (i == count) return;
     uint8_t game[CARD_BLOCK_SIZE];
     size_t size;
-    if (result != CARD_OK || entry.size != sizeof game ||
+    if (entries[i].size != sizeof game ||
         card_read(image, name, 0, game, sizeof game, &size) != CARD_OK ||
         size != sizeof game || game[0] != 'S' || game[1] != 'C' || game[3] != 1) {
         menu->issue = "Unreadable memory card or game file.";
@@ -111,6 +121,8 @@ int bfm_save_menu_input(BfmSaveMenu *menu, uint16_t pressed)
     enum { START = 1u << 3, UP = 1u << 4, RIGHT = 1u << 5, DOWN = 1u << 6, LEFT = 1u << 7,
            TRIANGLE = 1u << 12, CIRCLE = 1u << 13, CROSS = 1u << 14 };
     if (menu->issue) return (pressed & (START | TRIANGLE | CIRCLE | CROSS)) != 0;
+    if (menu->page == BFM_SAVE_CARD_LOADING || menu->page == BFM_SAVE_CARD_READING) return 0;
+    if (menu->page == BFM_SAVE_NO_DATA) return (pressed & TRIANGLE) != 0;
     if (menu->page != BFM_SAVE_PICK) {
         if (pressed & TRIANGLE) menu->page = BFM_SAVE_PICK;
         else if ((pressed & CROSS) && menu->page == BFM_SAVE_CONFIRM)

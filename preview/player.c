@@ -16,7 +16,7 @@
 
 enum { TITLE_W = 640, TITLE_H = 480, OPENING_W = 320, OPENING_H = 240 };
 /* On the US disc, the first visible loading sprite spans at least 115 fields. */
-enum { LOADING_VISIBLE_FIELDS = 115 };
+enum { LOADING_VISIBLE_FIELDS = 115, CARD_READ_VISIBLE_FIELDS = 90 };
 enum { PAD_START = 1u << 3, PAD_UP = 1u << 4, PAD_RIGHT = 1u << 5, PAD_DOWN = 1u << 6,
        PAD_LEFT = 1u << 7, PAD_TRIANGLE = 1u << 12,
        PAD_CIRCLE = BFM_FOREST_CIRCLE, PAD_CROSS = BFM_FOREST_CROSS, PAD_SQUARE = BFM_FOREST_SQUARE };
@@ -462,6 +462,11 @@ static int play(Player *p, char *error, size_t size) {
         int opening = p->flow.phase == BFM_TITLE_OPENING;
         int files = p->flow.phase == BFM_TITLE_FILES;
         int bedroom = p->flow.phase == BFM_TITLE_BEDROOM;
+        if (files && p->saves.page == BFM_SAVE_CARD_LOADING && fields >= LOADING_VISIBLE_FIELDS)
+            p->saves.page = BFM_SAVE_CARD_READING;
+        if (files && p->saves.page == BFM_SAVE_CARD_READING &&
+            fields >= LOADING_VISIBLE_FIELDS + CARD_READ_VISIBLE_FIELDS)
+            p->saves.page = BFM_SAVE_NO_DATA;
         if (files && !p->save_art) {
             p->save_art = bfm_save_art_load(p->disc);
             if (!p->save_art) {
@@ -557,6 +562,9 @@ static int play(Player *p, char *error, size_t size) {
             }
         } else if (bedroom) {
             frame = bedroom_frame(p);
+        } else if (files && p->saves.page == BFM_SAVE_CARD_LOADING) {
+            frame = bfm_title_frame(p->title, fields, BFM_TITLE_LOADING, BFM_CHOICE_CONTINUE,
+                                    0, p->pixels, p->width, p->height);
         } else if (files) {
             bfm_save_menu_draw(p->save_art, &p->saves, fields, (uint32_t (*)[320])p->pixels);
             frame = 1;

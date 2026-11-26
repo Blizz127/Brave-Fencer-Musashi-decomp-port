@@ -169,6 +169,16 @@ void bfm_save_menu_draw(const BfmSaveArt *art, const BfmSaveMenu *menu, unsigned
         text(&c, 22, 31, "Press T or Triangle to return.", 128);
         return;
     }
+    if (menu->page == BFM_SAVE_CARD_READING) {
+        label(&c, 118, 18, 0, 24, 75, 12, 128);
+        label(&c, 40, 31, 0, 36, 237, 12, 128);
+        return;
+    }
+    if (menu->page == BFM_SAVE_NO_DATA) {
+        label(&c, 94, 18, 0, 120, 124, 12, 128);
+        label(&c, 76, 31, 0, 132, 162, 12, 128);
+        return;
+    }
     for (unsigned i = 0; i < 4; ++i) draw_row(&c, menu, i);
     if (menu->page == BFM_SAVE_BOUNDARY) {
         text(&c, 22, 18, "This preview cannot resume this save.", 128);
