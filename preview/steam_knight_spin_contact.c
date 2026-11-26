@@ -133,7 +133,9 @@ int bfm_steam_spin_segments(const BfmForestTransform *actor,
     BfmSteamSpinSegments segments = {.count = 1};
     world_point(actor, pivot, segments.pivot);
     world_point(actor, previous, segments.ends[0]);
-    if (length_squared >= 65 * 65) {
+    /* In bank two, the original integer distance first reaches 65 at this
+     * squared chord length. A 65-unit axis-aligned chord still reports 64. */
+    if (length_squared >= 4288) {
         int near[3], far[3];
         for (unsigned i = 0; i < 3; ++i) {
             near[i] = previous[i] + third[i];
