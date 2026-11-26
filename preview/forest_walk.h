@@ -3,6 +3,7 @@
 #define BFM_FOREST_WALK_H
 #include "forest_entry.h"
 #include "gameplay_run.h"
+#include "retry_screen.h"
 
 typedef struct BfmForestWalk BfmForestWalk;
 
@@ -31,6 +32,8 @@ int bfm_forest_walk_tick_controls(BfmForestWalk *walk, int x, int y,
                                   int cross_pressed, int cross_held);
 /* 0 during the door event, 1 under player control, 2 at the preview boundary. */
 int bfm_forest_walk_control(const BfmForestWalk *walk);
+int bfm_forest_walk_defeated(const BfmForestWalk *walk);
+BfmRetryAudioEvent bfm_forest_walk_retry_audio(const BfmForestWalk *walk);
 /* Room selected by the running scene, including during a transfer. */
 uint16_t bfm_forest_walk_room(const BfmForestWalk *walk);
 /* Take the entry offered by the completed castle crossing once. */

@@ -29,6 +29,13 @@ void bfm_desktop_voice_forest_swing(DesktopVoice *voice);
 void bfm_desktop_voice_forest_hit(DesktopVoice *voice);
 /* Invoke on the earned skill's firing marker once the shot spends BP. */
 void bfm_desktop_voice_forest_gunshot(DesktopVoice *voice);
+typedef enum {
+    BFM_DEFEAT_SCORE_FADE_FIELD, BFM_DEFEAT_SCORE_START, BFM_DEFEAT_SCORE_FADE_OUT
+} BfmDefeatScoreEvent;
+/* Apply one loss-scene music command on the game thread. A mounted score
+ * can be accepted with the output device disconnected. */
+int bfm_desktop_voice_defeat_score(DesktopVoice *voice, const MusashiDiscMedia *disc,
+                                   BfmDefeatScoreEvent event);
 struct BfmTowerBellSound;
 void bfm_desktop_voice_tower_bell(DesktopVoice *voice, struct BfmTowerBellSound *bell,
                                   unsigned command, unsigned argument);

@@ -15,7 +15,8 @@ static const VoiceArchive archives[] = {
     [BFM_VOICE_OPEN] = { "OPEN.STR", 0x8006a774, 8, 0x4600 },
     [BFM_VOICE_ST01] = { "ST01.STR", 0x8006a69c, 0, 0x4000 },
     [BFM_VOICE_ST02] = { "ST02.STR", 0x8006a6e4, 1, 0x4200 },
-    [BFM_VOICE_SHOPS01] = { "SHOPS01.STR", 0x8006a72c, 2, 0x4400 }
+    [BFM_VOICE_SHOPS01] = { "SHOPS01.STR", 0x8006a72c, 2, 0x4400 },
+    [BFM_VOICE_OUT] = { "OUT.STR", 0x8006a8dc, 11, 0x5000 }
 };
 
 struct PalaceVoice {

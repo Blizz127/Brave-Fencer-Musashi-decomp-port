@@ -48,6 +48,11 @@ ForestVoice *bfm_inn_voice_load(const MusashiDiscMedia *disc)
     return load_voice(disc, BFM_VOICE_SHOPS01);
 }
 
+ForestVoice *bfm_defeat_voice_load(const MusashiDiscMedia *disc)
+{
+    return load_voice(disc, BFM_VOICE_OUT);
+}
+
 ForestVoice *bfm_library_voice_load(const MusashiDiscMedia *disc)
 {
     return load_voice(disc, BFM_VOICE_OPEN);

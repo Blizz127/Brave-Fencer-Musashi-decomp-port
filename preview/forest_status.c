@@ -49,6 +49,26 @@ void bfm_forest_status_equip_lumina(BfmForestStatus *status)
     status->record[0x48] |= 1u;
 }
 
+void bfm_forest_status_defeated(BfmForestStatus *status)
+{
+    if (!status) return;
+    /* The defeat actor releases the current ability and its working state.
+     * Lumina and the scrolls remain equipped in the preceding byte. */
+    memset(status->record + 0x49, 0, 4);
+    memset(status->record + 0x50, 0, 4);
+}
+
+void bfm_forest_status_chapter_retry(BfmForestStatus *status)
+{
+    if (!status) return;
+    /* All early chapter rooms select this fixed resource recovery. The
+     * opening's wallet has 100 stored units (the HUD displays 1,000). */
+    status->record[0x3c] = status->record[0x40] = 150;
+    status->record[0x3d] = status->record[0x41] = 0;
+    status->record[0x14] = 100;
+    memset(status->record + 0x15, 0, 3);
+}
+
 void bfm_forest_status_debit(BfmForestStatus *status, unsigned amount)
 {
     if (!status) return;

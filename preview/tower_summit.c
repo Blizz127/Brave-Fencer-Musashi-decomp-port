@@ -185,6 +185,28 @@ BfmTowerSummitLesson *bfm_tower_summit_active_lesson(BfmTowerSummit *summit)
     return summit && summit->lesson.phase ? &summit->lesson : NULL;
 }
 
+int bfm_tower_summit_resume_escape(BfmTowerSummit *summit, BfmTowerEscape *escape,
+                                   BfmTowerEscapeCamera *camera)
+{
+    if (!summit || !escape || !camera) return 0;
+    BfmTowerEscape next = *escape;
+    if (!bfm_tower_escape_resume(&next, summit->field)) return 0;
+    int lower = next.checkpoint == BFM_ESCAPE_LOWER_CHECKPOINT;
+    BfmTowerEscapeProps *road = NULL;
+    if (lower) {
+        road = bfm_tower_escape_props_open(summit->field);
+        if (!road) return 0;
+        bfm_tower_escape_props_tick(road, next.head.position[2]);
+    }
+    bfm_tower_escape_props_free(summit->road);
+    summit->road = road;
+    summit->road_head = next.head.root;
+    summit->escaping = summit->head_relocated = summit->head_visible = 1;
+    bfm_tower_escape_lens_resume(camera, lower, next.position[0]);
+    *escape = next;
+    return 1;
+}
+
 int bfm_tower_summit_road_tick(BfmTowerSummit *summit, const BfmTowerEscape *escape)
 {
     if (!summit || !escape) return 0;
@@ -195,7 +217,7 @@ int bfm_tower_summit_road_tick(BfmTowerSummit *summit, const BfmTowerEscape *esc
     if (escape->phase > BFM_ESCAPE_REVEAL || (escape->phase == BFM_ESCAPE_REVEAL && escape->age >= 19)) {
         if (!bfm_forest_mount_summit_road(summit->field, summit->disc)) return 0;
     }
-    if (escape->phase < BFM_ESCAPE_LOWER) return 1;
+    if (escape->checkpoint != BFM_ESCAPE_LOWER_CHECKPOINT) return 1;
     if (!summit->road) summit->road = bfm_tower_escape_props_open(summit->field);
     if (!summit->road) return 0;
     bfm_tower_escape_props_tick(summit->road, escape->head.position[2]);

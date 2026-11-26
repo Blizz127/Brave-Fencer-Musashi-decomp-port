@@ -700,6 +700,14 @@ int bfm_forest_draw_player(BfmForestField *field, const BfmForestCamera *camera,
     return bfm_forest_draw_player_buffer(field, camera, pose, root, visible_parts, 0, pixels);
 }
 
+int bfm_forest_draw_player_only(const BfmForestField *field, const BfmForestCamera *camera,
+                                const BfmForestPose *pose, const BfmForestTransform *root,
+                                uint32_t mask, const BfmForestModelLighting *lighting, uint32_t pixels[240][320])
+{
+    return field && bfm_forest_terrain_draw_player_only(field->terrain, camera, field->player,
+                                                         pose, root, mask, lighting, pixels);
+}
+
 int bfm_forest_draw_player_buffer(BfmForestField *field, const BfmForestCamera *camera,
                            const BfmForestPose *pose, const BfmForestTransform *root,
                            uint32_t visible_parts, unsigned buffer, uint32_t pixels[240][320])

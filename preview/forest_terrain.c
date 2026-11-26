@@ -41,7 +41,7 @@ struct BfmForestTerrain {
     TerrainMesh mesh;
     size_t capacity;
     int has_lighting;
-    int direction[3][3], color[3][3], ambient[3];
+    BfmForestModelLighting room_light;
     ProjectedFace *draw;
     uint16_t tiles[512][1024];
 };
@@ -226,11 +226,11 @@ int bfm_forest_terrain_set_lighting(BfmForestTerrain *terrain, const uint8_t *ro
         if (!length)
             return 0;
         for (unsigned k = 0; k < 3; ++k) {
-            terrain->direction[i][k] = -axis[k] * 4096 / (int)length;
-            terrain->color[k][i] = light[6+k] * 4096 / 255;
+            terrain->room_light.direction[i][k] = -axis[k] * 4096 / (int)length;
+            terrain->room_light.color[k][i] = light[6+k] * 4096 / 255;
         }
         int ambient = (int16_t)le16(room + 2*i);
-        terrain->ambient[i] = ambient - ((ambient % 16 + 16) % 16);
+        terrain->room_light.ambient[i] = ambient - ((ambient % 16 + 16) % 16);
     }
     terrain->has_lighting = 1;
     return 1;
@@ -506,7 +506,7 @@ int bfm_forest_effect_camera(const BfmForestCamera *camera, const BfmForestTrans
     return 1;
 }
 
-static uint32_t light_vertex(const BfmForestTerrain *terrain, const int32_t light[3][3],
+static uint32_t light_vertex(const BfmForestModelLighting *lighting, const int32_t light[3][3],
                              const MusashiForestPlayerVector *normal, const uint8_t rgb[3])
 {
     int scale[3];
@@ -521,8 +521,8 @@ static uint32_t light_vertex(const BfmForestTerrain *terrain, const int32_t ligh
     for (unsigned i = 0; i < 3; ++i) {
         int64_t sum = 0;
         for (unsigned k = 0; k < 3; ++k)
-            sum += (int64_t)terrain->color[i][k] * scale[k];
-        int level = smaller(32767, larger(0, terrain->ambient[i] + (int)floor_denom(sum,4096)));
+            sum += (int64_t)lighting->color[i][k] * scale[k];
+        int level = smaller(32767, larger(0, lighting->ambient[i] + (int)floor_denom(sum,4096)));
         color |= (uint32_t)smaller(255, rgb[i] * level / 4096) << (8*i);
     }
     return color;
@@ -560,7 +560,8 @@ typedef enum { FOREST_PLAYER_MODEL, FOREST_ROOM_MODEL } ForestModelRole;
 static const MusashiForestPlayerFace white_triangle = {.corners = 3};
 static const MusashiForestPlayerFace white_quad = {.corners = 4};
 
-static int collect_model(BfmForestTerrain *terrain, const BfmForestCamera *camera,
+static int collect_model(BfmForestTerrain *terrain, const BfmForestModelLighting *lighting,
+                         const BfmForestCamera *camera,
                          const MusashiForestPlayerMesh *model, const BfmForestPose *pose,
                          const BfmForestTransform *root, uint32_t mask,
                          ForestModelRole role, size_t *count)
@@ -589,7 +590,7 @@ static int collect_model(BfmForestTerrain *terrain, const BfmForestCamera *camer
             for (unsigned b = 0; b < 3; ++b) {
                 int64_t dot = 0;
                 for (unsigned k = 0; k < 3; ++k)
-                    dot += (int64_t)terrain->direction[a][k] * world.rotation[k][b];
+                    dot += (int64_t)lighting->direction[a][k] * world.rotation[k][b];
                 light[a][b] = (int32_t)floor_denom(dot,4096);
             }
         for (size_t f = 0; f < part->face_count; ++f) {
@@ -614,7 +615,7 @@ static int collect_model(BfmForestTerrain *terrain, const BfmForestCamera *camer
                 const uint8_t *rgb = face->corner_rgb[k];
                 out->lighting[k] = (face->mode & 1) ?
                     (unsigned)rgb[0] | (unsigned)rgb[1] << 8 | (unsigned)rgb[2] << 16 :
-                    light_vertex(terrain, light, &part->normals[face->normal[k]], rgb);
+                    light_vertex(lighting, light, &part->normals[face->normal[k]], rgb);
             }
             if (role == FOREST_PLAYER_MODEL && i < 2)
                 out->depth = nearest/4 - 1;
@@ -660,6 +661,27 @@ static int by_depth(const void *left, const void *right)
     if ((a->model_face == &blade_face) != (b->model_face == &blade_face))
         return a->model_face == &blade_face ? 1 : -1;
     return a->ordinal > b->ordinal ? -1 : a->ordinal < b->ordinal;
+}
+
+int bfm_forest_terrain_draw_player_only(BfmForestTerrain *terrain, const BfmForestCamera *camera,
+                                      const MusashiForestPlayerMesh *model, const BfmForestPose *pose,
+                                      const BfmForestTransform *root, uint32_t mask,
+                                      const BfmForestModelLighting *lighting, uint32_t pixels[240][320])
+{
+    if (!terrain || !terrain->has_lighting || !camera || !camera->projection ||
+        !model || !pose || !root || !pixels) return 0;
+    size_t count = 0;
+    if (!collect_model(terrain, lighting ? lighting : &terrain->room_light, camera, model,
+                       pose, root, mask, FOREST_PLAYER_MODEL, &count))
+        return 0;
+    const BfmForestRaster surface = {
+        .tiles = (const uint16_t (*)[1024])terrain->tiles, .pixels = pixels,
+        .top = 10, .bottom = 229
+    };
+    qsort(terrain->draw, count, sizeof(*terrain->draw), by_depth);
+    for (size_t i = 0; i < count; ++i)
+        draw_model_face(&surface, &terrain->draw[i]);
+    return 1;
 }
 
 int bfm_forest_terrain_draw_actor(BfmForestTerrain *terrain, const BfmForestCamera *camera,
@@ -796,13 +818,13 @@ int bfm_forest_terrain_draw_entrance_with_effects(BfmForestTerrain *terrain,
             count = collect_cell(terrain, cell, camera, buffer, count);
     }
     if (model && (!pose || !root ||
-                  !collect_model(terrain, camera, model, pose, root, mask, FOREST_PLAYER_MODEL, &count)))
+                  !collect_model(terrain, &terrain->room_light, camera, model, pose, root, mask, FOREST_PLAYER_MODEL, &count)))
         return 0;
     for (size_t i = 0; i < actor_count; ++i) {
         const BfmForestActor *actor = &actors[i];
         if (!actor->mesh || !actor->pose || !actor->root ||
             (actor->visible_parts >> MUSASHI_FOREST_PLAYER_PARTS) ||
-            !collect_model(terrain, actor->submitted_camera ? actor->submitted_camera : camera,
+            !collect_model(terrain, &terrain->room_light, actor->submitted_camera ? actor->submitted_camera : camera,
                            actor->mesh, actor->pose, actor->root,
                            actor->visible_parts, FOREST_ROOM_MODEL, &count)) return 0;
     }

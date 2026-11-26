@@ -71,6 +71,20 @@ static void set_position(BfmTowerEscapeHead *h, int y, int z)
     h->vy = h->vz = h->gravity = 0;
 }
 
+void bfm_tower_escape_head_resume(BfmTowerEscapeHead *h, int lower)
+{
+    *h = (BfmTowerEscapeHead){.visible = 1, .roll = -1024};
+    if (lower) {
+        set_position(h, -1395, 7257);
+        h->windup_ticks = 16;
+        set_motion(h, WINDUP);
+    } else {
+        set_position(h, -1012, 15512);
+        set_motion(h, UPPER_RISE);
+    }
+    set_root(h);
+}
+
 static void spin(BfmTowerEscapeHead *h, unsigned amount)
 {
     h->yaw = (int16_t)(((unsigned)h->yaw + amount) & 4095u);
@@ -188,6 +202,7 @@ int bfm_tower_escape_head_tick(BfmTowerEscapeHead *h, const BfmForestField *room
         h->yaw = 0;
         set_motion(h, DROP_FROM_LEDGE);
     } else if (phase == BFM_ESCAPE_RECOVER && age == 98) {
+        h->windup_ticks = 6 + 8 + 46;
         set_motion(h, WINDUP);
     } else {
         switch (h->motion) {
@@ -228,7 +243,7 @@ int bfm_tower_escape_head_tick(BfmTowerEscapeHead *h, const BfmForestField *room
             }
             break;
         case WINDUP:
-            if (h->age >= 6 + 8 + 46) {
+            if (h->age >= h->windup_ticks) {
                 h->vz = -2 * Q;
                 h->spin = 0;
                 set_motion(h, ACCELERATING);

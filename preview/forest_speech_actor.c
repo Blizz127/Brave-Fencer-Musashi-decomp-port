@@ -132,18 +132,33 @@ static int select_phase(BfmForestSpeechActor *actor, BfmForestTalkPhase phase,
     return select_motion(actor, script_address(phase), pose);
 }
 
-int bfm_forest_speech_actor_begin(BfmForestSpeechActor *actor, const BfmForestField *field,
-                                  const MusashiDiscMedia *disc, uint32_t parts,
-                                  BfmForestPose *pose)
+static int begin_actor(BfmForestSpeechActor *actor, const BfmForestField *field,
+                       const MusashiDiscMedia *disc, uint32_t parts,
+                       BfmForestTalkPhase phase, BfmForestPose *pose)
 {
     if (!actor || !field || !disc || !pose)
         return 0;
     BfmForestSpeechActor fresh = {.field = field, .visible = parts, .entry_visible = parts};
     if (!forest_player_archive_open(disc, &fresh.player) ||
-        !select_phase(&fresh, BFM_FOREST_TALK_START, pose) || !advance(&fresh, pose, 0))
+        !select_phase(&fresh, phase, pose) ||
+        (phase == BFM_FOREST_TALK_START && !advance(&fresh, pose, 0)))
         return 0;
     *actor = fresh;
     return 1;
+}
+
+int bfm_forest_speech_actor_begin(BfmForestSpeechActor *actor, const BfmForestField *field,
+                                  const MusashiDiscMedia *disc, uint32_t parts,
+                                  BfmForestPose *pose)
+{
+    return begin_actor(actor, field, disc, parts, BFM_FOREST_TALK_START, pose);
+}
+
+int bfm_forest_standing_begin(BfmForestSpeechActor *actor, const BfmForestField *field,
+                              const MusashiDiscMedia *disc, uint32_t parts,
+                              BfmForestPose *pose)
+{
+    return begin_actor(actor, field, disc, parts, BFM_FOREST_TALK_RELEASED, pose);
 }
 
 int bfm_forest_speech_actor_tick(BfmForestSpeechActor *actor, int first, int second,

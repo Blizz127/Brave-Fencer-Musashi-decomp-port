@@ -36,13 +36,26 @@ static void set_shot(BfmTowerEscapeCamera *lens, int projection, int distance,
     lens->offset_z = z;
 }
 
-static int orbit(const BfmTowerEscapeCamera *lens, const int16_t player[3],
+void bfm_tower_escape_lens_resume(BfmTowerEscapeCamera *lens, int lower, int center_x)
+{
+    *lens = (BfmTowerEscapeCamera){.center_x = center_x};
+    if (lower) set_shot(lens, 300, 400, 288, -128, -200);
+    else {
+        set_shot(lens, 100, 400, 341, -128, 1024);
+        lens->upper_rise = 1;
+    }
+}
+
+static int orbit(BfmTowerEscapeCamera *lens, const int16_t player[3],
                  BfmForestCamera *view, int32_t eye[3])
 {
     int y = player[1], z = player[2];
     if (z >= -3327 && y > -384) y = -384;
     if (z < -6528) z = -6528;
-    int32_t target[3] = {lens->center_x, y + lens->offset_y, z + lens->offset_z};
+    int32_t *target = lens->target;
+    target[0] = lens->center_x;
+    target[1] = y + lens->offset_y;
+    target[2] = z + lens->offset_z;
     BfmForestTransform arm;
     bfm_forest_actor_pitch_yaw((unsigned)lens->pitch & 4095, 2048, player, &arm);
     for (unsigned axis = 0; axis < 3; ++axis)
@@ -79,12 +92,14 @@ int bfm_tower_escape_lens(BfmTowerEscapeCamera *lens, unsigned phase, unsigned a
             if (lens->upper_offset_z > 0) lens->upper_offset_z = 0;
             lens->pitch = lens->upper_pitch;
             lens->offset_z = lens->upper_offset_z;
-        } else {
+        } else if (!lens->upper_rise || age >= 44) {
             lens->offset_z = approach(lens->offset_z, lens->upper_offset_z, 16);
         }
     } else if (phase == BFM_ESCAPE_DROP && lens->phase != phase) {
         set_shot(lens, 300, 400, 128, -128, -200);
         lens->center_x = player[0];
+    } else if (phase == BFM_ESCAPE_CAUGHT && lens->phase == BFM_ESCAPE_UPPER) {
+        return orbit(lens, player, view, eye);
     } else if (phase >= BFM_ESCAPE_LOWER) {
         if (!lens->woodland && player[2] < 4992) {
             lens->woodland = 1;

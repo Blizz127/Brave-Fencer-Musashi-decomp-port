@@ -205,7 +205,8 @@ BfmSqvResult bfm_sqv_archive_track_load(const MusashiDiscMedia *disc, const char
     if (!disc) return BFM_SQV_INVALID;
     if (!archive) return BFM_SQV_INVALID;
     int sc01 = !strcmp(archive, "SC01.CD"), sc03 = !strcmp(archive, "SC03.CD");
-    int single = (sc01 && member == FOREST_MEMBER) || (sc03 && member == 67);
+    int single = (sc01 && member == FOREST_MEMBER) || (sc03 && member == 67) ||
+                 (!strcmp(archive, "SC02.CD") && member == 25);
     int triple = (sc01 && (member == PALACE_MEMBER || member == 75)) || (sc03 && member == 68);
     int village = sc03 && member == 0;
     if (!single && !village && !triple) return BFM_SQV_UNSUPPORTED;

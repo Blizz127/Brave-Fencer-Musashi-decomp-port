@@ -355,6 +355,23 @@ static int forest_frame(Player *p)
         running = bfm_forest_walk_tick_controller(p->forest, x, y, p->forest_pressed, p->held, stick);
         p->forest_pressed = 0;
         if (running < 0) return -1;
+        switch (bfm_forest_walk_retry_audio(p->forest)) {
+        case BFM_RETRY_AUDIO_FADE_FIELD:
+            bfm_desktop_voice_defeat_score(p->voice, p->disc, BFM_DEFEAT_SCORE_FADE_FIELD);
+            break;
+        case BFM_RETRY_AUDIO_START:
+            bfm_desktop_voice_defeat_score(p->voice, p->disc, BFM_DEFEAT_SCORE_START);
+            break;
+        case BFM_RETRY_AUDIO_FADE_OUT:
+            bfm_desktop_voice_defeat_score(p->voice, p->disc, BFM_DEFEAT_SCORE_FADE_OUT);
+            break;
+        case BFM_RETRY_AUDIO_RESTORE_ROOM:
+            if (bfm_forest_walk_room(p->forest) == 0x3008)
+                bfm_desktop_voice_forest_score(p->voice, p->disc, SDL_GetTicks64());
+            break;
+        case BFM_RETRY_AUDIO_NONE:
+            break;
+        }
         if (bfm_forest_walk_swing_sound(p->forest)) bfm_desktop_voice_forest_swing(p->voice);
         unsigned bell_command, bell_argument;
         struct BfmTowerBellSound *bell = bfm_forest_walk_bell_sound(p->forest, &bell_command, &bell_argument);
@@ -367,7 +384,9 @@ static int forest_frame(Player *p)
     int control = bfm_forest_walk_control(p->forest);
     uint16_t room = bfm_forest_walk_room(p->forest);
     if (control != p->control_message || room != p->display_room) {
-        if (room == 0x300e) {
+        if (bfm_forest_walk_defeated(p->forest)) {
+            SDL_SetWindowTitle(p->window, "Brave Fencer Musashi");
+        } else if (room == 0x300e) {
             SDL_SetWindowTitle(p->window, "Brave Fencer Musashi - Allucaneet Castle");
         } else if (room == 0x300d) {
             SDL_SetWindowTitle(p->window, "Brave Fencer Musashi - Allucaneet Castle drawbridge");

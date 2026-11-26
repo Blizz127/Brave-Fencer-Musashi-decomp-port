@@ -12,7 +12,12 @@ typedef enum {
     BFM_ESCAPE_CAUGHT, BFM_ESCAPE_REQUEST, BFM_ESCAPE_TRANSFERRED
 } BfmTowerEscapePhase;
 
+typedef enum {
+    BFM_ESCAPE_NO_CHECKPOINT, BFM_ESCAPE_UPPER_CHECKPOINT = 2, BFM_ESCAPE_LOWER_CHECKPOINT = 3
+} BfmTowerEscapeCheckpoint;
+
 typedef struct {
+    BfmTowerEscapeCheckpoint checkpoint;
     BfmTowerEscapePhase phase;
     RoomTransferDescriptor destination;
     int16_t marks[4][3], lane[3];
@@ -28,6 +33,8 @@ typedef struct {
  * The field owns all borrowed placement and volume records for this visit. */
 int bfm_tower_escape_begin(BfmTowerEscape *escape, const BfmForestField *field,
                            const int16_t position[3], int16_t yaw);
+/* Restore the chase from its last earned descriptor after a defeat. */
+int bfm_tower_escape_resume(BfmTowerEscape *escape, const BfmForestField *field);
 int bfm_tower_escape_tick(BfmTowerEscape *escape, const BfmForestField *field,
                           int horizontal, int cross_edge, int cross_held);
 int bfm_tower_escape_take_castle(BfmTowerEscape *escape, RoomTransferDescriptor *destination);

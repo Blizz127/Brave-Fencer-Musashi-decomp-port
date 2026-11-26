@@ -30,28 +30,56 @@ static int whole(int n)
     return n / Q - (n % Q < 0);
 }
 
+static int load_course(BfmTowerEscape *next, const BfmForestField *field)
+{
+    const uint8_t *exit = bfm_forest_field_entrance(field, 1);
+    const uint8_t *marks = bfm_forest_room_bytes(field, UINT32_C(0x801e6c84), 32);
+    const uint8_t *lane = bfm_forest_room_bytes(field, UINT32_C(0x8018edc8), 8);
+    next->placements = bfm_forest_room_bytes(field, UINT32_C(0x8018f07c), OBSTACLES * 12);
+    next->rock_bounds = bfm_forest_room_bytes(field, UINT32_C(0x8018f3a0), 12);
+    next->trunk_bounds = bfm_forest_room_bytes(field, UINT32_C(0x8018f3b8), 12);
+    if (!exit || !marks || !lane || !next->placements || !next->rock_bounds || !next->trunk_bounds)
+        return 0;
+    bfm_forest_decode_transfer(exit, &next->destination);
+    if (next->destination.room != 0x300d || next->destination.parameter || next->destination.world) return 0;
+    for (unsigned i = 0; i < 4; ++i) read_point(marks + 8 * i, next->marks[i]);
+    read_point(lane, next->lane);
+    return 1;
+}
+
 int bfm_tower_escape_begin(BfmTowerEscape *e, const BfmForestField *field,
                            const int16_t position[3], int16_t yaw)
 {
     if (!e || e->phase != BFM_ESCAPE_IDLE || !field || !position) return 0;
-    const uint8_t *exit = bfm_forest_field_entrance(field, 1);
-    const uint8_t *marks = bfm_forest_room_bytes(field, UINT32_C(0x801e6c84), 32);
-    const uint8_t *lane = bfm_forest_room_bytes(field, UINT32_C(0x8018edc8), 8);
     BfmTowerEscape next = {0};
-    next.placements = bfm_forest_room_bytes(field, UINT32_C(0x8018f07c), OBSTACLES * 12);
-    next.rock_bounds = bfm_forest_room_bytes(field, UINT32_C(0x8018f3a0), 12);
-    next.trunk_bounds = bfm_forest_room_bytes(field, UINT32_C(0x8018f3b8), 12);
-    if (!exit || !marks || !lane || !next.placements || !next.rock_bounds || !next.trunk_bounds)
-        return 0;
-    bfm_forest_decode_transfer(exit, &next.destination);
-    if (next.destination.room != 0x300d || next.destination.parameter || next.destination.world) return 0;
-    for (unsigned i = 0; i < 4; ++i) read_point(marks + 8 * i, next.marks[i]);
-    read_point(lane, next.lane);
+    if (!load_course(&next, field)) return 0;
     memcpy(next.position, position, sizeof next.position);
     place(&next, position);
     next.yaw = yaw;
     if (!bfm_tower_escape_head_begin(&next.head, field)) return 0;
     enter(&next, BFM_ESCAPE_RETREAT);
+    *e = next;
+    return 1;
+}
+
+int bfm_tower_escape_resume(BfmTowerEscape *e, const BfmForestField *field)
+{
+    if (!e || !field || e->phase != BFM_ESCAPE_CAUGHT ||
+        (e->checkpoint != BFM_ESCAPE_UPPER_CHECKPOINT && e->checkpoint != BFM_ESCAPE_LOWER_CHECKPOINT))
+        return 0;
+    /* The active summit door list includes both chase entries after the lift and castle. */
+    const uint8_t *slot = bfm_forest_room_bytes(field, UINT32_C(0x8018eab4) + 4 * e->checkpoint, 4);
+    const uint8_t *door = slot ? bfm_forest_room_bytes(field, u32le(slot), 36) : NULL;
+    if (!door || u16le(door) != 0x300b || door[2] != e->checkpoint || door[3]) return 0;
+    BfmTowerEscape next = {.checkpoint = e->checkpoint};
+    if (!load_course(&next, field)) return 0;
+    read_point(door + 16, next.position);
+    place(&next, next.position);
+    next.yaw = s16le(door + 22);
+    int lower = next.checkpoint == BFM_ESCAPE_LOWER_CHECKPOINT;
+    next.forward_speed = (lower ? 11 : 8) * Q;
+    enter(&next, lower ? BFM_ESCAPE_LOWER : BFM_ESCAPE_UPPER);
+    bfm_tower_escape_head_resume(&next.head, lower);
     *e = next;
     return 1;
 }
@@ -226,6 +254,7 @@ int bfm_tower_escape_tick(BfmTowerEscape *e, const BfmForestField *field,
         break;
     case BFM_ESCAPE_REVEAL:
         if (e->age >= 63) {
+            e->checkpoint = BFM_ESCAPE_UPPER_CHECKPOINT;
             e->forward_speed = 8 * Q;
             enter(e, BFM_ESCAPE_UPPER);
         }
@@ -264,6 +293,7 @@ int bfm_tower_escape_tick(BfmTowerEscape *e, const BfmForestField *field,
             }
         }
         if (e->age >= 49 + 49 + 17 + 2) {
+            e->checkpoint = BFM_ESCAPE_LOWER_CHECKPOINT;
             e->forward_speed = 9 * Q;
             enter(e, BFM_ESCAPE_LOWER);
         }

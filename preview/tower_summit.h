@@ -5,6 +5,7 @@
 #include "forest_field.h"
 #include "tower_summit_camera.h"
 #include "tower_escape.h"
+#include "tower_escape_camera.h"
 #include "tower_summit_arrival.h"
 #include "tower_summit_lesson.h"
 #include "tower_summit_residents.h"
@@ -44,6 +45,9 @@ const BfmSummitSkillFrame *bfm_tower_summit_skill_tick(BfmTowerSummit *summit,
     uint32_t animation_table, const BfmForestTransform *root, int16_t yaw, unsigned tick,
     const BfmSummitSkillInput *input, BfmGameplayRun *run);
 BfmTowerSummitLesson *bfm_tower_summit_active_lesson(BfmTowerSummit *summit);
+/* Continue within the current visit. Escape owns the restored player placement. */
+int bfm_tower_summit_resume_escape(BfmTowerSummit *summit, BfmTowerEscape *escape,
+                                   BfmTowerEscapeCamera *camera);
 int bfm_tower_summit_road_tick(BfmTowerSummit *summit, const BfmTowerEscape *escape);
 int bfm_tower_summit_draw(const BfmTowerSummit *summit, const BfmForestCamera *camera,
                           const BfmForestPose *pose, const BfmForestTransform *root,

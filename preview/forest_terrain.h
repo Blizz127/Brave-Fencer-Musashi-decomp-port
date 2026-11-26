@@ -32,6 +32,10 @@ BfmForestTerrain *bfm_forest_terrain_load_member(const MusashiDiscMedia *disc,
 /* Replace the static polygons while retaining mounted tiles and room lighting.
  * A rejected mesh leaves the previous geometry available for drawing. */
 int bfm_forest_terrain_replace_mesh(BfmForestTerrain *terrain, const uint8_t *mesh, size_t bytes);
+typedef struct {
+    int32_t ambient[3], direction[3][3], color[3][3];
+} BfmForestModelLighting;
+
 /* Set the active room descriptor's ambient and directional lights. */
 int bfm_forest_terrain_set_lighting(BfmForestTerrain *terrain,
                                     const uint8_t *descriptor, size_t bytes);
@@ -44,6 +48,10 @@ void bfm_forest_terrain_free(BfmForestTerrain *terrain);
  * room. The caller composes scene effects and the HUD. */
 int bfm_forest_terrain_draw(BfmForestTerrain *terrain, const BfmForestCamera *camera,
                             uint32_t pixels[240][320]);
+int bfm_forest_terrain_draw_player_only(BfmForestTerrain *terrain, const BfmForestCamera *camera,
+                                      const MusashiForestPlayerMesh *model, const BfmForestPose *pose,
+                                      const BfmForestTransform *root, uint32_t mask,
+                                      const BfmForestModelLighting *lighting, uint32_t pixels[240][320]);
 int bfm_forest_terrain_draw_actor(BfmForestTerrain *terrain, const BfmForestCamera *camera,
                                   const MusashiForestPlayerMesh *mesh, const BfmForestPose *pose,
                                   const BfmForestTransform *root, uint32_t visible_parts,

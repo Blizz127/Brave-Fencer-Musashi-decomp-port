@@ -88,7 +88,8 @@ static BfmPalaceBank *read_score_bank(const MusashiDiscMedia *disc, const char *
         if (middle < 12 || middle > bytes - 8 || last) return NULL;
         final_track = 4 + middle;
     } else {
-        int single = member == 78 || (!strcmp(archive, "SC03.CD") && member == 67);
+        int single = member == 78 || (!strcmp(archive, "SC03.CD") && member == 67) ||
+                     (!strcmp(archive, "SC02.CD") && member == 25);
         if (!single || middle || last) return NULL;
     }
     uint8_t signature[4];

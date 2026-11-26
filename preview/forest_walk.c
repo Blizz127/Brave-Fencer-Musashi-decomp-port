@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "forest_walk.h"
+#include "retry_screen.h"
 #include "castle_drawbridge.h"
 #include "steam_knight.h"
 #include "forest_gateway_transition.h"
@@ -65,6 +66,9 @@ typedef struct {
 
 struct BfmForestWalk {
     BfmForestField *field;
+    BfmRetryScreen *retry;
+    int fatal_hit;
+    unsigned reentry_age;
     BfmTowerField *tower;
     BfmTowerAscentDoor summit_door;
     BfmTowerSummitTransfer summit_transfer;
@@ -386,25 +390,29 @@ void bfm_forest_walk_inherit_clock(BfmForestWalk *w, uint16_t first_tick)
         w->entry_world_tick = first_tick;
 }
 
+static void release_visit(BfmForestWalk *w)
+{
+    bfm_retry_screen_free(w->retry);
+    bfm_steam_knight_free(w->steam_knight);
+    bfm_castle_drawbridge_free(w->drawbridge);
+    bfm_tower_summit_free(w->summit);
+    bfm_tower_interior_note_close(&w->inner_note);
+    bfm_tower_interior_free(w->inner);
+    bfm_forest_message_free(w->tower_note);
+    bfm_forest_message_free(w->lesson.page);
+    bfm_forest_hud_free(w->hud);
+    bfm_forest_message_free(w->message);
+    bfm_forest_message_art_free(w->message_art);
+    bfm_forest_voice_free(w->voice);
+    free(w->held_forest);
+    bfm_tower_field_free(w->tower);
+    bfm_forest_field_free(w->field);
+}
+
 void bfm_forest_walk_free(BfmForestWalk *w)
 {
-    if (w) {
-        bfm_steam_knight_free(w->steam_knight);
-        bfm_castle_drawbridge_free(w->drawbridge);
-        bfm_tower_summit_free(w->summit);
-        bfm_tower_interior_note_close(&w->inner_note);
-        bfm_tower_interior_free(w->inner);
-        bfm_forest_message_free(w->tower_note);
-        bfm_forest_message_free(w->lesson.page);
-        bfm_forest_hud_free(w->hud);
-        bfm_forest_message_free(w->message);
-        bfm_forest_message_art_free(w->message_art);
-        bfm_forest_voice_free(w->voice);
-        free(w->held_forest);
-        bfm_tower_field_free(w->tower);
-        bfm_forest_field_free(w->field);
-        free(w);
-    }
+    if (w) release_visit(w);
+    free(w);
 }
 
 static int begin_message(BfmForestWalk *w)
@@ -421,6 +429,13 @@ static int begin_message(BfmForestWalk *w)
     memset(w->actor.velocity, 0, sizeof w->actor.velocity);
     w->actor.field_2c.word = 0;
     return 1;
+}
+
+static void use_actor_pose(BfmForestWalk *w)
+{
+    w->frame = w->speaker.frame;
+    w->visible = w->speaker.visible;
+    memcpy(w->blade_anchors, w->speaker.blade_anchors, sizeof w->blade_anchors);
 }
 
 static int tick_message(BfmForestWalk *w, int confirm_edge)
@@ -452,9 +467,7 @@ static int tick_message(BfmForestWalk *w, int confirm_edge)
         w->player_control = 1;
         bfm_forest_hud_show(w->hud);
     }
-    w->frame = w->speaker.frame;
-    w->visible = w->speaker.visible;
-    memcpy(w->blade_anchors, w->speaker.blade_anchors, sizeof w->blade_anchors);
+    use_actor_pose(w);
     ++w->tick;
     return 1;
 }
@@ -965,7 +978,10 @@ static int tick_hurt(BfmForestWalk *w, unsigned received, int16_t hit_yaw,
         w->pending_damage = 0;
         w->actor.field_a8 = 32;
         w->hurt_tail = scripted ? 0 : 3;
-        if (bfm_forest_status_values(&w->gameplay->player).hp <= 0) return 0;
+        if (bfm_forest_status_values(&w->gameplay->player).hp <= 0) {
+            w->fatal_hit = !w->gateway.active;
+            return 0;
+        }
         if (scripted) return 2;
         return tick_ground(w, 0, 0, 1, dust) == 1 ? 2 : -1;
     }
@@ -1298,8 +1314,23 @@ int bfm_forest_walk_take_castle_request(BfmForestWalk *w, RoomTransferDescriptor
            bfm_tower_escape_take_castle(&w->escape, destination);
 }
 
+int bfm_forest_walk_defeated(const BfmForestWalk *w)
+{
+    return w && (w->retry || w->reentry_age);
+}
+
+BfmRetryAudioEvent bfm_forest_walk_retry_audio(const BfmForestWalk *w)
+{
+    if (!w) return BFM_RETRY_AUDIO_NONE;
+    if (w->retry) return bfm_retry_screen_audio_event(w->retry);
+    if (w->reentry_age == (w->summit ? 1u : 104u))
+        return BFM_RETRY_AUDIO_RESTORE_ROOM;
+    return BFM_RETRY_AUDIO_NONE;
+}
+
 int bfm_forest_walk_control(const BfmForestWalk *w)
 {
+    if (bfm_forest_walk_defeated(w)) return 0;
     if (w && w->steam_knight) return bfm_steam_knight_control(w->steam_knight);
     if (w && w->drawbridge) return 0;
     if (w && w->summit_transfer.phase != BFM_SUMMIT_TRANSFER_IDLE) {
@@ -1326,6 +1357,10 @@ int bfm_forest_walk_control(const BfmForestWalk *w)
 ForestVoice *bfm_forest_walk_voice(BfmForestWalk *w, unsigned *generation)
 {
     if (!w || !generation) return NULL;
+    if (w->retry) {
+        *generation = bfm_retry_screen_generation(w->retry);
+        return bfm_retry_screen_voice(w->retry);
+    }
     if (w->steam_knight) return bfm_steam_knight_voice(w->steam_knight, generation);
     *generation = w->voice_generation;
     return w->voice;
@@ -1792,7 +1827,10 @@ static int step_summit_escape(BfmForestWalk *w, BfmTowerSummitPickup *pickup,
     if (!bfm_tower_escape_tick(e, field, horizontal, cross_edge, cross_held)) return -1;
     if (e->phase == BFM_ESCAPE_CAUGHT && e->age == 7) {
         BfmForestStatusValues v = bfm_forest_status_values(&w->gameplay->player);
-        if (v.hp > 0) bfm_forest_status_debit(&w->gameplay->player, (unsigned)v.hp);
+        if (v.hp > 0) {
+            bfm_forest_status_debit(&w->gameplay->player, (unsigned)v.hp);
+            w->fatal_hit = 1;
+        }
     }
     restore_whole_position(w, e->position);
     w->yaw = e->yaw;
@@ -1811,7 +1849,7 @@ static int step_summit_escape(BfmForestWalk *w, BfmTowerSummitPickup *pickup,
     const uint32_t weapons = UINT32_C(0x3f) << 21;
     w->visible = (w->visible & ~weapons) |
                  (bfm_tower_summit_pickup_frame(pickup)->visible_parts & weapons);
-    if (e->phase >= BFM_ESCAPE_UPPER) bfm_forest_hud_show(w->hud);
+    if (e->phase >= BFM_ESCAPE_UPPER && !w->reentry_age) bfm_forest_hud_show(w->hud);
     bfm_forest_hud_tick(w->hud);
     bfm_forest_hud_submit_points(w->hud, &w->gameplay->player);
     if (!bfm_tower_summit_road_tick(w->summit, e)) return -1;
@@ -2047,6 +2085,25 @@ static int step_controller(BfmForestWalk *w, int x, int y, uint16_t pressed,
         return advanced;
     }
     if (w->tick >= LAST_WALK_TICK) {
+        if (w->reentry_age) {
+            /* Checkpoint entry releases movement without replaying the first
+             * visit's two speeches. */
+            w->reentry_age = 0;
+            w->player_control = 1;
+            w->actor.state = 0;
+            w->actor.phase = 1;
+            memset(w->actor.velocity, 0, sizeof w->actor.velocity);
+            w->actor.field_2c.word = 0;
+            w->motion = IDLE;
+            w->elapsed = 0;
+            if (!bfm_forest_standing_begin(&w->speaker, w->field, w->disc, w->visible, &w->pose))
+                return -1;
+            use_actor_pose(w);
+            update_root(w);
+            bfm_forest_hud_show(w->hud);
+            ++w->tick;
+            return bfm_forest_tick_shore_actor_with_run(w->field, w->cached, w->gameplay) ? 1 : -1;
+        }
         int result = tick_message(w, cross_pressed);
         if (result <= 0) return result;
         return bfm_forest_tick_shore_actor_with_run(w->field, w->cached, w->gameplay) ? result : -1;
@@ -2118,9 +2175,104 @@ int bfm_forest_walk_take_boss_request(BfmForestWalk *w, RoomTransferDescriptor *
     return w && bfm_castle_drawbridge_take_boss_request(w->drawbridge, destination);
 }
 
+static int reenter_forest(BfmForestWalk *w)
+{
+    const uint8_t *record = bfm_forest_field_entrance(w->field, 0);
+    if (!record) return 0;
+    RoomTransferDescriptor door;
+    bfm_forest_decode_transfer(record, &door);
+    BfmForestWalk *next = bfm_forest_walk_open(w->disc, &door);
+    if (!next) return 0;
+
+    /* Construct the next visit with the existing run before releasing
+     * the defeated actor and the other objects from the expired room. */
+    BfmGameplayRun resumed = *w->gameplay;
+    next->voice = bfm_forest_voice_load(w->disc);
+    next->message_art = bfm_forest_open_message_art(next->field, w->disc);
+    next->reentry_age = 1;
+    if (!next->voice || !next->message_art || !bfm_forest_walk_bind_gameplay(next, &resumed)) {
+        bfm_forest_walk_free(next);
+        return 0;
+    }
+    BfmGameplayRun *owner = w->gameplay;
+    release_visit(w);
+    *w = *next;
+    free(next);
+    w->gameplay = owner;
+    *owner = resumed;
+    return 1;
+}
+
+static int resume_chapter(BfmForestWalk *w)
+{
+    if (!w->summit) return reenter_forest(w);
+    BfmForestHud *hud = bfm_forest_open_hud(w->field, w->disc);
+    if (!hud) return 0;
+    if (!bfm_tower_summit_resume_escape(w->summit, &w->escape, &w->escape_camera)) {
+        bfm_forest_hud_free(hud);
+        return 0;
+    }
+    bfm_forest_hud_free(w->hud);
+    w->hud = hud;
+    w->reentry_age = 1;
+    restore_whole_position(w, w->escape.position);
+    w->yaw = w->escape.yaw;
+    w->actor.state = (uint8_t)w->escape.action;
+    w->actor.phase = 1;
+    w->motion = RUN;
+    w->elapsed = 0;
+    w->displayed_body = (BfmForestBodySample){0};
+    w->hide_recovering_body = 0;
+    w->control_polled = w->jump_pressed = w->jump_held = 0;
+    w->input_x = w->input_y = 0;
+    bfm_retry_screen_free(w->retry);
+    w->retry = NULL;
+    const uint32_t weapons = UINT32_C(0x3f) << 21;
+    uint32_t equipped = w->visible & weapons;
+    if (!update_pose(w)) return 0;
+    w->visible = (w->visible & ~weapons) | equipped;
+    return bfm_tower_escape_lens(&w->escape_camera, w->escape.phase,
+            w->escape.age, w->escape.position, &w->camera, w->eye);
+}
+
 int bfm_forest_walk_tick_controller(BfmForestWalk *w, int x, int y, uint16_t pressed,
                                     uint16_t held, int stick_direction)
 {
+    if (w && w->retry) {
+        if (w->fatal_hit) {
+            bfm_forest_status_defeated(&w->gameplay->player);
+            w->fatal_hit = 0;
+        }
+        if (!w->summit && bfm_retry_screen_keep_world(w->retry)) {
+            w->yaw = (int16_t)bfm_retry_screen_yaw(w->retry);
+            if (!follow(w)) return -1;
+            bfm_retry_screen_update_outgoing_view(w->retry, &w->camera, w->target);
+        }
+        int ready = bfm_retry_screen_step(w->retry, held, pressed);
+        if (ready < 0) return -1;
+        bfm_forest_hud_tick(w->hud);
+        bfm_forest_hud_submit_points(w->hud, &w->gameplay->player);
+        if (ready && !resume_chapter(w)) return -1;
+        return 1;
+    }
+    if (w && w->reentry_age && !w->summit) {
+        /* The measured warm-disc transfer takes 149 updates to the first
+         * active entrance pose. Movement and the incoming palette follow. */
+        if (++w->reentry_age <= 149) return 1;
+        int stepped = step_controller(w, 0, 0, 0, 0, 0);
+        if (stepped > 0) bfm_forest_submit_atmosphere(w->field, &w->camera, w->eye);
+        return stepped;
+    }
+    if (w && w->reentry_age) {
+        /* The summit loader places the hero while black. The chase begins its
+         * automatic stride during the incoming wipe, before ordinary control. */
+        if (++w->reentry_age < 8) return 1;
+        BfmTowerSummitPickup *pickup = bfm_tower_summit_pickup(w->summit);
+        if (!pickup || step_summit_escape(w, pickup, 0, 0, 0) != 1) return -1;
+        ++w->tick;
+        if (w->reentry_age >= 23) w->reentry_age = 0;
+        return 1;
+    }
     if (w && w->steam_knight) {
         int stepped = bfm_steam_knight_tick(w->steam_knight, x, y, pressed, held, w->data.initial_velocity);
         if (stepped <= 0) return stepped;
@@ -2159,6 +2311,14 @@ int bfm_forest_walk_tick_controller(BfmForestWalk *w, int x, int y, uint16_t pre
         return stepped;
     }
     int result = step_controller(w, x, y, pressed, held, stick_direction);
+    if (w && result >= 0 && w->fatal_hit) {
+        BfmForestField *field = w->summit ? bfm_tower_summit_room(w->summit) : w->field;
+        w->hit_sound = w->swing_sound = w->gunshot_fired = 0;
+        w->retry = bfm_retry_screen_open(w->disc, field, bfm_forest_walk_room(w),
+                w->gameplay, &w->camera, w->summit ? w->escape_camera.target : w->target,
+                w->cached, w->yaw, w->visible);
+        return w->retry ? 1 : -1;
+    }
     RoomTransferDescriptor destination;
     if (result >= 0 && bfm_forest_walk_take_castle_request(w, &destination)) {
         w->drawbridge = bfm_castle_drawbridge_open(w->disc, &destination, w->gameplay);
@@ -2193,7 +2353,19 @@ int bfm_forest_walk_draw(BfmForestWalk *w,uint32_t pixels[240][320])
 {
     if(!w || !pixels) return 0;
     for(unsigned y=0;y<240;y++) for(unsigned x=0;x<320;x++) pixels[y][x]=UINT32_C(0xff000000);
-    if(!w->tick) return 1;
+    if(!w->tick || (w->summit && w->reentry_age && w->reentry_age < 8)) return 1;
+    if (w->retry) {
+        if (bfm_retry_screen_keep_world(w->retry)) {
+            unsigned parity = w->tick & 1u;
+            int drawn = w->summit ?
+                bfm_tower_summit_draw(w->summit, &w->camera, &w->pose, &w->root,
+                                      0, parity, NULL, pixels) :
+                bfm_forest_draw_entrance_player(w->field, &w->camera, &w->pose, &w->root,
+                                                0, parity, NULL, pixels);
+            if (!drawn) return 0;
+        }
+        return bfm_retry_screen_draw(w->retry, w->hud, w->message_art, pixels);
+    }
     if (w->steam_knight) {
         unsigned shade = bfm_steam_knight_shade(w->steam_knight);
         if (shade >= 31) return 1;
@@ -2239,6 +2411,10 @@ int bfm_forest_walk_draw(BfmForestWalk *w,uint32_t pixels[240][320])
         } else {
             if (!bfm_tower_interior_draw_lift(w->inner, &w->camera, &w->pose, &w->root,
                     w->visible, w->tick & 1u, has_blade ? &blade : NULL, &frame, pixels)) return 0;
+        }
+        if (w->reentry_age) {
+            field_palette(pixels, 2 * (22 - w->reentry_age));
+            return 1;
         }
         if (frame.shade) field_palette(pixels, frame.shade >> 3);
         if (w->summit_free || (!frame.show_destination && frame.show_hud))

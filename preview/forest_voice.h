@@ -24,6 +24,7 @@ int bfm_bedroom_voice_primed_frames(const ForestVoice *voice, size_t *frames);
  * PLAYING. The title's sound-tick deadline bounds the recording supplied. */
 size_t bfm_forest_voice_read(ForestVoice *voice, int16_t *stereo, size_t frames);
 void bfm_forest_voice_stop(ForestVoice *voice);
+ForestVoice *bfm_defeat_voice_load(const MusashiDiscMedia *disc);
 ForestVoice *bfm_library_voice_load(const MusashiDiscMedia *disc);
 /* Tick the page against the mounted voice service and deliver its requests. */
 const BfmForestMessageFrame *bfm_forest_voice_page(ForestVoice *voice, BfmForestMessage *page,

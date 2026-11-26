@@ -32,7 +32,8 @@ struct DesktopVoice {
     BfmCableSound *slider;
     BfmTowerBellSound *bell;
     BfmVillageImpactSound *landing;
-    BfmForestScore *forest_score, *room_score, *fading_score;
+    BfmForestScore *forest_score, *room_score, *fading_score, *defeat_score;
+    int defeat_playing;
     Uint64 forest_score_start;
     int forest_score_requested, forest_score_waiting;
     Uint64 opening_start, rendered_frames;
@@ -135,6 +136,7 @@ static void SDLCALL render_voice(void *userdata, Uint8 *stream, int bytes)
     if (v->fading_score && bfm_forest_score_mix(v->fading_score, (int16_t *)(void *)stream, frames) < frames)
         v->fading_score = NULL;
     if (v->room_score) bfm_forest_score_mix(v->room_score, (int16_t *)(void *)stream, frames);
+    if (v->defeat_playing) bfm_forest_score_mix(v->defeat_score, (int16_t *)(void *)stream, frames);
     if (v->bell) bfm_tower_bell_sound_mix(v->bell, (int16_t *)(void *)stream, frames);
     if (v->landing) bfm_village_impact_sound_mix(v->landing, (int16_t *)(void *)stream, frames);
     if (v->slider) bfm_cable_sound_mix(v->slider,(int16_t *)(void *)stream,frames);
@@ -228,6 +230,7 @@ static void stop_voice(DesktopVoice *v, int leaving_room)
     v->pending = NULL;
     if (leaving_room) {
         v->room_score = v->fading_score = NULL;
+        v->defeat_playing = 0;
         v->room_effects = NULL;
         v->slider = NULL;
         v->landing = NULL;
@@ -240,7 +243,7 @@ static void stop_voice(DesktopVoice *v, int leaving_room)
     v->active_source = NULL;
     v->forest_score_requested = v->forest_score_waiting = 0;
     v->selected = v->message_ready = v->playing = v->reported = 0;
-    int room_audio = v->bell || v->landing || v->slider || v->room_score || v->fading_score || v->room_effects;
+    int room_audio = v->bell || v->landing || v->slider || v->room_score || v->fading_score || v->room_effects || v->defeat_playing;
     if (v->device) {
         SDL_UnlockAudioDevice(v->device);
         if (!room_audio) SDL_PauseAudioDevice(v->device, 1);
@@ -256,6 +259,44 @@ void bfm_desktop_voice_room_skip(DesktopVoice *v)
 void bfm_desktop_voice_stop(DesktopVoice *v)
 {
     stop_voice(v, 1);
+}
+
+int bfm_desktop_voice_defeat_score(DesktopVoice *v, const MusashiDiscMedia *disc, BfmDefeatScoreEvent event)
+{
+    if (!v) return 0;
+    BfmForestScore *prepared = NULL;
+    if (event == BFM_DEFEAT_SCORE_START && !v->defeat_score) {
+        prepared = bfm_defeat_score_load(disc, BFM_PALACE_VOICE_RATE);
+        if (!prepared) return 0;
+    }
+    if (v->device) SDL_LockAudioDevice(v->device);
+    int accepted = 1;
+    switch (event) {
+    case BFM_DEFEAT_SCORE_FADE_FIELD:
+        v->defeat_playing = 0;
+        if (v->forest_score_requested) bfm_forest_score_fade_for_defeat(v->forest_score);
+        bfm_forest_score_fade_for_defeat(v->room_score);
+        break;
+    case BFM_DEFEAT_SCORE_START:
+        if (prepared) v->defeat_score = prepared;
+        if (!v->defeat_playing) {
+            v->forest_score_requested = v->forest_score_waiting = 0;
+            v->room_score = v->fading_score = NULL;
+            bfm_forest_score_rewind(v->defeat_score);
+            v->defeat_playing = 1;
+        }
+        break;
+    case BFM_DEFEAT_SCORE_FADE_OUT:
+        if (v->defeat_playing) bfm_castle_score_fade(v->defeat_score);
+        break;
+    default:
+        accepted = 0;
+    }
+    if (v->device) {
+        SDL_UnlockAudioDevice(v->device);
+        if (event == BFM_DEFEAT_SCORE_START) SDL_PauseAudioDevice(v->device, 0);
+    }
+    return accepted;
 }
 
 void bfm_desktop_voice_tower_bell(DesktopVoice *v, BfmTowerBellSound *bell,
@@ -365,7 +406,7 @@ void bfm_desktop_voice_event(DesktopVoice *v, const SDL_AudioDeviceEvent *e)
         v->playing = 0;
     } else if (e->type == SDL_AUDIODEVICEADDED && !v->device) {
         open_device(v);
-        int room_audio = v->bell || v->landing || v->slider || v->room_effects || v->room_score || v->fading_score;
+        int room_audio = v->bell || v->landing || v->slider || v->room_effects || v->room_score || v->fading_score || v->defeat_playing;
         if (v->device && (room_audio || (v->forest_score_requested && v->forest_score))) {
             SDL_PauseAudioDevice(v->device, 0);
         } else if (v->device && v->court == COURT_PLAYING && v->effects) {
@@ -548,6 +589,7 @@ void bfm_desktop_voice_free(DesktopVoice *v)
     bfm_desktop_voice_stop(v);
     if (v->device) SDL_CloseAudioDevice(v->device);
     bfm_forest_score_free(v->forest_score);
+    bfm_forest_score_free(v->defeat_score);
     bfm_palace_effects_free(v->effects);
     bfm_palace_voice_free(v->decoder);
     free(v);

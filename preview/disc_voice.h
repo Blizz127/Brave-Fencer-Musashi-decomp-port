@@ -6,7 +6,7 @@
 
 /* Both scene interfaces can share the original opaque C type. */
 typedef struct PalaceVoice DiscVoice;
-typedef enum { BFM_VOICE_OPEN, BFM_VOICE_ST01, BFM_VOICE_ST02, BFM_VOICE_SHOPS01 } BfmDiscVoiceArchive;
+typedef enum { BFM_VOICE_OPEN, BFM_VOICE_ST01, BFM_VOICE_ST02, BFM_VOICE_SHOPS01, BFM_VOICE_OUT } BfmDiscVoiceArchive;
 typedef struct {
     unsigned channel_offset, sound_ticks, group_head_frames;
 } BfmDiscVoiceCue;

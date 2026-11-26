@@ -8,8 +8,11 @@
 typedef struct {
     int projection, distance, pitch, offset_y, offset_z;
     int center_x, upper_pitch, upper_offset_z;
-    unsigned phase, woodland;
+    int32_t target[3];
+    unsigned phase, woodland, upper_rise;
 } BfmTowerEscapeCamera;
+
+void bfm_tower_escape_lens_resume(BfmTowerEscapeCamera *lens, int lower, int center_x);
 
 /* Advance once per field update. The initial eye/view are inherited from
  * the summit acquisition and held during the retreat from the pedestal. */

@@ -22,6 +22,10 @@ typedef struct {
 int bfm_forest_speech_actor_begin(BfmForestSpeechActor *actor, const BfmForestField *field,
                                   const MusashiDiscMedia *disc, uint32_t parts,
                                   BfmForestPose *pose);
+/* A checkpoint entrance hands control directly to the standing action. */
+int bfm_forest_standing_begin(BfmForestSpeechActor *actor, const BfmForestField *field,
+                              const MusashiDiscMedia *disc, uint32_t parts,
+                              BfmForestPose *pose);
 /* Advance a dialogue actor on its current mounted motion. A nonzero script
  * changes the motion before this update's ordinary animation service. */
 int bfm_forest_speech_motion_tick(BfmForestSpeechActor *actor, uint32_t script,

@@ -38,7 +38,7 @@ struct BfmForestScore {
     const BfmSqvEvent *pending_bend;
     size_t count, event, frames, remaining, phrase;
     unsigned rate, gain, fade_level, fade_phase;
-    int fading;
+    unsigned fade_step;
     int previous[2], until_output, failed;
 };
 
@@ -342,7 +342,7 @@ void bfm_forest_score_rewind(BfmForestScore *score)
     score->remaining = score->frames;
     score->previous[0] = score->previous[1] = 0;
     score->until_output = 0;
-    score->fading = 0;
+    score->fade_step = 0;
     score->fade_phase = 0;
     score->fade_level = 0x4000;
     score->failed = 0;
@@ -447,6 +447,22 @@ BfmForestScore *bfm_forest_score_load(const MusashiDiscMedia *disc, unsigned rat
     return load_score(disc, rate, "SC01.CD", 78, 0, 90);
 }
 
+BfmForestScore *bfm_defeat_score_load(const MusashiDiscMedia *disc, unsigned rate)
+{
+    /* The US loss scene requests resident selector 0x83. Its command row
+     * selects the single score and dry volume in the mounted SC02 member. */
+    uint8_t selector[6], command[16];
+    if (!bfm_bedroom_resident_data(disc, UINT32_C(0x80063138) + 6 * 0x83,
+                                   selector, sizeof selector) ||
+        table_word(selector) != 0xa0 || table_word(selector + 2) != 0x17c ||
+        table_word(selector + 4) != 0x17c) return NULL;
+    unsigned row = table_word(selector + 4) - 0x100;
+    if (!bfm_bedroom_resident_data(disc, UINT32_C(0x80068b5c) + 16 * row,
+                                   command, sizeof command) || table_word(command) != 4 ||
+        table_word(command + 6) != 0 || table_word(command + 2) > 127) return NULL;
+    return load_score(disc, rate, "SC02.CD", 25, 0, table_word(command + 2));
+}
+
 BfmForestScore *bfm_castle_score_load(const MusashiDiscMedia *disc, unsigned rate,
                                     unsigned member, unsigned track, unsigned volume)
 {
@@ -463,7 +479,12 @@ BfmForestScore *bfm_library_score_load(const MusashiDiscMedia *disc, unsigned ra
 
 void bfm_castle_score_fade(BfmForestScore *score)
 {
-    if (score) score->fading = 1;
+    if (score) score->fade_step = 0x111;
+}
+
+void bfm_forest_score_fade_for_defeat(BfmForestScore *score)
+{
+    if (score) score->fade_step = 0x88;
 }
 
 size_t bfm_forest_score_mix(BfmForestScore *score, int16_t *stereo, size_t frames)
@@ -484,15 +505,15 @@ size_t bfm_forest_score_mix(BfmForestScore *score, int16_t *stereo, size_t frame
                 int value = current[c] +
                     (int)((int64_t)(score->previous[c] - current[c]) * fraction / score->rate);
                 value = value * (int)score->gain / 90;
-                if (score->fading) value = (int)((int64_t)value * score->fade_level / 0x4000);
+                if (score->fade_step) value = (int)((int64_t)value * score->fade_level / 0x4000);
                 stereo[2 * written + c] = limit_sample(stereo[2 * written + c] + value);
             }
             ++written;
-            if (score->fading) {
+            if (score->fade_step) {
                 score->fade_phase += 60;
                 if (score->fade_phase >= score->rate) {
                     score->fade_phase -= score->rate;
-                    score->fade_level = score->fade_level > 0x111 ? score->fade_level-0x111 : 0;
+                    score->fade_level = score->fade_level > score->fade_step ? score->fade_level - score->fade_step : 0;
                 }
             }
             score->until_output += DEVICE_RATE;
