@@ -338,6 +338,7 @@ static int start_forest(Player *p, unsigned field)
     p->forest = bfm_opening_take_forest(p->opening, p->disc, field, &forest_field);
     if (!p->forest) return 0;
     if (!bfm_forest_walk_bind_gameplay(p->forest, &p->gameplay)) return 0;
+    bfm_opening_advance_playtime(p->opening, field, &p->gameplay);
     bfm_opening_free(p->opening);
     p->opening = NULL;
     p->forest_start = forest_field ? p->phase_start + (forest_field * 1001 + 59) / 60
@@ -622,6 +623,7 @@ static int play(Player *p, char *error, size_t size) {
         }
         int opening = p->flow.phase == BFM_TITLE_OPENING;
         int chapter = p->flow.phase == BFM_TITLE_CHAPTER_COMPLETION;
+        if (opening) bfm_opening_advance_playtime(p->opening, fields, &p->gameplay);
         int files = p->flow.phase == BFM_TITLE_FILES;
         int bedroom = p->flow.phase == BFM_TITLE_BEDROOM;
         if (files && p->saves.page == BFM_SAVE_CARD_LOADING && fields >= LOADING_VISIBLE_FIELDS)

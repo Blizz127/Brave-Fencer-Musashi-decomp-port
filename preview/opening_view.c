@@ -20,6 +20,7 @@ typedef struct {
     BfmChapterCard *chapter;
     unsigned departure_field, departure_pose, departure_member;
     int natural_departure;
+    unsigned playtime_updates;
     ForestStage forest_stage;
     RoomTransferDescriptor forest_entry;
     BfmForestWalk *incoming_forest;
@@ -314,6 +315,32 @@ static int begin_chapter(OpeningView *view, const MusashiDiscMedia *disc, unsign
     return 1;
 }
 
+/* A field number belongs to the opening presentation. Repainting the same
+ * field or waiting on a transfer must leave the earned time unchanged. */
+void bfm_opening_advance_playtime(void *scene, unsigned field, BfmGameplayRun *run)
+{
+    enum { EXTERIOR_LIVE = 30, EXTERIOR_LEAVE = 1034, COURT_LIVE = 1445 };
+    OpeningView *view = scene;
+    if (!view || !run || !run->has_player) return;
+    if (field > BFM_OPENING_LAST_FIELD) field = BFM_OPENING_LAST_FIELD;
+    if (view->chapter) {
+        /* The ordinary court queues its door three updates after the final
+         * page closes. The interior Cross is dispatched on its next update. */
+        unsigned last = view->departure_pose;
+        if (view->natural_departure) last += 5;
+        else last += view->departure_member == 1 ? 4u : 2u;
+        if (field > last) field = last;
+    }
+    if (field < EXTERIOR_LIVE) return;
+    unsigned exterior = field < EXTERIOR_LEAVE ? field : EXTERIOR_LEAVE;
+    unsigned updates = (exterior - EXTERIOR_LIVE) / 2;
+    if (field >= COURT_LIVE) updates += (field - COURT_LIVE) / 2;
+    if (updates > view->playtime_updates) {
+        bfm_gameplay_advance_playtime(run->player.record, updates - view->playtime_updates);
+        view->playtime_updates = updates;
+    }
+}
+
 int bfm_opening_request_skip(void *scene, const MusashiDiscMedia *disc, unsigned fields,
                              char *error, size_t error_size)
 {
@@ -340,8 +367,10 @@ static BfmForestWalk *open_departing_forest(const OpeningView *view, const Musas
                                           const RoomTransferDescriptor *entry)
 {
     BfmForestWalk *walk = bfm_forest_walk_open(disc, entry);
+    if (!walk) return NULL;
+    bfm_forest_walk_set_palace_exit(walk, view->departure_member);
     unsigned field = view->departure_field;
-    if (!walk || field != view->departure_pose) return walk;
+    if (field != view->departure_pose) return walk;
 
     /* At the first displayed palace field, two world updates have completed.
      * The exterior and court continue for 29 and 31 updates respectively

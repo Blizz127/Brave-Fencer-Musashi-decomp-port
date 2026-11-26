@@ -28,6 +28,8 @@ int bfm_opening_request_skip(void *scene, const MusashiDiscMedia *disc, unsigned
  * input. Returns one on the initiating update, zero otherwise, negative on failure. */
 int bfm_opening_advance_court(void *scene, const MusashiDiscMedia *disc, unsigned field,
                              char *error, size_t error_size);
+struct BfmGameplayRun;
+void bfm_opening_advance_playtime(void *scene, unsigned field, struct BfmGameplayRun *run);
 struct BfmForestWalk;
 /* Take the selected forest after the card ends. Natural entry is prepared
  * during the fade and supplies its opening-clock field. Cross uses a new

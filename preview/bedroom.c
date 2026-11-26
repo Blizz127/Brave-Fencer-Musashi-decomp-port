@@ -764,20 +764,6 @@ static int cable_trip_step(BfmBedroom *room)
     return BFM_BEDROOM_ADVANCED;
 }
 
-/* The loaded record counts player updates, seconds, minutes and hours.
- * World time is a separate village clock and pauses in its own scenes. */
-static void tick_playtime(uint8_t time[4])
-{
-    if (time[3] >= 99 && time[2] >= 59 && time[1] >= 59) return;
-    if (++time[0] < 30) return;
-    time[0] = 0;
-    if (++time[1] < 60) return;
-    time[1] = 0;
-    if (++time[2] < 60) return;
-    time[2] = 0;
-    ++time[3];
-}
-
 const BfmSaveRecord *bfm_bedroom_inn_record(const BfmBedroom *room)
 {
     return room->inn && bfm_inn_field_service(room->inn) ? &room->entry.state : NULL;
@@ -801,7 +787,7 @@ int bfm_bedroom_step_axes(BfmBedroom *room, int confirm_edge, int reveal_edge,
     room->effect_request = 0;
     room->slider_event = 0;
     int result = BFM_BEDROOM_ADVANCED;
-    tick_playtime(room->entry.state.progress + 4);
+    bfm_gameplay_advance_playtime(room->entry.state.progress, 1);
     if (room->inn) {
         uint16_t pressed = (direction < 0 ? 0x10u : direction > 0 ? 0x40u : 0u) |
                            (back_edge ? 0x1000u : 0u) | (reveal_edge ? 0x2000u : 0u) |

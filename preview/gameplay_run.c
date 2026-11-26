@@ -59,3 +59,21 @@ int bfm_gameplay_acquire_lumina(BfmGameplayRun *run)
     }
     return 1;
 }
+
+void bfm_gameplay_advance_playtime(uint8_t progress[152], unsigned updates)
+{
+    uint8_t *time = progress + 4;
+    while (updates--) {
+        if (++time[0] < 30) continue;
+        time[0] = 0;
+        if (++time[1] < 60) continue;
+        time[1] = 0;
+        if (++time[2] < 60) continue;
+        time[2] = 0;
+        if (++time[3] >= 100) {
+            time[1] = 59;
+            time[2] = 59;
+            time[3] = 99;
+        }
+    }
+}

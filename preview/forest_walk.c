@@ -155,6 +155,7 @@ struct BfmForestWalk {
     int follow_projection;
     unsigned tick, elapsed, motion;
     int entry_world_tick;
+    unsigned forest_live_update;
     uint32_t frame, visible;
 };
 
@@ -341,6 +342,7 @@ BfmForestWalk *bfm_forest_walk_open(const MusashiDiscMedia *disc,const RoomTrans
     BfmForestWalk *w=calloc(1,sizeof *w); if(!w) return NULL;
     w->gameplay = &w->standalone_gameplay;
     w->entry_world_tick = -1;
+    w->forest_live_update = 14;
     w->disc=disc; w->field=bfm_forest_enter(disc,entry,&w->actor,&w->yaw,w->cached);
     w->entrance_yaw=w->yaw;
     w->look_x = -(int)lround(sin(w->yaw * radians) * 4096) / 64;
@@ -383,6 +385,12 @@ int bfm_forest_walk_bind_gameplay(BfmForestWalk *w, BfmGameplayRun *run)
     }
     w->gameplay = run;
     return start_ambient(w);
+}
+
+void bfm_forest_walk_set_palace_exit(BfmForestWalk *w, unsigned member)
+{
+    if (w && !w->tick)
+        w->forest_live_update = member == 1 ? 16 : 14;
 }
 
 void bfm_forest_walk_inherit_clock(BfmForestWalk *w, uint16_t first_tick)
@@ -1485,7 +1493,7 @@ static int step_tower_note(BfmForestWalk *w, int confirm, int reveal)
 /* Measured in room updates, each covering two display fields. The room
  * selector changes while the old scene is fading. The destination owns
  * placement and the authored camera sequence independently. */
-enum { INNER_SELECT=31, INNER_WIPE=44, INNER_BLACK=125, INNER_PLACE=150, INNER_CAMERA=198, INNER_LIT=215 };
+enum { INNER_SELECT=31, INNER_WIPE=44, INNER_BLACK=125, INNER_PLACE=150, INNER_CAMERA=198, INNER_LIVE=212, INNER_LIT=215 };
 
 static int step_inner_player(BfmForestWalk *w, BfmForestField *room, int x, int y,
                              int square_edge, int jump_pressed, int jump_held, GunshotInput circle)
@@ -2254,6 +2262,16 @@ static int resume_chapter(BfmForestWalk *w)
             w->escape.age, w->escape.position, &w->camera, w->eye);
 }
 
+static int walk_has_live_room(const BfmForestWalk *w)
+{
+    if (w->summit_transfer.phase != BFM_SUMMIT_TRANSFER_IDLE)
+        return bfm_tower_summit_transfer_frame(&w->summit_transfer).mode == 9;
+    if (w->inner_age) return w->inner_age >= INNER_LIVE;
+    if (w->gateway.active) return bfm_forest_gateway_transition_frame(&w->gateway).mode == 9;
+    /* The first visible forest fade still belongs to room loading. */
+    return w->tick >= w->forest_live_update;
+}
+
 int bfm_forest_walk_tick_controller(BfmForestWalk *w, int x, int y, uint16_t pressed,
                                     uint16_t held, int stick_direction)
 {
@@ -2321,6 +2339,8 @@ int bfm_forest_walk_tick_controller(BfmForestWalk *w, int x, int y, uint16_t pre
     }
     if (w && w->drawbridge) {
         int stepped = tick_drawbridge(w);
+        if (stepped > 0 && bfm_castle_drawbridge_live(w->drawbridge))
+            bfm_gameplay_advance_playtime(w->gameplay->player.record, 1);
         RoomTransferDescriptor hall;
         if (stepped > 0 && bfm_forest_walk_take_boss_request(w, &hall)) {
             w->steam_knight = bfm_steam_knight_open(w->disc, &hall, w->gameplay);
@@ -2329,7 +2349,10 @@ int bfm_forest_walk_tick_controller(BfmForestWalk *w, int x, int y, uint16_t pre
         }
         return stepped;
     }
+    if (!w) return -1;
+    int clock_running = walk_has_live_room(w);
     int result = step_controller(w, x, y, pressed, held, stick_direction);
+    if (result > 0 && clock_running) bfm_gameplay_advance_playtime(w->gameplay->player.record, 1);
     if (w && result >= 0 && w->fatal_hit) {
         BfmForestField *field = w->summit ? bfm_tower_summit_room(w->summit) : w->field;
         w->hit_sound = w->swing_sound = w->gunshot_fired = 0;
