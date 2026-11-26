@@ -162,6 +162,7 @@ int bfm_village_arrival_continue(BfmVillageArrival *a)
 
 int bfm_village_arrival_message_closed(BfmVillageArrival *a, unsigned answer)
 {
+    if (a->woods) return bfm_southern_woods_close(a->woods);
     if (a->lower) {
         bfm_village_lower_close(a->lower, answer);
         return 1;
@@ -258,7 +259,7 @@ int bfm_village_arrival_step_input(BfmVillageArrival *a, BfmGameplayRun *run,
     if (a->woods) {
         if (bfm_southern_woods_player(a->woods)->controlled)
             bfm_village_clock_step(a->record, 0);
-        return bfm_southern_woods_step(a->woods, x, y);
+        return bfm_southern_woods_step(a->woods, x, y, talk_edge, opened);
     }
     if (a->lower) {
         if (!bfm_village_lower_step(a->lower, x, y, talk_edge, opened)) return 0;
@@ -360,7 +361,7 @@ static void draw_actors(void *context, int depth)
 int bfm_village_arrival_draw(BfmVillageArrival *a, const uint8_t flags[64],
                              const BfmForestMessageFrame *window, uint32_t pixels[240][320])
 {
-    if (a->woods) return bfm_southern_woods_draw(a->woods, flags, pixels);
+    if (a->woods) return bfm_southern_woods_draw(a->woods, flags, window, pixels);
     if (a->lower) return bfm_village_lower_draw(a->lower, a->scene_tick, flags, window, pixels);
     const BfmVillagePlayer *p = bfm_village_motion_player(a->motion);
     BfmVillageCamera drawing = a->presented_camera;

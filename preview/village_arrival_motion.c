@@ -37,7 +37,7 @@ struct BfmVillageMotion {
     int64_t position[3];
     int32_t starting_speed, speed;
     int walking, pending, message_due;
-    enum { NO_TALK, TALK_APPROACH, TALK_FACE, TALK_HOLD } talk;
+    enum { NO_TALK, TALK_APPROACH, TALK_FACE, TALK_HOLD, READ_SIGN } talk;
     unsigned talk_dispatch;
     int16_t talk_x, talk_z, resident_x, resident_z;
 };
@@ -359,6 +359,10 @@ static int talking_input(BfmVillageMotion *m, int camera, BfmBedroomAction *acti
         --m->talk_dispatch;
         return 1;
     }
+    if (m->talk == READ_SIGN) {
+        turn(m);
+        return 1;
+    }
     if (m->talk == TALK_APPROACH) {
         int dx = m->talk_x - m->player.root.xyz[0], dz = m->talk_z - m->player.root.xyz[2];
         if ((int64_t)dx*dx + (int64_t)dz*dz >= 16*16)
@@ -583,6 +587,14 @@ const uint8_t *bfm_village_motion_transfer(const BfmVillageMotion *m)
     return m ? m->transfer : NULL;
 }
 
+int bfm_village_motion_correct_contact(BfmVillageMotion *m, const int16_t xyz[3])
+{
+    if (!m || !xyz) return 0;
+    for (unsigned i = 0; i < 3; ++i)
+        m->position[i] = (int64_t)xyz[i]*Q + (m->position[i] & (Q-1));
+    return publish_root(m);
+}
+
 int bfm_village_motion_resident_contact(BfmVillageMotion *m, const BfmVillageResidents *residents,
                                         unsigned field_tick, const int16_t previous[3])
 {
@@ -591,9 +603,7 @@ int bfm_village_motion_resident_contact(BfmVillageMotion *m, const BfmVillageRes
     memcpy(xyz, m->player.root.xyz, sizeof xyz);
     if (!bfm_village_residents_contact(residents, field_tick, previous, xyz)) return 1;
     bfm_village_residents_contact(residents, field_tick, previous, xyz);
-    for (unsigned i = 0; i < 3; ++i)
-        m->position[i] = (int64_t)xyz[i] * Q + (m->position[i] & (Q - 1));
-    return publish_root(m);
+    return bfm_village_motion_correct_contact(m, xyz);
 }
 
 int bfm_village_motion_staged(BfmVillageMotion *m, const BfmBedroomRoot *root)
@@ -771,6 +781,30 @@ int bfm_village_motion_begin_talk(BfmVillageMotion *m, const int16_t resident[3]
     m->talk = TALK_APPROACH;
     m->player.controlled = 0;
     m->player.root.busy = 1;
+    return 1;
+}
+
+int bfm_village_motion_begin_read(BfmVillageMotion *m, const int16_t point[3])
+{
+    if (!m || !point || !m->player.controlled || m->talk != NO_TALK)
+        return 0;
+    if ((m->walking || m->brake) &&
+        !bfm_bedroom_motion_step(m->ordinary,BFM_BEDROOM_STAND,&m->player.pose)) return 0;
+    m->turn = (unsigned)heading(m->player.root.xyz[0]-point[0],m->player.root.xyz[2]-point[2]);
+    m->walking = m->brake = 0;
+    m->talk_dispatch = 2;
+    m->talk = READ_SIGN;
+    m->player.controlled = 0;
+    m->player.root.busy = 1;
+    return 1;
+}
+
+int bfm_village_motion_end_read(BfmVillageMotion *m)
+{
+    if (!m || m->talk != READ_SIGN) return 0;
+    m->talk = NO_TALK;
+    m->player.controlled = 1;
+    m->player.root.busy = 0;
     return 1;
 }
 

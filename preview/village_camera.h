@@ -23,4 +23,6 @@ void bfm_village_camera_step(BfmVillageCamera *camera, const int16_t xyz[3],
 void bfm_village_camera_lower(BfmVillageCamera *camera, const int16_t xyz[3],
                               int entering);
 
+void bfm_village_camera_woods_orbit(BfmVillageCamera *camera, int bearing);
+
 #endif

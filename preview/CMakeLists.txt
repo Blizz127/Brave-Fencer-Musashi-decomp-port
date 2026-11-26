@@ -37,6 +37,7 @@ add_executable(musashi_native_boot
     village_talk_camera.c
     village_cable.c
     southern_woods.c
+    woods_sign_model.c
     village_field.c
     village_gate.c
     village_greeting.c

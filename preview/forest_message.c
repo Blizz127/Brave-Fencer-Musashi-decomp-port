@@ -123,8 +123,9 @@ static int print_update(BfmForestMessage *m)
             break;
         case 0x02: /* Open dialogue border */
             if (left < 2 || !set_style(m, arg[0] == 10 || arg[0] == 14 ? arg[0] - 8u : arg[0]) || arg[1] > 3 ||
-                ((arg[0] == 1) != (arg[1] == 0))) return 0;
-            f->portrait = arg[1];
+                (arg[0] == 1 ? arg[1] > 1 : !arg[1])) return 0;
+            /* Rectangular notices and signs have no portrait. */
+            f->portrait = arg[0] == 1 ? 0 : arg[1];
             m->cursor += 2;
             f->border_step = 2;
             m->phase = OPENING;

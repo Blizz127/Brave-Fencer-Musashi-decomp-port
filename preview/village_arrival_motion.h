@@ -54,6 +54,7 @@ const BfmVillagePlayer *bfm_village_motion_player(const BfmVillageMotion *motion
 int bfm_village_motion_step(BfmVillageMotion *motion, int stick_x, int stick_y, int camera_yaw);
 struct BfmVillageResidents;
 /* Resolve contact against the actor transform from the previous field update. */
+int bfm_village_motion_correct_contact(BfmVillageMotion *motion, const int16_t xyz[3]);
 int bfm_village_motion_resident_contact(BfmVillageMotion *motion,
     const struct BfmVillageResidents *residents, unsigned field_tick, const int16_t previous[3]);
 /* Signal music readiness or closure of the current message before the next step. */
@@ -64,6 +65,8 @@ int bfm_village_motion_begin_talk(BfmVillageMotion *motion, const int16_t reside
                                   unsigned resident_yaw);
 /* Pass the previous view's eye and target while its conversation zoom moves. */
 int bfm_village_motion_view_yaw(const int32_t eye[3], const int32_t target[3]);
+int bfm_village_motion_begin_read(BfmVillageMotion *motion, const int16_t point[3]);
+int bfm_village_motion_end_read(BfmVillageMotion *motion);
 int bfm_village_motion_talk_ready(const BfmVillageMotion *motion);
 int bfm_village_motion_end_talk(BfmVillageMotion *motion);
 int bfm_village_motion_face(const BfmVillageMotion *motion, uint16_t tiles[512][1024]);
