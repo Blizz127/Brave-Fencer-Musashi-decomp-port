@@ -249,13 +249,6 @@ static int creek_slide_step(BfmForestJump *jump, const BfmForestField *field,
     int16_t *yaw, int16_t cached[3])
 {
     ForestPlayerState next = *actor;
-    BfmForestContact floor;
-    if (bfm_forest_ground(field, cached[0], cached[1] - 4, cached[2], &floor) &&
-        !floor.flags && !floor.bridge && !floor.normal[0] && floor.normal[2] > 0 &&
-        floor.normal[2] == -floor.normal[1])
-        jump->ground = floor;
-    if (jump->ground.normal[2] <= 0) return 0;
-    int32_t downhill = 4 * Q16 * jump->ground.normal[2] / 4096;
     int32_t steer[2] = {jump->slide_steer[0], jump->slide_steer[1]};
     int16_t heading = *yaw;
     if (x || y) {
@@ -272,8 +265,10 @@ static int creek_slide_step(BfmForestJump *jump, const BfmForestField *field,
         next.position[i] += (uint32_t)travel[i];
         foot[i] = (int16_t)(next.position[i] >> 16);
     }
-    int support = bfm_forest_creek_slope_step(field, cached, foot);
+    int16_t normal_z;
+    int support = bfm_forest_creek_slope_step(field, cached, foot, &normal_z);
     if (!support) return 0;
+    int32_t downhill = 4 * Q16 * normal_z / 4096;
     if (support == 2) {
         /* Leaving the incline carries a smaller horizontal component into
          * free flight. Its first update keeps the eight-unit descent. */

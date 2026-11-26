@@ -225,8 +225,9 @@ int bfm_forest_creek_bank_stride(const BfmForestField *field, const int16_t from
 /* Acquire only the downward, bounded near-grade contact of a failed air sweep. */
 int bfm_forest_creek_slope_contact(const BfmForestField *field, const int16_t from[3], int16_t end[3]);
 /* Continue a supported slide (1), or leave its finite toe for air (2).
- * Return 2 and rejected queries preserve the offered endpoint. */
-int bfm_forest_creek_slope_step(const BfmForestField *field, const int16_t from[3], int16_t end[3]);
+ * Both report the incline's Z normal if requested. Only 1 changes the foot. */
+int bfm_forest_creek_slope_step(const BfmForestField *field, const int16_t from[3],
+                                int16_t end[3], int16_t *normal_z);
 /* The hero can additionally enter the bounded first-creek water surface. */
 int bfm_forest_player_air_step(const BfmForestField *field, const int16_t from[3],
                                int16_t to[3], BfmForestContact *contact, int *landed, int *water);
