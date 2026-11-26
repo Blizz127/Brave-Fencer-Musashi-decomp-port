@@ -18,6 +18,7 @@ typedef struct {
     unsigned fields;
     BfmSaveRecord earned;
     BfmGameplayRun *run;
+    unsigned read_fields;
 } BfmChapterCompletion;
 
 /* Receive a completed encounter once. The caller retains its live run. Supply
@@ -27,8 +28,9 @@ int bfm_chapter_completion_begin(BfmChapterCompletion *state, BfmGameplayRun *ru
                                  const BfmSaveRecord *record);
 /* Consume the final 300E room departure using this playthrough's own banks. */
 int bfm_chapter_completion_begin_earned(BfmChapterCompletion *state, BfmGameplayRun *run);
-/* One NTSC field with fresh wire-order edges. Zero leaves an unimplemented
- * choice with the caller. The recorded branch accepted both Yes prompts. */
+/* One NTSC field with fresh wire-order edges. Declining the initial save
+ * opens the resume prompt. Declining to resume reads the save files again.
+ * Zero leaves an unimplemented choice with the caller. */
 int bfm_chapter_completion_step(BfmChapterCompletion *state, const MusashiDiscMedia *disc,
                                 BfmInnProfile *copy, uint16_t pressed);
 /* Transfer the newly entered bedroom once, retaining the same run. */

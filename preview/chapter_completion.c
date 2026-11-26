@@ -7,7 +7,8 @@ enum {
     CROSS = 1u << 14, TRIANGLE = 1u << 12,
     /* The first two boundaries fall between consecutive 30-field
      * observations of the card UI. The resume prompt has its own input. */
-    CARD_READ_FIELDS = 256, CARD_WRITE_FIELDS = 240, SAVED_FIELDS = 156,
+    CARD_READ_FIELDS = 256, CARD_REREAD_FIELDS = 106,
+    CARD_WRITE_FIELDS = 240, SAVED_FIELDS = 156,
     TITLE_TO_BEDROOM_FIELDS = 584
 };
 
@@ -57,7 +58,7 @@ static void fail(BfmChapterCompletion *state, const char *issue)
     page(state, BFM_CHAPTER_SAVE_ERROR);
 }
 
-static void read_card(BfmChapterCompletion *state, BfmInnProfile *copy)
+static void read_card(BfmChapterCompletion *state, BfmInnProfile *copy, unsigned fields)
 {
     if (!copy) {
         fail(state, "Open a writable card copy to save.");
@@ -69,6 +70,7 @@ static void read_card(BfmChapterCompletion *state, BfmInnProfile *copy)
         fail(state, "Could not read the memory card.");
         return;
     }
+    state->read_fields = fields;
     page(state, BFM_CHAPTER_SAVE_READING);
 }
 
@@ -98,11 +100,11 @@ int bfm_chapter_completion_step(BfmChapterCompletion *state, const MusashiDiscMe
     if (state->fields < UINT32_MAX) ++state->fields;
     switch (state->page) {
     case BFM_CHAPTER_SAVE_PROMPT:
-        if (pressed & TRIANGLE) return 0;
-        if (pressed & CROSS) read_card(state, copy);
+        if (pressed & TRIANGLE) page(state, BFM_CHAPTER_RESUME);
+        else if (pressed & CROSS) read_card(state, copy, CARD_READ_FIELDS);
         break;
     case BFM_CHAPTER_SAVE_READING:
-        if (state->fields >= CARD_READ_FIELDS) page(state, BFM_CHAPTER_SAVE_FILES);
+        if (state->fields >= state->read_fields) page(state, BFM_CHAPTER_SAVE_FILES);
         break;
     case BFM_CHAPTER_SAVE_FILES: {
         if (pressed & TRIANGLE) return 0;
@@ -127,8 +129,8 @@ int bfm_chapter_completion_step(BfmChapterCompletion *state, const MusashiDiscMe
         if (state->fields >= SAVED_FIELDS) page(state, BFM_CHAPTER_RESUME);
         break;
     case BFM_CHAPTER_RESUME:
-        if (pressed & TRIANGLE) return 0;
-        if (pressed & CROSS) page(state, BFM_CHAPTER_TWO_TITLE);
+        if (pressed & TRIANGLE) read_card(state, copy, CARD_REREAD_FIELDS);
+        else if (pressed & CROSS) page(state, BFM_CHAPTER_TWO_TITLE);
         break;
     case BFM_CHAPTER_TWO_TITLE:
         if (state->fields >= TITLE_TO_BEDROOM_FIELDS) page(state, BFM_CHAPTER_BEDROOM);
