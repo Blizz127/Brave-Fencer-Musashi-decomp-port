@@ -5,6 +5,9 @@
 typedef struct BfmLibraryBooks BfmLibraryBooks;
 enum { BFM_BOOKS_ACTIVE, BFM_BOOKS_QUIT, BFM_BOOKS_SELECTED };
 BfmLibraryBooks *bfm_library_books_open(const MusashiDiscMedia *disc, const uint8_t *scene, size_t bytes);
+/* The mounted book and topic indices are each one-based in the room result. */
+unsigned bfm_library_books_selection(const BfmLibraryBooks *books);
+void bfm_library_books_resume(BfmLibraryBooks *books);
 void bfm_library_books_free(BfmLibraryBooks *books);
 int bfm_library_books_input(BfmLibraryBooks *books, int direction, int held, int cross,
                             int back, int available, unsigned *effect);

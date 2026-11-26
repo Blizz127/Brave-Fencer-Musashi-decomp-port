@@ -39,6 +39,8 @@ BfmForestMessage *bfm_forest_message_open(const uint8_t *program, size_t length)
 BfmForestMessage *bfm_field_message_open(const uint8_t *program, size_t length);
 /* The room keeps its mounted bytes alive until this cursor is freed. */
 BfmForestMessage *bfm_field_message_borrow(const uint8_t *program, size_t length);
+/* The room keeps this mounted, NUL-terminated reading entry alive for the window. */
+int bfm_field_message_insert_text(BfmForestMessage *message, const uint8_t *text, size_t bytes);
 /* Apply fresh navigation/accept edges while the choice window owns input. */
 int bfm_field_message_choose(BfmForestMessage *message, int direction, int last, int accept);
 void bfm_forest_message_free(BfmForestMessage *message);

@@ -18,7 +18,8 @@ struct BfmForestMessage {
     unsigned timer, delay, glyph_interval;
     int speaker_name, voiced_page, rapid, voice_interrupted, sync_on_open;
     int notice, last_shortcut;
-    const uint8_t *program;
+    const uint8_t *program, *insertion, *resume;
+    size_t insertion_bytes, resume_bytes;
 };
 
 static BfmForestMessage *open_message(const uint8_t *program, size_t length, int copy)
@@ -56,6 +57,16 @@ BfmForestMessage *bfm_field_message_borrow(const uint8_t *program, size_t length
     return open_message(program, length, 0);
 }
 
+int bfm_field_message_insert_text(BfmForestMessage *message, const uint8_t *text, size_t bytes)
+{
+    if (!message || !text || !bytes || message->insertion || message->resume) return 0;
+    const uint8_t *end = memchr(text, 0, bytes);
+    if (!end) return 0;
+    message->insertion = text;
+    message->insertion_bytes = (size_t)(end-text)+1;
+    return 1;
+}
+
 BfmForestMessage *bfm_forest_message_open(const uint8_t *program, size_t length)
 {
     if (length != DOORWAY_BYTES) return NULL;
@@ -91,13 +102,24 @@ static int print_update(BfmForestMessage *m)
         const uint8_t *arg = m->program + m->cursor;
         size_t left = m->size - m->cursor;
         switch (op) {
+        case 0x00:
+            if (m->resume) {
+                m->program = m->resume;
+                m->size = m->resume_bytes;
+                m->cursor = 0;
+                m->resume = NULL;
+                break;
+            }
+            f->wait_for_confirm = 1;
+            m->phase = WAIT_DISMISS;
+            return 1;
         case 0x01: /* Ink */
             if (left < 1 || (arg[0] != 1 && arg[0] != 2)) return 0;
             m->ink = arg[0];
             ++m->cursor;
             break;
         case 0x02: /* Open dialogue border */
-            if (left < 2 || !set_style(m, arg[0]) || arg[1] > 3 ||
+            if (left < 2 || !set_style(m, arg[0] == 10 ? 2 : arg[0]) || arg[1] > 3 ||
                 ((arg[0] == 1) != (arg[1] == 0))) return 0;
             f->portrait = arg[1];
             m->cursor += 2;
@@ -169,6 +191,15 @@ static int print_update(BfmForestMessage *m)
                 m->phase = WAIT_VOICE;
                 return 1;
             }
+            break;
+        case 0x0f: /* Print the selected book entry, then resume its speaker. */
+            if (!m->insertion || m->resume) return 0;
+            m->resume = arg;
+            m->resume_bytes = left;
+            m->program = m->insertion;
+            m->size = m->insertion_bytes;
+            m->cursor = 0;
+            m->insertion = NULL;
             break;
         case 0x10: {
             if (left < 2) return 0;

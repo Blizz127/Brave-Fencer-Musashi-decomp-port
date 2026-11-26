@@ -39,6 +39,7 @@ struct BfmBedroom {
     unsigned transfer_wait, transition, arrival, entry_wait;
     BfmLibraryBooks *books;
     unsigned books_active, books_closing;
+    uint32_t chapter_text;
     uint32_t (*books_background)[320];
     uint16_t tiles[512][1024];
     BfmBedroomEntry entry;
@@ -251,6 +252,43 @@ static int apply(void *context, BfmBedroomEvent event, uint32_t operand)
         if (!room->books || !room->books_background) return 0;
         room->books_active = 1;
         break;
+    case BFM_BED_BOOKS_RESUME:
+        if (!room->books || !room->books_background) return 0;
+        bfm_library_books_resume(room->books);
+        room->books_closing = 0;
+        room->books_active = 1;
+        break;
+    case BFM_BED_PROJECT_VISITOR: {
+        int16_t actor[3];
+        for (unsigned i=0; i<3; ++i) actor[i] = (int16_t)room->camera_actor[i];
+        const BfmBedroomView *view = bfm_bedroom_field_view(room->field);
+        const BfmBedroomRoot *hero = bfm_bedroom_travel_root(room->travel);
+        int guest_xy[3], hero_xy[3];
+        if (!bfm_bedroom_project(view, actor, guest_xy) ||
+            !bfm_bedroom_project(view, hero->xyz, hero_xy)) return 0;
+        int right = guest_xy[0] >= hero_xy[0];
+        const uint8_t *limits = data_range(room, 0x8017fed8u, 12);
+        if (!limits) return 0;
+        int scale = (right ? -1 : 1) * 8 * 904;
+        int q = (guest_xy[0]-160) * 4096 / scale;
+        if (q) {
+            int lo = (int16_t)half(limits);
+            int hi = (int16_t)half(limits+10);
+            if (q > (int16_t)half(limits+2) && q < (int16_t)half(limits+8)) {
+                lo = (int16_t)half(limits+4);
+                hi = (int16_t)half(limits+6);
+            }
+            if (q < lo) q = lo;
+            if (q > hi) q = hi;
+        }
+        /* The speech renderer accepts the speaker anchor, one pixel beyond
+         * the reflected tail's right edge. Its left edge uses the anchor. */
+        int product = q*scale;
+        int offset = product/4096 - (product%4096 < 0);
+        room->visitor_layout.offset_x = offset + (right ? 2 : 0);
+        room->visitor_layout.portrait_on_right = right;
+        break;
+    }
     case BFM_BED_CAMERA_CUT:
     case BFM_BED_CAMERA_MOVE:
         return bfm_bedroom_field_camera(room->field, room->scene, room->scene_bytes,
@@ -340,6 +378,12 @@ static int apply(void *context, BfmBedroomEvent event, uint32_t operand)
         size_t bytes = room->scene_bytes - (size_t)(program - room->scene);
         room->visitor_window = event == BFM_BED_VISITOR_WINDOW;
         room->message = bfm_field_message_borrow(program, bytes);
+        if (room->chapter_text) {
+            const uint8_t *chapter = data_range(room, room->chapter_text, 1);
+            if (!chapter || !bfm_field_message_insert_text(room->message, chapter,
+                    room->scene_bytes - (size_t)(chapter-room->scene))) return 0;
+            room->chapter_text = 0;
+        }
         return room->message != NULL;
     }
     }
@@ -425,7 +469,12 @@ static int render_scene(BfmBedroom *room, const BfmBedroomPose *pose, uint32_t p
         int anchor = (layout->portrait_on_right ? 159 : 160) + layout->offset_x;
         /* The shared prompt blinks against the field that presents this frame. */
         BfmForestMessageFrame frame = *bfm_forest_message_frame(room->message);
-        if ((room->update + 2) & 4) frame.inline_prompt = 0;
+        if (room->library) {
+            /* The library submits its prompt on bit 2 of the normal field
+             * clock. BOOKS pauses that clock. Its phase relative to putting
+             * the earned room on screen comes from the first reading. */
+            frame.inline_prompt &= !!((room->update + 3u) & 4u);
+        } else if ((room->update + 2) & 4) frame.inline_prompt = 0;
         bfm_bedroom_message_art_draw_side(room->message_art, &frame, anchor,
                                          layout->portrait_on_right, pixels);
     }
@@ -457,10 +506,24 @@ int bfm_bedroom_step_pad(BfmBedroom *room, int confirm_edge, int reveal_edge,
                                       room->entry.state.variables[98], &room->effect_request);
             if (!bfm_library_books_draw(room->books, room->message_art, room->tiles,
                                         room->frames[submitted])) return 0;
-            if (selection == BFM_BOOKS_QUIT) room->books_closing = 1;
-            if (selection == BFM_BOOKS_SELECTED) {
-                room->books_active = 0;
-                room->message_closed = 1;
+            if (selection == BFM_BOOKS_QUIT) {
+                room->script.book = 0;
+                room->books_closing = 1;
+            } else if (selection == BFM_BOOKS_SELECTED) {
+                unsigned book = bfm_library_books_selection(room->books);
+                room->script.book = book;
+                if ((book >> 8) == 1)
+                    room->entry.state.flags[232 / 8] |= 1u << (232 % 8);
+                if (book == 0x101) {
+                    /* First pointer in the mounted five-topics-per-book catalogue. */
+                    const uint8_t *entry = data_range(room, 0x8019f144u, 4);
+                    if (!entry || !data_range(room, word(entry), 1)) return 0;
+                    room->chapter_text = word(entry);
+                    room->books_closing = 1;
+                } else {
+                    room->books_active = 0;
+                    room->message_closed = 1;
+                }
             }
         }
         room->presented = (submitted+1)%3;

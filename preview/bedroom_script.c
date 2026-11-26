@@ -79,6 +79,7 @@ int bfm_bedroom_script_tick(BfmBedroomScript *s, int player_queue_idle, int mess
             case 0x80180b34u: event = BFM_BED_BUTLER_RESTS; break;
             case 0x80180b44u: event = BFM_BED_SOUND_FADE; break;
             case 0x8017f294u: event = BFM_BED_BOOKS; break;
+            case 0x8017f2b8u: event = BFM_BED_BOOKS_RESUME; break;
             case 0x80180ae8u: event = BFM_BED_HANDOVER; break;
             default: goto invalid;
             }
@@ -105,18 +106,21 @@ int bfm_bedroom_script_tick(BfmBedroomScript *s, int player_queue_idle, int mess
         case 0x4a: event = BFM_BED_HUD_SHOW; break;
         case 0x4b: event = BFM_BED_HUD_HIDE; break;
         case 0x36:
-            /* Closing BOOKS with Quit leaves the book result zero. The room
-             * consumes the branch operand and continues to Shanky's question. */
+            if (s->size - s->cursor < 8 || word(s->scene + s->cursor) != 0) goto invalid;
             if (arg == 0x8017f6c8u) {
-                if (s->size-s->cursor<8 || word(s->scene+s->cursor)!=0) goto invalid;
-                s->cursor+=8;
-                continue;
-            }
-            if (arg != 0x80180ad0u || !s->answer || s->answer > 2 ||
-                s->size - s->cursor < 8 || word(s->scene + s->cursor) != 0) goto invalid;
+                /* Read returns the selected one-based book and chapter. */
+                if (!s->book) {
+                    s->cursor += 8;
+                    continue;
+                }
+            } else if (arg == 0x80180ad0u && s->answer && s->answer <= 2) {
+                if (s->answer == 1) {
+                    s->cursor += 8;
+                    continue;
+                }
+            } else goto invalid;
             arg = word(s->scene + s->cursor + 4);
             s->cursor += 8;
-            if (s->answer == 1) continue;
             /* fall through */
         case 0x34:
             if (!scene_range(s, arg, 8) || ((arg - scene_base) & 7u)) goto invalid;
@@ -129,6 +133,7 @@ int bfm_bedroom_script_tick(BfmBedroomScript *s, int player_queue_idle, int mess
         case 0x37: event = BFM_BED_VISITOR_LAYOUT; break;
         case 0x38: event = BFM_BED_PLAYER_LAYOUT; break;
         case 0x07: event = BFM_BED_TURN; break;
+        case 0x39: event = BFM_BED_PROJECT_VISITOR; break;
         case 0x3a: event = BFM_BED_WINDOW_POSITION; break;
         case 0x00:
         case 0x01:

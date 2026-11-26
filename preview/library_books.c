@@ -47,6 +47,16 @@ invalid:
     free(b);
     return NULL;
 }
+unsigned bfm_library_books_selection(const BfmLibraryBooks *b)
+{
+    return (b->row[1]+1)*256 + b->row[2]+1;
+}
+void bfm_library_books_resume(BfmLibraryBooks *b)
+{
+    b->depth = 2;
+    b->ink = b->repeat = 0;
+    b->held = 0;
+}
 void bfm_library_books_free(BfmLibraryBooks *b) { free(b); }
 int bfm_library_books_input(BfmLibraryBooks *b,int direction,int held,int cross,int back,
                             int available,unsigned *effect)
@@ -62,7 +72,7 @@ int bfm_library_books_input(BfmLibraryBooks *b,int direction,int held,int cross,
             return BFM_BOOKS_QUIT;
         }
         if (b->depth==2) {
-            *effect=0x45d;
+            *effect=0x474;
             return BFM_BOOKS_SELECTED;
         }
         if (b->depth==1 && b->row[1]>=3 && !available) {
