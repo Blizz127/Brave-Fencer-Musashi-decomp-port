@@ -6,6 +6,7 @@
 #include "bfm_plat_font.h"
 #include "title_flow.h"
 #include "save_menu.h"
+#include "chapter_completion_view.h"
 #include "inn_profile.h"
 #include "inn_menu.h"
 #include "inn_field.h"
@@ -50,6 +51,9 @@ typedef struct Player {
     int inn_service;
     BfmSaveMenu saves;
     BfmSaveArt *save_art;
+    BfmChapterCompletion chapter;
+    BfmChapterCard *chapter_title;
+    unsigned chapter_fields;
     BfmBedroom *bedroom;
     uint64_t phase_start;
     BfmTitleFlow flow;
@@ -132,11 +136,14 @@ static void phase_changed(Player *p) {
     case BFM_TITLE_PROMPT: caption = "Brave Fencer Musashi"; break;
     case BFM_TITLE_MENU: caption = "Brave Fencer Musashi - Start / Continue"; break;
     case BFM_TITLE_LOADING:
+        p->opening_finished = p->opening_seen = p->opening_skip = 0;
+        p->voice_stop_field = 0;
         p->gameplay.has_player = 0;
         memset(p->gameplay.story_flags, 0, sizeof p->gameplay.story_flags);
         caption = "Brave Fencer Musashi - Loading New Game";
         break;
     case BFM_TITLE_OPENING: caption = "Brave Fencer Musashi - Opening"; break;
+    case BFM_TITLE_CHAPTER_COMPLETION: caption = "Brave Fencer Musashi - Chapter complete"; break;
     case BFM_TITLE_BEDROOM: caption = "Brave Fencer Musashi - Castle bedroom"; break;
     case BFM_TITLE_FILES:
         if (p->save_copy) bfm_inn_profile_menu(p->save_copy, &p->saves);
@@ -343,6 +350,53 @@ static int start_forest(Player *p, unsigned field)
     return 1;
 }
 
+/* The forest event is consumed only after its final field has run. Stop the
+ * outgoing audio before releasing its scene-owned voices and instruments. */
+static int begin_completed_chapter(Player *p)
+{
+    if (!p->save_art) p->save_art = bfm_save_art_load(p->disc);
+    if (!p->save_art) return -1;
+    p->chapter_title = bfm_chapter_two_card_load(p->disc);
+    if (!p->chapter_title || !bfm_chapter_completion_begin_earned(&p->chapter, &p->gameplay))
+        return -1;
+
+    bfm_desktop_voice_stop(p->voice);
+    bfm_forest_walk_free(p->forest);
+    p->forest = NULL;
+    p->pressed = p->forest_pressed = 0;
+    p->chapter_fields = 0;
+    p->flow.phase = BFM_TITLE_CHAPTER_COMPLETION;
+    phase_changed(p);
+    return bfm_chapter_completion_draw(&p->chapter, p->save_art, p->chapter_title, 0,
+                                       (uint32_t (*)[OPENING_W])p->pixels) ? BFM_OPENING_FRAME : -1;
+}
+
+static int advance_completed_chapter(Player *p, unsigned fields)
+{
+    while (p->chapter_fields < fields) {
+        ++p->chapter_fields;
+        uint16_t pressed = p->pressed;
+        p->pressed = 0;
+        BfmChapterSavePage before = p->chapter.page;
+        /* An unsupported Back choice leaves its prompt on screen. */
+        if (!bfm_chapter_completion_step(&p->chapter, p->disc, p->save_copy, pressed) &&
+            !(pressed & PAD_TRIANGLE)) return 0;
+        if (p->chapter.page == BFM_CHAPTER_TWO_TITLE && before != BFM_CHAPTER_TWO_TITLE)
+            SDL_SetWindowTitle(p->window, "Brave Fencer Musashi - Chapter 2");
+        if (p->chapter.page == BFM_CHAPTER_BEDROOM) {
+            p->bedroom = bfm_chapter_completion_take_bedroom(&p->chapter, p->disc);
+            if (!p->bedroom || !bfm_bedroom_step(p->bedroom)) return 0;
+            bfm_chapter_card_free(p->chapter_title);
+            p->chapter_title = NULL;
+            p->chapter = (BfmChapterCompletion){0};
+            p->flow.phase = BFM_TITLE_BEDROOM;
+            phase_changed(p);
+            break;
+        }
+    }
+    return 1;
+}
+
 static int forest_frame(Player *p)
 {
     uint64_t wanted = (SDL_GetTicks64() - p->forest_start) * 30u / 1001u;
@@ -361,6 +415,8 @@ static int forest_frame(Player *p)
         if (bell) bfm_desktop_voice_tower_bell(p->voice, bell, bell_command, bell_argument);
         if (bfm_forest_walk_gunshot_sound(p->forest)) bfm_desktop_voice_forest_gunshot(p->voice);
         if (bfm_forest_walk_hit_sound(p->forest)) bfm_desktop_voice_forest_hit(p->voice);
+        if (bfm_forest_walk_take_chapter_request(p->forest))
+            return begin_completed_chapter(p);
         if (!running) break;
         ++p->forest_updates;
     }
@@ -417,7 +473,14 @@ static int play(Player *p, char *error, size_t size) {
             if (began < 0) return 2;
             if (began) SDL_SetWindowTitle(p->window, "Brave Fencer Musashi - Chapter 1");
         }
-        if (tick != last_logic) {
+        if (p->flow.phase == BFM_TITLE_CHAPTER_COMPLETION) {
+            if (!advance_completed_chapter(p, fields)) {
+                snprintf(error, size, "Could not advance the chapter-completion scene.");
+                return 2;
+            }
+            if (p->flow.phase == BFM_TITLE_BEDROOM) fields = 0;
+            last_logic = tick;
+        } else if (tick != last_logic) {
             int before = p->flow.phase;
             if (p->flow.phase == BFM_TITLE_OPENING && p->opening && !p->opening_skip &&
                 (p->pressed & PAD_CROSS)) {
@@ -533,6 +596,7 @@ static int play(Player *p, char *error, size_t size) {
             fields = 0;
         }
         int opening = p->flow.phase == BFM_TITLE_OPENING;
+        int chapter = p->flow.phase == BFM_TITLE_CHAPTER_COMPLETION;
         int files = p->flow.phase == BFM_TITLE_FILES;
         int bedroom = p->flow.phase == BFM_TITLE_BEDROOM;
         if (files && p->saves.page == BFM_SAVE_CARD_LOADING && fields >= LOADING_VISIBLE_FIELDS)
@@ -548,14 +612,15 @@ static int play(Player *p, char *error, size_t size) {
             }
         }
         int save_view = files ? (int)p->saves.selected + 4 * (int)p->saves.page : -1;
-        if (!surface(p, opening || files || bedroom ? OPENING_W : TITLE_W, opening || files || bedroom ? OPENING_H : TITLE_H)) {
+        int field_view = opening || files || bedroom || chapter;
+        if (!surface(p, field_view ? OPENING_W : TITLE_W, field_view ? OPENING_H : TITLE_H)) {
             snprintf(error, size, "Could not create the scene display: %s", SDL_GetError());
             return 2;
         }
         int unchanged = last_phase == (int)p->flow.phase && last_choice == (int)p->flow.choice &&
                         last_prompt == p->flow.prompt_visible && last_save_view == save_view &&
                         (!files || fields / 2 == last_field / 2) && !room_advanced &&
-                        (!opening || fields == last_field);
+                        (!(opening || chapter) || fields == last_field);
         if (unchanged || p->opening_finished) {
             if (p->redraw && !present(p)) {
                 snprintf(error, size, "Could not refresh the display: %s", SDL_GetError());
@@ -637,6 +702,9 @@ static int play(Player *p, char *error, size_t size) {
                 }
                 continue;
             }
+        } else if (chapter) {
+            frame = bfm_chapter_completion_draw(&p->chapter, p->save_art, p->chapter_title,
+                                                p->chapter.fields, (uint32_t (*)[OPENING_W])p->pixels);
         } else if (bedroom) {
             frame = bedroom_frame(p);
         } else if (files && p->saves.page == BFM_SAVE_CARD_LOADING) {
@@ -735,6 +803,7 @@ done:
     if (p->opening) bfm_opening_free(p->opening);
     bfm_bedroom_free(p->bedroom);
     bfm_inn_profile_close(p->save_copy);
+    bfm_chapter_card_free(p->chapter_title);
     free(p->save_art);
     if (p->title) bfm_title_free(p->title);
     musashi_disc_media_close(p->disc);
