@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "village_arrival_motion.h"
 #include "forest_motion.h"
+#include "room_walk_grid.h"
 
 #include <limits.h>
 #include <math.h>
@@ -25,6 +26,7 @@ struct BfmVillageMotion {
     unsigned key_count, key, delay, turn, countdown;
     uint32_t messages[2];
     BfmBedroomMotion *ordinary;
+    BfmRoomWalkGrid *walk;
     int64_t position[3];
     int32_t starting_speed, speed;
     int walking, pending, message_due;
@@ -178,7 +180,8 @@ BfmVillageMotion *bfm_village_motion_open(const uint8_t *scene, size_t scene_byt
     if (back < 0u-11u*Q || back == 0) goto fail;
     m->starting_speed = (int32_t)(0u-back);
     m->ordinary = bfm_bedroom_motion_open(scene,scene_bytes,main,main_bytes,room_address);
-    if (!m->ordinary) goto fail;
+    m->walk = bfm_room_walk_grid_open(scene, scene_bytes, room_address);
+    if (!m->ordinary || !m->walk) goto fail;
     place(m,entry+16);
     m->player.root.yaw = (unsigned)read16(entry+22) & 4095;
     m->player.root.busy = 1;
@@ -192,33 +195,6 @@ BfmVillageMotion *bfm_village_motion_open(const uint8_t *scene, size_t scene_byt
 fail:
     bfm_village_motion_free(m);
     return NULL;
-}
-
-/* Only cells composed entirely of horizontal floor faces are certified for free
- * walking here. A cell containing a wall, ledge or slope needs its own resolver. */
-static int level_cell(const BfmVillageMotion *m, const BfmBedroomRoot *r)
-{
-    const uint8_t *c = cell(m,r);
-    if (!c) return 0;
-    unsigned offset = (uint16_t)read16(c), count = (uint16_t)read16(c+2);
-    uint32_t ids = read32(m->grid+20), triangles = read32(m->grid+24);
-    uint32_t quads = read32(m->grid+28), normals = read32(m->grid+16);
-    size_t size = m->scene.bytes - (size_t)(m->grid - m->scene.data);
-    if (!count || !((normals <= ids) && (ids <= triangles) && (triangles <= quads)) ||
-        quads > size || offset > triangles-ids || 2*count > triangles-ids-offset) return 0;
-    for (unsigned i = 0; i < count; ++i) {
-        unsigned id = (uint16_t)read16(m->grid+ids+offset+2*i);
-        unsigned quad = id >> 15;
-        size_t start = quad ? quads : triangles, limit = quad ? size : quads;
-        unsigned stride = quad ? 22 : 18;
-        if ((id & 32767u) >= (limit-start)/stride) return 0;
-        const uint8_t *face = m->grid+start+(id & 32767u)*stride;
-        unsigned index = (uint16_t)read16(face+2);
-        if (read16(face) || index >= (ids-normals)/8) return 0;
-        const uint8_t *normal = m->grid+normals+index*8;
-        if (read16(normal) || read16(normal+2) >= 0 || read16(normal+4)) return 0;
-    }
-    return 1;
 }
 
 static int move(BfmVillageMotion *m, int speed, int vertical, int require_floor)
@@ -237,13 +213,15 @@ static int move(BfmVillageMotion *m, int speed, int vertical, int require_floor)
         if (whole < INT16_MIN || whole > INT16_MAX) return require_floor;
         candidate.xyz[i] = (int16_t)whole;
     }
-    /* The first ordinary movement is supported by the landing terrace. */
+    /* Follow the bounded terrace floor even where its grid cell also indexes a wall. */
     if (require_floor) {
-        if (!level_cell(m,&candidate)) return 1;
+        if (!bfm_room_walk_grid_level_step(m->walk, m->player.root.xyz, candidate.xyz)) return 1;
         if (!shadow(m,&candidate))
             return 0;
         if (!candidate.shadow_visible || candidate.shadow_xyz[1] != candidate.xyz[1] ||
             candidate.shadow_normal[0] || candidate.shadow_normal[2]) return 1;
+        for (int i = 0; i < 3; ++i)
+            next[i] = (int64_t)candidate.xyz[i]*Q + (next[i] & (Q-1));
     }
     memcpy(m->position,next,sizeof next);
     return 1;
@@ -446,6 +424,9 @@ int bfm_village_motion_face(const BfmVillageMotion *m, uint16_t tiles[512][1024]
 
 void bfm_village_motion_free(BfmVillageMotion *m)
 {
-    if (m) bfm_bedroom_motion_free(m->ordinary);
+    if (m) {
+        bfm_bedroom_motion_free(m->ordinary);
+        bfm_room_walk_grid_free(m->walk);
+    }
     free(m);
 }

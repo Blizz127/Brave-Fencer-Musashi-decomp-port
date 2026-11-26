@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "forest_field.h"
+#include "room_walk_grid.h"
 #include "forest_entry.h"
 #include "forest_bridge.h"
 #include "forest_upper_trunks.h"
@@ -348,6 +349,37 @@ static int load_grid(FloorGrid *grid, const uint8_t *scene, size_t size,
            load_faces(&grid->faces22, record + off[5], longs, 5, normals, distances);
 }
 
+struct BfmRoomWalkGrid {
+    FloorGrid grid;
+};
+
+static void free_grid(FloorGrid *grid)
+{
+    free(grid->cells);
+    free(grid->dist);
+    free(grid->verts);
+    free(grid->ids);
+    free(grid->faces18);
+    free(grid->faces22);
+}
+
+BfmRoomWalkGrid *bfm_room_walk_grid_open(const uint8_t *scene, size_t bytes, uint32_t room)
+{
+    const uint8_t *descriptor = scene ? scene_record(scene, bytes, room, 0x8c) : NULL;
+    BfmRoomWalkGrid *walk = descriptor ? calloc(1, sizeof *walk) : NULL;
+    if (walk && !load_grid(&walk->grid, scene, bytes, descriptor)) {
+        bfm_room_walk_grid_free(walk);
+        return NULL;
+    }
+    return walk;
+}
+
+void bfm_room_walk_grid_free(BfmRoomWalkGrid *walk)
+{
+    if (walk) free_grid(&walk->grid);
+    free(walk);
+}
+
 void bfm_forest_field_free(BfmForestField *field)
 {
     if (field) {
@@ -364,12 +396,7 @@ void bfm_forest_field_free(BfmForestField *field)
         bfm_forest_shore_free(field->shore);
         bfm_forest_terrain_free(field->terrain);
         free(field->scene);
-        free(field->grid.cells);
-        free(field->grid.dist);
-        free(field->grid.verts);
-        free(field->grid.ids);
-        free(field->grid.faces18);
-        free(field->grid.faces22);
+        free_grid(&field->grid);
         musashi_forest_player_mesh_free(field->player);
         free(field);
     }
@@ -1241,12 +1268,12 @@ int bfm_forest_clear_flat_step(const BfmForestField *field, const int16_t from[3
 
 enum { EDGE_TOLERANCE = 0x2f00 };
 
-/* A cell seam can pass through a single floor polygon. Keep the route on
- * the actual flat polygons indexed by the original doorway cell. */
-static int on_doorway_floor(const FloorGrid *grid, ContactCell doorway, const int16_t p[3])
+/* A cell seam can pass through a single polygon. Test the bounded, unmarked
+ * level surface under the foot using the faces indexed by the given cell. */
+static int on_level_floor(const FloorGrid *grid, ContactCell cell, const int16_t p[3])
 {
-    for (unsigned i = 0; i < doorway.count; ++i) {
-        u16 token = doorway.tokens[i];
+    for (unsigned i = 0; i < cell.count; ++i) {
+        u16 token = cell.tokens[i];
         const FloorFace *face = contact_face(grid, token);
         const FloorPoint *n = &grid->verts[face->e[0].v];
         if (!flat_floor(face, n) ||
@@ -1436,6 +1463,23 @@ static int resolve_walls(const FloorGrid *grid, ContactCell start,
             return hit == 0;
     }
     return 0;
+}
+
+int bfm_room_walk_grid_level_step(const BfmRoomWalkGrid *walk, const int16_t from[3],
+                                  int16_t to[3])
+{
+    if (!walk || !from || !to || from[1] != to[1] ||
+        abs(to[0] - from[0]) > 16 || abs(to[2] - from[2]) > 16)
+        return 0;
+    const FloorGrid *grid = &walk->grid;
+    ContactCell start = contact_cell(grid, from);
+    int16_t foot[3] = {to[0], to[1], to[2]};
+    if (!on_level_floor(grid, start, from) ||
+        !resolve_walls(grid, start, from, foot, 1, NULL) ||
+        !on_level_floor(grid, contact_cell(grid, foot), foot))
+        return 0;
+    memcpy(to, foot, sizeof foot);
+    return 1;
 }
 
 /* Adjacent polygons on the ramp share a plane. Recover the actual support
@@ -2023,10 +2067,10 @@ int bfm_forest_doorway_step(const BfmForestField *field, const int16_t origin[3]
     ContactCell doorway = contact_cell(&field->grid, origin);
     BfmForestContact ground;
     int16_t end[3] = {to[0], to[1], to[2]};
-    if (!on_doorway_floor(&field->grid, doorway, from) ||
+    if (!on_level_floor(&field->grid, doorway, from) ||
         !bfm_forest_ground(field, from[0], from[1], from[2], &ground) ||
         !bfm_forest_corridor_step(field, &ground, from, end) ||
-        end[1] != from[1] || !on_doorway_floor(&field->grid, doorway, end))
+        end[1] != from[1] || !on_level_floor(&field->grid, doorway, end))
         return 0;
     to[0] = end[0];
     to[2] = end[2];
