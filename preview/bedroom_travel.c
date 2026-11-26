@@ -27,6 +27,7 @@ struct BfmBedroomTravel {
     int state, action, goal_x, goal_z, goal_yaw;
     int64_t position[3];
     int speed, fall_speed, airborne, landed;
+    int retreat, saved_yaw, entry_action;
 };
 
 static unsigned u16(const uint8_t *p)
@@ -264,17 +265,19 @@ static void begin(BfmBedroomTravel *t, int action)
     t->action = action;
 }
 
-int bfm_bedroom_travel_turn(BfmBedroomTravel *t, unsigned yaw)
+int bfm_bedroom_travel_turn(BfmBedroomTravel *t, unsigned yaw, int entry_action)
 {
     if (!t || t->root.busy || yaw > 4095) return 0;
     t->goal_yaw = (int)yaw;
     begin(t, TURN);
+    t->entry_action = entry_action;
     return 1;
 }
 
-int bfm_bedroom_travel_walk(BfmBedroomTravel *t, int16_t x, int16_t z)
+int bfm_bedroom_travel_walk(BfmBedroomTravel *t, int16_t x, int16_t z, int entry_action)
 {
     if (!t || t->root.busy) return 0;
+    t->entry_action = entry_action;
     t->goal_x = x;
     t->goal_z = z;
     begin(t, START_WALK);
@@ -321,6 +324,20 @@ static int sine(int yaw)
     return (int)lround(4096 * sin((yaw & 4095) * angle_unit));
 }
 
+int bfm_bedroom_travel_retreat(BfmBedroomTravel *t, int16_t distance)
+{
+    /* This command walks a local Z offset while retaining the player's facing. */
+    if (!t || t->root.busy) return 0;
+    int yaw = (int)t->root.yaw;
+    int x = t->root.xyz[0] + (int)floor_div((int64_t)distance * sine(yaw), 4096);
+    int z = t->root.xyz[2] + (int)floor_div((int64_t)distance * sine(yaw + 1024), 4096);
+    if (x < INT16_MIN || x > INT16_MAX || z < INT16_MIN || z > INT16_MAX ||
+        !bfm_bedroom_travel_walk(t, (int16_t)x, (int16_t)z, 0)) return 0;
+    t->retreat = 1;
+    t->saved_yaw = yaw;
+    return 1;
+}
+
 static int walk_step(BfmBedroomTravel *t, const int32_t eye[3], const int32_t target[3])
 {
     int dx = t->goal_x - t->root.xyz[0], dz = t->goal_z - t->root.xyz[2];
@@ -329,7 +346,8 @@ static int walk_step(BfmBedroomTravel *t, const int32_t eye[3], const int32_t ta
         t->root.xyz[2] = (int16_t)t->goal_z;
         for (int j = 0; j < 3; ++j)
             t->position[j] = (int64_t)t->root.xyz[j]*Q + (t->position[j] & (Q-1));
-        t->state = FINISH;
+        if (t->entry_action || t->retreat) t->state = FINISH;
+        else t->root.busy = 0;
         t->root.locomotion_edge = BFM_TRAVEL_STAND;
         return project_shadow(t);
     }
@@ -404,13 +422,20 @@ int bfm_bedroom_travel_step(BfmBedroomTravel *t,
         t->state = t->action;
         return 1;
     case TURN: {
-        if (!turn_toward(t, t->goal_yaw)) t->state = FINISH;
+        if (!turn_toward(t, t->goal_yaw)) {
+            if (t->entry_action) t->state = FINISH;
+            else t->root.busy = 0;
+        }
         return 1;
     }
     case START_WALK:
-    case WALK:
-        return walk_step(t, eye, target);
+    case WALK: {
+        int ok = walk_step(t, eye, target);
+        if (t->retreat) t->root.yaw = (unsigned)t->saved_yaw;
+        return ok;
+    }
     case FINISH:
+        t->retreat = 0;
         t->root.busy = 0;
         return 1;
     }

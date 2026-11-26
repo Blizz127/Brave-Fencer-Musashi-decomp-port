@@ -7882,6 +7882,45 @@
       "origin": "Independently reconstructed from US Giant Forest overlay member 77. The player action selector tests two conditions in priority order and treats either nonzero result as true.",
       "source_sha256": "af6a8bfe51fb720c1895ec177fa3b377dd2d12a963506932cb18698f31370cbc",
       "span_sha256": "535bb290018d4db627f863a9000f1b09700d2f5a51d50cd3aa8c7a341ab2c88d"
+    },
+    {
+      "name": "func_80147AD4",
+      "region": "sc01_0077",
+      "vram": 2148825812,
+      "size": 68,
+      "source": "src/overlays/sc01_0077/80147ad4.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the owned US Giant Forest overlay. Transforms the three movement inputs into a local vector, then commits the result using the actor’s per-axis overrides.",
+      "source_sha256": "b34ce919623319ccc895cbe39fd4c8e3991b020647a7b7d0fe898f7e2aee52ba",
+      "span_sha256": "3a759bccf464ae48f4b29414154e05d26d899cce1743cc29a501b06d0bf8f06f"
+    },
+    {
+      "name": "func_80147B5C",
+      "region": "sc01_0077",
+      "vram": 2148825948,
+      "size": 212,
+      "source": "src/overlays/main_0012/80147b5c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Existing owner-authored MAIN member 12 C, independently rebuilt and matched against US SC01 member 77. The forest movement path selects per-axis coordinates and commits its scratch vector to the character.",
+      "source_sha256": "1bc88c0d378f3d240ab2da31a09d861154444330410fc9cea872d2bb753b9d8a",
+      "span_sha256": "0f6c41fa16716552d9a37b6282d157d9faff731657366a8a9d305c9bf1e20a92"
+    },
+    {
+      "name": "func_8014F74C",
+      "region": "sc01_0077",
+      "vram": 2148857676,
+      "size": 696,
+      "source": "src/overlays/main_0012/8014f74c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Existing owner-authored MAIN member 12 C, independently rebuilt and matched against US SC01 member 77. The forest movement path samples the probed point and updates the actor coordinates on contact.",
+      "source_sha256": "7b1725871f4ca304c957c2bc6a9eccea20a36862539585297c0e993916614cd5",
+      "span_sha256": "ce0f359ad05ded980e5a6df6c82bd82232897bf5fd7ae54be00aec95176765d0"
     }
   ]
 }

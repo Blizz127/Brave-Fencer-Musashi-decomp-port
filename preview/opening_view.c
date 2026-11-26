@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 #include "scene_views.h"
 #include "chapter_card.h"
+#include "forest_walk.h"
+#include "scene_payload.h"
 #include "scene_tiles.h"
 #include "palace.h"
 #include "palace_dialogue.h"
@@ -11,11 +13,16 @@ enum { WIDTH = 320, HEIGHT = 240, INTERIOR_START_FIELD = 1188 };
 enum { TITLE_WIDTH = 256, TITLE_HEIGHT = 64 };
 enum { CREDIT_X = 80, CREDIT_Y = 104, CREDIT_WIDTH = 160, CREDIT_HEIGHT = 32 };
 
+typedef enum { FOREST_WAITING, FOREST_QUEUED, FOREST_READY, FOREST_TAKEN } ForestStage;
+
 typedef struct {
     Palace *palace, *stairs;
     BfmChapterCard *chapter;
-    unsigned skip_field, skip_pose;
-    unsigned skip_member;
+    unsigned departure_field, departure_pose, departure_member;
+    int natural_departure;
+    ForestStage forest_stage;
+    RoomTransferDescriptor forest_entry;
+    BfmForestWalk *incoming_forest;
     uint16_t (*tiles)[1024], (*stair_tiles)[1024];
     uint16_t sky[480][320];
     uint16_t title_ink[TITLE_HEIGHT][TITLE_WIDTH];
@@ -291,30 +298,119 @@ static int draw_opening(const OpeningView *view, unsigned fields, uint32_t *pixe
     return 1;
 }
 
+static int begin_chapter(OpeningView *view, const MusashiDiscMedia *disc, unsigned field,
+                         unsigned pose, unsigned member, char *error, size_t error_size)
+{
+    BfmChapterCard *card = bfm_chapter_card_load(disc);
+    if (!card) {
+        if (error && error_size)
+            snprintf(error, error_size, "Could not read the Chapter 1 card from SC01.CD.");
+        return -1;
+    }
+    view->chapter = card;
+    view->departure_member = member;
+    view->departure_field = field;
+    view->departure_pose = pose;
+    return 1;
+}
+
 int bfm_opening_request_skip(void *scene, const MusashiDiscMedia *disc, unsigned fields,
                              char *error, size_t error_size)
 {
     OpeningView *view = scene;
     if (!view || !disc) return -1;
     if (view->chapter) return 0;
-    view->chapter = bfm_chapter_card_load(disc);
+    unsigned pose = fields < BFM_OPENING_LAST_FIELD ? fields : BFM_OPENING_LAST_FIELD;
+    return begin_chapter(view, disc, fields, pose, fields < INTERIOR_START_FIELD ? 0u : 1u,
+                         error, error_size);
+}
+
+static int read_forest_entry(const MusashiDiscMedia *disc, unsigned member,
+                             RoomTransferDescriptor *entry)
+{
+    size_t size;
+    uint8_t *scene = bfm_scene_unpack_pac0(disc, "SC01.CD", member, 1u << 20, 1u << 20, &size);
+    if (!scene) return 0;
+    int selected = bfm_forest_entry_from_scene(scene, size, member, entry);
+    free(scene);
+    return selected;
+}
+
+int bfm_opening_advance_court(void *scene, const MusashiDiscMedia *disc, unsigned field,
+                             char *error, size_t error_size)
+{
+    OpeningView *view = scene;
+    if (!view || !disc) return -1;
+    /* Shorter opening cuts end before the final camera and its outgoing fade. */
+    enum { FULL_COURT_LAST_POSE = 17533 };
+    if (BFM_OPENING_LAST_FIELD < FULL_COURT_LAST_POSE) return 0;
+
+    int began = 0;
     if (!view->chapter) {
-        if (error && error_size)
-            snprintf(error, error_size, "Could not read the Chapter 1 card from SC01.CD.");
-        return -1;
+        unsigned closed;
+        if (!bfm_palace_dialogue_departure_field(bfm_palace_speech(view->stairs), &closed) ||
+            field < closed) return 0;
+        began = begin_chapter(view, disc, closed, closed, 1, error, error_size);
+        if (began < 0) return -1;
+        view->natural_departure = 1;
     }
-    view->skip_member = fields < INTERIOR_START_FIELD ? 0u : 1u;
-    view->skip_field = fields;
-    view->skip_pose = fields < BFM_OPENING_LAST_FIELD ? fields : BFM_OPENING_LAST_FIELD;
-    return 1;
+    /* The active court queues its second door three scene ticks after the
+     * message closes. Keep that record while the outgoing frames and card play. */
+    if (!view->natural_departure || field < view->departure_field) return began;
+    unsigned elapsed = field - view->departure_field;
+    if (view->forest_stage == FOREST_WAITING && elapsed >= 6) {
+        if (!read_forest_entry(disc, view->departure_member, &view->forest_entry)) {
+            if (error && error_size)
+                snprintf(error, error_size, "Could not read the palace's departing forest door.");
+            return -1;
+        }
+        view->forest_stage = FOREST_QUEUED;
+    }
+    /* The destination is selected while the fading palace is still visible.
+     * Its entrance waits at its initial pose until the chapter card ends. */
+    if (view->forest_stage == FOREST_QUEUED && elapsed >= 64) {
+        view->incoming_forest = bfm_forest_walk_open(disc, &view->forest_entry);
+        if (!view->incoming_forest) {
+            if (error && error_size)
+                snprintf(error, error_size, "Could not prepare the palace's forest entrance.");
+            return -1;
+        }
+        view->forest_stage = FOREST_READY;
+    }
+    return began;
 }
 
 int bfm_opening_skip_member(const void *scene, unsigned *member)
 {
     const OpeningView *view = scene;
-    if (!view || !view->chapter || !member) return 0;
-    *member = view->skip_member;
+    if (!view || !view->chapter || view->natural_departure || !member) return 0;
+    *member = view->departure_member;
     return 1;
+}
+
+BfmForestWalk *bfm_opening_take_forest(void *scene, const MusashiDiscMedia *disc,
+                                       unsigned field, uint64_t *forest_field)
+{
+    OpeningView *view = scene;
+    if (!view || !view->chapter || !disc || !forest_field || view->forest_stage == FOREST_TAKEN)
+        return NULL;
+    uint64_t first = (uint64_t)view->departure_field + BFM_CHAPTER_FOREST_FIELD;
+    if (field < first) return NULL;
+    BfmForestWalk *forest;
+    if (view->natural_departure) {
+        if (view->forest_stage != FOREST_READY) return NULL;
+        forest = view->incoming_forest;
+        view->incoming_forest = NULL;
+        *forest_field = first;
+    } else {
+        RoomTransferDescriptor entry;
+        if (!read_forest_entry(disc, view->departure_member, &entry)) return NULL;
+        forest = bfm_forest_walk_open(disc, &entry);
+        if (!forest) return NULL;
+        *forest_field = 0;
+    }
+    view->forest_stage = FOREST_TAKEN;
+    return forest;
 }
 
 int bfm_opening_frame(void *scene, unsigned fields, uint32_t *pixels, int width, int height)
@@ -325,14 +421,15 @@ int bfm_opening_frame(void *scene, unsigned fields, uint32_t *pixels, int width,
         if (fields > BFM_OPENING_LAST_FIELD) return BFM_OPENING_END;
         return draw_opening(view, fields, pixels);
     }
-    unsigned age = fields >= view->skip_field ? fields - view->skip_field : 0;
-    if (age >= (view->skip_member ? 68u : 6u)) {
-        int result = bfm_chapter_card_draw(view->chapter, age, view->skip_member, pixels);
-        return result == 0 ? BFM_OPENING_FOREST_PENDING : result;
-    }
-    unsigned active = view->skip_pose + age;
+    unsigned age = fields >= view->departure_field ? fields - view->departure_field : 0;
+    unsigned room_shade;
+    BfmChapterFrame stage = bfm_chapter_departure_frame(view->chapter, age, view->departure_member,
+                                                       pixels, &room_shade);
+    if (stage == BFM_CHAPTER_FINISHED) return BFM_OPENING_FOREST_PENDING;
+    if (stage != BFM_CHAPTER_OUTGOING_ROOM) return stage;
+    unsigned active = view->departure_pose + age;
     int result = draw_opening(view, active, pixels);
-    if (age > 36) shade_scene(pixels, (age & ~1u) - 36);
+    shade_scene(pixels, room_shade);
     return result;
 }
 
@@ -366,6 +463,7 @@ void bfm_opening_free(void *scene)
 {
     OpeningView *view = scene;
     if (view) {
+        bfm_forest_walk_free(view->incoming_forest);
         bfm_chapter_card_free(view->chapter);
         bfm_palace_free(view->palace);
         free(view->tiles);

@@ -158,25 +158,53 @@ static int render(Orchestra *o, const BfmSqvTrack *track, unsigned rate, size_t 
 {
     uint32_t tempo = 500000;
     uint64_t denominator = (uint64_t)track->ticks_per_quarter * 1000000;
-    uint64_t due = 0, clock = 0;
-    size_t index = 0, produced = 0;
+    uint64_t due = 0, deadline = 0, clock = 0;
+    size_t index = 0, produced = 0, events = track->event_count;
+    /* Through the wide chamber group, retain the original preview mix.
+     * Later attacks match the court's 60 logical fields per score second,
+     * starting one field after the flash. Each displayed field is
+     * 1001/60000 seconds. Sample pitch stays on the device clock. */
+    const uint32_t chamber_group = 13200;
+    /* The last new chord remains audible on the chapter card. Its mounted
+     * releases and the earlier bass continue under the room fade. */
+    const uint32_t last_chord = 23760;
+    /* Matched sustained instruments and fresh attacks fade together between
+     * these fields. The original room reverberation outlasts the dry score. */
+    const unsigned fade_field = 17501;
+    const uint64_t fade_start = (uint64_t)(fade_field - BFM_PALACE_SCORE_FIELD)
+                              * DEVICE_RATE * 1001 / 60000;
+    const uint64_t fade_end = (uint64_t)(BFM_PALACE_SCORE_END_FIELD - BFM_PALACE_SCORE_FIELD)
+                            * DEVICE_RATE * 1001 / 60000;
+    const uint64_t field = denominator * DEVICE_RATE * 1001 / 60000;
     /* Retain fractional tick timing across tempo changes and output samples. */
     uint64_t cursor = 0;
     int previous[2] = {0, 0}, current[2];
-    if (!track->event_count || track->events[0].tick != 0) return 0;
+    if (!events || track->events[0].tick != 0) return 0;
     for (uint64_t device = 0; produced < frames; ++device) {
-        while (index < track->event_count && due <= clock) {
+        while (index < events && deadline <= clock) {
             const BfmSqvEvent *e = &track->events[index++];
-            if (!event(o, e)) return 0;
+            if ((e->tick <= last_chord || e->kind != BFM_SQV_NOTE_ON) &&
+                !event(o, e)) return 0;
             if (e->kind == BFM_SQV_TEMPO) tempo = e->tempo_us_per_quarter;
-            if (index < track->event_count) {
+            if (index < events) {
                 uint64_t delta = track->events[index].tick - e->tick;
                 uint64_t step = (uint64_t)tempo * DEVICE_RATE;
                 if (delta && step > (UINT64_MAX - due) / delta) return 0;
                 due += step * delta;
+                deadline = due;
+                if (track->events[index].tick > chamber_group) {
+                    uint64_t adjustment = due / 1000 + field;
+                    if (adjustment > UINT64_MAX - due) return 0;
+                    deadline += adjustment;
+                }
             }
         }
         mix_frame(o, current);
+        if (device > fade_start) {
+            int64_t remaining = device < fade_end ? (int64_t)(fade_end - device) : 0;
+            for (unsigned c = 0; c < 2; ++c)
+                current[c] = (int)(current[c] * remaining / (int64_t)(fade_end - fade_start));
+        }
         while (produced < frames && cursor <= device * rate) {
             unsigned fraction = (unsigned)(device * rate - cursor);
             for (unsigned c = 0; c < 2; ++c)
@@ -216,12 +244,11 @@ static int fits_entrance(const BfmSqvTrack *track, size_t frames, unsigned rate)
     return 0;
 }
 
-/* The first terminal on the mounted court track returns to its marked phrase.
- * Append one traversal while preserving instrument, envelope and channel state.
- * Multiple traversals and the eventual exit are outside the observed scene. */
-static int append_court_reprise(BfmSqvTrack *track)
+/* Replay only the observed returns to the marked phrase. Keep instrument,
+ * envelope and channel state continuous across each terminal. */
+static int append_court_reprises(BfmSqvTrack *track, unsigned returns)
 {
-    if (track->event_count < 5) return 0;
+    if (!returns || track->event_count < 5) return 0;
     size_t terminal = track->event_count - 2;
     const BfmSqvEvent *close = &track->events[terminal];
     if (close->kind != BFM_SQV_CONTROL || close->channel != 0 ||
@@ -240,14 +267,21 @@ static int append_court_reprise(BfmSqvTrack *track)
     uint32_t mark = track->events[start - 1].tick;
     if (mark >= close->tick) return 0;
     uint32_t length = close->tick - mark;
-    if (length > UINT32_MAX - close->tick) return 0;
-    size_t added = terminal - start;
-    if (added > SIZE_MAX / sizeof(*track->events) - track->event_count) return 0;
-    size_t count = track->event_count + added;
+    if (returns > (UINT32_MAX - close->tick) / length) return 0;
+    size_t phrase = terminal - start;
+    if (returns > (SIZE_MAX / sizeof(*track->events) - track->event_count) / phrase) return 0;
+    size_t count = track->event_count + returns * phrase;
     BfmSqvEvent *events = realloc(track->events, count * sizeof(*events));
     if (!events) return 0;
-    memmove(events + terminal, events + start, (count - terminal) * sizeof(*events));
-    for (size_t i = terminal; i < count; ++i) events[i].tick += length;
+    memmove(events + count - 2, events + terminal, 2 * sizeof(*events));
+    for (size_t i = count - 2; i < count; ++i) events[i].tick += returns * length;
+    for (unsigned pass = 1; pass <= returns; ++pass) {
+        BfmSqvEvent *out = events + terminal + (pass - 1) * phrase;
+        for (size_t i = 0; i < phrase; ++i) {
+            out[i] = events[start + i];
+            out[i].tick += pass * length;
+        }
+    }
     track->duration_ticks = events[count - 1].tick;
     track->events = events;
     track->event_count = count;
@@ -260,13 +294,15 @@ int bfm_palace_score_render(const MusashiDiscMedia *disc, unsigned rate, size_t 
     *stereo = NULL;
     if (!disc || !frames || frames > SIZE_MAX / (2 * sizeof(int16_t)) ||
         (rate != DEVICE_RATE && rate != 37800)) return 0;
+    uint64_t max_frames = (uint64_t)(BFM_PALACE_SCORE_END_FIELD - BFM_PALACE_SCORE_FIELD)
+                          * rate * 1001 / 60000;
+    if (frames > max_frames) return 0;
     BfmSqvTrack track;
     if (bfm_sqv_track_load(disc, 1, &track) != BFM_SQV_OK) return 0;
-    /* The observed reprise reaches the close of the reply 3686 original fields
-     * after the second flash. Do not infer another traversal from the marker. */
+    /* The court remains audible into the chapter card. Its last passage
+     * shares its sounding notes with the earlier marked returns. */
     int supported = fits_entrance(&track, frames, rate);
-    if (!supported && frames <= UINT64_C(3686) * rate * 1001 / 60000 &&
-        append_court_reprise(&track))
+    if (!supported && append_court_reprises(&track, 7))
         supported = fits_entrance(&track, frames, rate);
     int16_t *out = supported ? malloc(2 * frames * sizeof(*out)) : NULL;
     Orchestra *o = out ? calloc(1, sizeof(*o)) : NULL;

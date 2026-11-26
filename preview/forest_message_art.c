@@ -11,7 +11,7 @@ enum { TAIL_OFFSET = 0x2030, FONT_OFFSET = 0x24cbc, CONTOUR_OFFSET = 0x257fc,
 struct BfmForestMessageArt {
     BfmDialoguePoint contour[2][CORNERS], inset[2][CORNERS];
     uint8_t glyph[GLYPHS][FONT_HEIGHT];
-    uint32_t portrait[40][32], tail[16][16], ink[16];
+    uint32_t portrait[2][40][32], tail[16][16], ink[16];
     uint32_t paper, highlight, outline;
     unsigned right_portrait;
 };
@@ -81,12 +81,17 @@ static int read_art(BfmForestMessageArt *art, const MusashiDiscMedia *disc,
             unsigned index = (tail[y * 64 + x/2] >> (4 * (x & 1))) & 15;
             art->tail[y][x] = bubble[index] ? rgb(bubble[index]) : 0;
         }
-    for (unsigned y = 0; y < 40; ++y)
-        for (unsigned x = 0; x < 32; ++x) {
-            unsigned pack = tiles[416+y][624+x/4];
-            uint16_t color = tiles[296][352+((pack >> (4*(x & 3))) & 15)];
-            art->portrait[y][x] = color ? rgb(color) : 0;
-        }
+    for (unsigned face = 0; face < 2; ++face) {
+        unsigned left = face ? 456 : 624;
+        unsigned top = face ? 400 : 416;
+        unsigned palette = face ? 457 : 296;
+        for (unsigned y = 0; y < 40; ++y)
+            for (unsigned x = 0; x < 32; ++x) {
+                unsigned packed = tiles[top + y][left + x/4];
+                uint16_t color = tiles[palette][352+((packed >> (4*(x & 3))) & 15)];
+                art->portrait[face][y][x] = color ? rgb(color) : 0;
+            }
+    }
     return 1;
 }
 
@@ -173,7 +178,7 @@ static void draw_message(const BfmForestMessageArt *art, int tail_x,
         for (unsigned x = 0; x < 32; ++x) {
             BfmDialoguePoint uv = art->right_portrait ? bfm_dialogue_reflected_texel(x, y, 32, 40, 39) :
                                                       (BfmDialoguePoint){(int)x, (int)y};
-            uint32_t color = art->portrait[uv.y][uv.x];
+            uint32_t color = art->portrait[frame->portrait == 2][uv.y][uv.x];
             if (color) pixels[24+y][(art->right_portrait ? 256 : 32)+x] = color;
         }
     for (unsigned row = 0; row < 3; ++row)

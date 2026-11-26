@@ -3,13 +3,24 @@
 #include <math.h>
 #include <string.h>
 
-int bfm_forest_blade_load(BfmForestBlade *blade, const uint8_t *scene, size_t bytes)
+static int load_outlines(BfmForestBlade *blade, const uint8_t *scene, size_t bytes, size_t guard)
 {
-    const size_t guard = 0x61900, blade_edge = 0x61914;
+    /* Each nine-point signed pair list starts on a word boundary. */
+    size_t blade_edge = guard + 20;
     if (!blade || !scene || bytes < blade_edge + sizeof(blade->outline[1])) return 0;
     memcpy(blade->outline[0], scene + guard, sizeof(blade->outline[0]));
     memcpy(blade->outline[1], scene + blade_edge, sizeof(blade->outline[1]));
     return 1;
+}
+
+int bfm_forest_blade_load(BfmForestBlade *blade, const uint8_t *scene, size_t bytes)
+{
+    return load_outlines(blade, scene, bytes, 0x61900);
+}
+
+int bfm_palace_blade_load(BfmForestBlade *blade, const uint8_t *scene, size_t bytes)
+{
+    return load_outlines(blade, scene, bytes, 0x60c50);
 }
 
 static int normalize(double v[3])

@@ -7,7 +7,7 @@
 enum { DOORWAY_BYTES = 160 };
 
 enum MessagePhase {
-    PRINT, OPENING, WAIT_VOICE, WAIT_TIMER, WAIT_CONFIRM, CLOSING, CLOSED, INVALID
+    PRINT, OPENING, WAIT_VOICE, WAIT_TIMER, WAIT_CONFIRM, WAIT_DISMISS, CLOSING, CLOSED, INVALID
 };
 
 struct BfmForestMessage {
@@ -17,7 +17,7 @@ struct BfmForestMessage {
     enum MessagePhase phase;
     unsigned row, column, ink;
     unsigned timer, delay, glyph_interval;
-    int speaker_name, voiced_page;
+    int speaker_name, voiced_page, rapid, voice_interrupted;
 };
 
 BfmForestMessage *bfm_field_message_open(const uint8_t *program, size_t length)
@@ -64,6 +64,7 @@ static int set_style(BfmForestMessage *message, unsigned style)
 static int print_update(BfmForestMessage *m)
 {
     BfmForestMessageFrame *f = &m->frame;
+    unsigned glyphs = 0;
     while (m->cursor < m->size) {
         unsigned op = m->program[m->cursor++];
         const uint8_t *arg = m->program + m->cursor;
@@ -75,7 +76,8 @@ static int print_update(BfmForestMessage *m)
             ++m->cursor;
             break;
         case 0x02: /* Open dialogue border */
-            if (left < 2 || !set_style(m, arg[0]) || arg[1] != 1) return 0;
+            if (left < 2 || !set_style(m, arg[0]) || (arg[1] != 1 && arg[1] != 2)) return 0;
+            f->portrait = arg[1];
             m->cursor += 2;
             f->border_step = 2;
             m->phase = OPENING;
@@ -83,7 +85,8 @@ static int print_update(BfmForestMessage *m)
         case 0x03: /* The closing pass keeps the cursor on this command. */
             if (left < 1 || arg[0] != 0) return 0;
             --m->cursor;
-            m->phase = CLOSING;
+            f->wait_for_confirm = m->voice_interrupted;
+            m->phase = m->voice_interrupted ? WAIT_DISMISS : CLOSING;
             return 1;
         case 0x04: /* Extra updates between body glyphs */
             if (left < 1) return 0;
@@ -115,6 +118,10 @@ static int print_update(BfmForestMessage *m)
         case 0x0b: /* Request voice. The high parameter bit permits layout
                     * to continue before the explicit synchronization point. */
             if (left < 3) return 0;
+            if (m->rapid) {
+                m->cursor += 3;
+                break;
+            }
             f->voice_bank = arg[0] & 0x7f;
             f->voice_cue = arg[1] | ((unsigned)arg[2] << 8);
             f->events |= BFM_FOREST_VOICE_REQUEST;
@@ -139,10 +146,12 @@ static int print_update(BfmForestMessage *m)
         }
         case 0x14:
             if (left < 2) return 0;
-            m->timer = arg[0] | ((unsigned)arg[1] << 8);
+            if (!m->voice_interrupted)
+                m->timer = arg[0] | ((unsigned)arg[1] << 8);
             m->cursor += 2;
             break;
         case 0x15:
+            if (m->voice_interrupted && !m->timer) break;
             m->phase = WAIT_TIMER;
             return 1;
         case 0x18:
@@ -160,7 +169,8 @@ static int print_update(BfmForestMessage *m)
                 return 0;
             f->cells[m->row][m->column].glyph = (uint8_t)op;
             f->cells[m->row][m->column++].ink = (uint8_t)m->ink;
-            if (!m->speaker_name) {
+            ++glyphs;
+            if ((!m->speaker_name && !m->rapid) || glyphs == 36) {
                 m->delay = m->glyph_interval;
                 return 1;
             }
@@ -170,9 +180,23 @@ static int print_update(BfmForestMessage *m)
     return 0;
 }
 
-const BfmForestMessageFrame *bfm_forest_message_tick(BfmForestMessage *m,
+/* Reveal takes effect after this update's ordinary printing. A voice cut
+ * leaves its page under button control through the final dismissal. */
+static void reveal(BfmForestMessage *m, int pressed)
+{
+    if (!pressed || m->rapid) return;
+    m->rapid = 1;
+    if (m->voiced_page) {
+        m->voiced_page = 0;
+        m->voice_interrupted = 1;
+        m->frame.events |= BFM_FOREST_VOICE_STOP;
+    }
+}
+
+const BfmForestMessageFrame *bfm_field_message_tick(BfmForestMessage *m,
                                                      unsigned voice_status,
-                                                     int confirm_edge)
+                                                     int confirm_edge,
+                                                     int reveal_edge)
 {
     if (!m || m->phase == INVALID)
         return NULL;
@@ -189,6 +213,7 @@ const BfmForestMessageFrame *bfm_forest_message_tick(BfmForestMessage *m,
             m->phase = INVALID;
             return NULL;
         }
+        reveal(m, reveal_edge);
         break;
     case OPENING:
         if (f->border_step < 8)
@@ -204,11 +229,20 @@ const BfmForestMessageFrame *bfm_forest_message_tick(BfmForestMessage *m,
             m->phase = PRINT;
         } else if (voice_status == 2 || voice_status == 4) {
             m->phase = PRINT;
+        } else {
+            reveal(m, reveal_edge);
+            if (m->rapid) m->phase = PRINT;
         }
         break;
     case WAIT_TIMER:
-        if (m->timer == 0)
-            m->phase = PRINT;
+        if (m->timer) {
+            reveal(m, reveal_edge);
+            if (m->rapid) {
+                m->timer = 0;
+                if (!m->voice_interrupted) m->rapid = 0;
+            }
+        }
+        if (!m->timer) m->phase = PRINT;
         break;
     case WAIT_CONFIRM:
         if (confirm_edge) {
@@ -216,6 +250,12 @@ const BfmForestMessageFrame *bfm_forest_message_tick(BfmForestMessage *m,
             m->phase = PRINT;
         }
         break;
+    case WAIT_DISMISS:
+        if (!confirm_edge) break;
+        f->wait_for_confirm = 0;
+        m->phase = CLOSING;
+        /* The border begins shrinking on the dismissal update. */
+        /* fall through */
     case CLOSING:
         f->text_visible = 0;
         if (!f->border_step) {
@@ -239,4 +279,11 @@ const BfmForestMessageFrame *bfm_forest_message_tick(BfmForestMessage *m,
             --f->jagged_mix;
     }
     return f;
+}
+
+const BfmForestMessageFrame *bfm_forest_message_tick(BfmForestMessage *m,
+                                                      unsigned voice_status,
+                                                      int confirm_edge)
+{
+    return bfm_field_message_tick(m, voice_status, confirm_edge, 0);
 }

@@ -15,7 +15,8 @@ enum {
     BFM_FOREST_FIRST_GESTURE  = 1u << 0,
     BFM_FOREST_SECOND_GESTURE = 1u << 1,
     BFM_FOREST_VOICE_REQUEST  = 1u << 2,
-    BFM_FOREST_MESSAGE_CLOSED = 1u << 3
+    BFM_FOREST_MESSAGE_CLOSED = 1u << 3,
+    BFM_FOREST_VOICE_STOP     = 1u << 4
 };
 
 typedef struct {
@@ -26,7 +27,7 @@ typedef struct {
     unsigned actor_flags;
     unsigned focused, text_visible, wait_for_confirm;
     /* Opening and closing size, and blend from round to pointed corners. */
-    unsigned border_step, border_scale, jagged_mix, style;
+    unsigned border_step, border_scale, jagged_mix, style, portrait;
 } BfmForestMessageFrame;
 
 /* Open on the update where the doorway gives focus to its message slot.
@@ -44,5 +45,12 @@ const BfmForestMessageFrame *bfm_forest_message_frame(const BfmForestMessage *me
 const BfmForestMessageFrame *bfm_forest_message_tick(BfmForestMessage *message,
                                                      unsigned voice_status,
                                                      int confirm_edge);
+
+/* Pass the focused field window's reveal button edge in addition to any
+ * accepted confirm edge. The voice owner consumes BFM_FOREST_VOICE_STOP. */
+const BfmForestMessageFrame *bfm_field_message_tick(BfmForestMessage *message,
+                                                    unsigned voice_status,
+                                                    int confirm_edge,
+                                                    int reveal_edge);
 
 #endif

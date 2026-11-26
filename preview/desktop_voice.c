@@ -213,13 +213,21 @@ static void start_clip(DesktopVoice *v, unsigned due, unsigned forest_generation
     VoiceClip *retired = v->outgoing.clip;
     VoiceClip *old = v->active.clip;
     v->outgoing = (Playback){0};
-    /* If the outgoing line fits its scene interval, retain any audible tail
-     * the device has yet to consume. Truly interrupted lines switch at once. */
-    if (!forest_generation && !v->forest_generation && old && v->playing &&
-        v->active.cursor < old->signal_end &&
-        old->signal_end <= elapsed_frames(due - v->active_field)) {
-        v->outgoing = (Playback){old, v->active.cursor, old->signal_end};
-        old = NULL;
+    if (old && v->playing) {
+        size_t keep = 0;
+        if (!forest_generation && !v->forest_generation &&
+            old->signal_end <= elapsed_frames(due - v->active_field))
+            keep = old->signal_end;
+        /* The forest decoder already bounds the clip at its disc deadline.
+         * Preserve pending samples only when its whole interval elapsed on
+         * the room clock. An early cut or a scene switch still takes effect. */
+        else if (forest_generation && v->forest_generation && v->active_field &&
+                 due > v->active_field && old->frames <= elapsed_frames(due - v->active_field))
+            keep = old->frames;
+        if (v->active.cursor < keep) {
+            v->outgoing = (Playback){old, v->active.cursor, keep};
+            old = NULL;
+        }
     }
     size_t frames = v->pending->frames;
     if (!forest_generation) {
@@ -267,7 +275,7 @@ int bfm_desktop_voice_pump(DesktopVoice *v, unsigned field, unsigned *bank, unsi
     return events;
 }
 
-void bfm_desktop_voice_forest(DesktopVoice *v, ForestVoice *source, unsigned generation)
+void bfm_desktop_voice_forest(DesktopVoice *v, ForestVoice *source, unsigned generation, unsigned room_field)
 {
     if (!v || !v->device || !source || !generation ||
         bfm_forest_voice_status(source) != BFM_FOREST_VOICE_PLAYING)
@@ -287,7 +295,7 @@ void bfm_desktop_voice_forest(DesktopVoice *v, ForestVoice *source, unsigned gen
     free(v->pending);
     v->pending = next;
     v->selected = v->message_ready = v->reported = 0;
-    start_clip(v, 0, generation);
+    start_clip(v, room_field, generation);
 }
 
 void bfm_desktop_voice_free(DesktopVoice *v)

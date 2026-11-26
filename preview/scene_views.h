@@ -18,12 +18,22 @@ void bfm_title_free(void *scene);
 
 int bfm_opening_load(const MusashiDiscMedia *disc, void **scene, char *error,
                      size_t error_size);
-enum { BFM_OPENING_LAST_FIELD = 8316 };
+enum { BFM_OPENING_LAST_FIELD = 17533 };
 enum { BFM_OPENING_END, BFM_OPENING_FRAME, BFM_OPENING_FOREST_PENDING };
 /* A fresh Cross edge selects the authored chapter transition. Returns one
  * when accepted, zero for an already selected route and negative on failure. */
 int bfm_opening_request_skip(void *scene, const MusashiDiscMedia *disc, unsigned fields,
                              char *error, size_t error_size);
+/* Step the completed court dialogue's automatic departure independently of
+ * input. Returns one on the initiating update, zero otherwise, negative on failure. */
+int bfm_opening_advance_court(void *scene, const MusashiDiscMedia *disc, unsigned field,
+                             char *error, size_t error_size);
+struct BfmForestWalk;
+/* Take the selected forest after the card ends. Natural entry is prepared
+ * during the fade and supplies its opening-clock field. Cross uses a new
+ * forest clock (zero). Ownership transfers to the caller exactly once. */
+struct BfmForestWalk *bfm_opening_take_forest(void *scene, const MusashiDiscMedia *disc,
+                                             unsigned field, uint64_t *forest_field);
 int bfm_opening_skip_member(const void *scene, unsigned *member);
 /* FRAME produces an image. On END, render the final opening field.
  * FOREST_PENDING has already painted the black end of the chapter card. */

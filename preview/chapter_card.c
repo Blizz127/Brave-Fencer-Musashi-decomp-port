@@ -45,7 +45,7 @@ int bfm_chapter_card_draw(const BfmChapterCard *card, unsigned elapsed, unsigned
 {
     if (!card || !pixels) return -1;
     for (unsigned i = 0; i < WIDTH * HEIGHT; ++i) pixels[i] = UINT32_C(0xff000000);
-    if (elapsed >= 638) return 0;
+    if (elapsed >= BFM_CHAPTER_FOREST_FIELD) return 0;
     unsigned card_field = elapsed;
     if (source_member == 0 && elapsed < 140) card_field += 4;
     if (card_field < 108 || elapsed >= (source_member ? 506u : 504u)) return 1;
@@ -63,4 +63,19 @@ int bfm_chapter_card_draw(const BfmChapterCard *card, unsigned elapsed, unsigned
         }
     }
     return 1;
+}
+
+BfmChapterFrame bfm_chapter_departure_frame(const BfmChapterCard *card, unsigned elapsed,
+                                            unsigned source_member, uint32_t *pixels,
+                                            unsigned *room_shade)
+{
+    if (!card || !pixels || !room_shade || source_member > 1) return BFM_CHAPTER_ERROR;
+    unsigned room_fields = source_member ? 68u : 6u;
+    if (elapsed < room_fields) {
+        *room_shade = elapsed > 36 ? (elapsed & ~1u) - 36 : 0;
+        return BFM_CHAPTER_OUTGOING_ROOM;
+    }
+    int painted = bfm_chapter_card_draw(card, elapsed, source_member, pixels);
+    if (painted < 0) return BFM_CHAPTER_ERROR;
+    return painted ? BFM_CHAPTER_CARD : BFM_CHAPTER_FINISHED;
 }

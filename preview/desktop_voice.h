@@ -21,8 +21,10 @@ unsigned bfm_desktop_voice_ready_field(const DesktopVoice *voice);
  * ready before the first voice samples reach SDL. */
 int bfm_desktop_voice_pump(DesktopVoice *voice, unsigned field, unsigned *bank, unsigned *cue);
 struct ForestVoice;
-/* Supply the already clocked forest transport to the same SDL output device. */
-void bfm_desktop_voice_forest(DesktopVoice *voice, struct ForestVoice *source, unsigned generation);
+/* Supply the clocked field transport to SDL. Giant Forest provides its NTSC
+ * field so complete lines can drain on a slow device. Zero selects immediate
+ * replacement for rooms without that timing contract. */
+void bfm_desktop_voice_forest(DesktopVoice *voice, struct ForestVoice *source, unsigned generation, unsigned room_field);
 /* Finish the already-scheduled samples up to the final scene field. */
 void bfm_desktop_voice_finish(DesktopVoice *voice);
 void bfm_desktop_voice_stop(DesktopVoice *voice);

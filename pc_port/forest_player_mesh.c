@@ -16,6 +16,7 @@ enum {
 static const uint32_t payload_origin = UINT32_C(0x800cedf8);
 
 struct MusashiForestPlayerMesh {
+    unsigned count;
     MusashiForestPlayerPart parts[MUSASHI_FOREST_PLAYER_PARTS];
     MusashiForestPlayerVector *vectors;
     MusashiForestPlayerFace *faces;
@@ -60,18 +61,21 @@ static void decode_vectors(const uint8_t *p, size_t count, MusashiForestPlayerVe
         out[i] = (MusashiForestPlayerVector){s16le(p), s16le(p+2), s16le(p+4)};
 }
 
-static int decode_faces(const SourcePart *part, MusashiForestPlayerFace *out) {
+static int decode_faces(const SourcePart *part, MusashiForestPlayerFace *out, int scene_materials) {
     const uint8_t *p = part->primitives;
     for (size_t i = 0; i < part->face_count; ++i) {
         size_t available = (size_t)(part->vertices - p);
         if (available < 4) return 0;
         unsigned mode = p[3], n = (mode & 8) ? 4 : 3;
         unsigned textured = mode & 4, gouraud = mode & 16;
-        unsigned prefix = textured ? n : 1;
+        int vertex_inks = !!(p[2] & 4);
+        unsigned prefix = (textured || vertex_inks) ? n : 1;
         unsigned input = prefix + (gouraud ? n : (n+2)/2);
         unsigned output = 1 + n + (textured ? n : 0) + (gouraud ? n-1 : 0);
         size_t length = (size_t)(input+1)*4;
-        if ((mode & ~0x1cu) != 0x20 || mode == 0x24 || p[2] ||
+        unsigned allowed_bits = scene_materials ? 0x1e : 0x1c;
+        if ((mode & ~allowed_bits) != 0x20 || mode == 0x24 ||
+            (p[2] && (!scene_materials || p[2] != 4 || textured || !gouraud)) ||
             p[0] != output || p[1] != input || length > available) return 0;
         MusashiForestPlayerFace face = {0};
         face.mode = (uint8_t)mode;
@@ -89,6 +93,7 @@ static int decode_faces(const SourcePart *part, MusashiForestPlayerFace *out) {
                 face.u[k] = body[k*4];
                 face.v[k] = body[k*4+1];
             }
+            memcpy(face.corner_rgb[k], vertex_inks ? body + 4*k : face.rgb, 3);
             face.vertex[k] = u16le(indices + (gouraud ? 4*k+2 : 2+2*k));
             face.normal[k] = u16le(indices + (gouraud ? 4*k : 0));
             if (face.vertex[k] >= part->vertex_count || face.normal[k] >= part->normal_count)
@@ -100,18 +105,22 @@ static int decode_faces(const SourcePart *part, MusashiForestPlayerFace *out) {
     return p == part->vertices;
 }
 
-static MusashiForestPlayerMesh *decode_mesh(const uint8_t *block, const size_t *offsets) {
+static MusashiForestPlayerMesh *decode_mesh(const uint8_t *block, const size_t *offsets,
+                                           unsigned count, int scene_materials) {
     SourcePart source[MUSASHI_FOREST_PLAYER_PARTS];
     size_t vectors = 0, faces = 0;
-    for (unsigned i = 0; i < MUSASHI_FOREST_PLAYER_PARTS; ++i) {
+    for (unsigned i = 0; i < count; ++i) {
         const uint8_t *p = block + (offsets[i]-offsets[0]);
         if (!source_part(p, offsets[i+1]-offsets[i], source+i)) return NULL;
         vectors += source[i].vertex_count + source[i].normal_count;
         faces += source[i].face_count;
     }
-    /* Counts above are bounded by the disjoint spans below TABLE_OFFSET. */
+    /* The component spans are disjoint. Validate the decoded array sizes. */
+    if (vectors > SIZE_MAX / sizeof(MusashiForestPlayerVector) ||
+        faces > SIZE_MAX / sizeof(MusashiForestPlayerFace)) return NULL;
     MusashiForestPlayerMesh *mesh = calloc(1, sizeof(*mesh));
     if (!mesh) return NULL;
+    mesh->count = count;
     mesh->vectors = malloc(vectors * sizeof(*mesh->vectors));
     mesh->faces = malloc(faces * sizeof(*mesh->faces));
     if (!mesh->vectors || !mesh->faces) {
@@ -120,11 +129,11 @@ static MusashiForestPlayerMesh *decode_mesh(const uint8_t *block, const size_t *
     }
     MusashiForestPlayerVector *v = mesh->vectors;
     MusashiForestPlayerFace *f = mesh->faces;
-    for (unsigned i = 0; i < MUSASHI_FOREST_PLAYER_PARTS; ++i) {
+    for (unsigned i = 0; i < count; ++i) {
         const SourcePart *s = source+i;
         decode_vectors(s->vertices, s->vertex_count, v);
         decode_vectors(s->normals, s->normal_count, v+s->vertex_count);
-        if (!decode_faces(s, f)) {
+        if (!decode_faces(s, f, scene_materials)) {
             musashi_forest_player_mesh_free(mesh);
             return NULL;
         }
@@ -147,14 +156,39 @@ MusashiForestPlayerMesh *musashi_forest_player_mesh_load(const MusashiDiscMedia 
     uint8_t *block = malloc(bytes);
     if (!block) return NULL;
     MusashiForestPlayerMesh *mesh = NULL;
-    if (forest_player_archive_read(&archive, payload_origin+(uint32_t)offsets[0], block, bytes)) mesh = decode_mesh(block, offsets);
+    if (forest_player_archive_read(&archive, payload_origin+(uint32_t)offsets[0], block, bytes)) mesh = decode_mesh(block, offsets, MUSASHI_FOREST_PLAYER_PARTS, 0);
     free(block);
     return mesh;
 }
 
+MusashiForestPlayerMesh *musashi_forest_player_mesh_from_table(
+    const uint8_t *scene, size_t bytes, uint32_t origin, uint32_t table,
+    unsigned *part_count)
+{
+    if (!scene || !part_count || table < origin || bytes > UINT32_MAX) return NULL;
+    *part_count = 0;
+    size_t offsets[MUSASHI_FOREST_PLAYER_PARTS+1];
+    size_t start = table-origin;
+    if (start > bytes) return NULL;
+    for (unsigned i = 0; i <= MUSASHI_FOREST_PLAYER_PARTS; ++i) {
+        if ((bytes-start)/4 <= i) return NULL;
+        uint32_t address = u32le(scene + start + 4*i);
+        if (!address && i) {
+            offsets[i] = start;
+            MusashiForestPlayerMesh *mesh = decode_mesh(scene+offsets[0], offsets, i, 1);
+            if (mesh) *part_count = i;
+            return mesh;
+        }
+        if (address < origin || address >= table || (address & 3) ||
+            (i && address-origin <= offsets[i-1])) return NULL;
+        offsets[i] = address-origin;
+    }
+    return NULL;
+}
+
 const MusashiForestPlayerPart *musashi_forest_player_mesh_part(
     const MusashiForestPlayerMesh *mesh, unsigned index) {
-    if (!mesh || index >= MUSASHI_FOREST_PLAYER_PARTS) return NULL;
+    if (!mesh || index >= mesh->count) return NULL;
     return mesh->parts+index;
 }
 

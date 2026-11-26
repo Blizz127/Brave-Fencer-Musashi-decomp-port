@@ -22,15 +22,16 @@ int bfm_bedroom_script_begin(BfmBedroomScript *script, const uint8_t *scene, siz
     return 1;
 }
 
-/* The normal earned save runs the early-story program until its first
- * conversation. Blocking player actions continue to tick alongside it. */
-int bfm_bedroom_script_tick(BfmBedroomScript *s, int player_queue_idle,
+/* The player and visitors continue updating while the room event waits for
+ * movement, dialogue, or a delay from its mounted script. */
+int bfm_bedroom_script_tick(BfmBedroomScript *s, int player_queue_idle, int message_active,
                             BfmBedroomApply apply, void *context)
 {
     if (s->failed || !apply) return 0;
-    if (s->reached_dialogue || (s->delay && --s->delay) ||
+    if ((s->waiting_for_message && message_active) || (s->delay && --s->delay) ||
         (s->waiting_for_player && !player_queue_idle)) return 1;
     s->waiting_for_player = 0;
+    s->waiting_for_message = 0;
     while (s->cursor <= s->size && s->size - s->cursor >= 8) {
         const uint8_t *command = s->scene + s->cursor;
         uint32_t op = word(command), arg = word(command + 4);
@@ -51,8 +52,12 @@ int bfm_bedroom_script_tick(BfmBedroomScript *s, int player_queue_idle,
             }
             break;
         case 0x33:
-            if (arg != 0x801807d8u) goto invalid;
-            event = BFM_BED_UPRIGHT;
+            switch (arg) {
+            case 0x801807d8u: event = BFM_BED_UPRIGHT; break;
+            case 0x80180a38u: event = BFM_BED_VISITORS_ENTER; break;
+            case 0x80180b04u: event = BFM_BED_VISITOR_SPEAKS; break;
+            default: goto invalid;
+            }
             break;
         case 0x3f:
             if (arg > 0x7fffffffu) goto invalid;
@@ -63,17 +68,21 @@ int bfm_bedroom_script_tick(BfmBedroomScript *s, int player_queue_idle,
             return 1;
         case 0x41: event = BFM_BED_CUE; break;
         case 0x03: event = BFM_BED_WALK; break;
+        case 0x05: event = BFM_BED_RETREAT; break;
+        case 0x1d: event = BFM_BED_NOTICE; break;
+        case 0x37: event = BFM_BED_SPEAKER; break;
         case 0x07: event = BFM_BED_TURN; break;
         case 0x3a: event = BFM_BED_WINDOW_POSITION; break;
+        case 0x00:
         case 0x01:
             if (!scene_range(s, arg, 1)) goto invalid;
-            s->reached_dialogue = 1;
-            event = BFM_BED_WINDOW;
+            s->waiting_for_message = 1;
+            event = op == 0x00 ? BFM_BED_VISITOR_WINDOW : BFM_BED_WINDOW;
             break;
         default: goto invalid;
         }
         if (!apply(context, event, arg)) goto invalid;
-        if (s->reached_dialogue) return 1;
+        if (s->waiting_for_message) return 1;
     }
 invalid:
     s->failed = 1;

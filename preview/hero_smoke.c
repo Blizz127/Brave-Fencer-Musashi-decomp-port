@@ -8,19 +8,15 @@ static int floor_fixed(int64_t value, unsigned fractional_bits)
     return (int)(value >= 0 ? value / unit : -((-value + unit - 1) / unit));
 }
 
-static void emit_puff(const BfmHeroSmokeMaterial *material, unsigned birth, unsigned age,
-                      const int camera[3][3], const int translation[3],
-                      BfmHeroSmokeEmit emit, void *context)
+void bfm_hero_smoke_project(const BfmHeroSmokeMaterial *material, const int world[3],
+                            unsigned age, int depth_bias, const int camera[3][3],
+                            const int translation[3],
+                            BfmHeroSmokeEmit emit, void *context)
 {
-    /* The first puff takes the lead position. The continuation cycles through
-     * the remaining mounted positions, advancing seven places at each birth. */
-    unsigned origin = birth ? 1 + (7 * birth - 1) % (BFM_HERO_SMOKE_ORIGINS - 1) : 0;
-    const int16_t *base = material->origin[origin];
-    int y = base[1] - 4 * (int)age;
     int view[3];
     for (unsigned i = 0; i < 3; ++i) {
-        int64_t dot = (int64_t)camera[i][0] * base[0] + (int64_t)camera[i][1] * y
-                    + (int64_t)camera[i][2] * base[2];
+        int64_t dot = (int64_t)camera[i][0] * world[0] + (int64_t)camera[i][1] * world[1]
+                    + (int64_t)camera[i][2] * world[2];
         view[i] = floor_fixed(dot, 12) + translation[i];
     }
     int z = view[2];
@@ -38,7 +34,7 @@ static void emit_puff(const BfmHeroSmokeMaterial *material, unsigned birth, unsi
     int bottom = top + material->height * scale / 4096;
     const int quad[4][3] = {{left, top, z}, {right, top, z},
                             {left, bottom, z}, {right, bottom, z}};
-    emit(context, age * 2, quad, z / 4 + 1);
+    emit(context, age * 2, quad, z / 4 + depth_bias);
 }
 
 void bfm_hero_smoke_prepare(const BfmHeroSmokeMaterial *material, unsigned opening_field,
@@ -55,6 +51,12 @@ void bfm_hero_smoke_prepare(const BfmHeroSmokeMaterial *material, unsigned openi
      * observed issue order when additive puffs share an ordering bucket. */
     for (unsigned slot = visible_ticks; slot > 0; --slot)
         for (unsigned birth = slot - 1; birth < births; birth += visible_ticks)
-            if (birth < tick && tick - birth <= visible_ticks)
-                emit_puff(material, birth, tick - birth, camera, translation, emit, context);
+            if (birth < tick && tick - birth <= visible_ticks) {
+                unsigned age = tick - birth;
+                /* The following births cycle seven positions at a time, skipping the lead. */
+                unsigned origin = birth ? 1 + (7 * birth - 1) % (BFM_HERO_SMOKE_ORIGINS - 1) : 0;
+                const int16_t *base = material->origin[origin];
+                int world[3] = {base[0], base[1] - 4 * (int)age, base[2]};
+                bfm_hero_smoke_project(material, world, age, 1, camera, translation, emit, context);
+            }
 }

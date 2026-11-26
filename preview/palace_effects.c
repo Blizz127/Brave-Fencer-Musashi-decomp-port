@@ -16,7 +16,6 @@ typedef struct {
 } Instrument;
 
 enum { RISE, FLASH, AFTER_FLASH, SCORE, NOTES };
-enum { SCORE_FIELD = 4630 };
 struct BfmPalaceEffects {
     Instrument notes[NOTES];
 };
@@ -61,11 +60,13 @@ BfmPalaceEffects *bfm_palace_effects_load(const MusashiDiscMedia *disc)
     }
     bfm_palace_sound_bank_free(bank);
     if (effects) {
-        /* The second flash starts a new score. Keep the dry stereo mix
-         * through the same final field as the neutral court scene. */
+        /* The score carries across the natural room change into the chapter
+         * card. Shorter previews still end at their last court field. */
         Instrument *score = &effects->notes[SCORE];
-        score->field = SCORE_FIELD;
-        size_t frames = (uint64_t)(BFM_OPENING_LAST_FIELD - SCORE_FIELD) *
+        score->field = BFM_PALACE_SCORE_FIELD;
+        unsigned end = BFM_OPENING_LAST_FIELD >= BFM_PALACE_DEPARTURE_FIELD
+                         ? BFM_PALACE_SCORE_END_FIELD : BFM_OPENING_LAST_FIELD;
+        size_t frames = (uint64_t)(end - score->field) *
                         BFM_PALACE_VOICE_RATE * 1001 / 60000;
         if (bfm_palace_score_render(disc, BFM_PALACE_VOICE_RATE, frames, &score->pcm))
             score->frames = frames;

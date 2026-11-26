@@ -18,6 +18,7 @@ typedef struct {
 typedef struct {
     uint8_t mode, corners;
     uint8_t rgb[3], u[4], v[4];
+    uint8_t corner_rgb[4][3];
     uint16_t clut, tpage;
     uint16_t vertex[4], normal[4];
 } MusashiForestPlayerFace;
@@ -32,6 +33,12 @@ typedef struct {
  * The result owns its data and survives closing the disc. Part order follows
  * the model table. The scene chooses which equipment components to draw. */
 MusashiForestPlayerMesh *musashi_forest_player_mesh_load(const MusashiDiscMedia *media);
+
+/* Decode a bounded, null-terminated scene TMD table. Its ordered part blocks
+ * end at the table. Returns the actual number of parts, up to the player limit. */
+MusashiForestPlayerMesh *musashi_forest_player_mesh_from_table(
+    const uint8_t *scene, size_t bytes, uint32_t origin, uint32_t table,
+    unsigned *part_count);
 
 /* Arrays and part descriptions remain valid until mesh_free. Indices in a
  * face refer to vertices and normals in that part. Textured faces use the

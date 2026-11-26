@@ -25,6 +25,8 @@ int bfm_palace_dialogue_voice_schedule(const PalaceDialogue *dialogue, unsigned 
  * clock as draw. A duplicate notification preserves the first start. */
 int bfm_palace_dialogue_voice_started(PalaceDialogue *dialogue, unsigned bank,
                                      unsigned cue, unsigned opening_field);
+/* Return the final mounted court message's close field once its pages are ready. */
+int bfm_palace_dialogue_departure_field(const PalaceDialogue *dialogue, unsigned *field);
 /* fields counts display fields from the opening moon, starting at zero.
  * Compose after drawing the room and actors at 320 x 240. */
 void bfm_palace_dialogue_draw(const PalaceDialogue *dialogue, unsigned fields,

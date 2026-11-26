@@ -20,9 +20,11 @@ add_executable(musashi_native_boot
     bedroom_fade.c
     bedroom_figure.c
     bedroom_motion.c
+    bedroom_reaction.c
     bedroom_record.c
     bedroom_script.c
     bedroom_travel.c
+    bedroom_visitors.c
     "${bfm_root}/pc_port/card/card_image.c"
     title_flow.c
     title_view.c

@@ -27,8 +27,11 @@ void bfm_bedroom_travel_free(BfmBedroomTravel *travel);
 const BfmBedroomRoot *bfm_bedroom_travel_root(const BfmBedroomTravel *travel);
 void bfm_bedroom_travel_look(BfmBedroomTravel *travel, int yaw);
 void bfm_bedroom_travel_face_point(BfmBedroomTravel *travel, int x, int z);
-int bfm_bedroom_travel_walk(BfmBedroomTravel *travel, int16_t x, int16_t z);
-int bfm_bedroom_travel_turn(BfmBedroomTravel *travel, unsigned yaw);
+int bfm_bedroom_travel_walk(BfmBedroomTravel *travel, int16_t x, int16_t z, int entry_action);
+int bfm_bedroom_travel_retreat(BfmBedroomTravel *travel, int16_t distance);
+/* The wake controller retires its queued actions separately. An ordinary turn
+ * or absolute walk releases the room as soon as its goal is reached. */
+int bfm_bedroom_travel_turn(BfmBedroomTravel *travel, unsigned yaw, int entry_action);
 int bfm_bedroom_travel_step(BfmBedroomTravel *travel,
                             const int32_t eye[3], const int32_t target[3]);
 

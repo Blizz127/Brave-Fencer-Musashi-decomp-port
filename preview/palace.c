@@ -17,7 +17,9 @@ typedef struct { Point eye, aim; } Pose;
 typedef struct { Point right, down, forward; } Basis;
 enum { INWARD_POSES = 100, STAIR_POSES = 504, LANDING_POSES = 98,
        CRYSTAL_WIDE_POSES = 50, STILL_POSES = 2, GATHERED_POSES = 70,
-       MUSASHI_ORBIT_POSES = 268, JUMP_CAMERA_POSES = 60, FILLET_REPLY_POSES = 140 };
+       MUSASHI_ORBIT_POSES = 268, JUMP_CAMERA_POSES = 60, FILLET_REPLY_POSES = 140,
+       FUSION_OFFER_POSES = 320, NOTE_CAMERA_POSES = 90, TOWER_ROUTE_POSES = 375,
+       FAREWELL_POSES = 145, COURTIERS_POSES = 204, FILLET_TURN_POSES = 13, DOOR_POSES = 223 };
 static const struct { unsigned start, count; size_t offset; } court_shots[] = {
     {1512, STAIR_POSES, 0x9b424}, {2520, LANDING_POSES, 0x9d504},
     {2760, CRYSTAL_WIDE_POSES, 0x9da70}, {2854, STILL_POSES, 0x9dd3c},
@@ -34,7 +36,26 @@ static const struct { unsigned start, count; size_t offset; } court_shots[] = {
     {6874, JUMP_CAMERA_POSES, 0xa56f8},
     {7082, STILL_POSES, 0xa5a50},   /* Musashi turns away from the great door. */
     {7406, FILLET_REPLY_POSES, 0xa5a7c}, /* The view moves closer during Fillet’s reply. */
-    {7774, STILL_POSES, 0xa6234}    /* The court intercedes, seen from the side. */
+    {7774, STILL_POSES, 0xa6234},   /* The court intercedes, seen from the side. */
+    {8850, STILL_POSES, 0xa62b8},   /* An attendant objects to the Steward’s request. */
+    {9196, STILL_POSES, 0xa62e4},   /* The Steward answers in the wide room. */
+    {9590, STILL_POSES, 0xa6310},   /* Musashi asks to go home. */
+    {10032, STILL_POSES, 0xa633c},  /* Shanky crosses the chamber. */
+    {11304, STILL_POSES, 0xa6368},  /* Musashi faces the Scribe. */
+    {11800, STILL_POSES, 0xa6394},  /* The court comes back into view. */
+    {11922, STILL_POSES, 0xa63c0},  /* The Steward sends Musashi to Spiral Tower. */
+    {12334, FUSION_OFFER_POSES, 0xa63ec}, /* Butler Livers approaches with Fusion. */
+    {12934, STILL_POSES, 0xa757c},  /* Musashi raises Fusion. */
+    {13118, STILL_POSES, 0xa75a8},  /* The courtiers explain the sword. */
+    {14104, STILL_POSES, 0xa75d4},
+    {14302, STILL_POSES, 0xa7600},  /* Musashi answers and lowers Fusion. */
+    {14704, STILL_POSES, 0xa762c},  /* Musashi wears the sword at his side. */
+    {14950, NOTE_CAMERA_POSES, 0xa7658},
+    {15104, TOWER_ROUTE_POSES, 0xa7b54}, /* Fillet explains the way to the tower. */
+    {15820, FAREWELL_POSES, 0xa8fe4},    /* Musashi runs out of the chamber. */
+    {16070, COURTIERS_POSES, 0xa97e0},
+    {16426, FILLET_TURN_POSES, 0xaa318},
+    {16814, DOOR_POSES, 0xaa3dc}          /* The remaining court watches the exit. */
 };
 enum { COURT_SHOT_COUNT = sizeof(court_shots) / sizeof(court_shots[0]) };
 typedef struct {
@@ -48,7 +69,8 @@ struct Palace {
     size_t vertex_count, face_count;
     Pose track[STAIR_POSES + LANDING_POSES + CRYSTAL_WIDE_POSES + GATHERED_POSES +
                MUSASHI_ORBIT_POSES + JUMP_CAMERA_POSES + FILLET_REPLY_POSES +
-               12 * STILL_POSES];
+               FUSION_OFFER_POSES + NOTE_CAMERA_POSES + TOWER_ROUTE_POSES + FAREWELL_POSES +
+               COURTIERS_POSES + FILLET_TURN_POSES + DOOR_POSES + 24 * STILL_POSES];
     BfmStairActors *actors;
     PalaceDialogue *dialogue;
     uint8_t *scene;
@@ -411,8 +433,8 @@ static void project_mesh(Palace *palace, unsigned field)
         Pose pose = palace->track[tick];
         eye = pose.eye;
         axes = look_at(pose, 1);
-        /* The falling masonry and the ritual flash shake the camera vertically. */
-        unsigned shake_start = field >= 4570 ? 4570 : 1480;
+        /* The court shakes again before the Steward sends Musashi to the tower. */
+        unsigned shake_start = field >= 11838 ? 11838 : field >= 4570 ? 4570 : 1480;
         if (field >= shake_start && field - shake_start < 64) {
             unsigned wave = (field - shake_start) / 4;
             int amplitude = 8 - (int)(wave / 2);
@@ -434,7 +456,7 @@ static void project_mesh(Palace *palace, unsigned field)
     }
     BfmBedroomView view = make_view(eye, axes, focal);
     if (palace->actors)
-        bfm_stair_actors_prepare(palace->actors, field, view.axes, view.translation);
+        bfm_stair_actors_prepare(palace->actors, field, view.axes, view.translation, view.eye);
     project_vertices(palace, &view);
 }
 

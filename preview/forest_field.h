@@ -51,8 +51,8 @@ int bfm_forest_clear_flat_step(const BfmForestField *field, const int16_t from[3
                                int16_t x, int16_t z);
 
 /* Walk on the mounted flat floor polygons surrounding the released actor.
- * An axis-aligned wall can clip the horizontal endpoint. Unsupported contacts
- * leave the endpoint untouched. */
+ * Bounded wall faces clip the horizontal endpoint, including successive
+ * contacts at a corner. Unsupported contacts leave the endpoint untouched. */
 int bfm_forest_doorway_step(const BfmForestField *field, const int16_t origin[3],
                             const int16_t from[3], int16_t to[3]);
 

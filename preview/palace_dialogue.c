@@ -6,9 +6,10 @@
 #include <string.h>
 
 enum { CORNERS = 30, CHAR_ROWS = 12, FIRST_CHAR = 32, CHAR_COUNT = 95 };
-enum { SPEECH_COUNT = 20, ROUNDED = 2, BURST = 6, RIGHT_ROUNDED = 10 };
+enum { SPEECH_COUNT = 40, PAGE_LIMIT = 4, ROUNDED = 2, BURST = 6, REFLECTED = 8 };
 enum { CRYSTAL_CAMERA_FIELD = 2760, SCRIBE_FIELD = 3316,
-       BUTLER_REACTION_FIELD = 4762, MUSASHI_RETORT_FIELD = 7082 };
+       BUTLER_REACTION_FIELD = 4762, MUSASHI_RETORT_FIELD = 7082,
+       FUSION_PRESENTATION_FIELD = 11920 };
 enum { PORTRAIT_W = 32, PORTRAIT_H = 40, LINE_CAPACITY = 36 };
 typedef BfmDialoguePoint Point;
 
@@ -18,14 +19,20 @@ typedef struct {
 } Letter;
 
 typedef struct {
-    Letter letters[LINE_CAPACITY * 3];
-    unsigned length, voice_ticks, style, style_tick;
-} Page;
-
-typedef struct {
     unsigned bank, cue, ready_field;
     int ready;
 } VoiceRequest;
+
+typedef struct {
+    Letter letters[LINE_CAPACITY * 3];
+    unsigned length, voice_ticks, style, style_tick;
+    VoiceRequest voice, inline_voice;
+    unsigned inline_tick;
+} Page;
+
+typedef struct {
+    unsigned remaining, ink;
+} Phrase;
 
 typedef struct {
     uint16_t portrait[PORTRAIT_H][PORTRAIT_W];
@@ -33,8 +40,8 @@ typedef struct {
     size_t name_size;
     unsigned portrait_id, style, hold_ticks;
     int panel_only, wait_for_voice;
-    VoiceRequest voice, continuation_voice;
-    Page lead, continuation;
+    unsigned page_count;
+    Page pages[PAGE_LIMIT];
 } Speech;
 
 struct PalaceDialogue {
@@ -85,12 +92,13 @@ static int line_bytes(uint8_t *out, size_t *count, const uint8_t *scene,
 
 /* Markers begin timed phrases. A wait ends the phrase without clearing
  * the page; later text can continue on the same line or after a newline. */
-static int read_page(Page *page, const uint8_t *scene, size_t size, size_t *position)
+static int read_page(Page *page, const uint8_t *scene, size_t size, size_t *position,
+                     Phrase *phrase)
 {
     size_t p = *position;
-    unsigned x = 0, y = 0, ink = 1, tick = 0, deadline = 0;
+    unsigned x = 0, y = 0, ink = phrase->ink, tick = 0, deadline = phrase->remaining;
     int speaker_name = 0;
-    if (p >= size || (scene[p] != 0x14 && scene[p] != 9)) return 0;
+    if (p >= size || (!deadline && scene[p] != 0x14 && scene[p] != 9)) return 0;
     while (p < size) {
         unsigned c = scene[p++];
         if (tick > UINT_MAX - 65536u) return 0;
@@ -110,11 +118,35 @@ static int read_page(Page *page, const uint8_t *scene, size_t size, size_t *posi
             if (tick < deadline) tick = deadline;
             if (p >= size) return 0;
             if (scene[p] == 3 || scene[p] == 8) {
+                phrase->remaining = 0;
+                phrase->ink = 1;
                 page->voice_ticks = tick;
                 *position = p;
                 return page->length != 0;
             }
             ++tick;
+            continue;
+        }
+        if (c == 8) {
+            /* A clear can also occur while the current phrase timer is
+             * running. The next page resumes that timer and its ink. */
+            if (!page->length || !tick || tick >= deadline) return 0;
+            page->voice_ticks = tick - 1;
+            phrase->remaining = deadline - tick - 1;
+            phrase->ink = ink;
+            *position = p - 1;
+            return 1;
+        }
+        if (c == 0x0b) {
+            /* Earlier letters, the cursor and the ink survive a voice
+             * request that introduces another phrase on the same page. */
+            if (!page->length || page->inline_voice.cue || size - p < 3 ||
+                (scene[p] & 128u) || tick < deadline) return 0;
+            page->inline_voice.bank = scene[p];
+            page->inline_voice.cue = little16(scene + p + 1);
+            if (!page->inline_voice.cue) return 0;
+            page->inline_tick = tick;
+            p += 3;
             continue;
         }
         if (c == 0x18) {
@@ -144,8 +176,11 @@ static int read_script(PalaceDialogue *d, const uint8_t *scene, size_t size)
     size_t p = 0x60dfc;
     for (unsigned i = 0; i < SPEECH_COUNT; ++i) {
         Speech *speech = &d->speech[i];
+        VoiceRequest *voice = &speech->pages[0].voice;
         /* The neutral court script selects the short ritual declaration. */
         if (i == 7) p = 0x610b0;
+        /* The neutral exchange skips the alternate unvoiced reaction. */
+        if (i == 32) p = 0x61a7c;
         if (p >= size) return 0;
         /* A voice request may introduce a message. A following panel can
          * change the portrait balloon while the same recording continues. */
@@ -153,14 +188,14 @@ static int read_script(PalaceDialogue *d, const uint8_t *scene, size_t size)
         if (!i && speech->panel_only) return 0;
         if (!speech->panel_only) {
             if (size - p < 5) return 0;
-            speech->voice.bank = scene[p + 2] & 127u;
-            speech->voice.cue = little16(scene + p + 3);
-            speech->wait_for_voice = speech->voice.cue && !(scene[p + 2] & 128u);
+            voice->bank = scene[p + 2] & 127u;
+            voice->cue = little16(scene + p + 3);
+            speech->wait_for_voice = voice->cue && !(scene[p + 2] & 128u);
             p += 5;
         }
-        if (size - p < 4 || scene[p] != 2 ||
-            (scene[p + 1] != ROUNDED && scene[p + 1] != BURST &&
-             scene[p + 1] != RIGHT_ROUNDED) || scene[p + 2] > 6) return 0;
+        if (size - p < 4 || scene[p] != 2 || scene[p + 2] > 6) return 0;
+        unsigned shape = scene[p + 1] & ~REFLECTED;
+        if (shape != ROUNDED && shape != BURST) return 0;
         speech->style = scene[p + 1];
         speech->portrait_id = scene[p + 2];
         p += 3;
@@ -169,26 +204,30 @@ static int read_script(PalaceDialogue *d, const uint8_t *scene, size_t size)
             if (!line_bytes(speech->name, &speech->name_size, scene, size, &p, '\n')) return 0;
         }
         if (p < size && scene[p] == 0x19) {
-            speech->wait_for_voice = speech->voice.cue != 0;
+            speech->wait_for_voice = voice->cue != 0;
             ++p;
         } else if (speech->name_size) return 0;
-        if (!read_page(&speech->lead, scene, size, &p)) return 0;
-        if (p < size && scene[p] == 8) {
+        Phrase phrase = {0, 1};
+        for (;;) {
+            Page *page = &speech->pages[speech->page_count++];
+            if (!read_page(page, scene, size, &p, &phrase)) return 0;
+            if (p == size || scene[p] != 8) break;
+            if (speech->page_count == PAGE_LIMIT) return 0;
             ++p;
             if (p < size && scene[p] == 0x0b) {
+                VoiceRequest *next = &speech->pages[speech->page_count].voice;
                 if (size - p < 4 || (scene[p + 1] & 128u)) return 0;
-                speech->continuation_voice.bank = scene[p + 1];
-                speech->continuation_voice.cue = little16(scene + p + 2);
-                if (!speech->continuation_voice.cue) return 0;
+                next->bank = scene[p + 1];
+                next->cue = little16(scene + p + 2);
+                if (!next->cue) return 0;
                 p += 4;
             }
-            if (!read_page(&speech->continuation, scene, size, &p)) return 0;
         }
         if (size - p < 3 || scene[p] != 3 || scene[p + 2] != 0) return 0;
         speech->hold_ticks = scene[p + 1];
         p += 3;
-        /* Each message begins on a four-byte boundary. */
-        while (p < size && p % 4) {
+        /* Between consecutive records the script aligns the next message. */
+        while (i + 1 < SPEECH_COUNT && p < size && p % 4) {
             if (scene[p++] != 0) return 0;
         }
     }
@@ -275,9 +314,10 @@ int bfm_palace_dialogue_voice_started(PalaceDialogue *d, unsigned bank, unsigned
     if (!d || opening_field > UINT_MAX - 6) return 0;
     for (unsigned i = 0; i < SPEECH_COUNT; ++i) {
         Speech *speech = &d->speech[i];
-        VoiceRequest *requests[] = {&speech->voice, &speech->continuation_voice};
-        for (unsigned j = 0; j < 2; ++j) {
-            VoiceRequest *request = requests[j];
+        for (unsigned j = 0; j < speech->page_count; ++j) {
+            Page *page = &speech->pages[j];
+            VoiceRequest *request = &page->voice;
+            if (request->cue != cue || request->bank != bank) request = &page->inline_voice;
             if (!request->cue || request->cue != cue || request->bank != bank) continue;
             if (!request->ready) {
                 request->ready_field = opening_field;
@@ -327,7 +367,7 @@ static void draw_balloon(const PalaceDialogue *d, unsigned style, unsigned step,
                          unsigned weight, unsigned portrait_id, uint32_t pixels[240][320])
 {
     Point border[CORNERS], inset[CORNERS];
-    int sx = (int)step * (portrait_id ? 7232 : 6170) / 8;
+    int sx = (int)step * (portrait_id ? 7233 : 6170) / 8;
     int sy = (int)step * 4096 / 6;
     int low = 240, high = 0;
     for (unsigned i = 0; i < CORNERS; ++i) {
@@ -338,7 +378,7 @@ static void draw_balloon(const PalaceDialogue *d, unsigned style, unsigned step,
             pos.y += scaled(target.y - pos.y, (int)weight * 1024);
         }
         Point delta = d->inset[weight >= 3][i];
-        if (style == RIGHT_ROUNDED) {
+        if (style & REFLECTED) {
             pos.x = -pos.x;
             delta.x = -delta.x;
         }
@@ -397,19 +437,33 @@ static void draw_page(const PalaceDialogue *d, const Page *page, unsigned x, uns
 }
 
 typedef struct {
+    uint64_t clear, request, body, inline_body;
+} PageTiming;
+
+typedef struct {
     const Speech *speech;
-    uint64_t opened, body, continuation_body, continuation_request, closing;
-    int voice_ready;
+    uint64_t opened, closing;
+    PageTiming timing[PAGE_LIMIT];
+    unsigned page_count, ready_count;
+    int waiting_inline;
 } SpeechEvent;
+
+static unsigned visible_ticks(const Page *page, const PageTiming *timing, unsigned field)
+{
+    if (field < timing->body) return 0;
+    unsigned ticks = 1 + (unsigned)(field - timing->body) / 2;
+    if (!page->inline_voice.cue || ticks <= page->inline_tick) return ticks;
+    if (!page->inline_voice.ready || field < timing->inline_body) return page->inline_tick;
+    return page->inline_tick + 1 + (unsigned)(field - timing->inline_body) / 2;
+}
 
 /* Changing the contour retains the current text and takes four script ticks
  * at full balloon size. The first tick also prints the next letter. */
-static void apply_page_style(const Page *page, uint64_t body, unsigned field,
+static void apply_page_style(const Page *page, unsigned visible,
                              unsigned *style, unsigned *weight)
 {
-    uint64_t change = body + 2ull * page->style_tick;
-    if (!page->style || field < change) return;
-    uint64_t ticks = (field - change) / 2 + 1;
+    if (!page->style || visible <= page->style_tick) return;
+    unsigned ticks = visible - page->style_tick;
     unsigned amount = ticks < 4 ? (unsigned)ticks : 4;
     if (page->style == BURST) {
         if (*weight < amount) *weight = amount;
@@ -426,13 +480,16 @@ static void draw_speech(const PalaceDialogue *d, const SpeechEvent *event, unsig
     uint64_t elapsed = field - event->opened;
     unsigned step = elapsed < 12 ? 2 + (unsigned)elapsed / 2 : 8;
     unsigned style = speech->style;
-    unsigned weight = style == BURST ? (step < 5 ? step - 1 : 4) : 0;
-    int continuation_ready = !speech->continuation_voice.cue || speech->continuation_voice.ready;
-    if (event->voice_ready) apply_page_style(&speech->lead, event->body, field, &style, &weight);
-    if (continuation_ready)
-        apply_page_style(&speech->continuation, event->continuation_body, field, &style, &weight);
+    unsigned weight = (style & ~REFLECTED) == BURST ? (step < 5 ? step - 1 : 4) : 0;
+    unsigned page = 0;
+    for (unsigned p = 0; p < event->page_count && field >= event->timing[p].clear; ++p) {
+        page = p;
+        if (p < event->ready_count)
+            apply_page_style(&speech->pages[p], visible_ticks(&speech->pages[p], &event->timing[p], field),
+                             &style, &weight);
+    }
     draw_balloon(d, style, step, weight, speech->portrait_id, pixels);
-    int right = style == RIGHT_ROUNDED;
+    int right = style & REFLECTED;
     unsigned text_x = right ? 32u : (speech->portrait_id ? 72u : 52u);
     if (step == 8 && !weight) {
         unsigned width = right ? 16u : (speech->portrait_id ? 15u : 13u);
@@ -457,17 +514,14 @@ static void draw_speech(const PalaceDialogue *d, const SpeechEvent *event, unsig
         }
     }
     if (elapsed < 16) return;
-    uint64_t clear = event->body + 2ull * speech->lead.voice_ticks + 2;
-    if (!event->voice_ready || !speech->continuation.length || field < clear) {
+    if (!page) {
         for (unsigned i = 0; i < speech->name_size; ++i)
             draw_glyph(d, text_x + 6u * i, 24, speech->name[i], 1, pixels);
-        if (event->voice_ready && field >= event->body)
-            draw_page(d, &speech->lead, text_x, speech->name_size ? 38 : 24,
-                      1 + (unsigned)(field - event->body) / 2, pixels);
-    } else if (continuation_ready && field >= event->continuation_body) {
-        draw_page(d, &speech->continuation, text_x, 24,
-                  1 + (unsigned)(field - event->continuation_body) / 2, pixels);
     }
+    uint64_t body = event->timing[page].body;
+    if (page < event->ready_count && field >= body)
+        draw_page(d, &speech->pages[page], text_x, !page && speech->name_size ? 38 : 24,
+                  visible_ticks(&speech->pages[page], &event->timing[page], field), pixels);
 }
 
 /* The room waits for each message to close. It counts 31 scene ticks before
@@ -485,40 +539,90 @@ static int speech_event(const PalaceDialogue *d, uint64_t field, SpeechEvent *ev
         if (i == 8 && opened < BUTLER_REACTION_FIELD) opened = BUTLER_REACTION_FIELD;
         /* Musashi lands before the close camera opens his reply. */
         if (i == 16 && opened < MUSASHI_RETORT_FIELD) opened = MUSASHI_RETORT_FIELD;
+        /* The Steward waits for the next court camera before announcing Fusion. */
+        if (i == 26 && opened < FUSION_PRESENTATION_FIELD) opened = FUSION_PRESENTATION_FIELD;
         uint64_t body = opened + (speech->wait_for_voice ? 32 : 16);
-        int ready = !speech->wait_for_voice || speech->voice.ready || i == 0;
-        if (speech->wait_for_voice && speech->voice.ready) {
+        const VoiceRequest *first = &speech->pages[0].voice;
+        if (speech->wait_for_voice && first->ready) {
             /* A fast host stream can start before the script restores normal
              * lettering after writing the portrait and name. */
-            uint64_t display = (uint64_t)speech->voice.ready_field + 6;
+            uint64_t display = (uint64_t)first->ready_field + 6;
             body = display > opened + 20 ? display : opened + 20;
         }
-        int continues = i + 1 < SPEECH_COUNT && d->speech[i + 1].panel_only;
-        uint64_t lead_end = body + 2ull * speech->lead.voice_ticks;
-        uint64_t continuation_body = lead_end + 4;
-        uint64_t continuation_request = continuation_body - 6;
-        if (speech->continuation_voice.ready) {
-            uint64_t audible_page = (uint64_t)speech->continuation_voice.ready_field + 6;
-            if (continuation_body < audible_page) continuation_body = audible_page;
+        event->timing[0] = (PageTiming){.clear = opened, .request = opened - 6, .body = body};
+        event->ready_count = 0;
+        event->waiting_inline = 0;
+        uint64_t end = 0;
+        for (unsigned p = 0; p < speech->page_count; ++p) {
+            const Page *page = &speech->pages[p];
+            PageTiming *timing = &event->timing[p];
+            if (p) {
+                /* The page clears one script tick before lettering can
+                 * resume, even when a new voice is still loading. */
+                *timing = (PageTiming){.clear = end + 2, .request = end - 2, .body = end + 4};
+                uint64_t display = (uint64_t)page->voice.ready_field + 6;
+                if (page->voice.ready && timing->body < display) timing->body = display;
+            }
+            event->page_count = p + 1;
+            end = timing->body + 2ull * page->voice_ticks;
+            int wait_for_voice = p ? page->voice.cue != 0 : i != 0 && speech->wait_for_voice;
+            if (wait_for_voice && !page->voice.ready) break;
+            event->ready_count = p + 1;
+            if (page->inline_voice.cue) {
+                if (!page->inline_voice.ready) {
+                    event->waiting_inline = 1;
+                    break;
+                }
+                uint64_t nominal = timing->body + 2ull * page->inline_tick;
+                uint64_t ready = (uint64_t)page->inline_voice.ready_field + 6;
+                timing->inline_body = ready > nominal ? ready : nominal;
+                end += timing->inline_body - nominal;
+            }
         }
-        uint64_t end = speech->continuation.length ?
-            continuation_body + 2ull * speech->continuation.voice_ticks : lead_end;
+        int continues = i + 1 < SPEECH_COUNT && d->speech[i + 1].panel_only;
         uint64_t close = end + 2 * speech->hold_ticks;
         /* The two panels of one voiced announcement share the transport.
          * The first closes a script tick earlier and the next opens without
          * the intervening speaker's wait. */
         close += continues ? 2 : 4;
-        /* The court waits two extra script ticks before Fillet begins the ritual. */
-        unsigned pause = i == 0 ? 31u : i == 6 ? 3u : 1u;
+        /* Fillet waits two extra script ticks before the ritual.
+         * The returning hero answers the Scribe with no intervening wait. */
+        unsigned pause = 1;
+        if (i == 0) pause = 31;
+        if (i == 6) pause = 3;
+        if (i == 24 || i == 26) pause = 0;
+        /* Two pauses separate the hero's reaction and Fillet's answer. */
+        if (i == 31) pause = 33;
+        if (i == 35) pause = 31;
         uint64_t next = close + 12 + (continues ? 0 : 2 * pause);
-        if (!ready || (speech->continuation_voice.cue && !speech->continuation_voice.ready) ||
-            field < next) {
-            *event = (SpeechEvent){speech, opened, body, continuation_body, continuation_request, close, ready};
+        if (event->waiting_inline || event->ready_count != speech->page_count || field < next) {
+            event->speech = speech;
+            event->opened = opened;
+            event->closing = close;
             return 1;
         }
         opened = next;
     }
     return 0;
+}
+
+int bfm_palace_dialogue_departure_field(const PalaceDialogue *d, unsigned *field)
+{
+    if (!d || !field) return 0;
+    const Speech *last = &d->speech[SPEECH_COUNT - 1];
+    const VoiceRequest *voice = &last->pages[0].voice;
+    if (!voice->ready || voice->bank != 8 || voice->cue != 0x46d2) return 0;
+
+    /* Look up the speech at its ready field, so a display update that misses
+     * the shrinking balloon can still recover the authored departure time. */
+    SpeechEvent event;
+    if (!speech_event(d, (uint64_t)voice->ready_field + 6, &event) ||
+        event.speech != last || event.waiting_inline ||
+        event.ready_count != last->page_count || event.closing > UINT_MAX - 2u)
+        return 0;
+    /* The room releases its message on the second tick of the closing balloon. */
+    *field = (unsigned)event.closing + 2;
+    return 1;
 }
 
 int bfm_palace_dialogue_voice_schedule(const PalaceDialogue *d, unsigned field,
@@ -528,18 +632,24 @@ int bfm_palace_dialogue_voice_schedule(const PalaceDialogue *d, unsigned field,
     uint64_t display = (uint64_t)field + 6;
     if (!d || !bank || !cue || !speech_event(d, display, &event) || display < event.opened)
         return 0;
-    const VoiceRequest *request = &event.speech->voice;
-    uint64_t issue = event.opened - 6;
-    if (request->cue && !request->ready && event.voice_ready && display >= event.closing) return 0;
-    if (!request->cue || request->ready) {
-        request = &event.speech->continuation_voice;
-        issue = event.continuation_request;
-        if (!request->cue || request->ready || field < issue) return 0;
+    for (unsigned p = 0; p < event.page_count; ++p) {
+        const Page *page = &event.speech->pages[p];
+        const VoiceRequest *request = &page->voice;
+        uint64_t issue = event.timing[p].request;
+        if (!request->cue || request->ready) {
+            request = &page->inline_voice;
+            if (!request->cue || request->ready) continue;
+            issue = event.timing[p].body + 2ull * page->inline_tick - 6;
+        } else if (!p && event.ready_count && !event.waiting_inline && display >= event.closing) {
+            return 0;
+        }
+        if (field < issue) return 0;
+        *bank = request->bank;
+        *cue = request->cue;
+        if (issue_field) *issue_field = (unsigned)issue;
+        return 1;
     }
-    *bank = request->bank;
-    *cue = request->cue;
-    if (issue_field) *issue_field = (unsigned)issue;
-    return 1;
+    return 0;
 }
 
 int bfm_palace_dialogue_voice_due(const PalaceDialogue *d, unsigned field,
@@ -553,14 +663,14 @@ void bfm_palace_dialogue_draw(const PalaceDialogue *d, unsigned field,
 {
     SpeechEvent event;
     if (!d || !pixels || !speech_event(d, field, &event) || field < event.opened) return;
-    if (!event.voice_ready || (event.speech->continuation_voice.cue && !event.speech->continuation_voice.ready) ||
-        field < event.closing) {
+    if (event.waiting_inline || event.ready_count != event.speech->page_count || field < event.closing) {
         draw_speech(d, &event, field, pixels);
     } else if (field - event.closing < 4) {
         const Speech *speech = event.speech;
-        unsigned style = speech->continuation.style ? speech->continuation.style :
-                         speech->lead.style ? speech->lead.style : speech->style;
+        unsigned style = speech->style;
+        for (unsigned p = 0; p < speech->page_count; ++p)
+            if (speech->pages[p].style) style = speech->pages[p].style;
         unsigned step = field - event.closing < 2 ? 6 : 4;
-        draw_balloon(d, style, step, style == BURST ? step / 2 : 0, speech->portrait_id, pixels);
+        draw_balloon(d, style, step, (style & ~REFLECTED) == BURST ? step / 2 : 0, speech->portrait_id, pixels);
     }
 }
