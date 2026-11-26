@@ -8096,6 +8096,19 @@
       "origin": "Independently reconstructed from the owned USA scene overlay. Acquires the actor model and advances to state one, or retires the actor if acquisition fails.",
       "source_sha256": "b5e0381ac6980a4a9d4090e680407fc19e3319a99a56054988922e92d47f2b10",
       "span_sha256": "e81e0e7dc5d6f73a892d46da032f54ffd2545a3fc134c83ea75f91b860759bdb"
+    },
+    {
+      "name": "func_801849A8",
+      "region": "sc01_0077",
+      "vram": 2149075368,
+      "size": 88,
+      "source": "src/overlays/sc01_0077/801849a8.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the owned USA scene overlay. Restores the saved model angle and starts the 80-update movement state.",
+      "source_sha256": "670da5086f7d59b325b07d90bd2bb21e06ae646396c79ffa483802431c6eeca9",
+      "span_sha256": "cca597cdad12c14f43a6429770eab67886f940d0d99365b753107ec1639e1f8d"
     }
   ]
 }
