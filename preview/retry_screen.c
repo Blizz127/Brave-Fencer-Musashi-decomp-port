@@ -273,6 +273,14 @@ static int move_camera(BfmRetryScreen *s)
         int64_t v = (int64_t)arm.rotation[i][2] * s->radius;
         eye[i] = target[i] + (int32_t)(v / 4096 - (v % 4096 < 0));
     }
+    if (bfm_forest_camera_look_at(eye, target, (uint16_t)projection, &s->camera)) return 1;
+    /* A long outgoing arm can remain outside the field camera's short-ray
+     * interval during the first orbit updates. Normalize the same direction
+     * around the actual eye, keeping the physical radius for the next step. */
+    int scale = abs(s->radius / 512) + 1;
+    if (scale == 1) return 0;
+    for (unsigned i = 0; i < 3; ++i)
+        target[i] = eye[i] + (target[i] - eye[i]) / scale;
     return bfm_forest_camera_look_at(eye, target, (uint16_t)projection, &s->camera);
 }
 
