@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "southern_woods.h"
+#include "woods_water.h"
 #include "village_field.h"
 #include "village_clock.h"
 #include "village_lighting.h"
@@ -24,6 +25,7 @@ struct BfmSouthernWoods {
     BfmVillageField field;
     BfmVillageCamera camera;
     BfmVillageDaylight daylight;
+    BfmWoodsWater water;
     uint16_t (*tiles)[1024];
     BfmWoodsSignModel *sign;
     BfmWoodsCaster *caster;
@@ -80,8 +82,9 @@ BfmSouthernWoods *bfm_southern_woods_open(const MusashiDiscMedia *disc, BfmBedro
     woods->motion = bfm_village_motion_woods(woods->scene,woods->bytes,main,main_bytes);
     if (!woods->motion || !bfm_village_field_load_woods(&woods->field,disc,woods->scene,woods->bytes) ||
         !bfm_scene_read_tiles(disc,"MAIN.CD",10,tiles) ||
-        !bfm_scene_read_tiles(disc,"SC03.CD",next.scene_member,tiles) ||
-        !bfm_woods_daylight_begin(&woods->daylight, woods->scene, woods->bytes,
+        !bfm_scene_read_tiles(disc,"SC03.CD",next.scene_member,tiles)) goto fail;
+    bfm_woods_water_load(&woods->water, tiles);
+    if (!bfm_woods_daylight_begin(&woods->daylight, woods->scene, woods->bytes,
                                   next.state.progress[0x37], tiles)) goto fail;
     const uint32_t base = UINT32_C(0x80128158);
     const size_t script = UINT32_C(0x8018bdec) - base;
@@ -250,7 +253,8 @@ int bfm_southern_woods_draw(BfmSouthernWoods *woods, const uint8_t flags[64],
         !bfm_woods_award_effect_append(&woods->apparition, woods->field.hero, view) ||
         !bfm_woods_sign_model_prepare(woods->sign,view,
                                       woods->tiles,&pixels[0][0])) return 0;
-    bfm_bedroom_field_draw(woods->field.field,woods->tiles,&pixels[0][0],draw_actors,woods);
+    bfm_woods_water_draw(&woods->water, woods->age, woods->field.field, woods->tiles,
+                         &pixels[0][0], draw_actors, woods);
     if (window) bfm_forest_message_art_draw(woods->writing,window,pixels);
     return 1;
 }
