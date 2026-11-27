@@ -32,6 +32,9 @@ void bfm_forest_hud_gauges(BfmForestHud *hud, unsigned charge, int absorption);
 /* Sample HP and BP after the forest simulation update. The bar and its
  * digits share the value submitted two updates before the displayed frame. */
 void bfm_forest_hud_submit_points(BfmForestHud *hud, const BfmForestStatus *status);
+/* The inn services display places the current tiredness beside the BP row. */
+void bfm_inn_hud_draw_fatigue(const BfmForestHud *hud, const BfmForestStatus *status,
+                              uint32_t pixels[240][320]);
 void bfm_forest_hud_draw(const BfmForestHud *hud, const BfmForestStatus *status,
                          uint32_t pixels[240][320]);
 

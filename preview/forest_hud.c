@@ -337,6 +337,29 @@ static void calendar(Canvas *c, const BfmForestStatusValues *v, int x, int y, un
     glyph(c,x+91,y,c->hud->digit[minutes%10],clock_palette);
 }
 
+void bfm_inn_hud_draw_fatigue(const BfmForestHud *hud, const BfmForestStatus *status,
+                              uint32_t pixels[240][320])
+{
+    if (!hud || !status || !pixels || hud->inset == 55) return;
+    unsigned story = le32(status->record + 8);
+    if (story < 10 || story >= 1210) return;
+
+    /* The service display uses the whole part of the live stamina reserve.
+     * Room 201 restores it to 160. Fractional stamina never rounds up. */
+    int whole = signed16(status->record + 0x2e);
+    int scaled = whole * 41368;
+    int percent = 100 - scaled / 65536 + (scaled % 65536 < 0);
+    static const struct { int x; unsigned uv; } label[] = {
+        {137, 0x5828}, {144, 0x0048}, {150, 0x0818}, {156, 0x0028}, {162, 0x0020}
+    };
+    unsigned palette = 0x6d16;
+    Canvas c = {hud, pixels};
+    for (unsigned i = 0; i < sizeof label / sizeof label[0]; ++i)
+        glyph(&c, label[i].x, 221, label[i].uv, palette);
+    number(&c, 171, 221, percent < 0 ? 0u : (unsigned)percent, 3, palette);
+    glyph(&c, 195, 221, 0x4058, palette);
+}
+
 void bfm_forest_hud_draw(const BfmForestHud *hud, const BfmForestStatus *status,
                          uint32_t pixels[240][320])
 {
