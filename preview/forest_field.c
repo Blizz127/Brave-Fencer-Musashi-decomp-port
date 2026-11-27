@@ -1929,6 +1929,10 @@ static BfmForestShoreFloor shore_floor_step(const BfmForestField *field,
     unsigned next_face = 0;
     const FloorPlane *first = shore_floor_crossing(grid, near, far, walker == SHORE_PLAYER, &next_face);
     BfmForestShoreFloor approach = shore_floor_kind(grid, first, walker != SHORE_PLAYER);
+    /* A guard keeps its last foothold and turns when its stride meets
+     * the steep bank, including when that face is the first contact. */
+    if (walker != SHORE_PLAYER && approach == BFM_SHORE_FLOOR_STEEP)
+        return approach;
     int16_t projected[3] = {to[0], to[1], to[2]};
     if ((approach != BFM_SHORE_FLOOR_FLAT && approach != BFM_SHORE_FLOOR_GRADE) ||
         !project_contact_plane(grid, first, depth, projected))
