@@ -267,7 +267,16 @@ static int move(BfmVillageMotion *m, int speed, int vertical, int require_floor)
             bfm_village_ground_wall_step(m->ground,m->player.root.xyz,candidate.xyz,&floor,
                                          &m->player.wall_contact);
         if (m->lilies) {
-            unsigned pad = bfm_woods_lilies_support(m->lilies,m->rider,m->player.root.xyz,candidate.xyz);
+            /* Gravity advances independently of the regular movement vector.
+             * A stationary fall uses the short support ray at the new foot. */
+            unsigned pad;
+            if (m->airborne && !m->rider && vertical > 0) {
+                int short_probe = (!velocity.velocity[0] && !velocity.velocity[2]) ||
+                    !memcmp(m->player.root.xyz,candidate.xyz,sizeof candidate.xyz);
+                pad = bfm_woods_lilies_land(m->lilies,m->player.root.xyz,candidate.xyz,short_probe);
+            } else {
+                pad = bfm_woods_lilies_support(m->lilies,m->rider,m->player.root.xyz,candidate.xyz);
+            }
             if (pad) {
                 floor = (BfmForestContact){.height=candidate.xyz[1], .normal={0,-4096,0}};
                 hit = BFM_VILLAGE_GROUND_FOOTING;

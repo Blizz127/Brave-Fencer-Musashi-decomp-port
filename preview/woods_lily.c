@@ -140,8 +140,10 @@ static int within(const BfmWoodsLilies *lilies, const Lily *pad, int x, int z)
            z >= lilies->low[2] && z <= lilies->high[2];
 }
 
-unsigned bfm_woods_lilies_support(const BfmWoodsLilies *lilies, unsigned rider,
-                                 const int16_t from[3], int16_t to[3])
+/* Keep the vertical extents in world units so the short foot probe can
+ * extend past the signed coordinate limits without wrapping its ray. */
+static unsigned support(const BfmWoodsLilies *lilies, unsigned rider,
+                        const int16_t from[3], int start_y, int16_t to[3], int end_y, int player_landing)
 {
     for (unsigned i = 0; i < PADS; ++i) {
         const Lily *pad = &lilies->pads[i];
@@ -149,18 +151,41 @@ unsigned bfm_woods_lilies_support(const BfmWoodsLilies *lilies, unsigned rider,
         if (rider == i+1) {
             if (!within(lilies,pad,to[0],to[2])) continue;
         } else {
-            int dy = to[1]-from[1];
+            int dy = end_y-start_y;
+            if (dy <= 0 || (player_landing && to[1] > pad->position[1])) continue;
+            /* A segment starting inside the eligible actor keeps its start
+             * as the contact point, including a start exactly on the top. */
+            if (player_landing && start_y >= top && start_y <= pad->position[1]+lilies->high[1] &&
+                within(lilies,pad,from[0],from[2])) {
+                to[0] = from[0];
+                to[1] = (int16_t)start_y;
+                to[2] = from[2];
+                return i+1;
+            }
             /* Sweep to the mounted box top. The standing clearance applies
              * only after the descending segment actually reaches the face. */
-            if (dy <= 0 || from[1] >= top || to[1] < top) continue;
-            int x = from[0] + (int)((int64_t)(to[0]-from[0])*(top-from[1])/dy);
-            int z = from[2] + (int)((int64_t)(to[2]-from[2])*(top-from[1])/dy);
+            if (start_y >= top || end_y < top) continue;
+            int x = from[0] + (int)((int64_t)(to[0]-from[0])*(top-start_y)/dy);
+            int z = from[2] + (int)((int64_t)(to[2]-from[2])*(top-start_y)/dy);
             if (!within(lilies,pad,x,z)) continue;
         }
         to[1] = (int16_t)(top - 2);
         return i+1;
     }
     return 0;
+}
+
+unsigned bfm_woods_lilies_support(const BfmWoodsLilies *lilies, unsigned rider,
+                                 const int16_t from[3], int16_t to[3])
+{
+    return support(lilies,rider,from,from[1],to,to[1],0);
+}
+
+unsigned bfm_woods_lilies_land(const BfmWoodsLilies *lilies, const int16_t from[3],
+                              int16_t feet[3], int short_probe)
+{
+    if (short_probe) return support(lilies,0,feet,feet[1]-3,feet,feet[1]+5,1);
+    return support(lilies,0,from,from[1],feet,feet[1],1);
 }
 
 void bfm_woods_lilies_shadow(const BfmWoodsLilies *lilies, BfmBedroomRoot *r)

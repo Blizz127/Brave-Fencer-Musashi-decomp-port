@@ -21,6 +21,10 @@ void bfm_woods_lilies_tick(BfmWoodsLilies *lilies, unsigned rider, const int16_t
                           int16_t carry[3]);
 unsigned bfm_woods_lilies_support(const BfmWoodsLilies *lilies, unsigned rider,
                                  const int16_t from[3], int16_t to[3]);
+/* A fresh descent tests the player's swept segment or, when regular
+ * movement does not advance the root, a short ray at the proposed feet. */
+unsigned bfm_woods_lilies_land(const BfmWoodsLilies *lilies, const int16_t from[3],
+                              int16_t feet[3], int short_probe);
 void bfm_woods_lilies_shadow(const BfmWoodsLilies *lilies, BfmBedroomRoot *root);
 
 #endif
