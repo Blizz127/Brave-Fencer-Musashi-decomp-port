@@ -24,6 +24,6 @@ int bfm_inn_field_leave(BfmInnField *inn);
 void bfm_inn_field_shade(const BfmInnField *inn, uint32_t pixels[240][320]);
 /* Borrow the mounted lower-village transfer once the indoor walk and fade finish. */
 const uint8_t *bfm_inn_field_departure(const BfmInnField *inn);
-/* The chat branch currently ends at the counter. */
+/* Later story conversations outside the mounted Hotelo route end at the counter. */
 int bfm_inn_field_finished(const BfmInnField *inn);
 #endif

@@ -6,12 +6,13 @@
 
 enum {
     FIRST_EXCHANGE = 0x40d4, RETURN_EXCHANGE = 0x4144,
-    AFTER_SERVICE_EXCHANGE = 0x416c, DECLINE_ROW = 0x41f0, FAREWELL_ROW = 0x4200,
-    RETURN_WELCOME = 0x42f4, AFTER_SERVICE_PROMPT = 0x43c8, SERVICE_QUESTION = 0x4e7c,
+    FOLLOW_UP_EXCHANGE = 0x416c, HOTELO_REPLIES = 0x4184,
+    DECLINE_ROW = 0x41f0, FAREWELL_ROW = 0x4200,
+    RETURN_WELCOME = 0x42f4, FOLLOW_UP_PROMPT = 0x43c8, SERVICE_QUESTION = 0x4e7c,
     SERVICE_BOX = 0x99690, VISITED = 276
 };
 static const uint32_t module_origin = UINT32_C(0x801ef468);
-enum GreetingPhase { TALK, ASK, SERVICE, AFTER_SERVICE, FAREWELL, DEPART, END_AT_COUNTER };
+enum GreetingPhase { TALK, ASK, CHAT, SERVICE, FOLLOW_UP, FAREWELL, DEPART, END_AT_COUNTER };
 
 struct BfmInnGreeting {
     const uint8_t *module, *service_box;
@@ -21,7 +22,7 @@ struct BfmInnGreeting {
     BfmForestMessageFrame update;
     enum GreetingPhase phase;
     unsigned age;
-    int hero, first, used_service, updated;
+    int hero, first, followed_up, updated;
 };
 
 static int open_text(BfmInnGreeting *talk, size_t offset, int hero)
@@ -83,13 +84,31 @@ int bfm_inn_greeting_service(const BfmInnGreeting *talk) { return talk && talk->
 int bfm_inn_greeting_leaving(const BfmInnGreeting *talk) { return talk && talk->phase == DEPART; }
 int bfm_inn_greeting_finished(const BfmInnGreeting *talk) { return talk && talk->phase == END_AT_COUNTER; }
 
+static int ask_again(BfmInnGreeting *talk)
+{
+    if (!open_row(talk, FOLLOW_UP_EXCHANGE, FOLLOW_UP_PROMPT)) return 0;
+    talk->followed_up = 1;
+    talk->phase = FOLLOW_UP;
+    talk->age = 0;
+    return 1;
+}
+
 int bfm_inn_greeting_finish_service(BfmInnGreeting *talk)
 {
-    if (!bfm_inn_greeting_service(talk) ||
-        !open_row(talk, AFTER_SERVICE_EXCHANGE, AFTER_SERVICE_PROMPT)) return 0;
-    talk->used_service = 1;
-    talk->phase = AFTER_SERVICE;
-    talk->age = 0;
+    return bfm_inn_greeting_service(talk) && ask_again(talk);
+}
+
+static int start_hotelo_chat(BfmInnGreeting *talk, unsigned progress)
+{
+    /* On early visits the same counter choice offers new local news as
+     * the story advances. The room owns each complete dialogue program. */
+    static const unsigned next_topic[] = {20, 70, 100, 130};
+    size_t row = 0;
+    while (row < sizeof next_topic / sizeof next_topic[0] && progress >= next_topic[row])
+        ++row;
+    uint32_t address = u32le(talk->module + HOTELO_REPLIES + row * 4);
+    if (address < module_origin || !open_text(talk, address - module_origin, 0)) return 0;
+    talk->phase = CHAT;
     return 1;
 }
 
@@ -116,18 +135,24 @@ static int finish_window(BfmInnGreeting *talk, unsigned answer)
         }
         return 1;
     }
-    case AFTER_SERVICE:
+    case FOLLOW_UP:
         if (!open_row(talk, talk->row + 8, 0)) return 0;
         talk->phase = ASK;
         return 1;
+    case CHAT:
+        return ask_again(talk);
     case ASK:
         if (!answer || answer > 3) return 0;
+        if (answer == 2) {
+            unsigned progress = u32le(talk->record->progress + 8);
+            if (progress < 200) return start_hotelo_chat(talk, progress);
+        }
         if (answer == 3) {
-            if (!open_row(talk, talk->used_service ? FAREWELL_ROW : DECLINE_ROW, 0)) return 0;
+            if (!open_row(talk, talk->followed_up ? FAREWELL_ROW : DECLINE_ROW, 0)) return 0;
             talk->phase = FAREWELL;
             return 1;
         }
-        /* The chat response still stops at the counter. */
+        /* Later inn hosts use their own story-dependent conversations. */
         talk->phase = answer == 1 ? SERVICE : END_AT_COUNTER;
         break;
     case FAREWELL:
