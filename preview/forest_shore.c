@@ -158,7 +158,7 @@ static int step_marker(BfmForestShore *shore, const BfmForestField *field)
     if (m->phase != BFM_SHORE_NOTICE || m->frame != 11 || shore->marker_key_seen)
         return 1;
     shore->marker_key_seen = 1;
-    return bfm_forest_marker_start(&shore->marker, field, m->position);
+    return bfm_forest_marker_start(&shore->marker, field, m->position, -120);
 }
 
 BfmForestShoreUpdate bfm_forest_shore_step(BfmForestShore *shore, const BfmForestField *field,

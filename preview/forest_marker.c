@@ -5,12 +5,13 @@
 #include <limits.h>
 
 int bfm_forest_marker_start(BfmForestMarker *marker, const BfmForestField *field,
-                            const int16_t owner[3])
+                            const int16_t owner[3], int16_t y_offset)
 {
     const uint8_t *sprite = bfm_forest_room_bytes(field, UINT32_C(0x80187f34), 12);
     if (!marker || !owner || !bfm_reaction_start_sprite(&marker->reaction, sprite, 12))
         return 0;
     for (unsigned i = 0; i < 3; ++i) marker->owner[i] = owner[i];
+    marker->y_offset = y_offset;
     /* Construction and the first growth update precede its first submission. */
     bfm_bedroom_reaction_step(&marker->reaction);
     bfm_bedroom_reaction_step(&marker->reaction);
@@ -35,7 +36,7 @@ int bfm_forest_marker_project(const BfmForestMarker *marker, const BfmForestCame
     if (!marker || !camera || !card || !camera->projection ||
         !marker->reaction.sprite || marker->reaction.scale <= 0) return 0;
     const uint8_t *s = marker->reaction.sprite;
-    int32_t world[3] = {marker->owner[0], marker->owner[1] - 120 + marker->reaction.lift,
+    int32_t world[3] = {marker->owner[0], marker->owner[1] + marker->y_offset + marker->reaction.lift,
                         marker->owner[2]};
     int64_t view[3];
     for (unsigned axis = 0; axis < 3; ++axis) {

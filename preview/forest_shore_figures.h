@@ -2,6 +2,7 @@
 #ifndef BFM_FOREST_SHORE_FIGURES_H
 #define BFM_FOREST_SHORE_FIGURES_H
 #include "forest_field.h"
+#include "forest_marker.h"
 
 typedef struct BfmForestShoreFigures BfmForestShoreFigures;
 
@@ -14,6 +15,8 @@ void bfm_forest_shore_figures_free(BfmForestShoreFigures *figures);
 
 /* The active mouth frame reports the yaw only on an actual body contact. */
 int bfm_forest_shore_figures_bite(const BfmForestShoreFigures *figures, int16_t *yaw);
+const BfmForestMarker *bfm_forest_shore_figure_marker(const BfmForestShoreFigures *figures,
+                                                     unsigned placement);
 
 /* Called after the player's position has been committed for this field update. */
 void bfm_forest_shore_figures_tick(BfmForestShoreFigures *figures,
