@@ -22,6 +22,7 @@ typedef struct {
 typedef struct {
     int16_t hp, bp;
 } DisplayPoints;
+typedef enum { MENU_GAUGE, FIELD_GAUGE, WOODS_GAUGE } GaugeMode;
 struct BfmForestHud {
     const uint16_t (*tiles)[1024];
     Sprite panel[5];
@@ -29,7 +30,8 @@ struct BfmForestHud {
     uint8_t vitality[20], dial[20], weekday[7];
     uint16_t orb[7], digit[10];
     unsigned inset, remaining, hiding, modal;
-    unsigned field_gauges, fill, green, charge_color;
+    GaugeMode gauge_mode;
+    unsigned fill, green, charge_color;
     DisplayPoints points[3];
     int points_ready;
 };
@@ -249,14 +251,22 @@ static void rectangle(Canvas *c, int x, int y, int w, int h, uint32_t color)
             c->pixels[iy][ix] = color;
 }
 
-void bfm_forest_hud_gauges(BfmForestHud *hud, unsigned charge, int absorption)
+static void field_gauges(BfmForestHud *hud, unsigned charge, int absorption, GaugeMode mode)
 {
     if (!hud) return;
+    hud->gauge_mode = mode;
+    /* In Cleft Woods the fresh collision has zero absorption. Only a
+     * contributing press changes the well from charge to assimilation. */
+    if (mode == WOODS_GAUGE && absorption == 0) absorption = -1;
     unsigned value = absorption >= 0 ? (unsigned)absorption : charge;
     if (value > 128) value = 128;
-    hud->field_gauges = 1;
-    if (absorption >= 0 && !hud->green) hud->fill = 0;
-    if (absorption >= 0) hud->green = 1;
+    if (absorption >= 0) {
+        if (mode == FIELD_GAUGE && !hud->green) hud->fill = 0;
+        hud->green = 1;
+    } else if (mode == WOODS_GAUGE && charge && hud->green) {
+        hud->fill = value;
+        hud->green = 0;
+    }
     if (hud->fill > value) {
         unsigned difference = hud->fill - value;
         unsigned step = value ? 3 : 8;
@@ -265,8 +275,19 @@ void bfm_forest_hud_gauges(BfmForestHud *hud, unsigned charge, int absorption)
         hud->fill = value;
     }
     if (!hud->fill && absorption < 0) hud->green = 0;
-    if (charge == 128 && !hud->green) hud->charge_color = hud->charge_color % 3 + 1;
-    else hud->charge_color = 0;
+    unsigned flash = mode == WOODS_GAUGE ? hud->fill : charge;
+    if (flash == 128 && !hud->green) hud->charge_color = hud->charge_color % 3 + 1;
+    else if (mode == FIELD_GAUGE) hud->charge_color = 0;
+}
+
+void bfm_forest_hud_gauges(BfmForestHud *hud, unsigned charge, int absorption)
+{
+    field_gauges(hud,charge,absorption,FIELD_GAUGE);
+}
+
+void bfm_woods_hud_gauges(BfmForestHud *hud, unsigned charge, int absorption)
+{
+    field_gauges(hud,charge,absorption,WOODS_GAUGE);
 }
 
 static void ornaments(Canvas *c, const BfmForestStatusValues *v, int inset)
@@ -288,9 +309,13 @@ static void ornaments(Canvas *c, const BfmForestStatusValues *v, int inset)
     int meter_y = c->hud->modal ? 256 : 0;
     /* RGB555. Full stance charge cycles the three bright primaries. */
     static const unsigned charge_tints[] = {0x085f, 0x18df, 0x1be6, 0x7cc6};
-    unsigned tint = c->hud->green ? 0x0be2 : charge_tints[c->hud->charge_color];
-    int charge = c->hud->field_gauges ? (int)(c->hud->fill * 9 / 16) : v->charge * 3 / 8;
-    int charge_active = c->hud->field_gauges ? (charge || c->hud->green) : v->charge;
+    int woods = c->hud->gauge_mode == WOODS_GAUGE;
+    unsigned flash = woods && c->hud->fill < 128 ? 0 : c->hud->charge_color;
+    unsigned tint = c->hud->green ? 0x0be2 : charge_tints[flash];
+    int field = c->hud->gauge_mode != MENU_GAUGE;
+    int charge = field ? (int)(c->hud->fill * 9 / 16) : v->charge * 3 / 8;
+    int charge_active = field ? (charge || c->hud->green) : v->charge;
+    if (woods) charge_active = c->hud->fill != 0;
     rectangle(c,8-inset,meter_y+129+inset,8,72,rgb(charge_active ? 0x5108 : 0x2108));
     rectangle(c,8-inset,meter_y+201+inset-charge,8,charge,rgb(tint));
     /* Frames overlap the orbs and the charge well in this layer. */

@@ -316,7 +316,7 @@ int bfm_woods_fusion_step(BfmWoodsFusion *s, BfmWoodsCaster *casters, BfmGamepla
     frame->blade_away = blade_away(s);
     if (frame->blade_away) frame->visible = grip(frame->visible, 0);
     if (s->tether.phase == BFM_TETHER_ATTACHED ||
-        (s->tether.phase == BFM_TETHER_EARNED && frame->blade_away))
+        (frame->blade_away && (s->tether.phase == BFM_TETHER_EARNED || s->partial_return)))
         frame->tether_gauge = (int)s->tether.meter;
     frame->blade = bfm_fusion_model_tick(s->model, &s->flight, attached && square);
     if (input->eye) {

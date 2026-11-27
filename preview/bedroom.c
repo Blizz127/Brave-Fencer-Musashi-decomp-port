@@ -674,8 +674,8 @@ static int submit_village_frame(BfmBedroom *room)
                 room->message ? bfm_forest_message_frame(room->message) : NULL, frame)) return 0;
     memcpy(room->status.record, room->entry.state.progress, sizeof room->status.record);
     if (bfm_village_arrival_room(room->village) == 0x3025) {
-        bfm_forest_hud_gauges(room->hud, room->status.record[0x47],
-                              bfm_village_arrival_tether_gauge(room->village));
+        bfm_woods_hud_gauges(room->hud, room->status.record[0x47],
+                            bfm_village_arrival_tether_gauge(room->village));
         bfm_forest_hud_submit_points(room->hud, &room->status);
     }
     bfm_forest_hud_draw(room->hud, &room->status, frame);
