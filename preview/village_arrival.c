@@ -271,7 +271,7 @@ int bfm_village_arrival_step_field(BfmVillageArrival *a, BfmGameplayRun *run,
     }
     if (a->woods) return bfm_southern_woods_step_field(a->woods, run, field, opened);
     if (a->lower) {
-        if (!bfm_village_lower_step(a->lower, x, y, talk_edge, opened)) return 0;
+        if (!bfm_village_lower_step_field(a->lower, field, opened)) return 0;
         if (!a->transfer_tick && bfm_village_lower_departure(a->lower)) {
             a->ascending = 1;
             a->transfer_tick = 1;

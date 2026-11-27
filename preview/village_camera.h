@@ -9,6 +9,10 @@ typedef struct {
     int radius, yaw, following, woods_pitch;
 } BfmVillageCamera;
 
+typedef struct {
+    int goal, direction, held_ticks;
+} BfmVillageCameraTurn;
+
 /* The descending cable entrance prepares the initial view before the first
  * field update. The player coordinates are in room space. */
 void bfm_village_camera_begin(BfmVillageCamera *camera, const int16_t xyz[3]);
@@ -22,6 +26,10 @@ void bfm_village_camera_step(BfmVillageCamera *camera, const int16_t xyz[3],
  * Start at the transferred player position, then update once per world tick. */
 void bfm_village_camera_lower(BfmVillageCamera *camera, const int16_t xyz[3],
                               int entering);
+/* Seed turn->goal with the entry yaw. One field update consumes the held
+ * shoulder direction (-1 for L2, +1 for R2), then lower places the eye. */
+void bfm_village_camera_turn(BfmVillageCamera *camera, BfmVillageCameraTurn *turn,
+                             int direction);
 
 /* Step the trail camera after movement. The zone uses the player's Z even
  * while the camera target is still catching up. */

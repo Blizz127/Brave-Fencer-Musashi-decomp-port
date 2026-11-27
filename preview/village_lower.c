@@ -28,6 +28,7 @@ struct BfmVillageLower {
     BfmVillageMotion *motion;
     BfmVillageField field;
     BfmVillageCamera camera, presented;
+    BfmVillageCameraTurn turn;
     BfmVillageMayorStage *stage;
     BfmVillageStreetScenery *scenery;
     BfmVillageShopDoors *shop_doors;
@@ -92,6 +93,7 @@ static BfmVillageLower *lower_open(const MusashiDiscMedia *disc, BfmBedroomEntry
         *hud = bfm_village_hud_load(disc, lower->scene, lower->scene_bytes, tiles);
         if (!*hud) goto fail;
     }
+    lower->turn.goal = lower->camera.yaw;
     lower->presented = lower->camera;
     *entry = next;
     return lower;
@@ -156,18 +158,22 @@ void bfm_village_lower_close(BfmVillageLower *lower, unsigned answer)
     if (lower->talk.finished) bfm_village_mayor_stage_finish(lower->stage);
 }
 
-int bfm_village_lower_step(BfmVillageLower *lower, int x, int y, int square,
-                          BfmForestMessage **opened)
+int bfm_village_lower_step_field(BfmVillageLower *lower, BfmFieldInput field,
+                                BfmForestMessage **opened)
 {
     const BfmVillagePlayer *p = bfm_village_motion_player(lower->motion);
     int active = bfm_village_mayor_stage_active(lower->stage);
-    if (!active && p->controlled && square &&
-        bfm_village_mayor_stage_begin(lower->stage, lower->save, &p->root, &lower->camera, square)) {
+    if (!active && p->controlled && field.square_pressed &&
+        bfm_village_mayor_stage_begin(lower->stage, lower->save, &p->root, &lower->camera, field.square_pressed)) {
         lower->talk = (BfmVillageMayorDialogue){0};
         active = 1;
     }
-    if (!active && !bfm_village_motion_step(lower->motion, x, y,
+    if (!active && !bfm_village_motion_step(lower->motion, field.x, field.y,
                                 (lower->camera.yaw + 2048) & 4095)) return 0;
+    if (!active && p->controlled && !(p->events & BFM_VILLAGE_TRANSFER))
+        bfm_village_camera_turn(&lower->camera, &lower->turn, field.camera_turn);
+    else
+        lower->turn.direction = lower->turn.held_ticks = 0;
     bfm_village_camera_lower(&lower->camera, p->root.xyz, 0);
     lower->presented = lower->camera;
     if (active) {
@@ -190,6 +196,13 @@ int bfm_village_lower_step(BfmVillageLower *lower, int x, int y, int square,
     if (!active && !(p->events & BFM_VILLAGE_TRANSFER)) bfm_village_clock_step(lower->save, 0);
     ++lower->age;
     return bfm_village_motion_face(lower->motion, lower->tiles);
+}
+
+int bfm_village_lower_step(BfmVillageLower *lower, int x, int y, int square,
+                          BfmForestMessage **opened)
+{
+    BfmFieldInput field = {.x = x, .y = y, .square_pressed = square};
+    return bfm_village_lower_step_field(lower, field, opened);
 }
 
 static void draw_figures(void *context, int depth)

@@ -22,7 +22,7 @@ enum { TITLE_W = 640, TITLE_H = 480, OPENING_W = 320, OPENING_H = 240 };
 /* On the US disc, the first visible loading sprite spans at least 115 fields. */
 enum { LOADING_VISIBLE_FIELDS = 115, CARD_READ_VISIBLE_FIELDS = 90 };
 enum { PAD_START = 1u << 3, PAD_UP = 1u << 4, PAD_RIGHT = 1u << 5, PAD_DOWN = 1u << 6,
-       PAD_LEFT = 1u << 7, PAD_TRIANGLE = 1u << 12,
+       PAD_LEFT = 1u << 7, PAD_L2 = 1u << 8, PAD_R2 = 1u << 9, PAD_TRIANGLE = 1u << 12,
        PAD_CIRCLE = BFM_FOREST_CIRCLE, PAD_CROSS = BFM_FOREST_CROSS, PAD_SQUARE = BFM_FOREST_SQUARE };
 
 typedef struct Player {
@@ -43,7 +43,7 @@ typedef struct Player {
     SDL_JoystickID controller_id;
     unsigned char keys[SDL_NUM_SCANCODES];
     uint16_t digital, held, pressed;
-    int axis_x, axis_y;
+    int axis_x, axis_y, axis_l2, axis_r2;
     const char *card_path;
     BfmInnProfile *save_copy;
     BfmInnMenu inn_menu;
@@ -73,7 +73,8 @@ static const char usage[] =
     "--save-copy creates a writable memory card in a new directory. It starts blank unless you supply a read-only --card.\n"
     "Enter/Start: start. Space/Cross: confirm or skip the opening. Arrows: select. "
     "D-pad, arrows or left stick: move in Giant Forest. A/Square: swing Fusion on the ground. "
-    "Right Shift/R1: charge Fusion. Z/Circle: fire earned Gunshot. T/Triangle: back from files. Escape: quit.\n";
+    "Right Shift/R1: charge Fusion. Z/Circle: fire earned Gunshot. Q/L2 and E/R2: rotate the camera in Lower Grillin'. "
+    "T/Triangle: back from files. Escape: quit.\n";
 
 static uint16_t button_mask(unsigned int button) {
     switch (button) {
@@ -99,6 +100,8 @@ static int field_axis(int negative, int positive, int analog) {
 
 static void update_input(Player *p) {
     uint16_t current = p->digital;
+    if (p->keys[SDL_SCANCODE_Q] || p->axis_l2 > 16000) current |= PAD_L2;
+    if (p->keys[SDL_SCANCODE_E] || p->axis_r2 > 16000) current |= PAD_R2;
     if (p->keys[SDL_SCANCODE_RSHIFT]) current |= BFM_FOREST_R1;
     if (p->keys[SDL_SCANCODE_RETURN] || p->keys[SDL_SCANCODE_KP_ENTER]) current |= PAD_START;
     if (p->keys[SDL_SCANCODE_SPACE] || p->keys[SDL_SCANCODE_X]) current |= PAD_CROSS;
@@ -126,6 +129,8 @@ static void find_controller(Player *p) {
         }
         p->axis_x = SDL_GameControllerGetAxis(p->controller, SDL_CONTROLLER_AXIS_LEFTX);
         p->axis_y = SDL_GameControllerGetAxis(p->controller, SDL_CONTROLLER_AXIS_LEFTY);
+        p->axis_l2 = SDL_GameControllerGetAxis(p->controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT);
+        p->axis_r2 = SDL_GameControllerGetAxis(p->controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
         update_input(p);
     }
 }
@@ -215,6 +220,7 @@ static int events(Player *p) {
                 p->controller_id = -1;
                 p->digital = 0;
                 p->axis_x = p->axis_y = 0;
+                p->axis_l2 = p->axis_r2 = 0;
                 p->pressed = 0;
                 find_controller(p);
             }
@@ -223,6 +229,8 @@ static int events(Player *p) {
             if (p->controller && e.caxis.which == p->controller_id) {
                 if (e.caxis.axis == SDL_CONTROLLER_AXIS_LEFTY) p->axis_y = e.caxis.value;
                 if (e.caxis.axis == SDL_CONTROLLER_AXIS_LEFTX) p->axis_x = e.caxis.value;
+                if (e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT) p->axis_l2 = e.caxis.value;
+                if (e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT) p->axis_r2 = e.caxis.value;
             }
             break;
         case SDL_CONTROLLERBUTTONDOWN:
@@ -604,7 +612,9 @@ static int play(Player *p, char *error, size_t size) {
                         int y = field_axis(p->keys[SDL_SCANCODE_UP] || (p->digital & PAD_UP),
                                            p->keys[SDL_SCANCODE_DOWN] || (p->digital & PAD_DOWN), p->axis_y);
                         BfmFieldInput field = {.x=x, .y=y, .square_pressed=scene_input & PAD_SQUARE,
-                                               .shoulder_held=!service && (p->held & BFM_FOREST_R1)};
+                                               .shoulder_held=!service && (p->held & BFM_FOREST_R1),
+                                               .camera_turn=service ? 0 :
+                                                   !!(p->held & PAD_R2) - !!(p->held & PAD_L2)};
                         int result = bfm_bedroom_step_field(p->bedroom,
                                     scene_input & (PAD_CIRCLE | PAD_CROSS | PAD_TRIANGLE),
                                     scene_input & PAD_CIRCLE, direction, held, scene_input & PAD_CROSS,

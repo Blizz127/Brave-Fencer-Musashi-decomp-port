@@ -27,6 +27,16 @@ static void orbit(BfmVillageCamera *camera, unsigned pitch)
     camera->eye[2] = camera->target[2] + scale(z, camera->radius);
 }
 
+static int yaw_step(int delta, int limit)
+{
+    int divisor = 20;
+    while (divisor > 1 && delta && delta / divisor == 0) divisor /= 2;
+    int step = delta / divisor;
+    if (step > limit) return limit;
+    if (step < -limit) return -limit;
+    return step;
+}
+
 void bfm_village_camera_step(BfmVillageCamera *camera, const int16_t xyz[3],
                              int follow_event)
 {
@@ -37,13 +47,7 @@ void bfm_village_camera_step(BfmVillageCamera *camera, const int16_t xyz[3],
         camera->yaw = 1536;
     }
     if (camera->following) {
-        int delta = 2048 - camera->yaw;
-        int divisor = 20;
-        while (divisor > 1 && delta && delta / divisor == 0) divisor /= 2;
-        int turn = delta / divisor;
-        if (turn > 91) turn = 91;
-        if (turn < -91) turn = -91;
-        camera->yaw += turn;
+        camera->yaw += yaw_step(2048 - camera->yaw, 91);
         for (unsigned i = 0; i < 3; ++i) camera->target[i] = xyz[i];
         orbit(camera, 568);
     } else {
@@ -54,6 +58,26 @@ void bfm_village_camera_step(BfmVillageCamera *camera, const int16_t xyz[3],
         camera->target[2] = 1379;
         orbit(camera, 56);
     }
+}
+
+void bfm_village_camera_turn(BfmVillageCamera *camera, BfmVillageCameraTurn *turn,
+                             int direction)
+{
+    /* A tap selects the next eighth-turn. Holding renews the target when the
+     * view is within about 75 degrees. Releasing lets the eye finish the turn. */
+    enum { REPEAT_TICK = 10, DETENT = 4096 / 8, LEAD = 4096 * 75 / 360 };
+    if (direction != turn->direction) {
+        turn->direction = direction;
+        turn->held_ticks = 0;
+    }
+    if (direction && turn->held_ticks < REPEAT_TICK) ++turn->held_ticks;
+    int continuous = turn->held_ticks == REPEAT_TICK;
+    int delta = ((turn->goal - camera->yaw + 2048) & 4095) - 2048;
+    if (turn->held_ticks == 1 || (continuous && direction * delta < LEAD)) {
+        turn->goal = (turn->goal + direction * DETENT) & 4095;
+        delta = ((turn->goal - camera->yaw + 2048) & 4095) - 2048;
+    }
+    camera->yaw = (camera->yaw + yaw_step(delta, continuous ? 45 : 91)) & 4095;
 }
 
 void bfm_village_camera_begin(BfmVillageCamera *camera, const int16_t xyz[3])
