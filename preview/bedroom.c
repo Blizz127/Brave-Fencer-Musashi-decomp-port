@@ -708,7 +708,10 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
             return 0;
     }
     BfmForestMessage *opened = NULL;
-    if (was_in_dialogue) field.square_pressed = field.shoulder_held = 0;
+    if (was_in_dialogue) {
+        field.square_pressed = field.shoulder_held = 0;
+        field.circle_pressed = field.cross_pressed = field.cross_held = 0;
+    }
     if (!bfm_village_arrival_step_field(room->village, room->run, field, &opened)) return 0;
     if (opened) room->message = opened;
     const uint8_t *inn_door = bfm_village_arrival_inn_transfer(room->village);
@@ -723,10 +726,11 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
     if (room->story_flags != room->entry.state.flags)
         memcpy(room->story_flags, room->entry.state.flags, sizeof room->entry.state.flags);
     const BfmVillagePlayer *player = bfm_village_arrival_player(room->village);
-    if (bfm_village_arrival_award_cue(room->village)) {
+    unsigned woods_sound = bfm_village_arrival_woods_sound(room->village);
+    if (woods_sound) {
         if (!room->shrink_sound) room->shrink_sound = bfm_woods_shrink_sound_load(room->disc);
         if (!room->shrink_sound) return 0;
-        room->effect_request = BFM_WOODS_SHRINK_SOUND;
+        room->effect_request = woods_sound;
     }
     if (player->pose.knock_contact) {
         if (!room->knock) room->knock = bfm_village_knock_sound_load(room->disc);
@@ -1122,7 +1126,8 @@ BfmCableSound *bfm_bedroom_slider(const BfmBedroom *room, int *event)
 BfmBedroomEffects *bfm_bedroom_effect(const BfmBedroom *room, unsigned *command)
 {
     *command = room->effect_request;
-    if (*command == BFM_WOODS_SHRINK_SOUND) return room->shrink_sound;
+    if (room->village && *command && *command == bfm_village_arrival_woods_sound(room->village))
+        return room->shrink_sound;
     return *command == BFM_VILLAGE_KNOCK_SOUND ? room->knock : room->effects;
 }
 

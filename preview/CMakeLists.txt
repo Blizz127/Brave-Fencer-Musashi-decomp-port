@@ -45,9 +45,21 @@ add_executable(musashi_native_boot
     woods_capture_light.c
     woods_flight_glow.c
     woods_caster.c
+    woods_king.c
+    woods_king_art.c
+    woods_king_reward.c
+    woods_body_notice.c
+    woods_lily.c
+    woods_lily_art.c
+    woods_jump_pose.c
     woods_fusion.c
     woods_fusion_art.c
     woods_shrink_message.c
+    woods_shrink_cast.c
+    woods_shrink_motion.c
+    woods_shrink_shot.c
+    woods_shrink_light.c
+    woods_shrink_ribbon.c
     village_field.c
     village_gate.c
     village_greeting.c

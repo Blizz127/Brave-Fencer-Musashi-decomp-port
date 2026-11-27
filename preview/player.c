@@ -614,7 +614,10 @@ static int play(Player *p, char *error, size_t size) {
                         BfmFieldInput field = {.x=x, .y=y, .square_pressed=scene_input & PAD_SQUARE,
                                                .shoulder_held=!service && (p->held & BFM_FOREST_R1),
                                                .camera_turn=service ? 0 :
-                                                   !!(p->held & PAD_R2) - !!(p->held & PAD_L2)};
+                                                   !!(p->held & PAD_R2) - !!(p->held & PAD_L2),
+                                               .circle_pressed=scene_input & PAD_CIRCLE,
+                                               .cross_pressed=scene_input & PAD_CROSS,
+                                               .cross_held=!service && (p->held & PAD_CROSS)};
                         int result = bfm_bedroom_step_field(p->bedroom,
                                     scene_input & (PAD_CIRCLE | PAD_CROSS | PAD_TRIANGLE),
                                     scene_input & PAD_CIRCLE, direction, held, scene_input & PAD_CROSS,

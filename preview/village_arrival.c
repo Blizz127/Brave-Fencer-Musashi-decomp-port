@@ -334,6 +334,11 @@ int bfm_village_arrival_award_cue(const BfmVillageArrival *a)
     return a->woods && bfm_southern_woods_award_cue(a->woods);
 }
 
+unsigned bfm_village_arrival_woods_sound(const BfmVillageArrival *a)
+{
+    return a->woods ? bfm_southern_woods_sound(a->woods) : 0;
+}
+
 int bfm_village_arrival_tether_gauge(const BfmVillageArrival *a)
 {
     return a->woods ? bfm_southern_woods_tether_gauge(a->woods) : -1;
