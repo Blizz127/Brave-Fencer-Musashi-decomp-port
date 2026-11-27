@@ -183,8 +183,8 @@ static int in_sign_reach(const BfmSouthernWoods *woods, const int16_t position[3
     return distance <= 64 * 64;
 }
 
-int bfm_southern_woods_step_field(BfmSouthernWoods *woods, BfmGameplayRun *run,
-                                  BfmFieldInput field, BfmForestMessage **opened)
+int bfm_southern_woods_step_field_at(BfmSouthernWoods *woods, BfmGameplayRun *run,
+                                     BfmFieldInput field, unsigned actor_tick, BfmForestMessage **opened)
 {
     if (opened) *opened = NULL;
     const BfmVillagePlayer *p = bfm_village_motion_player(woods->motion);
@@ -220,7 +220,7 @@ int bfm_southern_woods_step_field(BfmSouthernWoods *woods, BfmGameplayRun *run,
                      !woods->action.action && !woods->action.blade_away &&
                      !(may_read && in_sign_reach(woods,previous)) &&
                      bfm_village_motion_grounded(woods->motion),
-        .circle_pressed = field.circle_pressed, .field_tick = woods->age
+        .circle_pressed = field.circle_pressed, .field_tick = actor_tick
     };
     int casting = run && bfm_woods_shrink_cast_claims(woods->shrink, &run->player, &spell);
     int locked = casting || woods->action.movement_locked;
@@ -284,6 +284,12 @@ int bfm_southern_woods_step_field(BfmSouthernWoods *woods, BfmGameplayRun *run,
     ++woods->age;
     return bfm_village_motion_face(woods->motion,woods->tiles) &&
            bfm_woods_shrink_cast_face(woods->shrink,woods->tiles);
+}
+
+int bfm_southern_woods_step_field(BfmSouthernWoods *woods, BfmGameplayRun *run,
+                                  BfmFieldInput field, BfmForestMessage **opened)
+{
+    return bfm_southern_woods_step_field_at(woods, run, field, woods->age, opened);
 }
 
 int bfm_southern_woods_step(BfmSouthernWoods *woods, int x, int y,

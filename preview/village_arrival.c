@@ -243,6 +243,8 @@ int bfm_village_arrival_step_field(BfmVillageArrival *a, BfmGameplayRun *run,
     /* The upper field and the lower street share the running world clock. The
      * player is already on the incoming actor list for its 17 fade-in updates. */
     unsigned reveal = bfm_village_arrival_reveal_tick(a);
+    /* Actors read the shared counter before the field advances it. */
+    unsigned actor_tick = a->scene_tick;
     if (!a->transfer_tick || a->transfer_tick >= reveal - 2) ++a->scene_tick;
     if (a->residents) ++a->resident_field_tick;
     if (a->transfer_tick) {
@@ -269,7 +271,7 @@ int bfm_village_arrival_step_field(BfmVillageArrival *a, BfmGameplayRun *run,
         if (a->transfer_tick < reveal + (a->entering_woods ? 2 : 16)) return 1;
         if (a->transfer_tick >= reveal + 21) a->transfer_tick = 0;
     }
-    if (a->woods) return bfm_southern_woods_step_field(a->woods, run, field, opened);
+    if (a->woods) return bfm_southern_woods_step_field_at(a->woods, run, field, actor_tick, opened);
     if (a->lower) {
         if (!bfm_village_lower_step_field(a->lower, field, opened)) return 0;
         if (!a->transfer_tick && bfm_village_lower_departure(a->lower)) {
