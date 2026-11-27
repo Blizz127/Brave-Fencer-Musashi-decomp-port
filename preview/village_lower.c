@@ -481,7 +481,7 @@ int bfm_village_lower_step_gameplay(BfmVillageLower *lower, BfmGameplayRun *run,
     bfm_village_lower_step_ambient(lower, run);
     if (!active && !rest_action && p->controlled && !(p->events & BFM_VILLAGE_TRANSFER))
         bfm_village_camera_turn(&lower->camera, &lower->turn, field.camera_turn);
-    else
+    else if (!(p->events & BFM_VILLAGE_TRANSFER))
         lower->turn.direction = lower->turn.held_ticks = 0;
     bfm_village_camera_lower(&lower->camera, p->root.xyz, 0);
     lower->presented = lower->camera;
@@ -556,7 +556,7 @@ static void draw_figures(void *context, int depth)
 }
 
 int bfm_village_lower_draw(BfmVillageLower *lower, unsigned tick, const uint8_t flags[64],
-                          const BfmForestMessageFrame *window, uint32_t pixels[240][320])
+                          const BfmForestMessageFrame *window, unsigned draw_page, uint32_t pixels[240][320])
 {
     const BfmVillagePlayer *p = bfm_village_motion_player(lower->motion);
     const BfmBedroomRoot *root = bfm_village_mayor_stage_active(lower->stage)
@@ -571,7 +571,7 @@ int bfm_village_lower_draw(BfmVillageLower *lower, unsigned tick, const uint8_t 
     const BfmBedroomView *camera = bfm_bedroom_field_view(lower->field.field);
     bfm_village_shop_doors_prepare(lower->shop_doors, camera, lower->tiles, &pixels[0][0], lower->save);
     if (!bfm_village_mayor_stage_prepare(lower->stage, camera, lower->tiles, &pixels[0][0]) ||
-        !bfm_village_street_scenery_prepare(lower->scenery, camera, lower->tiles, &pixels[0][0]) ||
+        !bfm_village_street_scenery_prepare(lower->scenery, camera, lower->tiles, &pixels[0][0], draw_page) ||
         !bfm_village_mayor_stage_add(lower->stage, lower->field.hero, camera) ||
         !bfm_village_chimney_add(lower->chimney, lower->field.hero, camera) ||
         !bfm_village_street_vane_add(lower->scenery, lower->field.hero, camera) ||
@@ -605,4 +605,16 @@ int bfm_village_lower_draw(BfmVillageLower *lower, unsigned tick, const uint8_t 
         bfm_bedroom_message_art_draw_side(art, &shown, lower->anchor, lower->right, pixels);
     }
     return 1;
+}
+
+BfmVillageStreetOrbit bfm_village_lower_orbit(const BfmVillageLower *lower)
+{
+    return bfm_village_camera_street_orbit(&lower->camera, &lower->turn);
+}
+
+void bfm_village_lower_restore_orbit(BfmVillageLower *lower, BfmVillageStreetOrbit orbit)
+{
+    const BfmVillagePlayer *p = bfm_village_motion_player(lower->motion);
+    bfm_village_camera_restore_street(&lower->camera, &lower->turn, orbit, p->root.xyz);
+    lower->presented = lower->camera;
 }

@@ -13,6 +13,18 @@ typedef struct {
     int goal, direction, held_ticks;
 } BfmVillageCameraTurn;
 
+/* A village seam or a shop visit carries the street orbit to a new subject.
+ * World-space eye and target are rebuilt around the receiving player. */
+typedef struct {
+    int focal, radius, yaw;
+    BfmVillageCameraTurn turn;
+} BfmVillageStreetOrbit;
+
+BfmVillageStreetOrbit bfm_village_camera_street_orbit(const BfmVillageCamera *camera,
+                                                       const BfmVillageCameraTurn *turn);
+void bfm_village_camera_restore_street(BfmVillageCamera *camera, BfmVillageCameraTurn *turn,
+                                       BfmVillageStreetOrbit orbit, const int16_t xyz[3]);
+
 /* The descending cable entrance prepares the initial view before the first
  * field update. The player coordinates are in room space. */
 void bfm_village_camera_begin(BfmVillageCamera *camera, const int16_t xyz[3]);

@@ -275,7 +275,7 @@ static void include_pixel(BfmBedroomFigure *figure, int x, int y)
     if (y > figure->y_max) figure->y_max = y;
 }
 
-typedef enum { DEPTH_AVERAGE, DEPTH_NEAR, DEPTH_FAR_FT4 } PartDepth;
+typedef enum { DEPTH_AVERAGE, DEPTH_NEAR, DEPTH_FAR_FT4, DEPTH_FAR_UNLIT_TEXTURED } PartDepth;
 
 static void collect_part(BfmBedroomFigure *figure, const BfmBedroomView *camera,
                          const Transform *world, const MusashiForestPlayerPart *part,
@@ -331,7 +331,9 @@ static void collect_part(BfmBedroomFigure *figure, const BfmBedroomView *camera,
         };
         out->depth = (sum*(face->corners == 3 ? 341 : 256))/4096;
         if (depth == DEPTH_NEAR) out->depth = near/4-1;
-        if (depth == DEPTH_FAR_FT4 && face->mode == 0x2c) out->depth = far/4;
+        if ((depth == DEPTH_FAR_FT4 && face->mode == 0x2c) ||
+            (depth == DEPTH_FAR_UNLIT_TEXTURED && (face->mode == 0x25 || face->mode == 0x2d)))
+            out->depth = far/4;
         out->order = figure->count++;
     }
 }
@@ -859,6 +861,12 @@ int bfm_bedroom_figure_add_far_ft4_actor(BfmBedroomFigure *figure, const BfmBedr
                      const BfmForestActor *actor)
 {
     return add_actor(figure, view, actor, NULL, NULL, 0, NULL, 0, DEPTH_FAR_FT4);
+}
+
+int bfm_bedroom_figure_add_far_unlit_actor(BfmBedroomFigure *figure, const BfmBedroomView *view,
+                     const BfmForestActor *actor)
+{
+    return add_actor(figure, view, actor, NULL, NULL, 0, NULL, 0, DEPTH_FAR_UNLIT_TEXTURED);
 }
 
 int bfm_bedroom_figure_add_lit_translucent(BfmBedroomFigure *figure, const BfmBedroomView *view,

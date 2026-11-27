@@ -30,6 +30,8 @@ typedef struct BfmGameplayRun {
     int has_player;
     BfmGameplayBanks banks;
     BfmFieldCheckpoint saved_data, memory_box;
+    /* Completed 240-line draw page, shared across scene and room changes. */
+    unsigned display_page;
 } BfmGameplayRun;
 
 /* Initialize the first palace room from mounted New Game and figure data. */

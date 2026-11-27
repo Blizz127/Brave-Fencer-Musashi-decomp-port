@@ -338,12 +338,6 @@ static int camera_axis(Point v, int a, int b, int c)
     return floor_div((int64_t)v.x * a + (int64_t)v.y * b + (int64_t)v.z * c, 4096);
 }
 
-static int projection_coord(int coordinate, int reciprocal, int center)
-{
-    int screen = floor_div((int64_t)coordinate * reciprocal, 65536);
-    return center + smaller(1023, larger(-1024, screen));
-}
-
 static uint64_t squared(int v)
 {
     return (uint64_t)((int64_t)v * v);
@@ -421,21 +415,29 @@ static BfmBedroomView make_view(Point eye, Basis axes, int focal)
     return view;
 }
 
-static Point project_point(const BfmBedroomView *view, Point v)
+static Point project_point(const BfmBedroomView *view, Point v, int *packet_valid)
 {
     const int (*axis)[3] = view->axes;
     int x = camera_axis(v, axis[0][0], axis[0][1], axis[0][2]) + view->translation[0];
     int y = camera_axis(v, axis[1][0], axis[1][1], axis[1][2]) + view->translation[1];
     int z = camera_axis(v, axis[2][0], axis[2][1], axis[2][2]) + view->translation[2];
     int reciprocal = z > 0 ? smaller(131071, (view->focal * 65536 + z / 2) / z) : 131071;
-    return (Point){projection_coord(x, reciprocal, 160),
-                   projection_coord(y, reciprocal, 120), z};
+    int sx = floor_div((int64_t)x * reciprocal, 65536);
+    int sy = floor_div((int64_t)y * reciprocal, 65536);
+    if (packet_valid) {
+        /* The town landmark packets discard perspective divide overflow and
+         * saturated projected coordinates before the GPU adds its draw offset. */
+        *packet_valid = z > view->focal / 2 && sx >= -1024 && sx <= 1023 &&
+                        sy >= -1024 && sy <= 1023;
+    }
+    return (Point){160 + smaller(1023, larger(-1024, sx)),
+                   120 + smaller(1023, larger(-1024, sy)), z};
 }
 
 static void project_vertices(Palace *palace, const BfmBedroomView *view)
 {
     for (size_t i = 0; i < palace->vertex_count; ++i)
-        palace->projected[i] = project_point(view, palace->vertices[i]);
+        palace->projected[i] = project_point(view, palace->vertices[i], NULL);
 }
 
 static void project_mesh(Palace *palace, unsigned field)
@@ -897,12 +899,24 @@ void bfm_bedroom_field_draw(BfmBedroomField *field, const uint16_t tiles[512][10
     draw_mesh(&field->geometry, tiles, pixels, 0, NULL, draw_to, user);
 }
 
-int bfm_bedroom_project(const BfmBedroomView *view, const int16_t model[3], int xy_depth[3])
+static int project_vertex(const BfmBedroomView *view, const int16_t model[3], int xy_depth[3],
+                          int *packet_valid)
 {
     if (!view || !model || !xy_depth) return 0;
-    Point p = project_point(view, (Point){model[0], model[1], model[2]});
+    Point p = project_point(view, (Point){model[0], model[1], model[2]}, packet_valid);
     xy_depth[0] = p.x;
     xy_depth[1] = p.y;
     xy_depth[2] = p.z;
     return p.z > 0;
+}
+
+int bfm_bedroom_project(const BfmBedroomView *view, const int16_t model[3], int xy_depth[3])
+{
+    return project_vertex(view, model, xy_depth, NULL);
+}
+
+int bfm_bedroom_project_packet(const BfmBedroomView *view, const int16_t model[3], int xy_depth[3])
+{
+    int valid;
+    return project_vertex(view, model, xy_depth, &valid) && valid;
 }

@@ -20,6 +20,7 @@
 #include "village_sky.h"
 #include "southern_woods.h"
 #include "woods_box_visit.h"
+#include "hells_valley.h"
 #include "forest_bank.h"
 #include "nightmare_transition.h"
 #include "forest_maze.h"
@@ -44,6 +45,7 @@ typedef struct {
     BfmBedroomEntry entry;
     uint16_t tiles[512][1024];
     BfmWoodsBoxVisit *box;
+    BfmHellsValley *valley;
     BfmSouthernWoods *woods;
 } WoodsArrival;
 
@@ -52,7 +54,7 @@ typedef struct {
     enum { EXIT_WALK, MOUNT_RECEIVER, HOLD_PAGE, REVEAL_FIELD } phase;
     uint32_t page[240][320];
     int submitted;
-    unsigned reveal_updates;
+    unsigned reveal_updates, mount_wait;
 } WoodsCrossing;
 
 struct BfmVillageArrival {
@@ -68,6 +70,7 @@ struct BfmVillageArrival {
     BfmSouthernWoods *woods;
     BankVisit *bank;
     BfmWoodsBoxVisit *box;
+    BfmHellsValley *valley;
     WoodsArrival *incoming_woods;
     WoodsCrossing *crossing;
     BfmForestMaze *maze;
@@ -77,6 +80,8 @@ struct BfmVillageArrival {
     uint16_t (*tiles)[1024];
     BfmVillageMotion *motion;
     BfmVillageCamera camera, presented_camera;
+    BfmVillageCameraTurn turn;
+    int cable_camera;
     BfmVillageTalkCamera talk_camera;
     BfmSaveRecord *record;
     int start_talk_camera, latch_window, resident_anchor, resident_right;
@@ -129,6 +134,7 @@ static void free_bank(BankVisit *bank)
 static void free_woods_arrival(WoodsArrival *pending)
 {
     if (!pending) return;
+    bfm_hells_valley_free(pending->valley);
     bfm_woods_box_visit_free(pending->box);
     bfm_southern_woods_free(pending->woods);
     free(pending);
@@ -139,6 +145,7 @@ void bfm_village_arrival_free(BfmVillageArrival *a)
     if (!a) return;
     free(a->crossing);
     free_woods_arrival(a->incoming_woods);
+    bfm_hells_valley_free(a->valley);
     bfm_woods_box_visit_free(a->box);
     bfm_forest_maze_free(a->maze);
     free_bank(a->bank);
@@ -194,11 +201,16 @@ static int mount_upper(BfmVillageArrival *a, const MusashiDiscMedia *disc, BfmBe
     const int16_t *spawn = bfm_village_motion_player(a->motion)->root.xyz;
     if (departed) {
         bfm_village_camera_lower(&a->camera, spawn, 1);
-        if (a->transfer_route == UPPER_FROM_WOODS) {
-            a->camera.yaw = 1536;
+        if (a->lower) {
+            bfm_village_camera_restore_street(&a->camera, &a->turn,
+                                              bfm_village_lower_orbit(a->lower), spawn);
+        } else {
+            a->camera.yaw = a->turn.goal = 1536;
             bfm_village_camera_lower(&a->camera, spawn, 0);
         }
     } else {
+        a->cable_camera = 1;
+        a->turn.goal = 2048;
         bfm_village_camera_begin(&a->camera, spawn);
         /* The first live camera update precedes Musashi's first moving update. */
         bfm_village_camera_step(&a->camera, spawn, 0);
@@ -252,12 +264,14 @@ struct BfmSouthernWoods *bfm_village_arrival_woods(BfmVillageArrival *a)
 BfmRetryScreen *bfm_village_arrival_retry(const BfmVillageArrival *a)
 {
     if (!a) return NULL;
+    if (a->valley) return bfm_hells_valley_retry(a->valley);
     if (a->box) return bfm_woods_box_visit_retry(a->box);
     return a->bank ? bfm_forest_bank_retry(a->bank->art) : bfm_southern_woods_retry(a->woods);
 }
 
 int bfm_village_arrival_begin_retry(BfmVillageArrival *a, BfmGameplayRun *run)
 {
+    if (a->valley) return 1; /* The fatal pit receiver mounts its own retry. */
     if (a->box) return bfm_woods_box_visit_begin_retry(a->box, run);
     if (a->bank) {
         BankVisit *bank = a->bank;
@@ -270,6 +284,7 @@ int bfm_village_arrival_begin_retry(BfmVillageArrival *a, BfmGameplayRun *run)
 int bfm_village_arrival_draw_retry(BfmVillageArrival *a, const BfmForestHud *hud,
                                  uint32_t pixels[240][320])
 {
+    if (a->valley) return bfm_hells_valley_draw_retry(a->valley, hud, pixels);
     if (a->box) return bfm_woods_box_visit_draw_retry(a->box, hud, pixels);
     if (a->bank) return bfm_forest_bank_draw_retry(a->bank->art, a->bank->motion,
                                                   &a->bank->camera, hud, pixels);
@@ -280,6 +295,7 @@ int bfm_village_arrival_prepare_recovery(const BfmVillageArrival *a, const BfmGa
                                         BfmBedroomEntry *out)
 {
     if (!a) return 0;
+    if (a->valley) return bfm_hells_valley_recover(a->valley, run, out);
     if (a->box) return bfm_woods_box_visit_prepare_recovery(a->box, run, out);
     if (a->bank) {
         const size_t destination = UINT32_C(0x8018eb3c) - UINT32_C(0x80128158);
@@ -293,6 +309,7 @@ int bfm_village_arrival_prepare_recovery(const BfmVillageArrival *a, const BfmGa
 uint16_t bfm_village_arrival_room(const BfmVillageArrival *a)
 {
     /* The transfer descriptor can change while the outgoing field still draws. */
+    if (a->valley) return 0x302b;
     if (a->box) return 0x3026;
     if (a->maze) return 0x301b;
     if (a->bank) return 0x3014;
@@ -303,6 +320,7 @@ uint16_t bfm_village_arrival_room(const BfmVillageArrival *a)
 
 const BfmVillagePlayer *bfm_village_arrival_player(const BfmVillageArrival *a)
 {
+    if (a->valley) return bfm_hells_valley_player(a->valley);
     if (a->box) return bfm_woods_box_visit_player(a->box);
     if (a->maze) return bfm_village_motion_player(bfm_forest_maze_motion(a->maze));
     if (a->bank) return bfm_village_motion_player(a->bank->motion);
@@ -321,6 +339,7 @@ int bfm_village_arrival_continue(BfmVillageArrival *a)
 
 int bfm_village_arrival_message_closed(BfmVillageArrival *a, unsigned answer)
 {
+    if (a->valley) return bfm_hells_valley_message_closed(a->valley);
     if (a->box) return bfm_woods_box_visit_close(a->box, answer);
     if (a->maze) {
         bfm_forest_maze_close_sign(a->maze);
@@ -528,7 +547,8 @@ static int prepare_woods_arrival(BfmVillageArrival *a, const uint8_t *door,
                                 const BfmBedroomEntry *restored)
 {
     uint32_t target = u32le(door);
-    if (a->incoming_woods || (target != 0x00013026 && target != 0x00033025 &&
+    if (a->incoming_woods || (target != 0x302b && target != 0x00013025 &&
+        target != 0x00013026 && target != 0x00033025 &&
         !(restored && target == 0x00ff3026))) return 0;
     WoodsArrival *pending = calloc(1, sizeof *pending);
     if (!pending) return 0;
@@ -537,7 +557,12 @@ static int prepare_woods_arrival(BfmVillageArrival *a, const uint8_t *door,
     BfmBedroomEntry previous = *a->entry;
     memcpy(pending->tiles, a->tiles, sizeof pending->tiles);
     int drawn = 0;
-    if (target == 0x00033025) {
+    if (target == 0x302b) {
+        if (bfm_castle_room_entry(a->disc, door, a->entry))
+            pending->valley = bfm_hells_valley_open(a->disc, a->entry, a->main, a->main_bytes, a->tiles);
+        if (pending->valley)
+            drawn = bfm_hells_valley_draw(pending->valley, a->record->flags, frame);
+    } else if (target == 0x00033025 || target == 0x00013025) {
         pending->woods = bfm_southern_woods_open(a->disc, a->entry, door, a->main,
                                                   a->main_bytes, a->tiles);
         if (pending->woods)
@@ -574,12 +599,14 @@ static void install_woods_arrival(BfmVillageArrival *a)
     WoodsArrival *pending = a->incoming_woods;
     free_bank(a->bank);
     a->bank = NULL;
+    bfm_hells_valley_free(a->valley);
     bfm_woods_box_visit_free(a->box);
     bfm_southern_woods_free(a->woods);
     *a->entry = pending->entry;
     memcpy(a->tiles, pending->tiles, sizeof pending->tiles);
     a->woods = pending->woods;
     a->box = pending->box;
+    a->valley = pending->valley;
     free(pending);
     a->incoming_woods = NULL;
 }
@@ -596,7 +623,7 @@ static WoodsCrossing *open_woods_crossing(const MusashiDiscMedia *disc)
 
 int bfm_village_arrival_restore_woods_box(BfmVillageArrival *a, const BfmBedroomEntry *restored)
 {
-    if (!a || !restored || a->crossing || (!a->woods && !a->bank && !a->box) || restored->scene_member != 11 ||
+    if (!a || !restored || a->crossing || (!a->woods && !a->bank && !a->box && !a->valley) || restored->scene_member != 11 ||
         u32le(restored->state.destination) != 0x00ff3026) return 0;
     WoodsCrossing *c = open_woods_crossing(a->disc);
     if (!c) return 0;
@@ -609,9 +636,9 @@ int bfm_village_arrival_restore_woods_box(BfmVillageArrival *a, const BfmBedroom
     return 1;
 }
 
-/* The two Cleft gates share the resident exit delay, the loader's captured
+/* The Cleft passages share the resident exit delay, the loader's captured
  * eight-line curtain and the incoming field fade. The receiving actor is live
- * from its first shaded frame. Neither gate issues the Nightmare audio stop. */
+ * from its first shaded frame. Field passages keep the outdoor audio active. */
 static int begin_woods_crossing(BfmVillageArrival *a)
 {
     WoodsCrossing *c = open_woods_crossing(a->disc);
@@ -634,28 +661,42 @@ static int step_box_field(BfmWoodsBoxVisit *box, BfmGameplayRun *run, BfmFieldIn
 }
 
 static int step_woods_field(BfmVillageArrival *a, BfmGameplayRun *run, BfmFieldInput field,
-                            BfmForestMessage **opened)
+                            unsigned tick, BfmForestMessage **opened)
 {
-    unsigned tick = a->scene_tick++;
-    return a->box ? step_box_field(a->box, run, field, tick, opened) :
-                    bfm_southern_woods_step_field_at(a->woods, run, field, tick, opened);
+    if (a->valley) {
+        if (opened) return bfm_hells_valley_step_with_notice(a->valley, run, field, tick, opened);
+        return bfm_hells_valley_step_at(a->valley, run, field, tick);
+    }
+    if (a->box) return step_box_field(a->box, run, field, tick, opened);
+    return bfm_southern_woods_step_field_at(a->woods, run, field, tick, opened);
+}
+
+static const BfmVillageMotion *woods_departure(const BfmVillageArrival *a)
+{
+    if (a->valley) return bfm_hells_valley_departure(a->valley);
+    if (a->box) return bfm_woods_box_visit_departure(a->box);
+    return bfm_southern_woods_departure(a->woods);
 }
 
 static int step_woods_crossing(BfmVillageArrival *a, BfmGameplayRun *run, BfmFieldInput field,
                                BfmForestMessage **opened)
 {
     WoodsCrossing *c = a->crossing;
-    if (c->phase == EXIT_WALK && !step_woods_field(a, run, (BfmFieldInput){0}, opened)) return 0;
+    if (c->phase == EXIT_WALK && !step_woods_field(a, run, (BfmFieldInput){0}, a->scene_tick++, opened)) return 0;
     BfmNightmareTransitionEvent event = BFM_NIGHTMARE_TRANSITION_NONE;
     if (c->phase != MOUNT_RECEIVER) {
-        event = bfm_nightmare_transition_step(&c->wipe, 1, c->submitted, a->incoming_woods != NULL);
+        if (c->mount_wait) --c->mount_wait;
+        int ready = a->incoming_woods != NULL && c->mount_wait == 0;
+        event = bfm_nightmare_transition_step(&c->wipe, 1, c->submitted, ready);
         if (event == BFM_NIGHTMARE_CAPTURE_OUTGOING) c->phase = MOUNT_RECEIVER;
     }
     if (c->phase == MOUNT_RECEIVER) {
-        const BfmVillageMotion *motion = a->box ? bfm_woods_box_visit_departure(a->box) :
-                                                 bfm_southern_woods_departure(a->woods);
+        const BfmVillageMotion *motion = woods_departure(a);
         const uint8_t *door = motion ? bfm_village_motion_transfer(motion) : NULL;
         if (!door || !prepare_woods_arrival(a, door, NULL)) return 0;
+        /* On the US File 4 crossing the shutter started at V14471. The valley
+         * entered its reveal at V14780, after the outgoing strips were black. */
+        if (a->incoming_woods->valley) c->mount_wait = 155;
         c->phase = HOLD_PAGE;
     } else if (event == BFM_NIGHTMARE_ENTER_VILLAGE) {
         /* Elapsed playtime is maintained by the host field loop. Preserve
@@ -670,8 +711,8 @@ static int step_woods_crossing(BfmVillageArrival *a, BfmGameplayRun *run, BfmFie
     if (c->phase != REVEAL_FIELD) return 1;
     /* Physical input starts in the live Cleft field, after the final reveal
      * update. The entrance script and the world continue during the wipe. */
-    if (a->woods) field = (BfmFieldInput){0};
-    if (!step_woods_field(a, run, field, opened)) return 0;
+    if (a->woods || a->valley) field = (BfmFieldInput){0};
+    if (!step_woods_field(a, run, field, a->scene_tick++, opened)) return 0;
     if (event == BFM_NIGHTMARE_REVEAL_COMPLETE) {
         free(c);
         a->crossing = NULL;
@@ -706,6 +747,13 @@ int bfm_village_arrival_draw_woods_crossing(const BfmVillageArrival *a, uint32_t
         memcpy(pixels, c->page, sizeof c->page);
     bfm_nightmare_transition_draw(&c->wipe, pixels);
     return 1;
+}
+
+void bfm_village_arrival_return_from_shop(BfmVillageArrival *outside,
+                                         const BfmVillageArrival *street)
+{
+    if (outside && outside->lower && street && street->lower)
+        bfm_village_lower_restore_orbit(outside->lower, bfm_village_lower_orbit(street->lower));
 }
 
 void bfm_village_arrival_lower_register(BfmVillageArrival *a, BfmGameplayRun *run)
@@ -833,6 +881,8 @@ static int step_field(BfmVillageArrival *a, BfmGameplayRun *run,
             } else {
                 a->lower = bfm_village_lower_open(a->disc, a->entry, a->motion, a->tiles);
                 if (!a->lower) return 0;
+                bfm_village_lower_restore_orbit(a->lower,
+                                      bfm_village_camera_street_orbit(&a->camera, &a->turn));
                 bfm_village_lower_register_actors(a->lower, run);
             }
         }
@@ -905,24 +955,23 @@ static int step_field(BfmVillageArrival *a, BfmGameplayRun *run,
         }
         return 1;
     }
-    if (a->box) {
-        if (!step_box_field(a->box, run, field, actor_tick, opened)) return 0;
-        const BfmVillageMotion *motion = bfm_woods_box_visit_departure(a->box);
-        if (!a->transfer_tick && motion) {
-            const uint8_t *door = bfm_village_motion_transfer(motion);
-            return door && u32le(door) == 0x00033025 && begin_woods_crossing(a);
-        }
-        return 1;
-    }
-    if (a->woods) {
-        if (!bfm_southern_woods_step_field_at(a->woods, run, field, actor_tick, opened)) return 0;
-        const BfmVillageMotion *motion = bfm_southern_woods_departure(a->woods);
+    if (a->valley || a->box || a->woods) {
+        if (!step_woods_field(a, run, field, actor_tick, opened)) return 0;
+        const BfmVillageMotion *motion = woods_departure(a);
         if (!a->transfer_tick && motion) {
             const uint8_t *door = bfm_village_motion_transfer(motion);
             if (!door) return 0;
-            if (u32le(door) == 0x00013026) return begin_woods_crossing(a);
-            a->transfer_route = UPPER_FROM_WOODS;
-            a->transfer_tick = 1;
+            switch (u32le(door)) {
+            case 0x00013025: case 0x00033025: case 0x00013026: case 0x302b:
+                return begin_woods_crossing(a);
+            case 0x00021011:
+                if (!a->woods) return 0;
+                a->transfer_route = UPPER_FROM_WOODS;
+                a->transfer_tick = 1;
+                break;
+            default:
+                return 0;
+            }
         }
         return 1;
     }
@@ -996,10 +1045,15 @@ static int step_field(BfmVillageArrival *a, BfmGameplayRun *run,
         bfm_village_clock_step(a->record, 0);
     bfm_village_cable_step(a->cable, p->movement, p->movement <= 81, p->root.xyz, run);
     bfm_village_impact_step(a->impact, p->events & BFM_VILLAGE_HIT, run);
-    if (a->transfer_route == UPPER_FROM_WOODS)
-        bfm_village_camera_lower(&a->camera, p->root.xyz, 0);
-    else
+    if (a->cable_camera) {
         bfm_village_camera_step(&a->camera, p->root.xyz, p->events & BFM_VILLAGE_CAMERA);
+        if (p->controlled && a->camera.following && a->camera.yaw == a->turn.goal)
+            a->cable_camera = 0;
+    } else {
+        if (p->controlled && !a->transfer_tick && !a->talk_camera.phase)
+            bfm_village_camera_turn(&a->camera, &a->turn, field.camera_turn);
+        bfm_village_camera_lower(&a->camera, p->root.xyz, 0);
+    }
     if (bfm_village_residents_talking(a->residents)) {
         int returning = bfm_village_residents_camera_returning(a->residents);
         if (!opened || !bfm_village_residents_step_talk(a->residents, a->record, a->age, opened))
@@ -1037,7 +1091,7 @@ int bfm_village_arrival_step_field(BfmVillageArrival *a, BfmGameplayRun *run,
     /* The upper actor starts on the update after admission and stops when
      * its outgoing field freezes. Musashi updates before the rotor when
      * both actors use the shared random stream in the same field. */
-    int advance_upper = !a->lower && !a->woods && !a->bank && !a->box && !a->maze && a->motion &&
+    int advance_upper = !a->lower && !a->woods && !a->bank && !a->box && !a->valley && !a->maze && a->motion &&
         (!a->transfer_tick || a->transfer_tick >= bfm_village_arrival_reveal_tick(a));
     int result = step_field(a, run, field, opened);
     if (result && advance_upper) {
@@ -1062,8 +1116,11 @@ void bfm_village_arrival_woods_score_applied(BfmVillageArrival *a, unsigned sele
 
 unsigned bfm_village_arrival_woods_score_selector(const BfmVillageArrival *a)
 {
-    /* Both fields initialize the same ordinary score, including a return to
-     * the working Memory Box. The room owner retains an already playing cue. */
+    if (a && a->valley) {
+        unsigned story = u32le(a->record->progress + 8);
+        return story >= 150 && story < 200 ? 0x21u : 0x18u;
+    }
+    /* The Cleft and Memory Box share the ordinary mountain score. */
     if (a && a->box) return bfm_woods_box_visit_score(a->box);
     return a && a->woods ? 0x18u : 0;
 }
@@ -1113,6 +1170,7 @@ unsigned bfm_village_arrival_take_box_sound(BfmVillageArrival *a)
 
 size_t bfm_village_arrival_take_woods_sounds(BfmVillageArrival *a, unsigned *out, size_t capacity)
 {
+    if (a && a->valley) return bfm_hells_valley_take_sounds(a->valley, out, capacity);
     if (a && a->maze && out && capacity) {
         size_t count = 0;
         while (count < capacity && (out[count] = bfm_forest_maze_take_sound(a->maze)) != 0) ++count;
@@ -1135,12 +1193,14 @@ int bfm_village_arrival_take_hud(BfmVillageArrival *a)
 
 int bfm_village_arrival_rest_hud(const BfmVillageArrival *a, BfmForestHud *hud)
 {
+    if (a && a->valley) return bfm_hells_valley_hud(a->valley,hud);
     if (a && a->box) return bfm_woods_box_visit_rest_hud(a->box, hud);
     return bfm_village_lower_rest_hud(a ? a->lower : NULL, hud);
 }
 
 int bfm_village_arrival_detector(const BfmVillageArrival *a)
 {
+    if (a->valley) return bfm_hells_valley_detector(a->valley);
     return bfm_southern_woods_detector(a->woods);
 }
 
@@ -1199,9 +1259,14 @@ static void draw_actors(void *context, int depth)
     }
 }
 
-int bfm_village_arrival_draw(BfmVillageArrival *a, const uint8_t flags[64],
-                             const BfmForestMessageFrame *window, uint32_t pixels[240][320])
+int bfm_village_arrival_draw_page(BfmVillageArrival *a, const uint8_t flags[64],
+                                  const BfmForestMessageFrame *window, unsigned draw_page,
+                                  uint32_t pixels[240][320])
 {
+    if (a->valley) {
+        if (!bfm_hells_valley_draw(a->valley, flags, pixels)) return 0;
+        return !window || bfm_hells_valley_draw_notice(a->valley, window, pixels);
+    }
     if (a->box) return bfm_woods_box_visit_draw(a->box, flags, window, pixels);
     if (a->maze) return bfm_forest_maze_draw(a->maze,flags,window,pixels);
     if (a->bank) {
@@ -1211,7 +1276,7 @@ int bfm_village_arrival_draw(BfmVillageArrival *a, const uint8_t flags[64],
         return 1;
     }
     if (a->woods) return bfm_southern_woods_draw(a->woods, flags, window, pixels);
-    if (a->lower) return bfm_village_lower_draw(a->lower, a->scene_tick, flags, window, pixels);
+    if (a->lower) return bfm_village_lower_draw(a->lower, a->scene_tick, flags, window, draw_page, pixels);
     const BfmVillagePlayer *p = bfm_village_motion_player(a->motion);
     BfmBedroomPose displayed = p->pose;
     bfm_village_leno_delivery_pose(a->delivery, &displayed);
@@ -1262,4 +1327,10 @@ int bfm_village_arrival_draw(BfmVillageArrival *a, const uint8_t flags[64],
         bfm_bedroom_message_art_draw_side(a->message_art, window, point[0], 0, pixels);
     }
     return 1;
+}
+
+int bfm_village_arrival_draw(BfmVillageArrival *a, const uint8_t flags[64],
+                             const BfmForestMessageFrame *window, uint32_t pixels[240][320])
+{
+    return bfm_village_arrival_draw_page(a, flags, window, 0, pixels);
 }

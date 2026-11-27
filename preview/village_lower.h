@@ -3,6 +3,7 @@
 #define BFM_VILLAGE_LOWER_H
 #include "forest_hud.h"
 #include "village_arrival.h"
+#include "village_camera.h"
 typedef struct BfmVillageLower BfmVillageLower;
 BfmVillageLower *bfm_village_lower_open(const MusashiDiscMedia *disc, BfmBedroomEntry *entry,
                                        const BfmVillageMotion *departed, uint16_t tiles[512][1024]);
@@ -15,6 +16,8 @@ const uint8_t *bfm_village_lower_inn_transfer(const BfmVillageLower *lower);
 const uint8_t *bfm_village_lower_castle_transfer(const BfmVillageLower *lower);
 const uint8_t *bfm_village_lower_shop_transfer(const BfmVillageLower *lower);
 const BfmVillageMotion *bfm_village_lower_departure(const BfmVillageLower *lower);
+BfmVillageStreetOrbit bfm_village_lower_orbit(const BfmVillageLower *lower);
+void bfm_village_lower_restore_orbit(BfmVillageLower *lower, BfmVillageStreetOrbit orbit);
 void bfm_village_lower_free(BfmVillageLower *lower);
 void bfm_village_lower_begin_hotelo_reveal(BfmVillageLower *lower);
 int bfm_village_lower_rest_hud(const BfmVillageLower *lower, BfmForestHud *hud);
@@ -30,5 +33,5 @@ int bfm_village_lower_step_field(BfmVillageLower *lower, BfmFieldInput field,
 unsigned bfm_village_lower_take_score_command(BfmVillageLower *lower);
 void bfm_village_lower_close(BfmVillageLower *lower, unsigned answer);
 int bfm_village_lower_draw(BfmVillageLower *lower, unsigned tick, const uint8_t flags[64],
-                          const BfmForestMessageFrame *window, uint32_t pixels[240][320]);
+                          const BfmForestMessageFrame *window, unsigned draw_page, uint32_t pixels[240][320]);
 #endif

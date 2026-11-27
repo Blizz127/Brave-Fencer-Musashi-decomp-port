@@ -41,10 +41,11 @@ static void make_rim(int radius, int16_t rim[RIM][2])
     }
 }
 
-BfmWoodsResidentGlowArt *bfm_woods_resident_glow_art_load(const uint8_t *scene, size_t size)
+BfmWoodsResidentGlowArt *bfm_bincho_glow_art_load(const uint8_t *scene, size_t size,
+    uint32_t profile_address, uint32_t joints_address)
 {
-    const uint8_t *resource = mounted(scene, size, UINT32_C(0x8018b24c), 8);
-    const uint8_t *joints = mounted(scene, size, UINT32_C(0x801d5ffc), PARTS * 12);
+    const uint8_t *resource = mounted(scene, size, profile_address, 8);
+    const uint8_t *joints = mounted(scene, size, joints_address, PARTS * 12);
     if (!resource || !joints || size > BFM_FIELD_SCENE_CAPACITY) return NULL;
     BfmWoodsResidentGlowArt *art = calloc(1, sizeof *art);
     if (!art) return NULL;
@@ -64,6 +65,11 @@ BfmWoodsResidentGlowArt *bfm_woods_resident_glow_art_load(const uint8_t *scene, 
 fail:
     bfm_woods_resident_glow_art_free(art);
     return NULL;
+}
+
+BfmWoodsResidentGlowArt *bfm_woods_resident_glow_art_load(const uint8_t *scene, size_t size)
+{
+    return bfm_bincho_glow_art_load(scene, size, UINT32_C(0x8018b24c), UINT32_C(0x801d5ffc));
 }
 
 void bfm_woods_resident_glow_art_free(BfmWoodsResidentGlowArt *art)

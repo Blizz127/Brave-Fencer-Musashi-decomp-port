@@ -159,7 +159,8 @@ static int print_update(BfmForestMessage *m)
             if (layout == 0xa2 || layout == 0xa6 || layout == 0xc2 ||
                 layout == 0x4e || layout == 10 || layout == 14)
                 style = layout & 7u;
-            if (!set_style(m, style) || (arg[1] > 4 && !(layout == 0x0a && arg[1] == 9)) ||
+            int resident = layout == 0x0a && arg[1] >= 9 && arg[1] <= 13;
+            if (!set_style(m, style) || (arg[1] > 4 && !resident) ||
                 (layout == 1 ? arg[1] > 1 : !arg[1])) return 0;
             f->text_columns = 36 - 8 * ((layout >> 5) & 3u);
             /* Rectangular notices and signs have no portrait. */

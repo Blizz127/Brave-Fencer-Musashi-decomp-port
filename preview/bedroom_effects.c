@@ -9,7 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { SPU_RATE = 44100, OUTPUT_RATE = 37800, VOICES = 24, MAX_LAYERS = 3 };
+enum { SPU_RATE = 44100, OUTPUT_RATE = 37800, VOICES = 24, MAX_LAYERS = 4 };
 enum { SEQUENCE_FIELDS = 480, RESCUE_BP_STRIKE = 2822, RESCUE_BP_ARPEGGIO = 3168 };
 enum {
     SHRINE_HIT_ACCEPTED = 0x5eb, SHRINE_RESTORED = 0x5ec,
@@ -173,23 +173,29 @@ static int instrument_open(const Sources *s, unsigned bank, unsigned instrument,
     return 1;
 }
 
-/* Type 8 holds the starting key and measures both goals relative to it.
- * Type 0 names the two absolute keys, with no initial hold. */
+/* Types 7 and 8 measure both goals from the starting key. Only type 8
+ * has an initial hold. Type 0 supplies absolute target keys. */
 static int pitch_slide(Layer *l)
 {
-    int relative = half(l->control) == 8;
-    const uint8_t *points = l->control + (relative ? 4 : 2);
+    unsigned type = half(l->control);
+    const uint8_t *points = l->control + (type == 8 ? 4 : 2);
     l->slide = 1;
-    l->slide_hold = relative ? half(l->control+2) : 0;
+    l->slide_hold = type == 8 ? half(l->control+2) : 0;
     l->slide_step[0] = half(points);
     l->slide_step[1] = half(points+6);
     for (unsigned i=0; i<2; ++i) {
         unsigned goal = half(points+2+2*i);
-        l->slide_goal[i] = relative ? l->key + (int16_t)goal : (int)goal;
+        l->slide_goal[i] = type == 0 ? (int)goal : l->key + (int16_t)goal;
         if (l->slide_goal[i] < 0 || l->slide_goal[i] >= 127*256) return 0;
     }
     l->gate = half(points+8);
     return 1;
+}
+
+/* Field counts in resident note sequences use the NTSC sound service. */
+static unsigned field_sample(unsigned field)
+{
+    return (unsigned)((uint64_t)field*SPU_RATE*1001u/60000u);
 }
 
 static int layer_open(const Sources *s, const uint8_t d[20], Layer *l, int sustained)
@@ -203,7 +209,7 @@ static int layer_open(const Sources *s, const uint8_t d[20], Layer *l, int susta
         uint32_t command = word(d+16);
         if (!read_data(s, command, l->control, 4)) return 0;
         unsigned control = half(l->control);
-        if (control == 0 || control == 8) {
+        if (control == 0 || control == 7 || control == 8) {
             if (!read_data(s, command, l->control, control == 8 ? 14 : 12) || !pitch_slide(l))
                 return 0;
         } else if (control == 1) {
@@ -214,6 +220,14 @@ static int layer_open(const Sources *s, const uint8_t d[20], Layer *l, int susta
             l->modulated = l->key != (int)half(l->control+4);
             l->gate = half(l->control+14);
             if (!l->gate && l->sample.loop_start < l->sample.frames) return 0;
+        } else if (control == 10) {
+            /* A direct tone can carry the same two-stage bend and release
+             * as a sequence note. Its gate belongs to the tone itself. */
+            if (!read_data(s, command, l->control, sizeof l->control) || !half(l->control+16))
+                return 0;
+            l->sequence_base = l->key;
+            l->modulated = 1;
+            l->gate_samples = field_sample(half(l->control+16));
         } else if (control == 2) {
             /* A fixed-pitch gate is just two halfwords, independent of the
              * adjacent controls in the resident effect table. */
@@ -292,12 +306,6 @@ static void sound_field(const uint8_t table[256], Layer *l)
         if (l->key == c[7]*256) l->modulated = 2;
     } else l->key = approach(l->key,c[11]*256,(int)half(c+8));
     l->pitch = pitch(table,l);
-}
-
-/* Field counts in resident note sequences use the NTSC sound service. */
-static unsigned field_sample(unsigned field)
-{
-    return (unsigned)((uint64_t)field*SPU_RATE*1001u/60000u);
 }
 
 static int next_sample(const uint8_t table[256], Layer *l)
@@ -392,19 +400,25 @@ static int prepare(const Sources *s, unsigned command, Clip *clip)
         if (count == MAX_LAYERS || !read_data(s,address,d,sizeof d)) goto done;
         if (word(d+12)) {
             if ((command != BFM_WOODS_GUARD_SOUND && command != BFM_WOODS_TERRAIN_HIT_FIRST &&
-                 command != SHRINE_HIT_ACCEPTED && command != BFM_WOODS_CRYSTAL_HIT_SOUND) ||
-                count || half(d+14)) goto done;
+                 command != SHRINE_HIT_ACCEPTED && command != BFM_WOODS_CRYSTAL_HIT_SOUND &&
+                 command != BFM_VALLEY_HINGE_IMPACT_SOUND) || half(d+14)) goto done;
             /* This is the same-command protection interval, not a delay
              * before the blow sounds or a key-off for the instrument. */
-            clip->retrigger_frames = ((uint64_t)half(d+12)*OUTPUT_RATE*1001u+59999u)/60000u;
+            size_t guard = ((uint64_t)half(d+12)*OUTPUT_RATE*1001u+59999u)/60000u;
+            /* All three voices of the hinged rock share one protection interval. */
+            if (count && (command != BFM_VALLEY_HINGE_IMPACT_SOUND ||
+                          guard != clip->retrigger_frames)) goto done;
+            clip->retrigger_frames = guard;
         }
         int rings = command == BFM_EARTH_SCROLL_RINGS_SOUND;
         if (!layer_open(s,d,&layers[count],rings)) goto done;
         layers[count].ntsc_fields = d[8] == 32 || (d[8] & 0x80) ||
+            command == BFM_VALLEY_GATE_SLIDE_SOUND || half(layers[count].control) == 7 ||
             command == BFM_WOODS_CRYSTAL_BREAK_SOUND || command == BFM_WOODS_RESCUE_DEPART_SOUND ||
             command == BFM_WOODS_RESCUE_VANISH_SOUND ||
             (s->group == 4 && command == BFM_WOODS_FUSION_FOLLOWUP_SOUND);
-        if (command == BFM_WOODS_FULL_CHARGE_SOUND || layers[count].ntsc_fields)
+        if (command == BFM_WOODS_FULL_CHARGE_SOUND || command == BFM_VALLEY_EARTH_RING_SOUND ||
+            layers[count].ntsc_fields)
             layers[count].delay = field_sample(half(d+2));
         ++count;
         if (!d[11]) break;
@@ -672,6 +686,17 @@ BfmBedroomEffects *bfm_woods_box_sound_load(const MusashiDiscMedia *disc)
     return effects;
 }
 
+static int prepare_equipment_effect(Sources *s, const ForestPlayerArchive *player,
+                                    uint32_t resource, unsigned command, Clip *clip)
+{
+    uint8_t bank[8];
+    if (!forest_player_archive_read(player, resource, bank, sizeof bank)) return 0;
+    bfm_palace_sound_bank_free(s->scene);
+    s->scene = bfm_archive_sound_bank_load(s->disc, "MAIN.CD", word(bank));
+    s->key = word(bank+4);
+    return s->scene && prepare(s, command, clip);
+}
+
 static int prepare_bank_field(Sources *s, const ForestPlayerArchive *player, BfmBedroomEffects *effects)
 {
     /* The bank's defense sound uses the active field VAB. The hurt and
@@ -680,13 +705,39 @@ static int prepare_bank_field(Sources *s, const ForestPlayerArchive *player, Bfm
     if (!s->common || !prepare(s, BFM_WOODS_GUARD_SOUND, &effects->clips[0]) ||
         !prepare(s, BFM_WOODS_HURT_SOUND, &effects->clips[1]) ||
         !prepare(s, BFM_WOODS_SHRINK_SOUND, &effects->clips[2])) return 0;
-    uint8_t skill[8];
-    if (!forest_player_archive_read(player, UINT32_C(0x800d3794), skill, sizeof skill)) return 0;
-    bfm_palace_sound_bank_free(s->scene);
-    s->scene = bfm_archive_sound_bank_load(s->disc, "MAIN.CD", word(skill));
-    s->key = word(skill+4);
     effects->replace_matching = 1;
-    return s->scene && prepare(s, BFM_WOODS_HOP_SOUND, &effects->clips[3]);
+    return prepare_equipment_effect(s, player, UINT32_C(0x800d3794),
+                                    BFM_WOODS_HOP_SOUND, &effects->clips[3]);
+}
+
+static int prepare_valley_field(Sources *s, const ForestPlayerArchive *player, BfmBedroomEffects *effects)
+{
+    /* Keep the canyon bank mounted through the four-layer gate leaf, the
+     * crystal and the captive's departure. The blade and BP sequences use
+     * the common bank. Only the two Earth sounds switch to equipment. */
+    static const unsigned field_sounds[] = {
+        BFM_VALLEY_GATE_SLIDE_SOUND, BFM_VALLEY_SOLDIER_LAND_SOUND,
+        BFM_WOODS_CRYSTAL_HIT_SOUND, BFM_WOODS_CRYSTAL_BREAK_SOUND,
+        BFM_VALLEY_KNITTER_DEPART_SOUND, BFM_VALLEY_KNITTER_VANISH_SOUND,
+        BFM_VALLEY_AWARD_RAISE_SOUND, BFM_WOODS_HURT_SOUND
+    };
+    size_t slot = 5;
+    _Static_assert(5 + sizeof field_sounds / sizeof *field_sounds +
+                   sizeof woods_swings / sizeof *woods_swings + 2 <= CLEFT_CLIPS,
+                   "Valley effects must fit the prepared bank");
+    s->common = bfm_archive_sound_bank_load(s->disc, "MAIN.CD", 2);
+    if (!s->common || !prepare(s, BFM_VALLEY_BOULDER_START_SOUND, &effects->clips[0]) ||
+        !prepare(s, BFM_VALLEY_BOULDER_IMPACT_SOUND, &effects->clips[1]) ||
+        !prepare(s, BFM_VALLEY_HINGE_IMPACT_SOUND, &effects->clips[4])) return 0;
+    for (size_t i = 0; i < sizeof field_sounds / sizeof *field_sounds; ++i)
+        if (!prepare(s, field_sounds[i], &effects->clips[slot++])) return 0;
+    for (size_t i = 0; i < sizeof woods_swings / sizeof *woods_swings; ++i)
+        if (!prepare(s, woods_swings[i], &effects->clips[slot++])) return 0;
+    return prepare_sequence(s, RESCUE_BP_STRIKE, &effects->clips[slot]) &&
+           prepare_sequence(s, RESCUE_BP_ARPEGGIO, &effects->clips[slot+1]) &&
+           prepare_equipment_effect(s, player, UINT32_C(0x800d3854),
+                                    BFM_VALLEY_EARTH_LANDING_SOUND, &effects->clips[2]) &&
+           prepare(s, BFM_VALLEY_EARTH_RING_SOUND, &effects->clips[3]);
 }
 
 static BfmBedroomEffects *forest_field_effects(const MusashiDiscMedia *disc, unsigned room,
@@ -709,6 +760,8 @@ static BfmBedroomEffects *forest_field_effects(const MusashiDiscMedia *disc, uns
         int valid;
         if (room == 0x3014) {
             valid = prepare_bank_field(&s, &player, effects);
+        } else if (room == 0x302b) {
+            valid = prepare_valley_field(&s, &player, effects);
         } else {
             valid = prepare(&s, BFM_WOODS_LENO_BARK_SOUND, &effects->clips[0]) &&
                     prepare(&s, BFM_MAZE_GUIDE_SNIFF_SOUND, &effects->clips[1]) &&
@@ -733,6 +786,11 @@ BfmBedroomEffects *bfm_forest_bank_effects_load(const MusashiDiscMedia *disc)
 BfmBedroomEffects *bfm_maze_guide_effects_load(const MusashiDiscMedia *disc)
 {
     return forest_field_effects(disc, 0x301b, 7);
+}
+
+BfmBedroomEffects *bfm_valley_effects_load(const MusashiDiscMedia *disc)
+{
+    return forest_field_effects(disc, 0x302b, 31);
 }
 
 BfmBedroomEffects *bfm_nightmare_sound_load(const MusashiDiscMedia *disc)

@@ -29,6 +29,9 @@ int bfm_village_arrival_prepare_recovery(const BfmVillageArrival *arrival, const
 int bfm_village_arrival_restore_woods_box(BfmVillageArrival *arrival, const BfmBedroomEntry *restored);
 const BfmVillagePlayer *bfm_village_arrival_player(const BfmVillageArrival *arrival);
 int bfm_village_arrival_step(BfmVillageArrival *arrival, BfmGameplayRun *run, int x, int y);
+/* An ordinary shop exit inherits the orbit left on the street before entering. */
+void bfm_village_arrival_return_from_shop(BfmVillageArrival *outside,
+                                         const BfmVillageArrival *street);
 /* Outdoor actors update during the inn exit fade, before player control. */
 void bfm_village_arrival_lower_register(BfmVillageArrival *a, BfmGameplayRun *run);
 void bfm_village_arrival_lower_ambient(BfmVillageArrival *a, BfmGameplayRun *run);
@@ -75,4 +78,7 @@ int bfm_village_arrival_continue(BfmVillageArrival *arrival);
 BfmForestMessage *bfm_village_arrival_speech(const BfmVillageArrival *arrival);
 int bfm_village_arrival_draw(BfmVillageArrival *arrival, const uint8_t flags[64],
                              const BfmForestMessageFrame *window, uint32_t pixels[240][320]);
+int bfm_village_arrival_draw_page(BfmVillageArrival *arrival, const uint8_t flags[64],
+                                  const BfmForestMessageFrame *window, unsigned draw_page,
+                                  uint32_t pixels[240][320]);
 #endif

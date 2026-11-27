@@ -57,6 +57,15 @@ int bfm_woods_lardwick_busy(const BfmWoodsLardwickField *field);
  * actor still owns one cleanup update after the count is published. */
 int bfm_woods_lardwick_controls_locked(const BfmWoodsLardwickField *field);
 
+typedef enum {
+    BFM_BINCHO_REVEAL_INVALID, BFM_BINCHO_REVEAL_RUNNING,
+    BFM_BINCHO_REVEAL_SPAWN, BFM_BINCHO_REVEAL_APPROACH
+} BfmBinchoReveal;
+
+/* Run between a blade contact and the captive's own approach script. */
+BfmBinchoReveal bfm_bincho_reveal_step(BfmWoodsLardwickField *field, BfmGameplayRun *run,
+    const int32_t eye[3], BfmWoodsLardwickEvents *events);
+
 /* One eligible actor update following the strike. The field presentation owns
  * any returned window until its ordinary close callback. The camera
  * eye determines the radial orientation at birth and the Soldier facing at spawn.

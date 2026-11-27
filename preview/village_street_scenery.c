@@ -35,7 +35,7 @@ struct BfmVillageStreetScenery {
     MusashiForestPlayerMesh *roof, *bell;
     int16_t hanger[3];
     WeatherVane vane;
-    unsigned tick, progress;
+    unsigned tick, progress, draw_page;
     int ambient[3], daylight[3][3];
     StreetFace faces[TREE_LIMIT + ROOF_FACES + BELL_FACES];
     BfmForestRaster raster;
@@ -274,7 +274,7 @@ static void prepare_landmark(BfmVillageStreetScenery *scenery, const BfmBedroomV
     const MusashiForestPlayerPart *part =
         musashi_forest_player_mesh_part(bell ? scenery->bell : scenery->roof, 0);
     if (!part || (bell && scenery->progress >= 385 && scenery->progress < 470)) return;
-    int projected[ROOF_VERTICES][3];
+    int projected[ROOF_VERTICES][3], valid[ROOF_VERTICES];
     uint32_t colors[BELL_VERTICES];
     BfmForestTransform rotation;
     if (bell) {
@@ -302,7 +302,7 @@ static void prepare_landmark(BfmVillageStreetScenery *scenery, const BfmBedroomV
                 location[k] = (int16_t)value;
             }
         }
-        bfm_bedroom_project(view, location, projected[i]);
+        valid[i] = bfm_bedroom_project_packet(view, location, projected[i]);
     }
     for (unsigned i = 0; i < part->face_count; ++i) {
         const MusashiForestPlayerFace *f = part->faces + i;
@@ -313,8 +313,7 @@ static void prepare_landmark(BfmVillageStreetScenery *scenery, const BfmBedroomV
         for (k = 0; k < f->corners; ++k) {
             const int *p = projected[f->vertex[k]];
             int x = p[0] - 160, y = p[1] - 120;
-            /* Both roof and bell reject saturated projected corners. */
-            if (p[2] <= 0 || x <= -1024 || x >= 1023 || y <= -1024 || y >= 1023) break;
+            if (!valid[f->vertex[k]]) break;
             face.points[k] = (BfmForestRasterVertex){.x = x, .y = y,
                                   .u = f->u[k], .v = f->v[k],
                                   .rgb = bell ? colors[f->normal[k]] : UINT32_C(0x808080)};
@@ -332,11 +331,12 @@ static void prepare_landmark(BfmVillageStreetScenery *scenery, const BfmBedroomV
 
 int bfm_village_street_scenery_prepare(BfmVillageStreetScenery *scenery,
                                       const BfmBedroomView *view,
-                                      const uint16_t tiles[512][1024], uint32_t *pixels)
+                                      const uint16_t tiles[512][1024], uint32_t *pixels, unsigned draw_page)
 {
     if (!scenery || !view || !tiles || !pixels) return 0;
     scenery->raster = (BfmForestRaster){.tiles = tiles, .pixels = (uint32_t (*)[320])pixels,
                                         .top = 10, .bottom = 229};
+    scenery->draw_page = draw_page;
     scenery->next = scenery->visible = 0;
     prepare_landmark(scenery, view, 0);
     prepare_landmark(scenery, view, 1);
@@ -393,7 +393,7 @@ void bfm_village_street_scenery_draw_to(BfmVillageStreetScenery *scenery, int de
     while (scenery->next < scenery->visible && scenery->faces[scenery->next].depth >= depth) {
         const StreetFace *face = &scenery->faces[scenery->next++];
         if (face->with_offset)
-            bfm_forest_raster_offset_face(&scenery->raster, &face->material, face->points, 160, 120);
+            bfm_forest_raster_buffer_face(&scenery->raster, &face->material, face->points, scenery->draw_page);
         else
             bfm_forest_raster_face(&scenery->raster, &face->material, face->points);
     }

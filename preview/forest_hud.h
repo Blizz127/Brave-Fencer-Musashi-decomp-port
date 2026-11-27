@@ -18,6 +18,8 @@ BfmForestHud *bfm_steam_knight_hud_load(const MusashiDiscMedia *disc, const uint
 BfmForestHud *bfm_village_hud_load(const MusashiDiscMedia *disc, const uint8_t *scene,
                                   size_t bytes, const uint16_t tiles[512][1024]);
 void bfm_bedroom_hud_hide(BfmForestHud *hud);
+/* A newly mounted field starts with both panels at their offscreen positions. */
+void bfm_forest_hud_enter_hidden(BfmForestHud *hud);
 /* COMMAND leaves the status panel on screen, moving its charge meter offscreen. */
 void bfm_castle_hud_command(BfmForestHud *hud);
 void bfm_castle_hud_command_closed(BfmForestHud *hud);

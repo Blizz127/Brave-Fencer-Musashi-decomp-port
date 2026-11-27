@@ -151,6 +151,12 @@
       "file": "extracted/overlays/sc03/0028.pac0.bin",
       "base": 2148696408,
       "sha256": "aabefa6c93b0a3d15df0bdada079baa0c38c642254a1039b276475075d65b706"
+    },
+    "sc03_0031": {
+      "kind": "blob",
+      "file": "extracted/overlays/sc03/0031.pac0.bin",
+      "base": 2148696408,
+      "sha256": "2652dceec890acfa48032a86e2164b4df014d195654f0516ea314fa659bfc71f"
     }
   },
   "matches": [
@@ -8649,6 +8655,32 @@
       "origin": "Independently reconstructed from USA SC03 member 28. Waits out Skullpion's nonfatal hit recovery, restores the camera, clears the boss's core pointer and releases the core.",
       "source_sha256": "64710e6ca24270e580deece98ccbf518a5c28453af5c608c48c7198ff1ef5ff5",
       "span_sha256": "cb5c41d10cb14e74de4be4f1bbc8c0f494506cb77af7f33138fbea9a02d61bd4"
+    },
+    {
+      "name": "func_8013C9C4",
+      "region": "sc03_0031",
+      "vram": 2148780484,
+      "size": 80,
+      "source": "src/overlays/sc03_0031/8013c9c4.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA SC03 member 31 overlay. Starts a camera shake pattern and resets its step and delay.",
+      "source_sha256": "472a309936ef9788f7d96a6854d6de60aa703bb4246925fdee91719c82a639d8",
+      "span_sha256": "4b4548b3d5629c0c828f9572e3c209548c1982c9ba0237b8148ec9e8f77de592"
+    },
+    {
+      "name": "func_8017FB84",
+      "region": "sc03_0031",
+      "vram": 2149055364,
+      "size": 100,
+      "source": "src/overlays/sc03_0031/8017fb84.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03 member 31. Advances a hinged-stone impact puff and releases it when its mounted animation ends.",
+      "source_sha256": "aefb69f3be4014c7d9c1490b58877bc8fb330dd4e739d8575ae2db2697856016",
+      "span_sha256": "b603a7635b46769619bb67bd9628fb53a5489eee7b694b2ac4ad1a4f14e83368"
     }
   ]
 }

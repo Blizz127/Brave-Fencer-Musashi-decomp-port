@@ -72,7 +72,8 @@ BfmVillageGround *bfm_village_ground_open(const uint8_t *scene, size_t bytes, ui
         view.lower_village = 1;
     }
     if (room == UINT32_C(0x8018ea38) || room == UINT32_C(0x801910e4) ||
-        room == UINT32_C(0x801961e8) || room == UINT32_C(0x8018c890))
+        room == UINT32_C(0x801961e8) || room == UINT32_C(0x8018c890) ||
+        room == UINT32_C(0x80186620))
         view.passage_wall = 0x203;
     view.origin_x = read16(grid);
     view.origin_z = read16(grid + 2);

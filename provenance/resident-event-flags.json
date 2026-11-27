@@ -36,6 +36,28 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2"
+    },
+    {
+      "name": "func_8002953C",
+      "region": "main",
+      "vram": 2147652924,
+      "size": 16,
+      "source": "src/main/8002953c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "source_sha256": "9c10ec7beaade0139d6936ff05537cf2cf94f9a60504239a1f0966b9f97f3b62"
+    },
+    {
+      "name": "func_8002955C",
+      "region": "main",
+      "vram": 2147652956,
+      "size": 32,
+      "source": "src/main/8002955c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "source_sha256": "d2733bff75300f4d1de209dd23219e6e8abc77d9ffdbdfe81c6b643244b90e45"
     }
   ]
 }

@@ -92,7 +92,7 @@ static BfmPalaceBank *read_score_bank(const MusashiDiscMedia *disc, const char *
     } else {
         int sc03_single = !strcmp(archive, "SC03.CD") &&
                           (member == 4 || member == 9 || (member >= 37 && member <= 39) ||
-                           member == 50 || member == 67 || member == 72);
+                           member == 43 || member == 50 || member == 67 || member == 72);
         int single = member == 78 || sc03_single ||
                      (!strcmp(archive, "SC02.CD") && member == 25) ||
                      (!strcmp(archive, "SC06.CD") && member == 38);
@@ -158,7 +158,7 @@ BfmPalaceBank *bfm_archive_sound_bank_load(const MusashiDiscMedia *disc, const c
              * PAC2 headers and extended sample bodies. */
             int extended = type == 0x103 &&
                 ((!strcmp(archive, "MAIN.CD") && (member == 2 || member == 15 || member == 18 ||
-                                                  member == 19 || member == 20)) ||
+                                                  member == 19 || member == 20 || member == 43)) ||
                  (!strcmp(archive, "SC02.CD") && member == 2) ||
                  (!strcmp(archive, "SC03.CD") && member == 59));
             if ((type != 3 && !extended) || key != header_key)

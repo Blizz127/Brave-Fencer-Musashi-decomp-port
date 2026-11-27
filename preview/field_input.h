@@ -12,7 +12,7 @@ typedef struct {
     unsigned held_faces;
     unsigned pressed_directions; /* Fresh wire-order D-pad bits for shop lists. */
     int camera_pressed;
-    int select_pressed;
+    int select_pressed, start_pressed;
 } BfmFieldInput;
 
 #endif

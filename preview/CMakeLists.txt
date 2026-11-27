@@ -60,6 +60,24 @@ add_executable(musashi_native_boot
     forest_bank_hopper.c
     southern_woods.c
     woods_box_return.c
+    hells_valley.c
+    valley_defeat.c
+    valley_gate_door.c
+    valley_gate_people.c
+    valley_gate_team.c
+    valley_bincho.c
+    valley_knitter.c
+    hells_valley_boulders.c
+    valley_debris_art.c
+    valley_hinge_debris.c
+    valley_hinge.c
+    valley_rock_fall.c
+    valley_rock_support.c
+    valley_earth_cast.c
+    valley_quake_art.c
+    valley_rock_shake.c
+    valley_scroll_menu.c
+    hells_valley_view.c
     woods_box_visit.c
     woods_earth_shrine.c
     woods_twinpeak_player_blade.c

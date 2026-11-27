@@ -669,10 +669,7 @@ int bfm_bedroom_motion_upload_palette(const BfmBedroomMotion *motion, uint32_t d
 
 int bfm_bedroom_orb_palette(const BfmBedroomMotion *m, uint32_t table, unsigned orb, uint16_t tiles[512][1024])
 {
-    uint32_t address;
-    if (orb & 0x80) orb = 7;
-    return m && tiles && orb <= 7 && word(m, table + 4*orb, &address) &&
-           upload(m, address, 1, tiles);
+    return bfm_field_blade_palette(m, table, orb, tiles);
 }
 
 int bfm_field_blade_palette(const BfmBedroomMotion *motion, uint32_t normal_table, unsigned orb,
@@ -681,7 +678,9 @@ int bfm_field_blade_palette(const BfmBedroomMotion *motion, uint32_t normal_tabl
     /* The room owns seven ordinary entries. The special selection has its own resident palette. */
     if (orb & 0x80)
         return bfm_bedroom_motion_upload_palette(motion, UINT32_C(0x800d45d4), tiles);
-    return orb < 7 && bfm_bedroom_orb_palette(motion, normal_table, orb, tiles);
+    uint32_t address;
+    return motion && tiles && orb < 7 && word(motion, normal_table + 4*orb, &address) &&
+           upload(motion, address, 1, tiles);
 }
 
 int bfm_grillin_blade_palette(const BfmBedroomMotion *motion, unsigned orb, uint16_t tiles[512][1024])

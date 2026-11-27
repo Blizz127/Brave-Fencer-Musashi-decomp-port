@@ -104,7 +104,7 @@ static BfmForestHud *load_hud(const MusashiDiscMedia *disc, const uint8_t *scene
     BfmForestHud *hud = calloc(1, sizeof(*hud));
     if (!hud) return NULL;
     hud->tiles = tiles;
-    hud->inset = 55;
+    bfm_forest_hud_enter_hidden(hud);
     for (unsigned i = 0; i < 5; ++i) {
         const uint8_t *p = records + i*16;
         if (p[3] != 0x64 || !le16(p+12) || le16(p+12)>320 || !le16(p+14) || le16(p+14)>240)
@@ -151,6 +151,15 @@ void bfm_forest_hud_free(BfmForestHud *hud)
 {
     free(hud);
 }
+void bfm_forest_hud_enter_hidden(BfmForestHud *hud)
+{
+    if (!hud) return;
+    hud->inset = 55;
+    hud->remaining = 0;
+    hud->hiding = 0;
+    hud->detector_phase = hud->rim_boost = 0;
+}
+
 void bfm_forest_hud_show(BfmForestHud *hud)
 {
     if (hud && hud->inset == 55 && !hud->remaining) {

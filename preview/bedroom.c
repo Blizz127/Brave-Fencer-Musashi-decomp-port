@@ -119,7 +119,7 @@ struct BfmBedroom {
     uint32_t (*frozen_recovery)[320];
     BfmBedroomEffects *nightmare_effects, *box_effects;
     BfmBedroomEffects *effects, *knock, *shrink_sound, *bakery_effects;
-    BfmBedroomEffects *forest_bank_effects, *maze_guide_effects;
+    BfmBedroomEffects *forest_bank_effects, *maze_guide_effects, *valley_effects;
     uint32_t room_sound_group;
     BfmForestHud *hud;
     BfmForestStatus status;
@@ -278,6 +278,7 @@ void bfm_bedroom_free(BfmBedroom *room)
     bfm_bedroom_effects_free(room->knock);
     bfm_bedroom_effects_free(room->shrink_sound);
     bfm_bedroom_effects_free(room->forest_bank_effects);
+    bfm_bedroom_effects_free(room->valley_effects);
     bfm_bedroom_effects_free(room->maze_guide_effects);
     bfm_bedroom_effects_free(room->effects);
     free(room->books_background);
@@ -933,7 +934,9 @@ static int submit_village_frame(BfmBedroom *room)
         if (!bfm_village_arrival_draw_retry(room->village, room->hud, frame)) return 0;
     } else {
         const BfmForestMessageFrame *window = room->message ? bfm_forest_message_frame(room->message) : NULL;
-        if (!bfm_village_arrival_draw(room->village, room->story_flags, window, frame)) return 0;
+        unsigned draw_page = room->run->display_page ^ 1u;
+        if (!bfm_village_arrival_draw_page(room->village, room->story_flags, window, draw_page, frame))
+            return 0;
         bfm_forest_hud_draw(room->hud, &room->status, frame);
         bfm_village_arrival_submit_woods_crossing(room->village, frame,
                                                 room->frames[(room->presented + 1) % 3]);
@@ -949,6 +952,13 @@ static int queue_woods_sounds(BfmBedroom *room)
     unsigned commands[BFM_VILLAGE_WOODS_SOUNDS];
     size_t count = bfm_village_arrival_take_woods_sounds(room->village, commands, BFM_VILLAGE_WOODS_SOUNDS);
     if (!count) return 1;
+    if (room->music_field == 0x302b) {
+        if (!room->valley_effects) room->valley_effects = bfm_valley_effects_load(room->disc);
+        if (!room->valley_effects) return 0;
+        for (size_t i = 0; i < count; ++i)
+            queue_mounted_effect(room, room->valley_effects, BFM_ROOM_VALLEY_BANK, commands[i]);
+        return 1;
+    }
     if (room->music_field == 0x3014 || room->music_field == 0x301b) {
         for (size_t i = 0; i < count; ++i) {
             unsigned cue = commands[i];
@@ -1323,6 +1333,8 @@ static int mount_grillin_exterior(BfmBedroom *room, const uint8_t *door, Grillin
     }
     free(inn_tiles);
     if (!outside) return 0;
+    if (room->inn || room->bakery)
+        bfm_village_arrival_return_from_shop(outside, room->village);
     *out = (GrillinExterior){.village = outside, .hud = hud, .score = score};
     return 1;
 }
@@ -1407,8 +1419,8 @@ static int transfer_castle_field(BfmBedroom *room)
     return 1;
 }
 
-int bfm_bedroom_step_field(BfmBedroom *room, int confirm_edge, int reveal_edge,
-                           int direction, int held, int accept_edge, int back_edge, BfmFieldInput field)
+static int step_bedroom_field(BfmBedroom *room, int confirm_edge, int reveal_edge,
+                              int direction, int held, int accept_edge, int back_edge, BfmFieldInput field)
 {
     room->sound_count = 0;
     room->sounds_taken = 0;
@@ -1834,6 +1846,15 @@ BfmWoodsRetryPage bfm_bedroom_retry_destination(const BfmBedroom *room)
 int bfm_bedroom_prepare_woods_recovery(BfmBedroom *room, BfmBedroomEntry *out)
 {
     return room && bfm_village_arrival_prepare_recovery(room->village, room->run, out);
+}
+
+int bfm_bedroom_step_field(BfmBedroom *room, int confirm_edge, int reveal_edge,
+                           int direction, int held, int accept_edge, int back_edge, BfmFieldInput field)
+{
+    int result = step_bedroom_field(room, confirm_edge, reveal_edge, direction, held,
+                                    accept_edge, back_edge, field);
+    if (result) room->run->display_page ^= 1u;
+    return result;
 }
 
 int bfm_bedroom_step_axes(BfmBedroom *room, int confirm_edge, int reveal_edge,

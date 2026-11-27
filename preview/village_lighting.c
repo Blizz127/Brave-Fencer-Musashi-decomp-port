@@ -116,6 +116,13 @@ int bfm_woods_daylight_begin(BfmVillageDaylight *light, const uint8_t *scene, si
                           1, phase, tiles);
 }
 
+int bfm_hells_valley_daylight_begin(BfmVillageDaylight *light, const uint8_t *scene, size_t bytes,
+                                    unsigned phase, uint16_t tiles[512][1024])
+{
+    return begin_daylight(light, scene, bytes, UINT32_C(0x80186620), UINT32_C(0x80182ba8),
+                          1, phase, tiles);
+}
+
 int bfm_forest_bank_daylight_begin(BfmVillageDaylight *light, const uint8_t *scene, size_t bytes,
                                    unsigned phase, uint16_t tiles[512][1024])
 {

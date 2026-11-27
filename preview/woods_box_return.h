@@ -10,6 +10,7 @@
  * transfer; the receiving field selects its own entrance by index. */
 typedef struct {
     const uint8_t *passage_actor, *passage;
+    const uint8_t *valley_actor, *valley_passage;
     const uint8_t *box_actor, *box_destination, *box_script;
     unsigned room;
 } BfmWoodsBoxRoute;
@@ -17,7 +18,9 @@ typedef struct {
 int bfm_woods_box_route_open(BfmWoodsBoxRoute *route, unsigned room,
                             const uint8_t *scene, size_t bytes);
 
-/* Read the mounted contact for the Cleft-to-mountain path or its return.
+const uint8_t *bfm_woods_passage_actor(const BfmWoodsBoxRoute *route, const uint8_t *door);
+
+/* Read the mounted contact for the Cleft mountain and valley paths.
  * Call after the ordinary player sweep, before consuming its wall contact. */
 const uint8_t *bfm_woods_box_passage(const BfmWoodsBoxRoute *route,
                                     const int16_t foot[3], unsigned wall_contact);

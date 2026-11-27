@@ -19,7 +19,7 @@ int bfm_village_street_vane_add(const BfmVillageStreetScenery *scenery, BfmBedro
                                const BfmBedroomView *view);
 int bfm_village_street_scenery_prepare(BfmVillageStreetScenery *scenery,
                                       const BfmBedroomView *view,
-                                      const uint16_t tiles[512][1024], uint32_t *pixels);
+                                      const uint16_t tiles[512][1024], uint32_t *pixels, unsigned draw_page);
 int bfm_village_street_scenery_next_depth(const BfmVillageStreetScenery *scenery);
 void bfm_village_street_scenery_draw_to(BfmVillageStreetScenery *scenery, int depth);
 

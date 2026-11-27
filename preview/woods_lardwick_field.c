@@ -181,9 +181,10 @@ static uint32_t operand(const BfmWoodsLardwickField *field, unsigned row)
     return u32le(field->script + row * 8 + 4);
 }
 
-static int reveal(BfmWoodsLardwickField *field, BfmGameplayRun *run,
-                  const int32_t eye[3], BfmWoodsLardwickEvents *events)
+BfmBinchoReveal bfm_bincho_reveal_step(BfmWoodsLardwickField *field, BfmGameplayRun *run,
+    const int32_t eye[3], BfmWoodsLardwickEvents *events)
 {
+    if (!field || !run || !eye || !events) return BFM_BINCHO_REVEAL_INVALID;
     switch (field->phase) {
     case GLOW_BIRTH: {
         const int32_t anchor[3] = {field->root.xyz[0], field->root.xyz[1] - 56, field->root.xyz[2]};
@@ -224,18 +225,19 @@ static int reveal(BfmWoodsLardwickField *field, BfmGameplayRun *run,
         field->soldier_yaw = (bfm_village_motion_view_yaw(center, eye) + 2048) & 4095u;
         field->soldier_visible = 1;
         field->phase = UNCOVER;
-        break;
+        return BFM_BINCHO_REVEAL_SPAWN;
     }
     case UNCOVER:
         if (field->glow_scale >= 192) field->glow_scale -= 192;
         else {
             field->glow_scale = 0;
             field->phase = APPROACH;
+            return BFM_BINCHO_REVEAL_APPROACH;
         }
         break;
-    default: return 0;
+    default: return BFM_BINCHO_REVEAL_INVALID;
     }
-    return 1;
+    return BFM_BINCHO_REVEAL_RUNNING;
 }
 
 static int conversation(BfmWoodsLardwickField *field, int player_queue_idle,
@@ -304,7 +306,7 @@ int bfm_woods_lardwick_release_step(BfmWoodsLardwickField *field, BfmGameplayRun
     if (field->soldier_visible) ++field->soldier_pose_age;
     if (field->phase == DEPARTURE || field->phase == DISAPPEARING)
         bfm_woods_lardwick_motes_step(&field->motes, run, field->root.xyz, field->soldier_pose_age);
-    if (field->phase <= UNCOVER) return reveal(field, run, camera_eye, events);
+    if (field->phase <= UNCOVER) return bfm_bincho_reveal_step(field, run, camera_eye, events) != BFM_BINCHO_REVEAL_INVALID;
     if (field->phase <= DISAPPEARING) {
         if (!conversation(field, player_queue_idle, opened, events)) return 0;
         if (field->phase != AWARD) return 1;

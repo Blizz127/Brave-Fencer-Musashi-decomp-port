@@ -36,6 +36,12 @@ BfmBedroomEffects *bfm_nightmare_sound_load(const MusashiDiscMedia *disc);
 enum { BFM_MAZE_GUIDE_SNIFF_SOUND = 0x527, BFM_MAZE_GUIDE_ABSENT_SOUND = 0xc4d };
 BfmBedroomEffects *bfm_forest_bank_effects_load(const MusashiDiscMedia *disc);
 BfmBedroomEffects *bfm_maze_guide_effects_load(const MusashiDiscMedia *disc);
+enum { BFM_VALLEY_EARTH_LANDING_SOUND = 0x47d, BFM_VALLEY_EARTH_RING_SOUND = 0x47e,
+       BFM_VALLEY_BOULDER_START_SOUND = 0x5c2, BFM_VALLEY_BOULDER_IMPACT_SOUND = 0x5c3,
+       BFM_VALLEY_HINGE_IMPACT_SOUND = 0x651, BFM_VALLEY_GATE_SLIDE_SOUND = 0x5c4,
+       BFM_VALLEY_SOLDIER_LAND_SOUND = 0x63f, BFM_VALLEY_KNITTER_DEPART_SOUND = 0xac3,
+       BFM_VALLEY_KNITTER_VANISH_SOUND = 0xac4, BFM_VALLEY_AWARD_RAISE_SOUND = 0x843 };
+BfmBedroomEffects *bfm_valley_effects_load(const MusashiDiscMedia *disc);
 BfmBedroomEffects *bfm_woods_shrink_sound_load(const MusashiDiscMedia *disc);
 enum { BFM_WOODS_BOX_OPEN_SOUND = 1471, BFM_WOODS_BOX_CLOSE_SOUND = 2184,
        BFM_WOODS_BOX_ACCEPT_SOUND = 0xb3b, BFM_ROOTRICK_IMPACT_SOUND = 0x5ca,

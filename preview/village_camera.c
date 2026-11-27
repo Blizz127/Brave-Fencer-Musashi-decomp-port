@@ -110,6 +110,24 @@ void bfm_village_camera_lower(BfmVillageCamera *camera, const int16_t xyz[3],
     orbit(camera, 568);
 }
 
+BfmVillageStreetOrbit bfm_village_camera_street_orbit(const BfmVillageCamera *camera,
+                                                       const BfmVillageCameraTurn *turn)
+{
+    return (BfmVillageStreetOrbit){.focal=camera->focal, .radius=camera->radius,
+                                   .yaw=camera->yaw, .turn=*turn};
+}
+
+void bfm_village_camera_restore_street(BfmVillageCamera *camera, BfmVillageCameraTurn *turn,
+                                       BfmVillageStreetOrbit orbit, const int16_t xyz[3])
+{
+    camera->focal = orbit.focal;
+    camera->radius = orbit.radius;
+    camera->yaw = orbit.yaw;
+    *turn = orbit.turn;
+    camera->target[1] = xyz[1];
+    bfm_village_camera_lower(camera, xyz, 0);
+}
+
 /* Both farm entrances look diagonally across the bank from the same bearing. */
 void bfm_village_camera_bank(BfmVillageCamera *camera, int *radius_goal, const int16_t xyz[3],
                              int entering, int shoulder_pressed)

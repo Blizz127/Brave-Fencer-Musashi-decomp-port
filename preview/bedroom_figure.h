@@ -69,6 +69,10 @@ int bfm_bedroom_figure_add_actor(BfmBedroomFigure *figure, const BfmBedroomView 
  * quad at its farthest vertex. The untextured faces keep their average depth. */
 int bfm_bedroom_figure_add_far_ft4_actor(BfmBedroomFigure *figure, const BfmBedroomView *view,
                      const BfmForestActor *actor);
+/* Unlit textured triangles and quads on the Valley gates use their farthest
+ * vertex to order the two leaves against the surrounding cliffs. */
+int bfm_bedroom_figure_add_far_unlit_actor(BfmBedroomFigure *figure, const BfmBedroomView *view,
+                     const BfmForestActor *actor);
 /* These models supply their own three directional lights and force the same
  * translucency equation on every face. The room ambient still applies. */
 int bfm_bedroom_figure_add_lit_translucent(BfmBedroomFigure *figure, const BfmBedroomView *view,

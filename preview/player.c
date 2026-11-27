@@ -544,6 +544,7 @@ static int advance_completed_chapter(Player *p, unsigned fields)
             phase_changed(p);
             break;
         }
+        p->gameplay.display_page ^= 1u;
     }
     return 1;
 }
@@ -560,6 +561,7 @@ static int forest_frame(Player *p)
         running = bfm_forest_walk_tick_controller(p->forest, x, y, p->forest_pressed, p->held, stick);
         p->forest_pressed = 0;
         if (running < 0) return -1;
+        p->gameplay.display_page ^= 1u;
         switch (bfm_forest_walk_retry_audio(p->forest)) {
         case BFM_RETRY_AUDIO_FADE_FIELD:
             bfm_desktop_voice_defeat_score(p->voice, p->disc, BFM_DEFEAT_SCORE_FADE_FIELD);
@@ -751,6 +753,7 @@ static int play(Player *p, char *error, size_t size) {
                                                .pressed_directions=scene_input & (PAD_UP|PAD_DOWN|PAD_LEFT|PAD_RIGHT),
                                                .shoulder_held=!service && (p->held & BFM_FOREST_R1),
                                                .select_pressed=scene_input & PAD_SELECT,
+                                               .start_pressed=scene_input & PAD_START,
                                                .camera_turn=service ? 0 :
                                                    !!(p->held & PAD_R2) - !!(p->held & PAD_L2),
                                                .camera_pressed=scene_input & (PAD_L2 | PAD_R2),
@@ -814,6 +817,15 @@ static int play(Player *p, char *error, size_t size) {
                 }
             } else {
                 bfm_title_input(&p->flow, p->held | p->pressed);
+            }
+            /* Menus execute one input update. The timed opening catches up to
+             * its playhead, while forest and room loops count their own steps. */
+            if (!p->forest && p->flow.phase != BFM_TITLE_BEDROOM) {
+                unsigned pages = 1;
+                if ((int)p->flow.phase == before &&
+                    (before == BFM_TITLE_OPENING || before == BFM_TITLE_LOADING))
+                    pages = (unsigned)(tick - last_logic);
+                p->gameplay.display_page ^= pages & 1u;
             }
             clear_presses(p);
             if ((int)p->flow.phase != before) {

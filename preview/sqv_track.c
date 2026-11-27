@@ -209,7 +209,7 @@ BfmSqvResult bfm_sqv_archive_track_load(const MusashiDiscMedia *disc, const char
     int twinpeak = sc03 && (member == 50 || (member >= 37 && member <= 39));
     int allows_wheel = twinpeak || member == FOREST_MEMBER || member == 75 || member == 34 || member == 0;
     int single = twinpeak || (sc01 && member == FOREST_MEMBER) ||
-                 (sc03 && (member == 4 || member == 9 || member == 67 || member == 72)) ||
+                 (sc03 && (member == 4 || member == 9 || member == 43 || member == 67 || member == 72)) ||
                  (sc02 && member == 25) ||
                  (!strcmp(archive, "SC06.CD") && member == 38);
     int triple = (sc01 && (member == PALACE_MEMBER || member == 75)) || (sc03 && member == 68);

@@ -6,6 +6,8 @@
 
 typedef struct BfmWoodsResidentGlowArt BfmWoodsResidentGlowArt;
 
+BfmWoodsResidentGlowArt *bfm_bincho_glow_art_load(const uint8_t *scene, size_t size,
+    uint32_t profile_address, uint32_t joints_address);
 BfmWoodsResidentGlowArt *bfm_woods_resident_glow_art_load(const uint8_t *scene, size_t size);
 void bfm_woods_resident_glow_art_free(BfmWoodsResidentGlowArt *art);
 

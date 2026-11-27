@@ -33,15 +33,25 @@ int bfm_woods_box_route_open(BfmWoodsBoxRoute *route, unsigned room,
     if (!passage || u32le(passage) != (cleft ? 0x00013026u : 0x00033025u)) return 0;
 
     BfmWoodsBoxRoute next = { .passage = passage, .room = room };
+    if (cleft) {
+        next.valley_passage = mounted(scene,bytes,u32le(doors + 4),36);
+        if (!next.valley_passage || u32le(next.valley_passage) != 0x302b) return 0;
+    }
     uint32_t actor_address = u32le(field + 0xb4);
     for (;;) {
         const uint8_t *actor = mounted(scene, bytes, actor_address, 20);
         if (!actor || actor_address > UINT32_MAX - 20) return 0;
         unsigned type = u16le(actor + 6);
         if (!type) break;
-        if (type == 126 && u32le(actor + 16) == passage_address) {
-            if (next.passage_actor) return 0;
-            next.passage_actor = actor;
+        if (type == 126) {
+            const uint8_t *door = mounted(scene,bytes,u32le(actor + 16),36);
+            if (door == passage) {
+                if (next.passage_actor) return 0;
+                next.passage_actor = actor;
+            } else if (cleft && door == next.valley_passage) {
+                if (next.valley_actor) return 0;
+                next.valley_actor = actor;
+            }
         } else if (!cleft && type == 483 && u16le(actor + 8) == 0) {
             if (next.box_actor) return 0;
             next.box_actor = actor;
@@ -50,7 +60,7 @@ int bfm_woods_box_route_open(BfmWoodsBoxRoute *route, unsigned room,
         }
         actor_address += 20;
     }
-    if (!next.passage_actor) return 0;
+    if (!next.passage_actor || (cleft && !next.valley_actor)) return 0;
     if (!cleft) {
         next.box_script = mounted(scene, bytes, UINT32_C(0x801e85bc), 0x98);
         if (!next.box_actor || !next.box_script) return 0;
@@ -59,21 +69,34 @@ int bfm_woods_box_route_open(BfmWoodsBoxRoute *route, unsigned room,
     return 1;
 }
 
+const uint8_t *bfm_woods_passage_actor(const BfmWoodsBoxRoute *route, const uint8_t *door)
+{
+    if (!route || !door) return NULL;
+    if (door == route->valley_passage) return route->valley_actor;
+    return door == route->passage ? route->passage_actor : NULL;
+}
+
+static int touches_passage(const int16_t foot[3], const uint8_t *gate)
+{
+    if (!gate) return 0;
+    int dy = foot[1] - s16le(gate + 2);
+    return abs(foot[0] - s16le(gate)) <= 256 && abs(foot[2] - s16le(gate + 4)) <= 256 &&
+           dy - 3 <= 256 && dy + 1 >= -256;
+}
+
 const uint8_t *bfm_woods_box_passage(const BfmWoodsBoxRoute *route,
                                     const int16_t foot[3], unsigned wall_contact)
 {
-    if (!route || !foot || !route->passage_actor || (wall_contact & 0xffu) != 3) return NULL;
-    const uint8_t *gate = route->passage_actor;
-    int dy = foot[1] - s16le(gate + 2);
-    if (abs(foot[0] - s16le(gate)) > 256 || abs(foot[2] - s16le(gate + 4)) > 256 ||
-        dy - 3 > 256 || dy + 1 < -256) return NULL;
-    return route->passage;
+    if (!route || !foot || (wall_contact & 0xffu) != 3) return NULL;
+    if (touches_passage(foot,route->valley_actor)) return route->valley_passage;
+    return touches_passage(foot,route->passage_actor) ? route->passage : NULL;
 }
 
 const uint8_t *bfm_woods_box_arrival(const BfmWoodsBoxRoute *route,
                                     const uint8_t destination[36])
 {
     if (!route || !destination || u16le(destination) != route->room || destination[3]) return NULL;
+    if (route->room == 0x3025 && destination[2] == 1) return route->valley_passage;
     if (destination[2] == (route->room == 0x3025 ? 3 : 1)) return route->passage;
     if (destination[2] == 0xff && route->box_destination &&
         memcmp(destination, route->box_destination, 36) == 0) return destination;

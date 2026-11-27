@@ -8,6 +8,9 @@ enum { CORNERS = BFM_DIALOGUE_CORNERS, GLYPHS = 0x96 - 0x20, FONT_HEIGHT = 12 };
 enum { TAIL_OFFSET = 0x2030, FONT_OFFSET = 0x24cbc, CONTOUR_OFFSET = 0x257fc,
        FOREST_INSET = 0x5f094, BEDROOM_INSET = 0x5a928 };
 
+enum { FIRST_FIELD_FACE = 9 };
+typedef uint32_t FieldFace[40][32];
+
 struct BfmForestMessageArt {
     BfmDialoguePoint contour[2][CORNERS], inset[2][CORNERS];
     int16_t tail_limits[6];
@@ -15,7 +18,8 @@ struct BfmForestMessageArt {
     uint8_t glyph[GLYPHS][FONT_HEIGHT];
     uint32_t portrait[4][40][32], tail[16][16], prompt[12][12], ink[16];
     uint32_t paper, highlight, outline;
-    uint32_t (*soldier)[32];
+    FieldFace *field_faces;
+    unsigned field_face_count;
 };
 
 static unsigned le16(const uint8_t *p)
@@ -118,7 +122,8 @@ static BfmForestMessageArt *load_art(const MusashiDiscMedia *disc, const uint8_t
         return NULL;
     BfmForestMessageArt *art = malloc(sizeof(*art));
     if (!art) return NULL;
-    art->soldier = NULL;
+    art->field_faces = NULL;
+    art->field_face_count = 0;
     if (!read_art(art, disc, scene + inset, tiles)) {
         free(art);
         return NULL;
@@ -151,31 +156,52 @@ BfmForestMessageArt *bfm_castle_message_art_load(const MusashiDiscMedia *disc, c
     return load_art(disc, scene, bytes, tiles, inset);
 }
 
+/* Both fields index separate tables of texture and palette origins. Only
+ * the actors present in this scene need their resident portraits decoded. */
+static BfmForestMessageArt *load_field_faces(const MusashiDiscMedia *disc, const uint8_t *scene,
+    size_t bytes, const uint16_t tiles[512][1024], size_t inset, size_t texture,
+    size_t palette, unsigned count)
+{
+    if (!scene || texture > bytes || palette > bytes ||
+        count > (bytes-texture)/4 || count > (bytes-palette)/4) return NULL;
+    BfmForestMessageArt *art = load_art(disc, scene, bytes, tiles, inset);
+    if (!art) return NULL;
+    art->field_faces = calloc(count, sizeof *art->field_faces);
+    if (!art->field_faces) goto failed;
+    for (unsigned i = 0; i < count; ++i) {
+        const uint8_t *tex = scene + texture + 4*i;
+        const uint8_t *clut = scene + palette + 4*i;
+        unsigned x = le16(tex), y = le16(tex+2), cx = le16(clut), cy = le16(clut+2);
+        if (x > 1024-8 || y > 512-40 || cx > 1024-16 || cy >= 512) goto failed;
+        decode_portrait(art->field_faces[i], tiles, x, y, &tiles[cy][cx]);
+    }
+    art->field_face_count = count;
+    return art;
+failed:
+    bfm_forest_message_art_free(art);
+    return NULL;
+}
+
 BfmForestMessageArt *bfm_southern_woods_message_art_load(const MusashiDiscMedia *disc,
     const uint8_t *scene, size_t bytes, const uint16_t tiles[512][1024])
 {
-    /* SC03/29 stores independent texture and CLUT coordinates for each speaker. */
     enum { INSET = 0x5fd88, FACE = 0x80187e78u - 0x80128158u,
            CLUT = 0x80187ebcu - 0x80128158u };
-    if (!scene || bytes < CLUT + 4) return NULL;
-    unsigned left = le16(scene + FACE), top = le16(scene + FACE + 2);
-    unsigned palette_x = le16(scene + CLUT), palette_y = le16(scene + CLUT + 2);
-    if (left > 1024 - 8 || top > 512 - 40 || palette_x > 1024 - 16 || palette_y >= 512)
-        return NULL;
-    BfmForestMessageArt *art = load_art(disc, scene, bytes, tiles, INSET);
-    if (!art) return NULL;
-    art->soldier = malloc(40 * sizeof *art->soldier);
-    if (!art->soldier) {
-        free(art);
-        return NULL;
-    }
-    decode_portrait(art->soldier, tiles, left, top, &tiles[palette_y][palette_x]);
-    return art;
+    return load_field_faces(disc, scene, bytes, tiles, INSET, FACE, CLUT, 1);
+}
+
+BfmForestMessageArt *bfm_valley_message_art_load(const MusashiDiscMedia *disc,
+    const uint8_t *scene, size_t bytes, const uint16_t tiles[512][1024])
+{
+    enum { INSET = 0x5a8e0, TEXTURES = 0x801829b0u - 0x80128158u,
+           PALETTES = 0x801829f4u - 0x80128158u, FIRST_ROW = FIRST_FIELD_FACE - 1 };
+    return load_field_faces(disc, scene, bytes, tiles, INSET,
+                            TEXTURES + 4*FIRST_ROW, PALETTES + 4*FIRST_ROW, 5);
 }
 
 void bfm_forest_message_art_free(BfmForestMessageArt *art)
 {
-    if (art) free(art->soldier);
+    if (art) free(art->field_faces);
     free(art);
 }
 
@@ -195,6 +221,22 @@ static int bubble_scale_x(unsigned columns, int step)
     if (columns == 20 || columns == 28)
         return step * 512 * ((int)columns * 6 + 56) / 154;
     return step * 904;
+}
+
+static void draw_tail(const BfmForestMessageArt *art, int right, unsigned tail_width,
+                      int tail_x, int top, uint32_t pixels[240][320])
+{
+    if (tail_x >= 0 && tail_x <= 320 - (int)tail_width && top >= 0 && top <= 240-11) {
+        for (unsigned y = 0; y < 11; ++y)
+            for (unsigned x = 0; x < tail_width; ++x) {
+                int u = (int)((x * 15 + tail_width / 2) / tail_width);
+                BfmDialoguePoint uv = {right ? 15 - u : u, (int)(y*15+5)/11};
+                if (right && tail_width == 16)
+                    uv = bfm_dialogue_reflected_texel(x, y, 16, 11, 15);
+                uint32_t color = art->tail[uv.y][uv.x];
+                if (color) pixels[top+y][tail_x+x] = color;
+            }
+    }
 }
 
 static void draw_bubble(const BfmForestMessageArt *art, int center, int tail_x, int right,
@@ -221,17 +263,7 @@ static void draw_bubble(const BfmForestMessageArt *art, int center, int tail_x, 
         int width = floor_div((right ? -9 : 9) * scale_x, 4096);
         tail_width = (unsigned)abs(width);
     }
-    if (!mix && step == 8 && tail_x >= 0 && tail_x <= 320 - (int)tail_width) {
-        for (unsigned y = 0; y < 11; ++y)
-            for (unsigned x = 0; x < tail_width; ++x) {
-                int u = (int)((x * 15 + tail_width / 2) / tail_width);
-                BfmDialoguePoint uv = {right ? 15 - u : u, (int)(y*15+5)/11};
-                if (right && tail_width == 16)
-                    uv = bfm_dialogue_reflected_texel(x, y, 16, 11, 15);
-                uint32_t color = art->tail[uv.y][uv.x];
-                if (color) pixels[76+y][tail_x+x] = color;
-            }
-    }
+    if (!mix && step == 8) draw_tail(art, right, tail_width, tail_x, 76, pixels);
 }
 
 static void draw_portrait(const BfmForestMessageArt *art, int right, int left,
@@ -239,7 +271,8 @@ static void draw_portrait(const BfmForestMessageArt *art, int right, int left,
 {
     const uint32_t (*face)[32] = NULL;
     if (portrait >= 1 && portrait <= 4) face = art->portrait[portrait - 1];
-    else if (portrait == 9) face = art->soldier;
+    else if (portrait >= FIRST_FIELD_FACE && portrait - FIRST_FIELD_FACE < art->field_face_count)
+        face = art->field_faces[portrait - FIRST_FIELD_FACE];
     if (!face) return;
     for (unsigned y = 0; y < 40; ++y)
         for (unsigned x = 0; x < 32; ++x) {
@@ -355,7 +388,7 @@ int bfm_forest_message_art_draw_placed(const BfmForestMessageArt *art, const Bfm
                                        int16_t offset, int on_right, uint32_t pixels[240][320])
 {
     if (!art || !frame || !pixels || !art->has_tail_limits || (on_right != 0 && on_right != 1) ||
-        (frame->portrait == 9 && !art->soldier))
+        (frame->portrait >= FIRST_FIELD_FACE && frame->portrait - FIRST_FIELD_FACE >= art->field_face_count))
         return 0;
     int scale = bubble_scale_x(frame->text_columns, 8);
     if (on_right) scale = -scale;
@@ -374,13 +407,19 @@ int bfm_forest_message_art_draw_placed(const BfmForestMessageArt *art, const Bfm
     return 1;
 }
 
-int bfm_library_question_draw(const BfmForestMessageArt *art, const uint8_t *box, const uint8_t *portrait,
+static int menu_question_draw(const BfmForestMessageArt *art, const uint8_t *box, const uint8_t *portrait,
                               const uint16_t tiles[512][1024], const uint8_t *text, size_t bytes,
-                              unsigned update, uint32_t pixels[240][320])
+                              unsigned update, int field_help, uint32_t pixels[240][320])
 {
-    if (!art || !box || !portrait || !tiles || !text || !pixels) return 0;
+    if (!art || !box || (!field_help && !portrait) || !tiles || !text || !pixels) return 0;
     int x=160+signed16(box), y=120+signed16(box+2);
     int width=16*signed16(box+4)+4, height=14*signed16(box+6)+14;
+    if (field_help) {
+        /* The field status uses the compact 14-column, three-line balloon in SC03/31. */
+        if (signed16(box+4) != 14 || signed16(box+6) != 3) return 0;
+        width=184;
+        height=48;
+    }
     if (bytes<3 || text[0]!=2 || text[1] || text[2] ||
         width<=0 || width>320 || height<=0 || height>240) return 0;
     BfmDialoguePoint border[CORNERS], inset[CORNERS];
@@ -392,15 +431,19 @@ int bfm_library_question_draw(const BfmForestMessageArt *art, const uint8_t *box
         inset[i].y=border[i].y+art->inset[0][i].y;
     }
     bfm_dialogue_contour(border,inset,art->paper,art->highlight,art->outline,10,pixels);
-    int px=160+signed16(portrait), py=120+signed16(portrait+2);
-    unsigned w=le16(portrait+4),h=le16(portrait+6),u=le16(portrait+8),v=le16(portrait+10);
-    unsigned clut=le16(portrait+12), page=le16(portrait+14);
-    if (w>64 || h>64 || u+w>256 || v+h>256 || page>31 || px<0 || py<0 ||
-        px+(int)w>320 || py+(int)h>240 || (clut>>6)>=512) return 0;
-    for (unsigned j=0;j<h;++j) for (unsigned i=0;i<w;++i) {
-        unsigned packed=tiles[((page>>4)&1)*256+v+j][(page&15)*64+(u+i)/4];
-        uint16_t color=tiles[clut>>6][(clut&63)*16+((packed>>(4*((u+i)&3)))&15)];
-        if (color) pixels[py+j][px+i]=rgb(color);
+    if (field_help) {
+        draw_tail(art, 1, 16, x+51, y+26, pixels);
+    } else {
+        int px=160+signed16(portrait), py=120+signed16(portrait+2);
+        unsigned w=le16(portrait+4),h=le16(portrait+6),u=le16(portrait+8),v=le16(portrait+10);
+        unsigned clut=le16(portrait+12), page=le16(portrait+14);
+        if (w>64 || h>64 || u+w>256 || v+h>256 || page>31 || px<0 || py<0 ||
+            px+(int)w>320 || py+(int)h>240 || (clut>>6)>=512) return 0;
+        for (unsigned j=0;j<h;++j) for (unsigned i=0;i<w;++i) {
+            unsigned packed=tiles[((page>>4)&1)*256+v+j][(page&15)*64+(u+i)/4];
+            uint16_t color=tiles[clut>>6][(clut&63)*16+((packed>>(4*((u+i)&3)))&15)];
+            if (color) pixels[py+j][px+i]=rgb(color);
+        }
     }
     unsigned row=0,col=0,ink=1;
     int ox=160+signed16(box+8)-64, oy=120+signed16(box+10)-20;
@@ -417,4 +460,18 @@ int bfm_library_question_draw(const BfmForestMessageArt *art, const uint8_t *box
             if (art->glyph[c-32][j]&(128u>>k)) pixels[gy+j][gx+k]=art->ink[ink];
     }
     return 0;
+}
+
+int bfm_library_question_draw(const BfmForestMessageArt *art, const uint8_t *box, const uint8_t *portrait,
+                              const uint16_t tiles[512][1024], const uint8_t *text, size_t bytes,
+                              unsigned update, uint32_t pixels[240][320])
+{
+    return menu_question_draw(art,box,portrait,tiles,text,bytes,update,0,pixels);
+}
+
+int bfm_field_menu_hint_draw(const BfmForestMessageArt *art, const uint8_t *box,
+                             const uint16_t tiles[512][1024], const uint8_t *text, size_t bytes,
+                             unsigned update, uint32_t pixels[240][320])
+{
+    return menu_question_draw(art,box,NULL,tiles,text,bytes,update,1,pixels);
 }

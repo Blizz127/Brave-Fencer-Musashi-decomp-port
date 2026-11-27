@@ -134,6 +134,13 @@ fail:
     return NULL;
 }
 
+BfmWoodsCasterMelee *bfm_valley_melee_open(const MusashiDiscMedia *disc,
+    const uint8_t *scene, size_t scene_bytes, const uint8_t *main, size_t main_bytes)
+{
+    return ordinary_melee(disc, scene, scene_bytes, main, main_bytes,
+                          UINT32_C(0x80184228), UINT32_C(0x801843cc));
+}
+
 BfmWoodsCasterMelee *bfm_woods_twinpeak_melee_open(const MusashiDiscMedia *disc,
     const uint8_t *scene, size_t scene_bytes, const uint8_t *main, size_t main_bytes)
 {

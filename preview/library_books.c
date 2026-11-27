@@ -145,20 +145,20 @@ int bfm_library_books_input(BfmLibraryBooks *b,int direction,int held,int cross,
 }
 
 static unsigned expand(unsigned five) { return five*255/31; }
-static void sprite(const uint16_t tiles[512][1024],uint32_t pixels[240][320],int x,int y,
-                   int w,int h,int u,int v,int uw,int vh,int active,int dim)
+void bfm_castle_menu_sprite(const uint16_t tiles[512][1024],uint32_t pixels[240][320],int x,int y,
+                   int w,int h,int u,int v,int uw,int vh,int active,int ink)
 {
     if (w<=0 || h<=0 || w>320 || h>240 || u<0 || v<0 || u+uw>256 || v+vh>256) return;
     for (int j=0;j<h;++j) for (int i=0;i<w;++i) {
         if ((unsigned)(x+i)>=320 || (unsigned)(y+j)>=240) continue;
         int tu=u+i*uw/w, tv=v+j*vh/h;
         unsigned packed=tiles[256+tv][320+tu/4], idx=(packed>>(4*(tu&3)))&15u;
-        unsigned c=tiles[257][352+idx];
+        unsigned c=tiles[ink == BFM_MENU_LABEL_EQUIPPED ? 438 : 257][352+idx];
         if (!c) continue;
         unsigned rgb=0xff000000;
         for (unsigned ch=0;ch<3;++ch) {
             unsigned intensity=(c>>(5*ch))&31u;
-            if (dim && ch < 2) intensity >>= 1;
+            if (ink == BFM_MENU_LABEL_DIM && ch < 2) intensity >>= 1;
             if (!active) intensity=intensity*88/128;
             rgb|=expand(intensity)<<(16-8*ch);
         }
@@ -171,7 +171,7 @@ static BfmCastleMenuLabel scene_label(const BfmCastleMenuArt *art, uint32_t addr
     return (BfmCastleMenuLabel){.bytes=start, .size=start ? art->bytes - (address - base) : 0};
 }
 
-static int label(const BfmCastleMenuArt *art,BfmCastleMenuLabel name,const uint16_t tiles[512][1024],
+int bfm_castle_menu_label(const BfmCastleMenuArt *art,BfmCastleMenuLabel name,const uint16_t tiles[512][1024],
                  uint32_t pixels[240][320],int x,int y,int active)
 {
     struct Glyph {int x,u,v;} run[48];
@@ -191,7 +191,7 @@ static int label(const BfmCastleMenuArt *art,BfmCastleMenuLabel name,const uint1
     }
     while (used) {
         struct Glyph g=run[--used];
-        sprite(tiles,pixels,g.x,y,8,8,g.u,g.v,8,8,active,name.dim);
+        bfm_castle_menu_sprite(tiles,pixels,g.x,y,8,8,g.u,g.v,8,8,active,name.ink);
     }
     return 1;
 }
@@ -219,6 +219,18 @@ static void fill(uint32_t pixels[240][320],const uint8_t *record,int active)
         pixels[y+j][x+i]=rgb;
     }
 }
+void bfm_castle_menu_window(const uint8_t frames[96], const uint8_t fills[32], int active,
+                            const uint16_t tiles[512][1024], uint32_t pixels[240][320])
+{
+    fill(pixels,fills+16,active);
+    if (active) fill(pixels,fills,1);
+    for (int i=0;i<8;++i) {
+        const uint8_t *f=frames+12*i;
+        bfm_castle_menu_sprite(tiles,pixels,160+(int16_t)half(f),120+(int16_t)half(f+2),half(f+4),half(f+6),
+               half(f+8),half(f+10),(i==4 || i==5)?7:8,i>=6?7:8,active,0);
+    }
+}
+
 static int paint_panel(const BfmCastleMenuArt *art, const uint8_t *p,
                        const BfmCastleMenuLabel *names, unsigned rows, unsigned selected,
                        int active, int can_scroll_up, int can_scroll_down,
@@ -230,26 +242,20 @@ static int paint_panel(const BfmCastleMenuArt *art, const uint8_t *p,
     const uint8_t *places = data(art, word(p+24), 4*rows);
     const uint8_t *labels = names ? NULL : data(art, word(p+28), 4*rows);
     if (!frames || !fills || !places || (!names && !labels)) return 0;
-    fill(pixels,fills+16,active);
-    if (active) fill(pixels,fills,1);
-    for (int i=0;i<8;++i) {
-        const uint8_t *f=frames+12*i;
-        sprite(tiles,pixels,160+(int16_t)half(f),120+(int16_t)half(f+2),half(f+4),half(f+6),
-               half(f+8),half(f+10),(i==4 || i==5)?7:8,i>=6?7:8,active,0);
-    }
-    if (!label(art,scene_label(art,word(p+20)),tiles,pixels,
+    bfm_castle_menu_window(frames, fills, active, tiles, pixels);
+    if (!bfm_castle_menu_label(art,scene_label(art,word(p+20)),tiles,pixels,
                160+(int16_t)half(p+16),120+(int16_t)half(p+18),active)) return 0;
     for (unsigned i=0; i<rows; ++i) {
         int x=160+(int16_t)half(places+4*i), y=120+(int16_t)half(places+4*i+2);
         BfmCastleMenuLabel name = names ? names[i] : scene_label(art,word(labels+4*i));
-        if (!label(art,name,tiles,pixels,x,y,active)) return 0;
-        if (i==selected) sprite(tiles,pixels,x-8,y,8,8,48,72,8,8,active,0);
+        if (!bfm_castle_menu_label(art,name,tiles,pixels,x,y,active)) return 0;
+        if (i==selected) bfm_castle_menu_sprite(tiles,pixels,x-8,y,8,8,48,72,8,8,active,0);
     }
     int arrow_x = 160 + (int16_t)half(frames+12) - 9;
     if (can_scroll_up)
-        sprite(tiles,pixels,arrow_x,118+(int16_t)half(places+2),8,8,120,48,8,8,active,0);
+        bfm_castle_menu_sprite(tiles,pixels,arrow_x,118+(int16_t)half(places+2),8,8,120,48,8,8,active,0);
     if (can_scroll_down)
-        sprite(tiles,pixels,arrow_x,121+(int16_t)half(places+4*(rows-1)+2),8,8,120,56,8,8,active,0);
+        bfm_castle_menu_sprite(tiles,pixels,arrow_x,121+(int16_t)half(places+4*(rows-1)+2),8,8,120,56,8,8,active,0);
     return 1;
 }
 

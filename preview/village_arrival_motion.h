@@ -60,6 +60,21 @@ BfmVillageMotion *bfm_village_motion_woods(const uint8_t *scene, size_t bytes,
  * recorded box destination resumes at its own marker without an entry walk. */
 BfmVillageMotion *bfm_village_motion_box_field(const uint8_t *scene, size_t bytes,
     const uint8_t *main, size_t main_bytes, const uint8_t destination[36]);
+/* Hell's Valley entrance zero walks inward from its Cleft-side gate, then
+ * hands walking and jumping back to the normal field controller. */
+BfmVillageMotion *bfm_village_motion_valley(const uint8_t *scene, size_t bytes,
+    const uint8_t *main, size_t main_bytes, const uint8_t destination[36], const MusashiDiscMedia *disc);
+struct BfmValleyBincho;
+struct BfmValleyGateDoor;
+void bfm_village_motion_valley_obstacles(BfmVillageMotion *motion,
+    const struct BfmValleyBincho *bincho, const struct BfmValleyGateDoor *door);
+struct BfmHellsValleyBoulders;
+void bfm_village_motion_valley_boulders(BfmVillageMotion *motion,
+    const struct BfmHellsValleyBoulders *rocks, unsigned actor_tick);
+int bfm_village_motion_step_valley_field(BfmVillageMotion *motion, int x, int y, int camera_yaw,
+    int cross_pressed, int cross_held, struct BfmGameplayRun *run);
+int bfm_village_motion_valley_orb(const BfmVillageMotion *motion, unsigned orb,
+                                 uint16_t tiles[512][1024]);
 /* True during the free-running tail of an ordinary room entrance walk. */
 int bfm_village_motion_ingress_clock_running(const BfmVillageMotion *motion);
 int bfm_village_motion_woods_departing(const BfmVillageMotion *motion);

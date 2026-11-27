@@ -21,6 +21,9 @@ BfmForestMessageArt *bfm_castle_message_art_load(const MusashiDiscMedia *disc, c
 /* Cache the sign and Soldier Lardwick window art from the mounted SC03/29 room. */
 BfmForestMessageArt *bfm_southern_woods_message_art_load(const MusashiDiscMedia *disc,
     const uint8_t *scene, size_t bytes, const uint16_t tiles[512][1024]);
+/* SC03/31 contains portraits for the gate party and Knitter Lunchetta. */
+BfmForestMessageArt *bfm_valley_message_art_load(const MusashiDiscMedia *disc,
+    const uint8_t *scene, size_t bytes, const uint16_t tiles[512][1024]);
 void bfm_forest_message_art_free(BfmForestMessageArt *art);
 void bfm_forest_message_art_draw(const BfmForestMessageArt *art,
                                  const BfmForestMessageFrame *frame,
@@ -37,4 +40,7 @@ int bfm_forest_message_art_draw_placed(const BfmForestMessageArt *art, const Bfm
 int bfm_library_question_draw(const BfmForestMessageArt *art, const uint8_t *box, const uint8_t *portrait,
                               const uint16_t tiles[512][1024], const uint8_t *text, size_t bytes,
                               unsigned update, uint32_t pixels[240][320]);
+int bfm_field_menu_hint_draw(const BfmForestMessageArt *art, const uint8_t *box,
+                             const uint16_t tiles[512][1024], const uint8_t *text, size_t bytes,
+                             unsigned update, uint32_t pixels[240][320]);
 #endif

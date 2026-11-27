@@ -104,7 +104,7 @@ struct BfmSouthernWoods {
     BfmForestMessageArt *writing;
     const uint8_t *sign_text;
     size_t sign_bytes;
-    unsigned age, open_delay;
+    unsigned age;
 };
 
 static void follow(BfmSouthernWoods *woods, int entering)
@@ -156,7 +156,7 @@ BfmSouthernWoods *bfm_southern_woods_open(const MusashiDiscMedia *disc, BfmBedro
     BfmSouthernWoods *woods = calloc(1,sizeof *woods);
     if (!woods) return NULL;
     woods->bytes = bfm_read_archive_field_scene(disc,"SC03.CD",next.scene_member,woods->scene);
-    if (door[2] == 3)
+    if (door[2] == 1 || door[2] == 3)
         woods->motion = bfm_village_motion_box_field(woods->scene,woods->bytes,main,main_bytes,door);
     else
         woods->motion = bfm_village_motion_woods(woods->scene,woods->bytes,main,main_bytes);
@@ -820,7 +820,7 @@ int bfm_southern_woods_step_field_at(BfmSouthernWoods *woods, BfmGameplayRun *ru
     bfm_woods_body_notice_step(&woods->body_notice);
     /* Ordinary outdoor time continues during the throw and absorption;
      * the acquisition pose and its three message pages suspend it. */
-    int return_clock = woods->save->destination[2] == 3 &&
+    int return_clock = (woods->save->destination[2] == 1 || woods->save->destination[2] == 3) &&
                        bfm_village_motion_ingress_clock_running(woods->motion);
     if (run && (p->controlled || was_in_water || return_clock) && actors_running && !dog_talking && !rescue_locked &&
         !bfm_village_motion_woods_departing(woods->motion))
@@ -908,7 +908,7 @@ int bfm_southern_woods_step_field_at(BfmSouthernWoods *woods, BfmGameplayRun *ru
     int scripted_motion = rescuing && (woods->rescue_player.count || woods->rescue_awarding);
     if (scripted_motion) {
         if (!step_rescue_player(woods, yaw, !woods->swing.action, opened)) return 0;
-    } else if (p->destination == 0x3026 && p->entrance == 1 && bfm_village_motion_transfer(woods->motion)) {
+    } else if (bfm_village_motion_transfer(woods->motion) && bfm_village_motion_woods_departing(woods->motion)) {
         if (!bfm_village_motion_woods_departure_step(woods->motion,yaw,run)) return 0;
     } else if (cut_field) {
         if (woods->swing.face_slot &&
@@ -962,10 +962,8 @@ int bfm_southern_woods_step_field_at(BfmSouthernWoods *woods, BfmGameplayRun *ru
     if (actors_running && !was_in_water && p->controlled) bfm_woods_king_touch(woods->king,p->root.xyz);
     if (opened && may_read && !locked && !carrying && p->controlled && in_sign_reach(woods,p->root.xyz)) {
         const int16_t *point = bfm_woods_sign_model_position(woods->sign);
-        if (bfm_village_motion_begin_read(woods->motion,point)) woods->open_delay = 4;
-    }
-    if (woods->open_delay && !--woods->open_delay) {
-        if (!open_field_message(opened, bfm_field_message_borrow(woods->sign_text, woods->sign_bytes)))
+        if (bfm_village_motion_begin_read(woods->motion,point) &&
+            !open_field_message(opened, bfm_field_message_borrow(woods->sign_text, woods->sign_bytes)))
             return 0;
     }
     if (rescuing && !step_rescue_script(woods, run, opened)) return 0;

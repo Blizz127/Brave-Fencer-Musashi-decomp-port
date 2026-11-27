@@ -35,6 +35,8 @@ void bfm_bedroom_field_viewpoint(BfmBedroomField *field, const int eye[3], const
 void bfm_bedroom_field_step(BfmBedroomField *field);
 const BfmBedroomView *bfm_bedroom_field_view(const BfmBedroomField *field);
 int bfm_bedroom_project(const BfmBedroomView *view, const int16_t model[3], int xy_depth[3]);
+/* Return whether an unsaturated field-model corner can enter its polygon packet. */
+int bfm_bedroom_project_packet(const BfmBedroomView *view, const int16_t model[3], int xy_depth[3]);
 void bfm_bedroom_field_draw(BfmBedroomField *field, const uint16_t tiles[512][1024],
                             uint32_t *pixels, void (*draw_to)(void *, int), void *user);
 #endif
