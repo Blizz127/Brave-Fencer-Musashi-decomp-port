@@ -33,6 +33,14 @@ int bfm_woods_charged_blade_contact(const BfmWoodsChargedTargets *targets,
         memcpy(end, result->point, sizeof end);
         ++result->contacts;
     }
+    if (targets->lardwick &&
+        bfm_woods_lardwick_contact(targets->lardwick, 11, from, end, result->point, result->normal) &&
+        bfm_woods_lardwick_strike(targets->lardwick, 11)) {
+        memcpy(end, result->point, sizeof end);
+        result->freed_captive = 1;
+        result->impact_sound = 0;
+        ++result->contacts;
+    }
     if (bfm_woods_leno_charged_blade(targets->leno, from, end, heading, result->point,
                                     result->normal)) {
         memcpy(end, result->point, sizeof end);

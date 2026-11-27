@@ -36,12 +36,6 @@ static inline int bfm_save_add_item(BfmSaveRecord *record, unsigned item)
     return 1;
 }
 
-/* Bits 29..33 select alternate room tables on Continue. */
-static inline int bfm_save_uses_default_room_table(const BfmSaveRecord *record)
-{
-    return !(record->flags[3] & 0xe0u) && !(record->flags[4] & 3u);
-}
-
 /* Default Continue uses the Grillin inn entrance throughout this story range. */
 static inline int bfm_story_returns_to_grillin_inn(uint32_t story)
 {

@@ -15,6 +15,9 @@ void bfm_woods_resident_glow_art_free(BfmWoodsResidentGlowArt *art);
  * field has room ambient light only, until its first directional update. */
 int bfm_woods_resident_glow_art_add(const BfmWoodsResidentGlowArt *art, BfmBedroomFigure *figure,
     const BfmBedroomView *view, const int16_t root[3], unsigned yaw, unsigned light_pitch,
-    unsigned light_yaw, int flash, int lights_active);
+    unsigned light_yaw, int flash, int lights_active, unsigned burst_updates, int floor_glow);
+
+int bfm_woods_resident_release_glow_add(const BfmWoodsResidentGlowArt *art, BfmBedroomFigure *figure,
+    const BfmBedroomView *view, const BfmForestTransform *facing, unsigned scale);
 
 #endif

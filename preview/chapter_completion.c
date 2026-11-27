@@ -24,7 +24,7 @@ int bfm_chapter_completion_begin(BfmChapterCompletion *state, BfmGameplayRun *ru
     if (!state || state->page != BFM_CHAPTER_INACTIVE || !run || !run->has_player || !record ||
         memcmp(record->progress + 8, (uint8_t[]){2, 0, 0, 0}, 4) ||
         memcmp(record->destination, (uint8_t[36]){0}, sizeof record->destination) ||
-        !bfm_save_uses_default_room_table(record) || !bfm_gameplay_story_flag(run, 128) ||
+        !bfm_gameplay_story_flag(run, 128) ||
         memcmp(record->flags, run->story_flags, sizeof record->flags) ||
         memcmp(record->progress, run->player.record, sizeof record->progress)) return 0;
     state->earned = *record;

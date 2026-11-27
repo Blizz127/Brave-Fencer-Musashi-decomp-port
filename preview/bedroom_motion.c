@@ -675,13 +675,18 @@ int bfm_bedroom_orb_palette(const BfmBedroomMotion *m, uint32_t table, unsigned 
            upload(m, address, 1, tiles);
 }
 
-int bfm_grillin_blade_palette(const BfmBedroomMotion *motion, unsigned orb, uint16_t tiles[512][1024])
+int bfm_field_blade_palette(const BfmBedroomMotion *motion, uint32_t normal_table, unsigned orb,
+                            uint16_t tiles[512][1024])
 {
-    /* The lower village and its bakery share seven ordinary blade palettes.
-     * The special blade has its own resident palette outside the table. */
+    /* The room owns seven ordinary entries. The special selection has its own resident palette. */
     if (orb & 0x80)
         return bfm_bedroom_motion_upload_palette(motion, UINT32_C(0x800d45d4), tiles);
-    return orb < 7 && bfm_bedroom_orb_palette(motion, UINT32_C(0x80190cd4), orb, tiles);
+    return orb < 7 && bfm_bedroom_orb_palette(motion, normal_table, orb, tiles);
+}
+
+int bfm_grillin_blade_palette(const BfmBedroomMotion *motion, unsigned orb, uint16_t tiles[512][1024])
+{
+    return bfm_field_blade_palette(motion, UINT32_C(0x80190cd4), orb, tiles);
 }
 
 void bfm_bedroom_motion_free(BfmBedroomMotion *m)

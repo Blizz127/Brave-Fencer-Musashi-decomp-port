@@ -6,12 +6,13 @@
 #include "field_waypoint.h"
 #include "scene_tiles.h"
 #include "village_sky.h"
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
 static const uint32_t base = UINT32_C(0x80128158), room = UINT32_C(0x801961e8);
-enum { PALETTE_TRANSFERS = 20, PHASES = 5 };
+enum { PALETTE_TRANSFERS = 20, PHASES = 5, SHRINE_PALETTE = 5 };
 
 typedef struct { unsigned sx, sy, x, y, width; } PaletteTransfer;
 struct BfmWoodsBoxView {
@@ -26,7 +27,7 @@ struct BfmWoodsBoxView {
     PaletteTransfer transfers[PALETTE_TRANSFERS];
     BfmBedroomLight lamps[3];
     uint8_t gain[3], sky[3];
-    unsigned phase, wait, blending, near_zoom;
+    unsigned phase, wait, blending, near_zoom, shrine_palette;
     int pitch, height_offset;
     int hide_body, hide_shadow, camera_effect_y;
 };
@@ -117,7 +118,7 @@ BfmWoodsBoxView *bfm_woods_box_view_open(const MusashiDiscMedia *disc, const uin
     v->bytes = bytes;
     v->phase = phase;
     v->quarter = at(v,0x801d66c8u,2048);
-    v->gains = at(v,0x801914c8u,PHASES*12);
+    v->gains = at(v,0x801914c8u,(SHRINE_PALETTE+1)*12);
     v->lamp_colors = at(v,0x80191660u,PHASES*9);
     v->sky_colors = at(v,0x80191698u,PHASES*12);
     const uint8_t *descriptor = at(v,room,0xa8);
@@ -183,6 +184,42 @@ BfmVillageField *bfm_woods_box_view_field(BfmWoodsBoxView *v)
     return v ? &v->field : NULL;
 }
 
+static BfmVillageCamera presented_camera(const BfmWoodsBoxView *v)
+{
+    BfmVillageCamera camera = v->camera;
+    camera.eye[1] += v->camera_effect_y;
+    camera.target[1] += v->camera_effect_y;
+    return camera;
+}
+
+const BfmBedroomView *bfm_woods_box_view_transform(BfmWoodsBoxView *v)
+{
+    if (!v || !bfm_bedroom_field_set_focal(v->field.field, v->camera.focal)) return NULL;
+    BfmVillageCamera camera = presented_camera(v);
+    bfm_bedroom_field_viewpoint(v->field.field, camera.eye, camera.target, 1, 1);
+    return bfm_bedroom_field_view(v->field.field);
+}
+
+const uint8_t *bfm_woods_box_view_third_lamp(const BfmWoodsBoxView *v)
+{
+    return v ? v->lamps[2].rgb : NULL;
+}
+
+int bfm_woods_box_view_shrine_palette(BfmWoodsBoxView *v, unsigned row)
+{
+    if (!v || (row && row != SHRINE_PALETTE)) return 0;
+    if (row) {
+        for (unsigned c = 0; c < 3; ++c)
+            if (read32(v->gains + (row*3+c)*4) > 255) return 0;
+    }
+    if (v->shrine_palette != row) {
+        v->shrine_palette = row;
+        v->blending = 1;
+        v->wait = 0;
+    }
+    return 1;
+}
+
 int bfm_woods_box_view_water_step(BfmWoodsBoxView *v, const int16_t splash_at[3],
                                   int hide_body, int hide_shadow, BfmGameplayRun *run)
 {
@@ -201,6 +238,17 @@ void bfm_woods_box_view_light(BfmWoodsBoxView *v, unsigned phase)
         v->phase = phase;
         v->blending = 1;
         v->wait = 0;
+    }
+    if (v->shrine_palette) {
+        int changed = 0;
+        for (unsigned c = 0; c < 3; ++c) {
+            int goal = (int)read32(v->gains + (SHRINE_PALETTE*3+c)*4);
+            int gain = toward(v->gain[c],goal,4);
+            changed |= gain != v->gain[c];
+            v->gain[c] = (uint8_t)gain;
+        }
+        if (changed) palettes(v);
+        return;
     }
     if (!v->blending) return;
     if (v->wait) {
@@ -305,27 +353,41 @@ void bfm_woods_box_view_follow(BfmWoodsBoxView *v, const int16_t foot[3],
     bfm_woods_box_view_follow_grip(v,foot,entering,shoulder_pressed,0);
 }
 
+int bfm_woods_box_view_draw_presentation(BfmWoodsBoxView *v, const BfmBedroomRoot *root,
+    const BfmBedroomPose *pose, const uint8_t flags[64], unsigned age, unsigned scale_q12,
+    int award_presentation, uint32_t pixels[240][320],
+    int (*prepare_actor)(void *, BfmBedroomFigure *, const BfmBedroomView *), void *actor)
+{
+    if (!v || !root || !pose || !flags || !pixels) return 0;
+    BfmVillageCamera presented = presented_camera(v);
+    BfmBedroomRoot displayed = *root;
+    if (v->hide_shadow) displayed.shadow_visible = 0;
+    uint32_t parts = v->hide_body ? 0 : bfm_village_field_visible(pose,flags);
+    if (award_presentation) {
+        for (unsigned y = 0; y < 240; ++y)
+            for (unsigned x = 0; x < 320; ++x) pixels[y][x] = UINT32_C(0xff000000);
+    } else if (!bfm_village_sky_draw_lit(v->scene+(room-base),v->bytes-(room-base),v->sky,pixels))
+        return 0;
+    if (!bfm_bedroom_figure_lights(v->field.hero,v->lamps) ||
+        !bfm_village_field_prepare_scaled(&v->field,&presented,&displayed,pose,flags,age,
+            parts,scale_q12,v->tiles,&pixels[0][0]))
+        return 0;
+    const BfmBedroomView *view = bfm_bedroom_field_view(v->field.field);
+    if ((!award_presentation && !bfm_woods_water_effect_append(&v->splash,v->field.hero,view)) ||
+        (prepare_actor && !prepare_actor(actor,v->field.hero,view))) return 0;
+    if (award_presentation)
+        bfm_bedroom_figure_draw_to(v->field.hero,INT_MIN);
+    else
+        bfm_woods_box_water_draw(&v->water,age,v->field.field,v->tiles,&pixels[0][0],
+                                bfm_bedroom_figure_draw_to,v->field.hero);
+    return 1;
+}
+
 int bfm_woods_box_view_draw(BfmWoodsBoxView *v, const BfmBedroomRoot *root,
     const BfmBedroomPose *pose, const uint8_t flags[64], unsigned age, unsigned scale_q12,
     uint32_t pixels[240][320],
     int (*prepare_actor)(void *, BfmBedroomFigure *, const BfmBedroomView *), void *actor)
 {
-    if (!v || !root || !pose || !flags || !pixels) return 0;
-    BfmVillageCamera presented = v->camera;
-    presented.eye[1] += v->camera_effect_y;
-    presented.target[1] += v->camera_effect_y;
-    BfmBedroomRoot displayed = *root;
-    if (v->hide_shadow) displayed.shadow_visible = 0;
-    uint32_t parts = v->hide_body ? 0 : bfm_village_field_visible(pose,flags);
-    if (!bfm_bedroom_figure_lights(v->field.hero,v->lamps) ||
-        !bfm_village_sky_draw_lit(v->scene+(room-base),v->bytes-(room-base),v->sky,pixels) ||
-        !bfm_village_field_prepare_scaled(&v->field,&presented,&displayed,pose,flags,age,
-            parts,scale_q12,v->tiles,&pixels[0][0]))
-        return 0;
-    const BfmBedroomView *view = bfm_bedroom_field_view(v->field.field);
-    if (!bfm_woods_water_effect_append(&v->splash,v->field.hero,view) ||
-        (prepare_actor && !prepare_actor(actor,v->field.hero,view))) return 0;
-    bfm_woods_box_water_draw(&v->water,age,v->field.field,v->tiles,&pixels[0][0],
-                            bfm_bedroom_figure_draw_to,v->field.hero);
-    return 1;
+    return bfm_woods_box_view_draw_presentation(v,root,pose,flags,age,scale_q12,0,
+                                                pixels,prepare_actor,actor);
 }

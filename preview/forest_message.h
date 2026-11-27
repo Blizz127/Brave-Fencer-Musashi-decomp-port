@@ -41,6 +41,9 @@ BfmForestMessage *bfm_forest_message_open(const uint8_t *program, size_t length)
 BfmForestMessage *bfm_field_message_open(const uint8_t *program, size_t length);
 /* The room keeps its mounted bytes alive until this cursor is freed. */
 BfmForestMessage *bfm_field_message_borrow(const uint8_t *program, size_t length);
+/* A focused field conversation may update flags in the room's live save. */
+BfmForestMessage *bfm_field_message_borrow_flags(const uint8_t *program, size_t length,
+                                                uint8_t flags[64]);
 /* The field keeps its program and live flag bank available until the notice closes. */
 BfmForestMessage *bfm_field_message_borrow_notice(const uint8_t *program, size_t length,
                                                 uint8_t flags[64], unsigned active_flag);

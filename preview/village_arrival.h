@@ -37,7 +37,10 @@ int bfm_village_arrival_step_field(BfmVillageArrival *arrival, BfmGameplayRun *r
 int bfm_village_arrival_award_cue(const BfmVillageArrival *arrival);
 void bfm_village_arrival_woods_score_applied(BfmVillageArrival *arrival, unsigned selector);
 unsigned bfm_village_arrival_woods_score_selector(const BfmVillageArrival *a);
+/* Positive selects a track, zero releases the field override, negative requests silence. */
+int bfm_village_arrival_field_score(const BfmVillageArrival *a, unsigned village_score);
 unsigned bfm_village_arrival_take_score_command(BfmVillageArrival *a);
+unsigned bfm_village_arrival_take_upper_sound(BfmVillageArrival *a);
 int bfm_village_arrival_take_retired_window(BfmVillageArrival *arrival);
 unsigned bfm_village_arrival_take_box_voice(BfmVillageArrival *arrival);
 unsigned bfm_village_arrival_take_box_sound(BfmVillageArrival *arrival);
@@ -53,6 +56,7 @@ int bfm_village_arrival_step_input(BfmVillageArrival *arrival, BfmGameplayRun *r
                                    int x, int y, int talk_edge, BfmForestMessage **opened);
 void bfm_village_arrival_begin_hotelo_reveal(BfmVillageArrival *arrival);
 void bfm_village_arrival_set_scene_tick(BfmVillageArrival *arrival, unsigned tick);
+const uint8_t *bfm_village_arrival_castle_transfer(const BfmVillageArrival *arrival);
 const uint8_t *bfm_village_arrival_shop_transfer(const BfmVillageArrival *arrival);
 const uint8_t *bfm_village_arrival_inn_transfer(const BfmVillageArrival *arrival);
 int bfm_village_arrival_forest_score_fades(const BfmVillageArrival *arrival);

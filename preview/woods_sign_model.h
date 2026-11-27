@@ -7,6 +7,9 @@
 typedef struct BfmWoodsSignModel BfmWoodsSignModel;
 
 BfmWoodsSignModel *bfm_woods_sign_model_load(const uint8_t *scene, size_t bytes, uint32_t room);
+/* Read a placed two-sided board and its solid post from the mounted room. */
+BfmWoodsSignModel *bfm_woods_sign_model_from_placement(const uint8_t *scene, size_t bytes,
+                                                       uint32_t row, uint32_t kit);
 void bfm_woods_sign_model_free(BfmWoodsSignModel *sign);
 const int16_t *bfm_woods_sign_model_position(const BfmWoodsSignModel *sign);
 /* Resolve one player foot movement against the placed post. A miss keeps

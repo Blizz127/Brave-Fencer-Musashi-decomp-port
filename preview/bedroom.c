@@ -4,6 +4,7 @@
 #include "inn_field.h"
 #include "bakery_field.h"
 #include "castle_cable.h"
+#include "castle_audience.h"
 #include "village_arrival.h"
 #include "nightmare_room.h"
 #include "nightmare_transition.h"
@@ -61,6 +62,10 @@ struct BfmBedroom {
     size_t scene_bytes, main_bytes;
     int library, command_room, gesture;
     unsigned command_delay, selected_command;
+    BfmCastleAudience *audience;
+    uint8_t castle_door[36];
+    unsigned castle_tick, castle_reveal;
+    int village_court;
     BfmCastleCable *cable;
     BfmVillageArrival *village;
     BfmInnField *inn;
@@ -261,6 +266,7 @@ void bfm_bedroom_free(BfmBedroom *room)
     bfm_village_arrival_free(room->pending_exterior.village);
     bfm_forest_hud_free(room->pending_exterior.hud);
     free(room->frozen_recovery);
+    bfm_castle_audience_free(room->audience);
     bfm_castle_cable_free(room->cable);
     bfm_village_arrival_free(room->village);
     bfm_village_impact_sound_free(room->landing_sound);
@@ -385,14 +391,8 @@ BfmBedroom *bfm_bedroom_open_restart(const MusashiDiscMedia *disc, const BfmSave
     return open_entry(disc, &entry);
 }
 
-static int enter_castle_room(BfmBedroom *r)
+static void clear_castle_field(BfmBedroom *r)
 {
-    BfmBedroomEntry entry=r->entry;
-    memcpy(entry.state.flags, r->story_flags, sizeof entry.state.flags);
-    int court = r->library;
-    const uint8_t *destination=data_range(r,court ? 0x8018317cu : 0x80185e5cu,sizeof(entry.state.destination));
-    if (!bfm_castle_room_entry(r->disc,destination,&entry)) return 0;
-    unsigned entrance = entry.state.destination[2];
     bfm_library_books_free(r->books); r->books=NULL;
     free(r->books_background); r->books_background=NULL;
     r->books_closing=0;
@@ -404,6 +404,15 @@ static int enter_castle_room(BfmBedroom *r)
     bfm_bedroom_visitor_free(r->visitor_models); r->visitor_models=NULL;
     bfm_forest_message_art_free(r->message_art); r->message_art=NULL;
     bfm_forest_voice_free(r->voice); r->voice=NULL;
+}
+
+static int load_castle_room(BfmBedroom *r, const uint8_t *destination, int court)
+{
+    BfmBedroomEntry entry = r->entry;
+    memcpy(entry.state.flags, r->story_flags, sizeof entry.state.flags);
+    if (!bfm_castle_room_entry(r->disc, destination, &entry)) return 0;
+    unsigned entrance = entry.state.destination[2];
+    clear_castle_field(r);
     r->scene_bytes=bfm_read_field_scene(r->disc,entry.scene_member,r->scene);
     const uint8_t *root=data_range(r,court ? 0x8017f1d0u : 0x8017f744u,4);
     const uint8_t *d=root ? data_range(r,word(root),0xcc) : NULL;
@@ -446,7 +455,7 @@ static int enter_castle_room(BfmBedroom *r)
     const uint8_t *walk_duration = data_range(r, court ? 0x80182ddcu : 0x80183204u, 4);
     if (!walk_duration || !bfm_bedroom_motion_step(r->motion, BFM_BEDROOM_ENTER, &r->pose) ||
         !bfm_bedroom_travel_entrance(r->travel, word(walk_duration))) return 0;
-    entry.state.flags[303 / 8] &= (uint8_t)~(1u << (303 % 8));
+    if (!r->village_court) entry.state.flags[303 / 8] &= (uint8_t)~(1u << (303 % 8));
     memcpy(r->story_flags, entry.state.flags, sizeof entry.state.flags);
     r->entry=entry;
     r->library=!court;
@@ -454,6 +463,83 @@ static int enter_castle_room(BfmBedroom *r)
     r->entry_wait=4;
     r->arrival=1;
     return 1;
+}
+
+static int enter_castle_room(BfmBedroom *room)
+{
+    int court = room->library;
+    const uint8_t *door = data_range(room, court ? 0x8018317cu : 0x80185e5cu,
+                                      sizeof room->entry.state.destination);
+    return load_castle_room(room, door, court);
+}
+
+/* The street, courtyard and Visit audience own different field data. Build
+ * the returning courtyard and its tile pages before relinquishing the old room. */
+static int receive_courtyard(BfmBedroom *room, const uint8_t *door)
+{
+    BfmForestScore *score = room_score(room, 0x3d);
+    if (!score) return 0;
+    BfmBedroom *next = calloc(1, sizeof *next);
+    if (!next) return 0;
+    next->disc = room->disc;
+    next->entry = room->entry;
+    memcpy(next->entry.state.flags, room->story_flags, sizeof next->entry.state.flags);
+    next->story_flags = next->entry.state.flags;
+    next->main = room->main;
+    next->main_bytes = room->main_bytes;
+    next->village_court = 1;
+    memcpy(next->tiles, room->tiles, sizeof next->tiles);
+    next->scene = malloc(BFM_FIELD_SCENE_CAPACITY);
+    if (!next->scene || !bfm_hero_run_smoke_load(&next->dust.sprite,next->main,next->main_bytes) ||
+        !load_castle_room(next, door, 1)) {
+        next->main = NULL;
+        bfm_bedroom_free(next);
+        return 0;
+    }
+    clear_castle_field(room);
+    free(room->scene);
+    room->scene = next->scene;
+    room->scene_bytes = next->scene_bytes;
+    room->field = next->field;
+    room->travel = next->travel;
+    room->motion = next->motion;
+    room->figure = next->figure;
+    room->visitors = next->visitors;
+    room->message_art = next->message_art;
+    room->blade = next->blade;
+    room->dust = next->dust;
+    room->script = next->script;
+    room->pose = next->pose;
+    room->entry = next->entry;
+    room->command_delay = next->command_delay;
+    room->entry_wait = next->entry_wait;
+    room->arrival = next->arrival;
+    memcpy(room->camera_actor, next->camera_actor, sizeof room->camera_actor);
+    memcpy(room->tiles, next->tiles, sizeof room->tiles);
+    memcpy(room->story_flags, room->entry.state.flags, sizeof room->entry.state.flags);
+    memcpy(room->status.record, room->entry.state.progress, sizeof room->status.record);
+    free(next);
+    bfm_castle_audience_free(room->audience); room->audience = NULL;
+    bfm_village_arrival_free(room->village); room->village = NULL;
+    bfm_castle_cable_free(room->cable); room->cable = NULL;
+    bfm_forest_message_free(room->message); room->message = NULL;
+    room->village_trip = room->cable_tick = 0;
+    room->recovered_exterior = STREET_NORMAL;
+    room->books_active = room->message_closed = room->drain = 0;
+    room->running = room->waking = room->gesture = 0;
+    room->requested = room->pending = BFM_BEDROOM_NONE;
+    room->current_score = score;
+    room->command_room = room->village_court = 1;
+    room->library = 0;
+    bfm_bedroom_hud_hide(room->hud);
+    return 1;
+}
+
+static void begin_castle_transfer(BfmBedroom *room, const uint8_t *door)
+{
+    memcpy(room->castle_door, door, sizeof room->castle_door);
+    room->castle_tick = 1;
+    room->castle_reveal = 0;
 }
 
 static int apply(void *context, BfmBedroomEvent event, uint32_t operand)
@@ -719,13 +805,22 @@ static int finish_castle_command(BfmBedroom *room)
     const uint8_t *choice = data_range(room,0x8018c2d4u+4*room->selected_command,4);
     if (!choice) return 0;
     uint32_t address = word(choice);
-    int first_village = room->selected_command == 4 && !address &&
+    int first_village = !room->village_court && room->selected_command == 4 && !address &&
                         !(room->story_flags[181 / 8] & (1u << (181 % 8)));
     if (room->selected_command == 4 && !address)
         address = first_village ? 0x80182c74u : 0x80182d24u;
     if (address) {
         const uint8_t *door=data_range(room,address,sizeof room->entry.state.destination);
         if (!door) return 0;
+        if (room->village_court &&
+            ((room->selected_command == 0 && word(door) == 0x3003 &&
+              bfm_castle_audience_eligible(&room->entry.state)) ||
+             (room->selected_command == 4 && word(door) == 0x00031010))) {
+            memcpy(room->frames[room->presented], room->books_background, sizeof room->frames[0]);
+            bfm_castle_hud_command_closed(room->hud);
+            begin_castle_transfer(room, door);
+            return 1;
+        }
         memcpy(room->entry.state.destination,door,sizeof room->entry.state.destination);
     }
     if (first_village) {
@@ -1034,6 +1129,11 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
                         int accept_edge, BfmFieldInput field)
 {
     int result = BFM_BEDROOM_ADVANCED;
+    const uint8_t *arch = bfm_village_arrival_castle_transfer(room->village);
+    if (arch && !room->message && bfm_castle_audience_eligible(&room->entry.state)) {
+        begin_castle_transfer(room, arch);
+        return BFM_BEDROOM_ADVANCED;
+    }
     if (bfm_village_arrival_room(room->village) == 0x3026 && !room->box_voice) {
         room->box_voice = bfm_defeat_voice_load(room->disc);
         if (!room->box_voice) return 0;
@@ -1067,7 +1167,7 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
         field.square_pressed = field.triangle_pressed = field.shoulder_held = 0;
         field.circle_pressed = field.cross_pressed = field.cross_held = 0;
     }
-    unsigned previous_score = bfm_village_arrival_woods_score_selector(room->village);
+    int previous_score = bfm_village_arrival_field_score(room->village, village_score_selector(room));
     if (!bfm_village_arrival_step_field(room->village, room->run, field, &opened)) return 0;
     if (bfm_village_arrival_take_retired_window(room->village)) {
         bfm_forest_message_free(room->message);
@@ -1075,11 +1175,11 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
     }
     unsigned field_voice = bfm_village_arrival_take_box_voice(room->village);
     if (field_voice && !request_field_voice(room, 1, field_voice)) return 0;
-    unsigned next_score = bfm_village_arrival_woods_score_selector(room->village);
-    if (previous_score != next_score && !next_score && bfm_village_arrival_room(room->village) == 0x3026) {
+    int next_score = bfm_village_arrival_field_score(room->village, village_score_selector(room));
+    if (previous_score != next_score && next_score < 0) {
         room->current_score = NULL;
     } else if (previous_score != next_score) {
-        unsigned selector = next_score ? next_score : village_score_selector(room);
+        unsigned selector = next_score ? (unsigned)next_score : village_score_selector(room);
         BfmForestScore *score = room_score(room, selector);
         if (!score) return 0;
         room->current_score = score;
@@ -1117,13 +1217,15 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
     if (room->story_flags != room->entry.state.flags)
         memcpy(room->story_flags, room->entry.state.flags, sizeof room->entry.state.flags);
     const BfmVillagePlayer *player = bfm_village_arrival_player(room->village);
-    if (player->pose.knock_contact || (player->events & BFM_VILLAGE_WELL_SOUND_EVENT)) {
+    unsigned upper_sound = bfm_village_arrival_take_upper_sound(room->village);
+    if (upper_sound || player->pose.knock_contact || (player->events & BFM_VILLAGE_WELL_SOUND_EVENT)) {
         if (!room->knock) room->knock = bfm_village_knock_sound_load(room->disc);
         if (!room->knock) return 0;
         if (player->pose.knock_contact)
             queue_effect(room, BFM_ROOM_KNOCK_BANK, BFM_VILLAGE_KNOCK_SOUND);
         if (player->events & BFM_VILLAGE_WELL_SOUND_EVENT)
             queue_effect(room, BFM_ROOM_KNOCK_BANK, BFM_VILLAGE_WELL_SOUND);
+        if (upper_sound) queue_effect(room, BFM_ROOM_KNOCK_BANK, upper_sound);
     }
     if (player->events & BFM_VILLAGE_CAMERA) {
         if (!apply(room, BFM_BED_SOUND_CHANGE, village_score_selector(room)))
@@ -1206,7 +1308,7 @@ static int mount_grillin_exterior(BfmBedroom *room, const uint8_t *door, Grillin
     /* The inn counter shares the street's tile allocation. Restore it if
      * street setup fails while the counter still owns the display. */
     void *inn_tiles = NULL;
-    if (room->inn || room->bakery) {
+    if (room->inn || room->bakery || room->village_court) {
         inn_tiles = malloc(sizeof room->tiles);
         if (!inn_tiles) return 0;
         memcpy(inn_tiles, room->tiles, sizeof room->tiles);
@@ -1263,6 +1365,48 @@ static int return_to_street(BfmBedroom *room, const uint8_t *door)
     return 1;
 }
 
+/* The village's long room change first shows the new courtyard 168 fields
+ * after the arch. The two indoor castle transitions use a shorter load. */
+static unsigned castle_load_fields(const BfmBedroom *room)
+{
+    if (room->village) return 168;
+    return room->audience ? 127 : 129;
+}
+
+static int transfer_castle_field(BfmBedroom *room)
+{
+    unsigned target = half(room->castle_door);
+    ++room->update;
+    if (++room->castle_tick <= castle_load_fields(room)) {
+        if (room->village && room->castle_tick == 41) room->current_score = NULL;
+        return 1;
+    }
+    if (target == 0x3000) {
+        if (!receive_courtyard(room, room->castle_door)) return 0;
+    } else if (target == 0x3003) {
+        BfmBedroomEntry entry = room->entry;
+        memcpy(entry.state.flags, room->story_flags, sizeof entry.state.flags);
+        if (!bfm_castle_audience_eligible(&entry.state) ||
+            !bfm_castle_room_entry(room->disc, room->castle_door, &entry)) return 0;
+        BfmCastleAudience *audience = bfm_castle_audience_open(room->disc, &entry,
+                                                               room->main, room->main_bytes);
+        if (!audience) return 0;
+        room->audience = audience;
+        room->entry = entry;
+        room->castle_reveal = 17;
+        room->message_closed = room->drain = 0;
+        bfm_bedroom_hud_hide(room->hud);
+    } else if (target == 0x1010) {
+        if (!room->voice) room->voice = bfm_bedroom_voice_load(room->disc);
+        if (!room->voice || !return_to_street(room, room->castle_door)) return 0;
+        room->command_room = room->village_court = 0;
+        room->message_closed = room->drain = 0;
+        room->village_trip = 1;
+    } else return 0;
+    room->castle_tick = 0;
+    return 1;
+}
+
 int bfm_bedroom_step_field(BfmBedroom *room, int confirm_edge, int reveal_edge,
                            int direction, int held, int accept_edge, int back_edge, BfmFieldInput field)
 {
@@ -1278,6 +1422,30 @@ int bfm_bedroom_step_field(BfmBedroom *room, int confirm_edge, int reveal_edge,
     BfmRetryScreen *retry = current_field_retry(room);
     if (retry) return woods_retry_step(room, retry, field, direction, back_edge, accept_edge, reveal_edge);
     int result = BFM_BEDROOM_ADVANCED;
+    if (room->castle_tick) return transfer_castle_field(room);
+    if (room->castle_reveal) {
+        ++room->update;
+        --room->castle_reveal;
+        return BFM_BEDROOM_ADVANCED;
+    }
+    if (room->audience) {
+        bfm_gameplay_advance_playtime(room->entry.state.progress, 1);
+        result = bfm_castle_audience_step(room->audience, &room->entry.state, room->run,
+                                          confirm_edge, reveal_edge, direction, held, accept_edge, back_edge);
+        if (!result) return 0;
+        queue_mounted_effect(room, bfm_castle_audience_effects(room->audience), BFM_ROOM_SCENE_BANK,
+                             bfm_castle_audience_take_sound(room->audience));
+        memcpy(room->status.record, room->entry.state.progress, sizeof room->status.record);
+        memcpy(room->story_flags, room->entry.state.flags, sizeof room->entry.state.flags);
+        const uint8_t *door = bfm_castle_audience_transfer(room->audience);
+        if (door) {
+            if (word(door) != 0x00043000 || !bfm_castle_audience_draw(room->audience, room->hud,
+                                             &room->status, room->frames[room->presented])) return 0;
+            begin_castle_transfer(room, door);
+        }
+        ++room->update;
+        return result;
+    }
     if (room->recovered_exterior != STREET_REVEALING &&
         !bfm_village_arrival_woods_playtime_paused(room->village))
         bfm_gameplay_advance_playtime(room->entry.state.progress, 1);
@@ -1730,6 +1898,8 @@ int bfm_bedroom_draw_counter(BfmBedroom *room, int dialogue, uint32_t pixels[240
 
 uint16_t bfm_bedroom_display_room(const BfmBedroom *room)
 {
+    if (room->castle_tick >= 30) return (uint16_t)half(room->castle_door);
+    if (room->audience) return 0x3003;
     if (room->nightmare) return 0x3012;
     if (room->bakery) return 0x2015;
     if (room->inn) return 0x2017;
@@ -1742,6 +1912,20 @@ uint16_t bfm_bedroom_display_room(const BfmBedroom *room)
 
 int bfm_bedroom_draw(BfmBedroom *room, uint32_t pixels[240][320])
 {
+    if (room->castle_tick) {
+        memcpy(pixels, room->frames[room->presented], sizeof room->frames[0]);
+        unsigned tick = room->castle_tick;
+        BfmForestGatewayFrame fade = {.view = BFM_GATEWAY_HELD_FOREST,
+                                      .shade = tick > 41 ? (tick-41)/2 : 0};
+        bfm_forest_gateway_transition_shade(&fade, pixels);
+        return 1;
+    }
+    if (room->audience) {
+        if (!bfm_castle_audience_draw(room->audience, room->hud, &room->status, pixels)) return 0;
+        BfmForestGatewayFrame fade = {.shade = room->castle_reveal * 2};
+        bfm_forest_gateway_transition_shade(&fade, pixels);
+        return 1;
+    }
     if (room->shop_door) {
         unsigned tick = room->shop_entry_tick;
         int bakery = half(room->shop_door) == 0x2015;
@@ -1840,6 +2024,8 @@ int bfm_bedroom_draw(BfmBedroom *room, uint32_t pixels[240][320])
 
 const char *bfm_bedroom_end_message(const BfmBedroom *room)
 {
+    if (room->audience && bfm_castle_audience_guest_pending(room->audience))
+        return "This castle guest visit is unfinished. Start to return.";
     if (unmounted_box_endpoint(room)) return "This Memory Box destination is unfinished. Start to return.";
     if (room->inn) return "Inn preview complete. Start to return.";
     return room->village_trip ? "Cable ride complete. Start to return." : "Library preview complete. Start to return.";
@@ -1847,13 +2033,15 @@ const char *bfm_bedroom_end_message(const BfmBedroom *room)
 
 int bfm_bedroom_endpoint(const BfmBedroom *room)
 {
-    if (room->nightmare) return 0;
+    if (room->castle_tick || room->nightmare) return 0;
+    if (room->audience) return bfm_castle_audience_guest_pending(room->audience);
     return unmounted_box_endpoint(room) || bfm_inn_field_finished(room->inn) ||
            (!room->village_trip && room->message_closed && room->drain==2);
 }
 
 struct ForestVoice *bfm_bedroom_voice(BfmBedroom *room, unsigned *generation)
 {
+    if (room->audience) return bfm_castle_audience_voice(room->audience, generation);
     if (room->nightmare) {
         *generation = bfm_nightmare_room_generation(room->nightmare);
         return bfm_nightmare_room_voice(room->nightmare);

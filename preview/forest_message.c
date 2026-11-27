@@ -22,7 +22,7 @@ struct BfmForestMessage {
     const uint8_t *program, *insertion, *resume;
     size_t insertion_bytes, resume_bytes;
     uint8_t *saved_flags;
-    unsigned active_flag;
+    int active_flag; /* Only a nonmodal notice owns a temporary flag. */
     int asserted_active_flag;
 };
 
@@ -39,6 +39,7 @@ static BfmForestMessage *open_message(const uint8_t *program, size_t length, int
             program = owned;
         }
         message->program = program;
+        message->active_flag = -1;
         message->size = length;
         message->frame.focused = 1;
         message->frame.text_columns = 36;
@@ -62,21 +63,27 @@ BfmForestMessage *bfm_field_message_borrow(const uint8_t *program, size_t length
     return open_message(program, length, 0);
 }
 
+BfmForestMessage *bfm_field_message_borrow_flags(const uint8_t *program, size_t length,
+                                                uint8_t flags[64])
+{
+    if (!flags) return NULL;
+    BfmForestMessage *message = bfm_field_message_borrow(program, length);
+    if (message) message->saved_flags = flags;
+    return message;
+}
+
 BfmForestMessage *bfm_field_message_borrow_notice(const uint8_t *program, size_t length,
                                                 uint8_t flags[64], unsigned active_flag)
 {
-    if (!flags || active_flag >= 64u * 8u) return NULL;
-    BfmForestMessage *message = bfm_field_message_borrow(program, length);
-    if (message) {
-        message->saved_flags = flags;
-        message->active_flag = active_flag;
-    }
+    if (active_flag >= 64u * 8u) return NULL;
+    BfmForestMessage *message = bfm_field_message_borrow_flags(program, length, flags);
+    if (message) message->active_flag = (int)active_flag;
     return message;
 }
 
 int bfm_field_message_keeps_control(const BfmForestMessage *message)
 {
-    return message && message->saved_flags != NULL;
+    return message && message->active_flag >= 0;
 }
 
 int bfm_field_message_insert_text(BfmForestMessage *message, const uint8_t *text, size_t bytes)
@@ -141,7 +148,7 @@ static int print_update(BfmForestMessage *m)
             m->phase = WAIT_DISMISS;
             return 1;
         case 0x01: /* Ink */
-            if (left < 1 || arg[0] < 1 || arg[0] > 5) return 0;
+            if (left < 1 || arg[0] < 1 || arg[0] >= 16) return 0;
             m->ink = arg[0];
             ++m->cursor;
             break;
@@ -149,9 +156,10 @@ static int print_update(BfmForestMessage *m)
             if (left < 2) return 0;
             unsigned layout = arg[0];
             unsigned style = layout;
-            if (layout == 0xa6 || layout == 0xc2 || layout == 10 || layout == 14)
+            if (layout == 0xa2 || layout == 0xa6 || layout == 0xc2 ||
+                layout == 0x4e || layout == 10 || layout == 14)
                 style = layout & 7u;
-            if (!set_style(m, style) || arg[1] > 4 ||
+            if (!set_style(m, style) || (arg[1] > 4 && !(layout == 0x0a && arg[1] == 9)) ||
                 (layout == 1 ? arg[1] > 1 : !arg[1])) return 0;
             f->text_columns = 36 - 8 * ((layout >> 5) & 3u);
             /* Rectangular notices and signs have no portrait. */
@@ -228,11 +236,14 @@ static int print_update(BfmForestMessage *m)
                 m->cursor += 3;
                 break;
             }
+            m->cursor += 3;
+            m->voiced_page = 1;
+            /* A zero cue keeps this page voiced while the current recording
+             * continues. The following text can print on this update. */
+            if (!arg[1] && !arg[2]) break;
             f->voice_bank = arg[0] & 0x7f;
             f->voice_cue = arg[1] | ((unsigned)arg[2] << 8);
             f->events |= BFM_FOREST_VOICE_REQUEST;
-            m->cursor += 3;
-            m->voiced_page = 1;
             if (!(arg[0] & 0x80)) {
                 /* An immediately following border opens during the seek.
                  * Inline cues synchronize before printing continues. */
@@ -263,7 +274,7 @@ static int print_update(BfmForestMessage *m)
                 uint8_t mask = (uint8_t)(1u << (flag % 8));
                 if (op == 0x10) m->saved_flags[flag / 8] |= mask;
                 else m->saved_flags[flag / 8] &= (uint8_t)~mask;
-                if (flag == m->active_flag) m->asserted_active_flag = op == 0x10;
+                if ((int)flag == m->active_flag) m->asserted_active_flag = op == 0x10;
             } else if (!actor_event) return 0;
             if (actor_event) {
                 f->actor_flags |= 1u << (flag - 0x125);
@@ -349,7 +360,7 @@ static int build_choice(BfmForestMessage *m)
         } else if (ch == 0x01) {
             if (m->cursor == m->size) return 0;
             unsigned ink = m->program[m->cursor++];
-            if (ink < 1 || ink > 5) return 0;
+            if (ink < 1 || ink >= 16) return 0;
             m->ink = ink;
         } else if (ch == 0x0a && m->row + 1 < m->frame.choice_row + m->choice_count) {
             ++m->row;

@@ -62,9 +62,17 @@ size_t bfm_tower_summit_departure_cards(const uint8_t *scene, size_t bytes,
                                         const BfmForestCamera *camera,
                                         BfmForestDustCard *out, size_t capacity)
 {
-    /* The US indoor scene supplies the closed perimeter as signed X/Z pairs. */
-    enum { ring = 0x620e0, sectors = 20, full = 2688 };
-    if (!scene || bytes < ring + 2*(sectors+1) || !pad || !camera || !out ||
+    const size_t ring = 0x620e0;
+    if (!scene || bytes < ring) return 0;
+    return bfm_departure_ring_cards(scene + ring, bytes - ring, pad, age, tick, camera, out, capacity);
+}
+
+size_t bfm_departure_ring_cards(const uint8_t *ring, size_t bytes, const int16_t pad[3],
+                                unsigned age, unsigned tick, const BfmForestCamera *camera,
+                                BfmForestDustCard *out, size_t capacity)
+{
+    enum { sectors = 20, full = 2688 };
+    if (!ring || bytes < 2*(sectors+1) || !pad || !camera || !out ||
         capacity < BFM_TOWER_SUMMIT_DEPARTURE_CARDS || age == 0 || age >= 90) return 0;
     int scale = age < 12 ? (int)age * 224 : full;
     if (age > 79) scale -= (int)(age - 79) * 256;
@@ -80,7 +88,7 @@ size_t bfm_tower_summit_departure_cards(const uint8_t *scene, size_t bytes,
     LiftVertex center = {{pad[0], (int16_t)y, pad[2]}, 0};
     LiftVertex inner[sectors+1], outer[sectors+1], upper[sectors+1];
     for (unsigned i = 0; i <= sectors; ++i) {
-        int x = scene[ring + 2*i], z = scene[ring + 2*i+1];
+        int x = ring[2*i], z = ring[2*i+1];
         if (x >= 128) x -= 256;
         if (z >= 128) z -= 256;
         inner[i] = (LiftVertex){{pad[0]+q12(x*scale), y, pad[2]+q12(z*scale)}, color};

@@ -26,6 +26,10 @@ BfmVillageGroundResult bfm_village_ground_wall_step(const BfmVillageGround *grou
     const int16_t from[3], int16_t to[3], BfmForestContact *floor, uint16_t *wall);
 BfmVillageGroundResult bfm_village_ground_air(const BfmVillageGround *ground,
     const int16_t from[3], int16_t to[3], BfmForestContact *floor);
+/* An airborne passage tests the unextended foot segment and reports the
+ * crossed wall material for the room's registered exit actor. */
+BfmVillageGroundResult bfm_village_ground_air_passage(const BfmVillageGround *ground,
+    const int16_t from[3], int16_t to[3], BfmForestContact *floor, uint16_t *wall);
 /* On successful sweeps, report a vertical or steep wall contact, including
  * unmarked geometry. The contact flag is independent of the wall material. */
 BfmVillageGroundResult bfm_village_ground_air_contact(const BfmVillageGround *ground,

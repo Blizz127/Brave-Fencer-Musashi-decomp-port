@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "note": "USA MAIN.CD member 12 graphics flag selection and VRAM rectangle copy lists.",
+  "targets": {
+    "main_0012": {
+      "kind": "blob",
+      "file": "extracted/overlays/main/0012.bin",
+      "base": 2148532568,
+      "sha256": "7bf686da174e6bd98cab8e742af629ba4168cff76e3be4e367cb69f783af070c"
+    }
+  },
+  "matches": [
+    {
+      "name": "func_80145EE8",
+      "region": "main_0012",
+      "vram": 2148818664,
+      "size": 300,
+      "source": "src/overlays/main_0012/80145ee8.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "source_sha256": "ec57cb95d11e303c5e564f74e8c2be83750376208e75558876b061ef7b65fbac"
+    },
+    {
+      "name": "func_80146014",
+      "region": "main_0012",
+      "vram": 2148818964,
+      "size": 96,
+      "source": "src/overlays/main_0012/80146014.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "source_sha256": "009c451e303028e3eef4a1bdc487c185bc8af01734f9e4725c5bf61798ddf4d4"
+    }
+  ]
+}

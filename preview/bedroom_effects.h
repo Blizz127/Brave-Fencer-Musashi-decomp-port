@@ -20,10 +20,15 @@ enum { BFM_WOODS_TERRAIN_HIT_FIRST = 0x426, BFM_WOODS_TERRAIN_HIT_LAST = 0x42d,
        BFM_WOODS_PINK_BITE_SOUND = 0x524, BFM_WOODS_LENO_BARK_SOUND = 0x525,
        BFM_WOODS_LENO_YELP_SOUND = 0x526, BFM_WOODS_SPLASH_SOUND = 0x531,
        BFM_WOODS_SATIATE_RECOVERY_SOUND = 0x5fb, BFM_WOODS_CHARGED_SLASH_SOUND = 0x9da };
+enum { BFM_WOODS_CRYSTAL_HIT_SOUND = 1581, BFM_WOODS_CRYSTAL_BREAK_SOUND = 1582,
+       BFM_WOODS_RESCUE_DEPART_SOUND = 1637, BFM_WOODS_RESCUE_VANISH_SOUND = 1638,
+       BFM_WOODS_RESCUE_BP_SOUND = 3070 };
 /* The room's ordered sound stream carries native key-off requests above the
- * sixteen-bit disc selectors. Only the charging tone receives this request. */
+ * sixteen-bit disc selectors. They release only matching active sounds. */
 enum { BFM_WOODS_CHARGE_SOUND = 1100, BFM_WOODS_FULL_CHARGE_SOUND = 1101,
-       BFM_WOODS_STOP_CHARGE_SOUND = 0x10000 + BFM_WOODS_CHARGE_SOUND };
+       BFM_WOODS_STOP_CHARGE_SOUND = 0x10000 + BFM_WOODS_CHARGE_SOUND,
+       BFM_EARTH_SCROLL_RINGS_SOUND = 0x639,
+       BFM_EARTH_SCROLL_STOP_RINGS_SOUND = 0x10000 + BFM_EARTH_SCROLL_RINGS_SOUND };
 enum { BFM_NIGHTMARE_WAKE_SOUND = 0x7e7, BFM_NIGHTMARE_BED_LANDING_SOUND = 0x434,
        BFM_NIGHTMARE_FLOOR_LANDING_SOUND = 0x42e };
 /* Prepare the wake cue and the bed and floor contact sounds from SC03 member 3. */
@@ -41,6 +46,8 @@ BfmBedroomEffects *bfm_village_knock_sound_load(const MusashiDiscMedia *disc);
 BfmBedroomEffects *bfm_forest_swing_sound_load(const MusashiDiscMedia *disc);
 BfmBedroomEffects *bfm_bakery_effects_load(const MusashiDiscMedia *disc);
 BfmBedroomEffects *bfm_menu_effects_load(const MusashiDiscMedia *disc);
+/* The castle command and rescued-person menus use the mounted common sound bank. */
+BfmBedroomEffects *bfm_castle_menu_effects_load(const MusashiDiscMedia *disc);
 BfmBedroomEffects *bfm_bedroom_effects_load(const MusashiDiscMedia *disc, unsigned member, uint32_t room);
 void bfm_bedroom_effects_free(BfmBedroomEffects *effects);
 /* Serialized with the sound callback. All source decoding occurs during load. */

@@ -17,6 +17,13 @@ void bfm_woods_box_view_follow_grip(BfmWoodsBoxView *view, const int16_t foot[3]
                                     int entering, int shoulder_pressed, int gripped);
 void bfm_woods_box_view_shake(BfmWoodsBoxView *view, int world_y_offset);
 void bfm_woods_box_view_present(BfmWoodsBoxView *view, const BfmVillageCamera *camera);
+/* Current submitted camera, including the requested field shake, and the
+ * third directional lamp used by the shrine shadow. Both are borrowed. */
+const BfmBedroomView *bfm_woods_box_view_transform(BfmWoodsBoxView *view);
+const uint8_t *bfm_woods_box_view_third_lamp(const BfmWoodsBoxView *view);
+/* The release requests row 5 or restores the clock with row 0. The ordinary
+ * field lighting step applies the currently requested row once per update. */
+int bfm_woods_box_view_shrine_palette(BfmWoodsBoxView *view, unsigned row);
 void bfm_woods_box_view_light(BfmWoodsBoxView *view, unsigned phase);
 /* Advance the existing splash once per player update. A new splash uses the
  * original contact point and the camera presented before this update. */
@@ -29,5 +36,11 @@ BfmVillageField *bfm_woods_box_view_field(BfmWoodsBoxView *view);
 int bfm_woods_box_view_draw(BfmWoodsBoxView *view, const BfmBedroomRoot *root,
     const BfmBedroomPose *pose, const uint8_t flags[64], unsigned age, unsigned scale_q12,
     uint32_t pixels[240][320],
+    int (*prepare_actor)(void *, BfmBedroomFigure *, const BfmBedroomView *), void *actor);
+/* During the Earth award, submit the hero and the admitted medal effects
+ * into the cleared playfield. The caller filters its actor submissions. */
+int bfm_woods_box_view_draw_presentation(BfmWoodsBoxView *view, const BfmBedroomRoot *root,
+    const BfmBedroomPose *pose, const uint8_t flags[64], unsigned age, unsigned scale_q12,
+    int award_presentation, uint32_t pixels[240][320],
     int (*prepare_actor)(void *, BfmBedroomFigure *, const BfmBedroomView *), void *actor);
 #endif

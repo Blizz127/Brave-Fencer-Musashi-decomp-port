@@ -18,6 +18,9 @@ BfmForestMessageArt *bfm_bedroom_message_art_load(const MusashiDiscMedia *disc,
                                                   const uint16_t tiles[512][1024]);
 BfmForestMessageArt *bfm_castle_message_art_load(const MusashiDiscMedia *disc, const uint8_t *scene,
                                                   size_t bytes, const uint16_t tiles[512][1024], size_t inset);
+/* Cache the sign and Soldier Lardwick window art from the mounted SC03/29 room. */
+BfmForestMessageArt *bfm_southern_woods_message_art_load(const MusashiDiscMedia *disc,
+    const uint8_t *scene, size_t bytes, const uint16_t tiles[512][1024]);
 void bfm_forest_message_art_free(BfmForestMessageArt *art);
 void bfm_forest_message_art_draw(const BfmForestMessageArt *art,
                                  const BfmForestMessageFrame *frame,

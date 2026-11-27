@@ -72,7 +72,10 @@ BfmVillageMotion *bfm_village_motion_arrive(const BfmVillageMotion *departed, co
 BfmVillageMotion *bfm_village_motion_resume(const uint8_t *scene, size_t bytes,
                                             uint32_t room_address,
                                             const uint8_t *main, size_t main_bytes);
-/* Shop exits use the receiving street's mounted anchor and heading. */
+/* Split the east arch from the ordinary inter-street and bridge transfers.
+ * The castle owner decides which menu destinations it can receive. */
+const uint8_t *bfm_village_motion_castle_exit(const BfmVillageMotion *motion);
+/* Indoor returns use the receiving street's mounted anchor and heading. */
 BfmVillageMotion *bfm_village_motion_return_to_street(const uint8_t *scene, size_t bytes,
                                     uint32_t room_address, const uint8_t *main, size_t main_bytes,
                                     unsigned entrance);
@@ -95,6 +98,10 @@ int bfm_village_motion_rootrick_step(BfmVillageMotion *motion, struct BfmRootric
     const struct BfmRootrickHeroObstacle *before, const struct BfmRootrickHeroObstacle *after,
     BfmFieldInput input, int camera_yaw,
     unsigned field_tick, int can_climb, int32_t *player_y_q16);
+/* Advance a mounted body program and the current face once. Repeating the
+ * program retains its body cursor. ended reports the published end marker. */
+int bfm_village_motion_staged_program(BfmVillageMotion *motion, const BfmBedroomRoot *root,
+                                      uint32_t program, int *ended);
 int bfm_village_motion_staged_action(BfmVillageMotion *motion, const BfmBedroomRoot *root,
                                     BfmBedroomAction action);
 /* Transfer the complete live coordinate to and from a scripted field mover.
@@ -106,6 +113,9 @@ int bfm_village_motion_staged_position(BfmVillageMotion *motion, const int32_t x
 int bfm_village_motion_staged_model(BfmVillageMotion *motion, const BfmBedroomRoot *root,
     uint32_t pose, unsigned face_slot, int show_fusion, int show_lumina);
 int bfm_village_motion_place(BfmVillageMotion *motion, const BfmBedroomRoot *root);
+/* Return a staged actor to ordinary control at his current physical position.
+ * Unlike a new placement, this retains fractions and the last fall velocity. */
+int bfm_village_motion_release_staged(BfmVillageMotion *motion);
 const BfmVillagePlayer *bfm_village_motion_player(const BfmVillageMotion *motion);
 /* Once per gameplay update. Pad axes are -127..127, right and down positive.
  * Camera yaw is target minus eye in X/Z, with +Z at zero. */
@@ -142,6 +152,11 @@ unsigned bfm_village_motion_box_pole(const BfmVillageMotion *motion);
 int bfm_village_motion_box_step(BfmVillageMotion *motion, int stick_x, int stick_y,
                                 int camera_yaw, int cross_pressed, int cross_held,
                                 struct BfmGameplayRun *run);
+/* A grounded Twinpeak blade owns the feet and yaw even when the original
+ * walking controller was braking. Recheck stationary terrain and advance the
+ * face. On a normal finish enter stance at zero speed. A lost support or a
+ * steep face instead yields the ordinary fall/slide to the caller. */
+int bfm_village_motion_box_blade_hold(BfmVillageMotion *motion, int finishing);
 struct BfmWoodsLilies;
 int bfm_village_motion_step_woods(BfmVillageMotion *motion, int stick_x, int stick_y,
                                  int camera_yaw, int cross_pressed, int cross_held,
@@ -222,6 +237,13 @@ int bfm_village_motion_continue(BfmVillageMotion *motion);
  * specifies the walking offset in the resident's local coordinates. */
 int bfm_village_motion_begin_talk(BfmVillageMotion *motion, const int16_t resident_xyz[3],
                                   unsigned resident_yaw);
+/* Start a mounted conversation that stages the player at a world-space
+ * approach foot before turning toward the speaker. */
+int bfm_village_motion_begin_talk_at(BfmVillageMotion *motion, const int16_t resident_xyz[3],
+                                     const int16_t approach_xyz[3]);
+/* A repeat line with no staging or facing cue holds the current foot
+ * and heading. Release with bfm_village_motion_end_talk on real close. */
+int bfm_village_motion_begin_talk_hold(BfmVillageMotion *motion);
 /* Pass the previous view's eye and target while its conversation zoom moves. */
 int bfm_village_motion_view_yaw(const int32_t eye[3], const int32_t target[3]);
 int bfm_village_motion_begin_read(BfmVillageMotion *motion, const int16_t point[3]);
@@ -231,6 +253,8 @@ int bfm_village_motion_end_talk(BfmVillageMotion *motion);
 int bfm_village_motion_face(const BfmVillageMotion *motion, uint16_t tiles[512][1024]);
 int bfm_village_motion_lower_orb(const BfmVillageMotion *motion, unsigned orb,
                                 uint16_t tiles[512][1024]);
+int bfm_village_motion_twinpeak_orb(const BfmVillageMotion *motion, unsigned orb,
+                                   uint16_t tiles[512][1024]);
 void bfm_village_motion_free(BfmVillageMotion *motion);
 
 /* Somnolent Forest's south clearing, entered from the bank. Both south

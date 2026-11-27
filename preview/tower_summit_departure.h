@@ -21,4 +21,9 @@ size_t bfm_tower_summit_departure_cards(const uint8_t *scene, size_t bytes,
                                         const BfmForestCamera *camera,
                                         BfmForestDustCard *out, size_t capacity);
 
+/* Project a departure light using its room's closed signed X/Z perimeter. */
+size_t bfm_departure_ring_cards(const uint8_t *ring, size_t bytes, const int16_t pad[3],
+                                unsigned beam_age, unsigned scene_tick, const BfmForestCamera *camera,
+                                BfmForestDustCard *out, size_t capacity);
+
 #endif

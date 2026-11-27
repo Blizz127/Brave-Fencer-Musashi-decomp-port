@@ -96,6 +96,8 @@ int bfm_bedroom_motion_external_face(BfmBedroomMotion *motion, unsigned slot,
                                      int already_stepped, BfmBedroomPose *frame);
 int bfm_bedroom_motion_face(const BfmBedroomMotion *motion, uint16_t tiles[512][1024]);
 int bfm_bedroom_orb_palette(const BfmBedroomMotion *motion, uint32_t table, unsigned orb, uint16_t tiles[512][1024]);
+int bfm_field_blade_palette(const BfmBedroomMotion *motion, uint32_t normal_table, unsigned orb,
+                            uint16_t tiles[512][1024]);
 int bfm_grillin_blade_palette(const BfmBedroomMotion *motion, unsigned orb, uint16_t tiles[512][1024]);
 int bfm_bedroom_motion_upload_palette(const BfmBedroomMotion *motion, uint32_t descriptor,
                                       uint16_t tiles[512][1024]);

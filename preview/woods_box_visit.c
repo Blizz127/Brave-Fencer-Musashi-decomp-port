@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "woods_box_visit.h"
 #include "forest_message_art.h"
+#include "field_rest.h"
 #include "village_clock.h"
 #include "woods_3026_box_art.h"
 #include "woods_3026_box_hit.h"
@@ -9,6 +10,9 @@
 #include "woods_box_view.h"
 #include "woods_rootrick_encounter.h"
 #include "woods_rootrick_boulder.h"
+#include "woods_earth_shrine.h"
+#include "woods_earth_shrine_visit.h"
+#include "woods_twinpeak_player_blade.h"
 #include "bedroom_effects.h"
 #include "village_field_defeat.h"
 #include "woods_fusion_art.h"
@@ -26,6 +30,11 @@ struct BfmWoodsBoxVisit {
     BfmVillageMotion *motion;
     BfmWoodsBoxView *view;
     BfmWoodsRootrickEncounter *rootrick;
+    BfmEarthShrine *shrine;
+    BfmEarthShrineVisit *ritual;
+    BfmWoodsCasterMelee *blade;
+    BfmWoodsCasterMeleeFrame swing;
+    BfmFieldRest rest;
     BfmWoods3026BoxArt *box;
     BfmForestMessageArt *writing;
     BfmWoodsBoxRoute route;
@@ -56,6 +65,9 @@ void bfm_woods_box_visit_free(BfmWoodsBoxVisit *visit)
     bfm_woods_player_hit_free(visit->receiver);
     bfm_forest_message_art_free(visit->writing);
     bfm_woods_rootrick_free(visit->rootrick);
+    bfm_woods_caster_melee_free(visit->blade);
+    bfm_earth_shrine_free(visit->shrine);
+    bfm_earth_visit_free(visit->ritual);
     bfm_woods_box_view_free(visit->view);
     bfm_woods_3026_box_art_free(visit->box);
     bfm_village_motion_free(visit->motion);
@@ -90,6 +102,8 @@ const BfmVillageMotion *bfm_woods_box_visit_departure(const BfmWoodsBoxVisit *vi
 static int submit_box(void *context, BfmBedroomFigure *figure, const BfmBedroomView *view)
 {
     const BfmWoodsBoxVisit *visit = context;
+    if (!bfm_earth_visit_draw(visit->ritual, visit->age, figure, view)) return 0;
+    if (bfm_earth_visit_dark(visit->ritual)) return 1;
     return bfm_woods_3026_box_art_draw(visit->box, figure, view, visit->use.openness) &&
            bfm_woods_pole_pickup_art_add(&visit->pickup_art, &visit->pickups, figure, view,
                                          visit->actor_tick) &&
@@ -106,15 +120,20 @@ int bfm_woods_box_visit_draw(BfmWoodsBoxVisit *visit, const uint8_t flags[64],
     unsigned scale = visit->entry->state.progress[0x23] & 0x80 ?
                      BFM_HERO_MINI_SCALE : BFM_HERO_NORMAL_SCALE;
     BfmBedroomPose shown = p->pose;
+    if (!bfm_twinpeak_player_blade_pose(&visit->swing, visit->main, visit->main_bytes, &shown)) return 0;
+    bfm_earth_visit_pose(visit->ritual, &shown);
     if (visit->reaction.pose &&
         !bfm_woods_fusion_art_pose(visit->main, visit->main_bytes, visit->reaction.pose,
                                    bfm_village_field_visible(&shown, flags), shown.hide_fusion, &shown))
         return 0;
     if (!bfm_village_motion_face(visit->motion, visit->tiles) ||
-        !bfm_woods_box_view_draw(visit->view, &p->root, &shown, flags, visit->age, scale, pixels,
+        !bfm_woods_box_view_draw_presentation(visit->view, &p->root, &shown, flags, visit->age, scale,
+                                bfm_earth_visit_dark(visit->ritual), pixels,
                                 submit_box, visit)) return 0;
     if (window && bfm_woods_rootrick_controls_player(visit->rootrick))
         return bfm_woods_rootrick_window(visit->rootrick, visit->writing, window, pixels);
+    if (window && (bfm_earth_shrine_in_scene(visit->shrine) || bfm_earth_visit_controls(visit->ritual)))
+        return bfm_forest_message_art_draw_placed(visit->writing, window, 0, 0, pixels);
     if (window) bfm_forest_message_art_draw(visit->writing, window, pixels);
     return 1;
 }
@@ -147,6 +166,16 @@ BfmWoodsBoxVisit *bfm_woods_box_visit_open(const MusashiDiscMedia *disc, BfmBedr
     if (!visit->view) goto fail;
     visit->rootrick = bfm_woods_rootrick_open(disc, visit->scene, bytes, main, main_bytes);
     if (!visit->rootrick) goto fail;
+    visit->blade = bfm_woods_twinpeak_melee_open(disc, visit->scene, bytes, main, main_bytes);
+    if (!visit->blade) goto fail;
+    int earned_scroll = entry->state.flags[22 / 8] & (1u << (22 % 8));
+    visit->shrine = bfm_earth_shrine_open(visit->scene, bytes, earned_scroll);
+    if (!visit->shrine) goto fail;
+    if (!earned_scroll) {
+        visit->ritual = bfm_earth_visit_open(disc, visit->scene, bytes, main, main_bytes, tiles,
+                                            visit->motion, visit->view, &entry->state);
+        if (!visit->ritual) goto fail;
+    }
     /* The room supplies its own dialogue border insets. */
     const size_t inset = UINT32_C(0x80191400) - UINT32_C(0x80128158);
     visit->writing = bfm_castle_message_art_load(disc, visit->scene, bytes, tiles, inset);
@@ -170,6 +199,7 @@ int bfm_woods_box_visit_close(BfmWoodsBoxVisit *visit, unsigned answer)
 {
     if (!visit) return 0;
     if (bfm_woods_rootrick_closed(visit->rootrick)) return 1;
+    if (bfm_earth_shrine_closed(visit->shrine) || bfm_earth_visit_close(visit->ritual)) return 1;
     if (!visit->use.wait_for_answer) return 0;
     bfm_woods_box_use_close(&visit->use, answer);
     return 1;
@@ -177,17 +207,36 @@ int bfm_woods_box_visit_close(BfmWoodsBoxVisit *visit, unsigned answer)
 
 int bfm_woods_box_visit_take_hud(BfmWoodsBoxVisit *visit)
 {
-    return visit ? bfm_woods_rootrick_take_hud(visit->rootrick) : 0;
+    if (!visit) return 0;
+    int hud = bfm_earth_visit_hud(visit->ritual);
+    return hud ? hud : bfm_woods_rootrick_take_hud(visit->rootrick);
+}
+
+int bfm_woods_box_visit_rest_hud(const BfmWoodsBoxVisit *visit, BfmForestHud *hud)
+{
+    if (!visit || !hud) return 0;
+    const uint8_t *status = visit->entry->state.progress;
+    unsigned palette;
+    if (bfm_village_hud_step_blade(hud, status[0x48], &palette) &&
+        !bfm_village_motion_twinpeak_orb(visit->motion, palette, visit->tiles)) return 0;
+    bfm_village_hud_rest(hud, (status[0x48] & 0x80) != 0, status[0x47],
+                         bfm_field_rest_sleeping(&visit->rest));
+    return 1;
 }
 
 void bfm_woods_box_visit_score_applied(BfmWoodsBoxVisit *visit, unsigned selector)
 {
-    if (visit) bfm_woods_rootrick_score_applied(visit->rootrick, selector);
+    if (visit) {
+        bfm_woods_rootrick_score_applied(visit->rootrick, selector);
+        bfm_earth_shrine_score_applied(visit->shrine, selector);
+    }
 }
 
 unsigned bfm_woods_box_visit_score(const BfmWoodsBoxVisit *visit)
 {
-    return visit ? bfm_woods_rootrick_score(visit->rootrick) : 0;
+    if (!visit) return 0;
+    unsigned field = bfm_earth_shrine_score(visit->shrine, bfm_woods_rootrick_score(visit->rootrick));
+    return bfm_earth_visit_score(visit->ritual, field);
 }
 
 int bfm_woods_box_visit_take_retired_window(BfmWoodsBoxVisit *visit)
@@ -205,6 +254,7 @@ unsigned bfm_woods_box_visit_take_sound(BfmWoodsBoxVisit *visit)
     if (!visit) return 0;
     unsigned sound = visit->sound;
     visit->sound = 0;
+    if (!sound) sound = bfm_earth_visit_sound(visit->ritual);
     return sound ? sound : bfm_woods_rootrick_take_sound(visit->rootrick);
 }
 
@@ -371,6 +421,19 @@ static int step_room(BfmWoodsBoxVisit *visit, BfmGameplayRun *run, BfmFieldInput
     /* The player's clock precedes Square and the Box actor. The actor needs
      * one final update after the terminal lid wait to release the player. */
     ++visit->age;
+    if (bfm_earth_visit_controls(visit->ritual)) {
+        /* The accepted strike keeps its recovery frames while the child begins shaking. */
+        int recovering = visit->swing.action != 0;
+        if (recovering) {
+            if (!bfm_twinpeak_player_blade_step(visit->blade, visit->motion, live, run,
+                                                (BfmFieldInput){0}, 1, &visit->swing) ||
+                !bfm_village_motion_box_blade_hold(visit->motion, !visit->swing.action)) return 0;
+            if (visit->swing.sound) visit->sound = visit->swing.sound;
+        }
+        return bfm_earth_visit_step(visit->ritual, run, actor_tick, !recovering, opened);
+    }
+    if (bfm_earth_shrine_in_scene(visit->shrine))
+        return bfm_earth_shrine_update(visit->shrine, visit->motion, visit->view, opened);
     if (bfm_woods_rootrick_controls_player(visit->rootrick)) {
         if (!player_hit_step(visit, run)) return 0;
         if (visit->boulder_receiver && !visit->reaction.movement_locked) {
@@ -390,21 +453,42 @@ static int step_room(BfmWoodsBoxVisit *visit, BfmGameplayRun *run, BfmFieldInput
         visit->box_cleanup = 0;
         return 1;
     }
-    if (!visit->use.route && !bfm_woods_box_visit_departure(visit)) {
-        if ((p->controlled || visit->in_water || bfm_village_motion_ingress_clock_running(visit->motion)) &&
-            !bfm_village_motion_woods_departing(visit->motion))
-            bfm_village_clock_step(live, 0);
-        if (run) memcpy(run->player.record, live->progress, sizeof run->player.record);
-    }
-    if (!visit->use.route && run && p->controlled && input.square_pressed &&
-        bfm_village_motion_grounded(visit->motion) && !bfm_woods_box_visit_departure(visit)) {
+    int use_box = 0;
+    if (!visit->use.route && visit->rest.pose == BFM_FIELD_REST_FREE && !visit->swing.action &&
+        run && p->controlled && input.square_pressed && bfm_village_motion_grounded(visit->motion) &&
+        !bfm_woods_box_visit_departure(visit)) {
         BfmForestTransform model;
         if (!bfm_bedroom_figure_actor_root(&p->root, p->pose.pitch, &model)) return 0;
         unsigned flags = live->progress[0x23] & 0x80 ? 0x400u : 0;
-        if (bfm_woods_3026_box_can_use(&visit->hit, &input, &model, p->root.xyz, flags, p->root.busy) &&
-            !bfm_woods_box_use_begin(&visit->use, &visit->route, visit->main, visit->main_bytes))
-            return 0;
+        use_box = bfm_woods_3026_box_can_use(&visit->hit, &input, &model, p->root.xyz, flags, p->root.busy);
     }
+    int resting = 0;
+    if (!visit->use.route && !bfm_woods_box_visit_departure(visit)) {
+        /* An ordinary standing player selects the rest stance before R1 starts
+         * charging. The same Select edge must not also toggle the blade. */
+        if (!use_box && visit->life == ALIVE && !visit->swing.action && !visit->in_water &&
+            !visit->reaction.movement_locked &&
+            !visit->incoming.hit_flags && !(live->progress[0x23] & 0x80) &&
+            bfm_twinpeak_player_field_ready(visit->motion, run)) {
+            bfm_village_motion_woods_condition(visit->motion, bfm_field_tired_stance(live->progress));
+            bfm_field_rest_input(&visit->rest, live, input);
+            input.select_pressed = 0;
+            resting = visit->rest.pose != BFM_FIELD_REST_FREE;
+        } else if (visit->rest.pose != BFM_FIELD_REST_FREE) {
+            visit->rest = (BfmFieldRest){0};
+            live->progress[0x47] = 0;
+        }
+        if ((p->controlled || visit->in_water || bfm_village_motion_ingress_clock_running(visit->motion)) &&
+            !bfm_village_motion_woods_departing(visit->motion)) {
+            int asleep = bfm_field_rest_sleeping(&visit->rest);
+            if (run && p->controlled) bfm_field_rest_stamina(live, asleep);
+            bfm_village_clock_step(live, asleep);
+        }
+        if (run) memcpy(run->player.record, live->progress, sizeof run->player.record);
+    }
+    if (resting) input = (BfmFieldInput){0};
+    if (use_box && !bfm_woods_box_use_begin(&visit->use, &visit->route, visit->main, visit->main_bytes))
+        return 0;
     if (visit->use.route) {
         unsigned cue;
         if (!bfm_woods_box_use_step(&visit->use, run, live, opened, &cue)) return 0;
@@ -427,7 +511,29 @@ static int step_room(BfmWoodsBoxVisit *visit, BfmGameplayRun *run, BfmFieldInput
     int16_t previous[3];
     memcpy(previous, p->root.xyz, sizeof previous);
     bfm_village_motion_water_bypass(visit->motion, live->variables[0xcf] != 0);
-    if (!visit->reaction.movement_locked &&
+    int previous_action = visit->swing.action;
+    int field_free = !resting && !visit->reaction.movement_locked && !visit->in_water && visit->life == ALIVE;
+    if (run && !bfm_twinpeak_player_blade_step(visit->blade, visit->motion, live, run, input,
+                                               field_free, &visit->swing)) return 0;
+    int blade_holds = field_free && (visit->swing.action || previous_action == 6) &&
+                      bfm_village_motion_grounded(visit->motion) &&
+                      !bfm_village_motion_woods_sliding(visit->motion);
+    if (resting) {
+        int result = bfm_village_motion_field_rest(visit->motion, visit->rest.pose, visit->rest.ticks);
+        if (!result) return 0;
+        if (result == 2 && visit->rest.pose == BFM_FIELD_REST_WAKE) {
+            live->progress[0x47] = 0;
+            run->player.record[0x47] = 0;
+        }
+        bfm_field_rest_advance(&visit->rest, result == 2);
+    } else if (blade_holds) {
+        if (!bfm_village_motion_box_blade_hold(visit->motion, !visit->swing.action)) return 0;
+        if (!bfm_village_motion_grounded(visit->motion) || bfm_village_motion_woods_sliding(visit->motion)) {
+            if (!bfm_twinpeak_player_blade_step(visit->blade, visit->motion, live, run,
+                                                (BfmFieldInput){0}, 0, &visit->swing)) return 0;
+        }
+        if (visit->swing.sound) visit->sound = visit->swing.sound;
+    } else if (!visit->reaction.movement_locked &&
         !bfm_village_motion_box_step(visit->motion, input.x, input.y, movement_yaw,
                                     input.cross_pressed, input.cross_held, run)) return 0;
     p = bfm_woods_box_visit_player(visit);
@@ -446,7 +552,11 @@ static int step_room(BfmWoodsBoxVisit *visit, BfmGameplayRun *run, BfmFieldInput
     }
     bfm_woods_box_view_follow_grip(visit->view, p->root.xyz, 0, input.camera_pressed,
                                    bfm_village_motion_box_pole(visit->motion) != 0);
-    return !run || encounter_step(visit, run, input, actor_tick, opened);
+    if (run && !visit->in_water && visit->life == ALIVE && !bfm_woods_box_visit_departure(visit) &&
+        !bfm_earth_shrine_on_approach(visit->shrine, &p->root)) return 0;
+    if (run && !bfm_earth_shrine_in_scene(visit->shrine) &&
+        !bfm_earth_visit_strike(visit->ritual, run, actor_tick, &visit->swing, opened)) return 0;
+    return !run || bfm_earth_visit_controls(visit->ritual) || encounter_step(visit, run, input, actor_tick, opened);
 }
 
 int bfm_woods_box_visit_step_at(BfmWoodsBoxVisit *visit, BfmGameplayRun *run,
@@ -455,6 +565,14 @@ int bfm_woods_box_visit_step_at(BfmWoodsBoxVisit *visit, BfmGameplayRun *run,
     unsigned pickup_amount = 0;
     if (!visit || (run && !bfm_woods_rootrick_update_ledges(visit->rootrick, run))) return 0;
     if (!step_room(visit, run, input, actor_tick, opened, &pickup_amount)) return 0;
+    if (run && visit->swing.action &&
+        (bfm_earth_shrine_in_scene(visit->shrine) ||
+         bfm_woods_rootrick_controls_player(visit->rootrick) ||
+         visit->in_water || visit->life != ALIVE || bfm_woods_box_visit_departure(visit))) {
+        if (!bfm_twinpeak_player_blade_step(visit->blade, visit->motion, &visit->entry->state,
+                                            run, (BfmFieldInput){0}, 0, &visit->swing)) return 0;
+    }
+    bfm_earth_visit_camera(visit->ritual);
     visit->actor_tick = actor_tick;
     const BfmVillagePlayer *p = bfm_woods_box_visit_player(visit);
     bfm_woods_pole_pickup_art_step(&visit->pickup_art, p->root.xyz, pickup_amount);

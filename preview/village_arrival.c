@@ -6,12 +6,15 @@
 #include "village_clock.h"
 #include "village_lower.h"
 #include "village_leno_delivery.h"
+#include "village_earth_return.h"
 #include "village_lighting.h"
 #include "village_cable.h"
 #include "village_impact.h"
 #include "village_portrait.h"
 #include "village_greeting.h"
 #include "village_gate.h"
+#include "village_upper_landmarks.h"
+#include "village_upper_guard.h"
 #include "village_rotor.h"
 #include "village_residents.h"
 #include "village_sky.h"
@@ -61,6 +64,7 @@ struct BfmVillageArrival {
     BfmBedroomEntry *entry;
     BfmVillageLower *lower;
     BfmVillageLenoDelivery *delivery;
+    BfmVillageEarthReturn *earth_return;
     BfmSouthernWoods *woods;
     BankVisit *bank;
     BfmWoodsBoxVisit *box;
@@ -81,6 +85,11 @@ struct BfmVillageArrival {
     BfmVillageResidents *residents;
     unsigned resident_field_tick;
     BfmVillageGate *gate;
+    BfmVillageUpperLandmarks *signs;
+    BfmVillageUpperGuard *guard;
+    BfmForestMessage *sign_reading;
+    unsigned sign_delay;
+    int reading_sign, talking_to_guard, first_guard_talk;
     BfmVillageRotor rotor;
     BfmVillageCable *cable;
     BfmVillageImpact *impact;
@@ -93,11 +102,15 @@ struct BfmVillageArrival {
 
 static void clear_upper(BfmVillageArrival *a)
 {
+    bfm_village_earth_return_free(a->earth_return);
     bfm_village_leno_delivery_free(a->delivery);
     bfm_forest_message_art_free(a->message_art);
     bfm_village_residents_free(a->residents);
     bfm_village_impact_free(a->impact);
     bfm_village_gate_free(a->gate);
+    bfm_forest_message_free(a->sign_reading);
+    bfm_village_upper_landmarks_free(a->signs);
+    bfm_village_upper_guard_free(a->guard);
     bfm_village_rotor_clear(&a->rotor);
     bfm_village_cable_free(a->cable);
     bfm_village_motion_free(a->motion);
@@ -156,6 +169,12 @@ static int mount_upper(BfmVillageArrival *a, const MusashiDiscMedia *disc, BfmBe
     bfm_village_macho_portrait_load(tiles);
     a->message_art = bfm_castle_message_art_load(disc, a->scene, a->bytes, tiles, 0x5da74);
     a->gate = bfm_village_gate_load(a->scene, a->bytes, room, next.state.progress[8], next.state.flags);
+    a->signs = bfm_village_upper_landmarks_open(a->scene,a->bytes,room);
+    if (!a->signs) return 0;
+    if (bfm_village_upper_guard_present(&next.state)) {
+        a->guard = bfm_village_upper_guard_open(a->scene,a->bytes,&next.state);
+        if (!a->guard || !bfm_village_upper_guard_load_art(a->guard,disc,tiles)) return 0;
+    }
     a->impact = bfm_village_impact_open(a->scene, a->bytes, main, main_bytes);
     a->cable = bfm_village_cable_load(a->scene, a->bytes, room);
     if (!a->message_art || !a->gate || !a->impact || !a->cable) return 0;
@@ -163,6 +182,13 @@ static int mount_upper(BfmVillageArrival *a, const MusashiDiscMedia *disc, BfmBe
     if (!(next.state.flags[240 / 8] & 1u) && next.state.progress[8] == 10) {
         a->residents = bfm_village_residents_load(a->scene, a->bytes, room, 0x80188094u, &next.state);
         if (!a->residents) return 0;
+    }
+    if (bfm_village_earth_return_pending(&next.state)) {
+        /* The actor keeps the live record through the conversation. */
+        a->earth_return = bfm_village_earth_return_open(disc, a->scene, a->bytes,
+                                                       main, main_bytes, &entry->state);
+        if (!a->earth_return || !bfm_village_earth_return_load_art(a->earth_return, disc, tiles))
+            return 0;
     }
     a->tiles = tiles;
     const int16_t *spawn = bfm_village_motion_player(a->motion)->root.xyz;
@@ -302,6 +328,19 @@ int bfm_village_arrival_message_closed(BfmVillageArrival *a, unsigned answer)
     }
     if (a->bank) return bfm_forest_bank_close(a->bank->art);
     if (a->woods) return bfm_southern_woods_close(a->woods);
+    if (a->reading_sign) {
+        a->reading_sign = 0;
+        return bfm_village_motion_end_read(a->motion);
+    }
+    if (a->talking_to_guard) {
+        bfm_village_upper_guard_close(a->guard);
+        if (!a->first_guard_talk) {
+            a->talking_to_guard = 0;
+            return bfm_village_motion_end_talk(a->motion);
+        }
+        return 1;
+    }
+    if (bfm_village_earth_return_message_closed(a->earth_return)) return 1;
     if (bfm_village_leno_delivery_message_closed(a->delivery)) return 1;
     if (a->lower) {
         bfm_village_lower_close(a->lower, answer);
@@ -318,6 +357,11 @@ void bfm_village_arrival_begin_hotelo_reveal(BfmVillageArrival *a)
 void bfm_village_arrival_set_scene_tick(BfmVillageArrival *a, unsigned tick)
 {
     a->scene_tick = tick;
+}
+
+const uint8_t *bfm_village_arrival_castle_transfer(const BfmVillageArrival *a)
+{
+    return a && !a->transfer_tick ? bfm_village_lower_castle_transfer(a->lower) : NULL;
 }
 
 const uint8_t *bfm_village_arrival_shop_transfer(const BfmVillageArrival *arrival)
@@ -624,6 +668,9 @@ static int step_woods_crossing(BfmVillageArrival *a, BfmGameplayRun *run, BfmFie
         bfm_nightmare_transition_begin_arrival(&c->wipe);
     }
     if (c->phase != REVEAL_FIELD) return 1;
+    /* Physical input starts in the live Cleft field, after the final reveal
+     * update. The entrance script and the world continue during the wipe. */
+    if (a->woods) field = (BfmFieldInput){0};
     if (!step_woods_field(a, run, field, opened)) return 0;
     if (event == BFM_NIGHTMARE_REVEAL_COMPLETE) {
         free(c);
@@ -669,6 +716,51 @@ void bfm_village_arrival_lower_register(BfmVillageArrival *a, BfmGameplayRun *ru
 void bfm_village_arrival_lower_ambient(BfmVillageArrival *a, BfmGameplayRun *run)
 {
     if (a->lower) bfm_village_lower_step_ambient(a->lower, run);
+}
+
+static int step_earth_return(BfmVillageArrival *a, BfmGameplayRun *run, BfmForestMessage **opened)
+{
+    int ready = bfm_village_motion_player(a->motion)->controlled;
+    int result = bfm_village_earth_return_step(a->earth_return, a->motion, &a->camera,
+                                              run, ready, opened);
+    if (result == 2) {
+        a->presented_camera = a->camera;
+        ++a->age;
+        if (!bfm_village_motion_face(a->motion, a->tiles)) return 0;
+    }
+    return result;
+}
+
+/* The actor-relative view consumes the same packed station format as the
+ * hillside resident. Lumpwood can speak from his new position after stepping
+ * aside, so the current station comes from his live actor. */
+static int begin_guard_talk(BfmVillageArrival *a, const BfmVillageGuardTalk *talk)
+{
+    if (talk->first) {
+        uint8_t station[8];
+        for (unsigned axis = 0; axis < 4; ++axis) {
+            unsigned value = axis < 3 ? (uint16_t)talk->speaker[axis] : talk->speaker_yaw;
+            station[2*axis] = (uint8_t)value;
+            station[2*axis+1] = (uint8_t)(value >> 8);
+        }
+        if (!bfm_village_motion_begin_talk_at(a->motion,talk->speaker,talk->approach) ||
+            !bfm_village_talk_camera_frame(&a->talk_camera,station,talk->camera,
+                                           &a->presented_camera)) return 0;
+    } else if (!bfm_village_motion_begin_talk_hold(a->motion)) return 0;
+    a->talking_to_guard = 1;
+    a->first_guard_talk = talk->first;
+    return 1;
+}
+
+static int upper_contact(BfmVillageArrival *a, const int16_t previous[3])
+{
+    const BfmVillagePlayer *p = bfm_village_motion_player(a->motion);
+    if (!p->controlled || p->phase != BFM_VILLAGE_CONTROL) return 1;
+    int16_t foot[3];
+    memcpy(foot,p->root.xyz,sizeof foot);
+    bfm_village_upper_landmarks_slide(a->signs,previous,foot);
+    bfm_village_upper_guard_contact(a->guard,previous,foot);
+    return !memcmp(foot,p->root.xyz,sizeof foot) || bfm_village_motion_correct_contact(a->motion,foot);
 }
 
 static int step_field(BfmVillageArrival *a, BfmGameplayRun *run,
@@ -751,6 +843,9 @@ static int step_field(BfmVillageArrival *a, BfmGameplayRun *run,
             if (a->transfer_route == WOODS_TRAIL && a->transfer_tick == reveal + 1)
                 bfm_southern_woods_rescue_field_step(a->woods, run, actor_tick);
             if (a->transfer_tick < reveal) return 1;
+            if (a->earth_return &&
+                (a->transfer_route == UPPER_FROM_WOODS || a->transfer_route == UPPER_FROM_STREET))
+                return step_earth_return(a, run, opened) != 0;
             if (!a->bank && !a->maze && a->transfer_route != VILLAGE_FROM_BANK && a->delivery) {
                 /* Newly registered actors update before the screen has opened
                  * enough for the player to take control. */
@@ -840,6 +935,10 @@ static int step_field(BfmVillageArrival *a, BfmGameplayRun *run,
         }
         return 1;
     }
+    if (a->earth_return) {
+        int step = step_earth_return(a, run, opened);
+        if (step != 1) return step != 0;
+    }
     if (a->delivery) {
         int step = bfm_village_leno_delivery_step(a->delivery, a->motion, &a->camera, 1, opened);
         if (!step) return 0;
@@ -852,7 +951,12 @@ static int step_field(BfmVillageArrival *a, BfmGameplayRun *run,
         }
     }
     const BfmVillagePlayer *before = bfm_village_motion_player(a->motion);
-    if (opened && before->controlled && talk_edge &&
+    BfmVillageGuardTalk guard_talk;
+    if (opened && before->controlled && !a->transfer_tick &&
+        bfm_village_upper_guard_begin(a->guard,a->record,before->root.xyz,talk_edge,&guard_talk)) {
+        if (!begin_guard_talk(a,&guard_talk)) return 0;
+        if (run) run->banks.variables[64] = a->record->variables[64];
+    } else if (opened && before->controlled && talk_edge &&
         bfm_village_residents_begin_talk(a->residents, before->root.xyz, a->record, talk_edge)) {
         int16_t station[3];
         unsigned yaw;
@@ -864,6 +968,15 @@ static int step_field(BfmVillageArrival *a, BfmGameplayRun *run,
                                            &a->presented_camera)) return 0;
         a->start_talk_camera = 0;
     }
+    if (opened && before->controlled && !a->transfer_tick && talk_edge) {
+        int16_t sign[3];
+        a->sign_reading = bfm_village_upper_landmarks_read(a->signs,before->root.xyz,talk_edge,sign);
+        if (a->sign_reading) {
+            if (!bfm_village_motion_begin_read(a->motion,sign)) return 0;
+            a->sign_delay = 4;
+            a->reading_sign = 1;
+        }
+    }
     /* The camera's orbit yaw points from the target to the eye. */
     int movement_yaw = (a->camera.yaw + 2048) & 4095;
     if (a->talk_camera.phase)
@@ -873,7 +986,7 @@ static int step_field(BfmVillageArrival *a, BfmGameplayRun *run,
     memcpy(previous, before->root.xyz, sizeof previous);
     if (!bfm_village_motion_step_field(a->motion, x, y, movement_yaw, run) ||
         !bfm_village_motion_resident_contact(a->motion, a->residents, a->resident_field_tick, previous) ||
-        !bfm_village_residents_step(a->residents, a->record)) return 0;
+        !upper_contact(a,previous) || !bfm_village_residents_step(a->residents, a->record)) return 0;
     const BfmVillagePlayer *p = bfm_village_motion_player(a->motion);
     if (p->events & BFM_VILLAGE_TRANSFER) {
         a->transfer_route = p->destination == 0x3025 ? WOODS_TRAIL : LOWER_STREET;
@@ -898,8 +1011,22 @@ static int step_field(BfmVillageArrival *a, BfmGameplayRun *run,
             if (!bfm_village_motion_end_talk(a->motion)) return 0;
         }
     }
+    if (a->talking_to_guard && opened)
+        *opened = bfm_village_upper_guard_message(a->guard,bfm_village_motion_talk_ready(a->motion));
+    if (a->sign_delay && !--a->sign_delay) {
+        if (!opened) return 0;
+        *opened = a->sign_reading;
+        a->sign_reading = NULL;
+    }
     a->presented_camera = a->camera;
     bfm_village_talk_camera_step(&a->talk_camera, &a->presented_camera);
+    if (a->talking_to_guard && a->first_guard_talk && !a->talk_camera.phase) {
+        bfm_village_upper_guard_camera_done(a->guard);
+        if (!bfm_village_upper_guard_busy(a->guard)) {
+            a->talking_to_guard = 0;
+            if (!bfm_village_motion_end_talk(a->motion)) return 0;
+        }
+    }
     ++a->age;
     return bfm_village_motion_face(a->motion, a->tiles);
 }
@@ -910,11 +1037,13 @@ int bfm_village_arrival_step_field(BfmVillageArrival *a, BfmGameplayRun *run,
     /* The upper actor starts on the update after admission and stops when
      * its outgoing field freezes. Musashi updates before the rotor when
      * both actors use the shared random stream in the same field. */
-    int advance_rotor = !a->lower && !a->woods && !a->bank && !a->box && !a->maze && a->rotor.mesh &&
+    int advance_upper = !a->lower && !a->woods && !a->bank && !a->box && !a->maze && a->motion &&
         (!a->transfer_tick || a->transfer_tick >= bfm_village_arrival_reveal_tick(a));
     int result = step_field(a, run, field, opened);
-    if (result && advance_rotor)
+    if (result && advance_upper) {
         bfm_village_rotor_step(&a->rotor, run, u32le(a->record->progress + 8));
+        if (bfm_village_upper_guard_step(a->guard)) bfm_village_talk_camera_release(&a->talk_camera);
+    }
     return result;
 }
 
@@ -927,6 +1056,8 @@ int bfm_village_arrival_award_cue(const BfmVillageArrival *a)
 void bfm_village_arrival_woods_score_applied(BfmVillageArrival *a, unsigned selector)
 {
     if (a && a->box) bfm_woods_box_visit_score_applied(a->box, selector);
+    if (a && a->earth_return && bfm_village_arrival_room(a) == 0x1011)
+        bfm_village_earth_return_score_applied(a->earth_return, selector);
 }
 
 unsigned bfm_village_arrival_woods_score_selector(const BfmVillageArrival *a)
@@ -937,9 +1068,26 @@ unsigned bfm_village_arrival_woods_score_selector(const BfmVillageArrival *a)
     return a && a->woods ? 0x18u : 0;
 }
 
+int bfm_village_arrival_field_score(const BfmVillageArrival *a, unsigned village_score)
+{
+    if (a && a->earth_return && bfm_village_arrival_room(a) == 0x1011) {
+        unsigned track = bfm_village_earth_return_score(a->earth_return, village_score);
+        return track ? (int)track : -1;
+    }
+    unsigned track = bfm_village_arrival_woods_score_selector(a);
+    if (!track && a && a->box) return -1;
+    return (int)track;
+}
+
 unsigned bfm_village_arrival_take_score_command(BfmVillageArrival *a)
 {
     return a ? bfm_village_lower_take_score_command(a->lower) : 0;
+}
+
+unsigned bfm_village_arrival_take_upper_sound(BfmVillageArrival *a)
+{
+    return a && a->earth_return && bfm_village_arrival_room(a) == 0x1011
+        ? bfm_village_earth_return_take_sound(a->earth_return) : 0;
 }
 
 unsigned bfm_village_arrival_woods_sound(const BfmVillageArrival *a)
@@ -980,11 +1128,14 @@ size_t bfm_village_arrival_take_woods_sounds(BfmVillageArrival *a, unsigned *out
 
 int bfm_village_arrival_take_hud(BfmVillageArrival *a)
 {
-    return a && a->box ? bfm_woods_box_visit_take_hud(a->box) : 0;
+    if (!a) return 0;
+    if (a->box) return bfm_woods_box_visit_take_hud(a->box);
+    return bfm_village_earth_return_take_hud(a->earth_return);
 }
 
 int bfm_village_arrival_rest_hud(const BfmVillageArrival *a, BfmForestHud *hud)
 {
+    if (a && a->box) return bfm_woods_box_visit_rest_hud(a->box, hud);
     return bfm_village_lower_rest_hud(a ? a->lower : NULL, hud);
 }
 
@@ -1026,6 +1177,8 @@ static void draw_actors(void *context, int depth)
         int gate = bfm_village_gate_next_depth(a->gate);
         int hero = bfm_bedroom_figure_next_depth(a->view.hero);
         if (gate > bucket) bucket = gate;
+        int signs = bfm_village_upper_landmarks_next_depth(a->signs);
+        if (signs > bucket) bucket = signs;
         if (hero > bucket) bucket = hero;
         if (a->next_card < a->card_count && (int)a->cards[a->next_card].bucket > bucket)
             bucket = (int)a->cards[a->next_card].bucket;
@@ -1036,6 +1189,7 @@ static void draw_actors(void *context, int depth)
             bfm_forest_raster_face(&a->surface, &card->material, card->vertices);
         }
         bfm_village_gate_draw_to(a->gate, bucket);
+        bfm_village_upper_landmarks_draw_to(a->signs,bucket);
         bfm_bedroom_figure_draw_to(a->view.hero, bucket);
         bfm_village_cable_draw_to(a->cable, bucket);
     }
@@ -1073,9 +1227,12 @@ int bfm_village_arrival_draw(BfmVillageArrival *a, const uint8_t flags[64],
     const BfmBedroomView *camera = bfm_bedroom_field_view(a->view.field);
     if (!bfm_village_cable_prepare(a->cable, camera, p->root.xyz, p->phase == BFM_VILLAGE_RIDE,
                                   a->tiles, &pixels[0][0])) return 0;
-    if (!bfm_village_gate_prepare(a->gate, camera, a->tiles, &pixels[0][0])) return 0;
+    if (!bfm_village_gate_prepare(a->gate, camera, a->tiles, &pixels[0][0]) ||
+        !bfm_village_upper_landmarks_prepare(a->signs,camera,a->tiles,&pixels[0][0])) return 0;
+    if (a->guard && !bfm_village_upper_guard_add(a->guard,a->view.hero,camera)) return 0;
     if (!bfm_village_rotor_append(&a->rotor, a->view.hero, camera)) return 0;
     if (!bfm_village_leno_delivery_add(a->delivery, a->view.hero, camera)) return 0;
+    if (!bfm_village_earth_return_add(a->earth_return, a->view.hero, camera)) return 0;
     if (a->residents && !bfm_village_residents_add(a->residents, a->view.hero, camera, a->age))
         return 0;
     a->surface = (BfmForestRaster){.tiles=a->tiles, .pixels=pixels, .top=10, .bottom=229};
@@ -1084,6 +1241,11 @@ int bfm_village_arrival_draw(BfmVillageArrival *a, const uint8_t flags[64],
     qsort(a->cards, a->card_count, sizeof *a->cards, far_card_first);
     bfm_bedroom_field_draw(a->view.field, a->tiles, &pixels[0][0],
                            draw_actors, a);
+    if (window && bfm_village_earth_return_active(a->earth_return)) {
+        return bfm_village_earth_return_draw_window(a->earth_return, camera, window, pixels);
+    }
+    if (window && a->talking_to_guard)
+        return bfm_village_upper_guard_draw_message(a->guard,camera,p->root.xyz,window,pixels);
     if (window && bfm_village_residents_talking(a->residents)) {
         if (a->latch_window) {
             if (!bfm_village_residents_place_window(a->residents, camera, p->root.xyz,

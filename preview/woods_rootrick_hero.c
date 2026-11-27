@@ -298,7 +298,9 @@ static int airborne(BfmRootrickHero *h, BfmBedroomMotion *motion, const BfmVilla
         h->phase = BFM_ROOTRICK_HERO_LANDING;
         h->grounded = 0;
         h->attached = 0;
-        h->vertical_speed = h->forward_speed = 0;
+        /* Contact stops translation. The next unassisted fall resumes
+         * gravity from the speed at which Musashi reached this support. */
+        h->forward_speed = 0;
         memcpy(root->normal,floor.normal,sizeof root->normal);
         action = BFM_BEDROOM_LAND;
     } else if ((wall & 255) == 21 && can_climb && !h->cooldown) {

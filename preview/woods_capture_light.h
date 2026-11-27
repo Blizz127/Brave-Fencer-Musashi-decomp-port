@@ -29,6 +29,8 @@ void bfm_woods_capture_light_tick(BfmWoodsCaptureLight *light, const int16_t tar
  * colored center. The display scale applies after rounding the base radius. */
 size_t bfm_woods_radial_light_project(const BfmForestCamera *camera, const int32_t center[3],
     int radius, int scale, uint32_t color, BfmForestDustCard *out, size_t capacity);
+size_t bfm_woods_radial_light_project_axes(const BfmForestCamera *camera, const int32_t center[3],
+    int radius, int scale_x, int scale_y, uint32_t color, BfmForestDustCard *out, size_t capacity);
 
 size_t bfm_woods_capture_light_project(const BfmWoodsCaptureLight *light,
     const BfmForestCamera *camera, const int32_t eye[3], BfmForestDustCard *out, size_t capacity);

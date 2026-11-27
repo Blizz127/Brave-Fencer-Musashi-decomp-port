@@ -45,7 +45,7 @@ static const char *encode_file(CardImage image, unsigned file, const BfmSaveReco
     const uint8_t *p = record->progress;
     uint32_t story = u32le(p + 8);
     int supported_story = place == CHAPTER_END ? story == 2 : bfm_story_returns_to_grillin_inn(story);
-    if (!supported_story || !bfm_save_uses_default_room_table(record))
+    if (!supported_story)
         return place == CHAPTER_END ? "Invalid chapter save." : "This story cannot be saved at the inn.";
     if (place == CHAPTER_END && (!(record->flags[16] & 1u) ||
                                 !empty_bytes(record->destination, sizeof record->destination)))

@@ -238,6 +238,7 @@ static const char *bedroom_caption(uint16_t room)
     switch (room) {
     case 0x3001: return "Brave Fencer Musashi - Castle bedroom";
     case 0x3002: return "Brave Fencer Musashi - Castle library";
+    case 0x3003: return "Brave Fencer Musashi - Castle audience";
     case 0x3000: return "Brave Fencer Musashi - Castle courtyard";
     case 0x3004: return "Brave Fencer Musashi - Castle cable station";
     case 0x1011: return "Brave Fencer Musashi - Upper Grillin' Village";

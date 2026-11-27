@@ -5,7 +5,7 @@
 #include "village_ground.h"
 #include "woods_charged_hit.h"
 #include "../pc_port/forest_player_bytes.h"
-#include <limits.h>
+#include "woods_twinpeak_stride.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -140,48 +140,6 @@ static void complete(BfmRootrickFinalePlayer *p)
     p->entered = 0;
 }
 
-/* The turned model and the walk stick both use local -Z as forward. */
-static int turn(BfmBedroomRoot *r, unsigned goal)
-{
-    int delta = (int)(goal & 4095) - (int)r->yaw;
-    if (delta > 2048) delta -= 4096;
-    if (delta < -2048) delta += 4096;
-    int step = delta/4;
-    if (!step) step = delta/2;
-    if (!step) step = delta;
-    r->yaw = (unsigned)((int)r->yaw+step) & 4095;
-    return !delta;
-}
-
-static int footing(BfmRootrickFinalePlayer *p, BfmBedroomRoot *r, int16_t to[3])
-{
-    BfmForestContact contact;
-    if (bfm_village_ground_step(bfm_village_motion_ground(p->motion),r->xyz,to,&contact)
-        != BFM_VILLAGE_GROUND_FOOTING) return 0;
-    memcpy(r->xyz,to,sizeof r->xyz);
-    memcpy(r->normal,contact.normal,sizeof r->normal);
-    return 1;
-}
-
-static int stride(BfmRootrickFinalePlayer *p, BfmBedroomRoot *r, int32_t position[3],
-                  int32_t speed, unsigned yaw)
-{
-    BfmForestTransform rotation;
-    int16_t to[3];
-    memcpy(to,r->xyz,sizeof to);
-    bfm_forest_actor_root(yaw,r->xyz,&rotation);
-    for (unsigned i = 0; i < 2; ++i) {
-        unsigned axis = 2*i;
-        int64_t v = (int64_t)speed * -rotation.rotation[axis][2];
-        int64_t q = position[axis] + v/4096 - (v%4096 < 0);
-        int64_t whole = q/65536 - (q%65536 < 0);
-        if (whole < INT16_MIN || whole > INT16_MAX) return 0;
-        to[axis] = (int16_t)whole;
-        position[axis] = (int32_t)q;
-    }
-    return footing(p,r,to);
-}
-
 int bfm_woods_rootrick_player_step(BfmRootrickFinalePlayer *p, BfmGameplayRun *run,
     int camera_yaw, uint32_t actor_flags, int winning_rock_present, BfmRootrickPlayerFrame *frame)
 {
@@ -200,7 +158,7 @@ int bfm_woods_rootrick_player_step(BfmRootrickFinalePlayer *p, BfmGameplayRun *r
             int dx = cmd->x-r.xyz[0], dz = cmd->z-r.xyz[2];
             if ((int64_t)dx*dx+(int64_t)dz*dz < 16*16) {
                 int16_t to[3] = {(int16_t)cmd->x,r.xyz[1],(int16_t)cmd->z};
-                if (!footing(p,&r,to)) return 0;
+                if (!bfm_twinpeak_footing(bfm_village_motion_ground(p->motion),&r,to)) return 0;
                 done = 1;
             } else {
                 stick = bfm_waypoint_input(dx,dz,0,camera_yaw);
@@ -212,8 +170,8 @@ int bfm_woods_rootrick_player_step(BfmRootrickFinalePlayer *p, BfmGameplayRun *r
             cmd->value += r.yaw;
             cmd->order = TURN;
             /* fall through */
-        case TURN: done = turn(&r,cmd->value); break;
-        case FACE: done = turn(&r,(unsigned)bfm_waypoint_heading(r.xyz[0]-cmd->x,
+        case TURN: done = bfm_twinpeak_turn(&r,cmd->value); break;
+        case FACE: done = bfm_twinpeak_turn(&r,(unsigned)bfm_waypoint_heading(r.xyz[0]-cmd->x,
                                                                   r.xyz[2]-cmd->z)); break;
         case CONTROL:
             frame->control_bits = cmd->value & ~p->granted_control_bits;
@@ -255,7 +213,7 @@ int bfm_woods_rootrick_player_step(BfmRootrickFinalePlayer *p, BfmGameplayRun *r
         const BfmWoodsCarryFrame *held = &frame->carry;
         moving = held->speed_q16 != 0;
         if (held->turn) r.yaw = (unsigned)stick.yaw;
-        if (moving && !stride(p,&r,position,held->speed_q16,r.yaw)) return 0;
+        if (moving && !bfm_twinpeak_stride(bfm_village_motion_ground(p->motion),&r,position,held->speed_q16,r.yaw)) return 0;
         if (held->attached) {
             memcpy(p->socket,held->socket,sizeof p->socket);
             if (p->carry.lift.clip == BFM_LIFT_IDLE || p->carry.lift.clip == BFM_LIFT_WALK) {
@@ -289,7 +247,7 @@ int bfm_woods_rootrick_player_step(BfmRootrickFinalePlayer *p, BfmGameplayRun *r
         if (done) action = BFM_BEDROOM_REST;
     } else if (directed) {
         r.yaw = (unsigned)stick.yaw;
-        if (!stride(p,&r,position,stick.speed_q16,r.yaw)) return 0;
+        if (!bfm_twinpeak_stride(bfm_village_motion_ground(p->motion),&r,position,stick.speed_q16,r.yaw)) return 0;
     }
     if (moving != (int)p->walking) {
         r.locomotion_edge = moving ? BFM_TRAVEL_WALK : BFM_TRAVEL_STAND;
@@ -329,12 +287,7 @@ int bfm_woods_rootrick_player_rival_hit(const BfmRootrickFinalePlayer *p,
 int bfm_woods_rootrick_player_finish(BfmRootrickFinalePlayer *p, int defeating)
 {
     if (!p || !p->outcome || p->count || bfm_woods_carry_active(&p->carry)) return 0;
-    if (!defeating) {
-        int32_t position[3];
-        if (!bfm_village_motion_position_q16(p->motion,position) ||
-            !bfm_village_motion_place(p->motion,&bfm_village_motion_player(p->motion)->root) ||
-            !bfm_village_motion_staged_position(p->motion,position)) return 0;
-    }
+    if (!defeating && !bfm_village_motion_release_staged(p->motion)) return 0;
     p->outcome = p->entered = p->walking = p->granted_control_bits = 0;
     return 1;
 }

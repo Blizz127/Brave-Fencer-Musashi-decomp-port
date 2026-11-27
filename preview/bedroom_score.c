@@ -28,10 +28,12 @@ int bfm_bedroom_resident_data(const MusashiDiscMedia *disc, uint32_t address, ui
  * track and gain to the score player. */
 static const struct RoomCue {
     unsigned selector, command, archive, member, track;
-} twinpeak_cues[] = {
+} room_cues[] = {
     {0x18, 0x137, 2, 23, 0}, {0x2b, 0x11d, 2, 23, 1},
     {0x26, 0x125, 3, 50, 0}, {0x1c, 0x118, 3, 37, 0},
     {0x1d, 0x119, 3, 38, 0}, {0x1e, 0x11a, 3, 39, 0},
+    {0x2f, 0x130, 3, 45, 0}, {0x30, 0x131, 3, 45, 1},
+    {0x93, 0x18a, 3, 72, 0},  /* Jon and Leno in upper Grillin. */
 };
 
 /* Resolve the room selector's archive member, track and gain from the
@@ -45,8 +47,8 @@ BfmForestScore *bfm_bedroom_score_load(const MusashiDiscMedia *disc, unsigned se
         "MAIN.CD", "SC01.CD", "SC02.CD", "SC03.CD", "SC04.CD", "SC05.CD", "SC06.CD"
     };
     const struct RoomCue *cue = NULL;
-    for (size_t n = 0; n < sizeof twinpeak_cues / sizeof twinpeak_cues[0]; ++n)
-        if (selector == twinpeak_cues[n].selector) cue = &twinpeak_cues[n];
+    for (size_t n = 0; n < sizeof room_cues / sizeof room_cues[0]; ++n)
+        if (selector == room_cues[n].selector) cue = &room_cues[n];
     size_t size;
     for (unsigned i = 0; i < sizeof archives / sizeof *archives; ++i) {
         if (!musashi_disc_media_read_root_range(disc, archives[i], 0, header, sizeof header, &size)) return NULL;

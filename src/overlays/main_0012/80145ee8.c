@@ -1,7 +1,6 @@
 /* Owner re-derivation from retail assembly (clean input set). */
-/* Registers the input-binding tables of the pad. Mode 0 adds a table for each of the pad bits
- * 0x1F, 0x21, 0x1E, 0x1D and 0x20 that func_80029178 reports as held; mode 1 adds all five
- * unconditionally; other modes do nothing. */
+/* Mode 0 copies the VRAM rectangles for each enabled flag. Mode 1 copies
+ * all five lists in order. Other modes leave the image alone. */
 #include "psx_types.h"
 
 extern u32 D_8017FD40[];

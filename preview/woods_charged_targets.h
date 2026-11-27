@@ -7,16 +7,19 @@
 #include "woods_charged_hit.h"
 #include "woods_king.h"
 #include "woods_leno.h"
+#include "woods_lardwick_field.h"
 
 typedef struct {
     BfmWoodsCaster *casters;
     BfmWoodsKing *king;
     BfmWoodsLeno *leno;
     const BfmVillageGround *ground;
+    BfmWoodsLardwickField *lardwick;
 } BfmWoodsChargedTargets;
 
 typedef struct {
     unsigned contacts, impact_sound, leno_yelp;
+    int freed_captive;
     int16_t point[3], normal[3];
     BfmWoodsChargedLevels levels;
     int terrain;

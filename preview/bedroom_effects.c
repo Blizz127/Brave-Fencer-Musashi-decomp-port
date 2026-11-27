@@ -10,6 +10,12 @@
 #include <string.h>
 
 enum { SPU_RATE = 44100, OUTPUT_RATE = 37800, VOICES = 24, MAX_LAYERS = 3 };
+enum { SEQUENCE_FIELDS = 480, RESCUE_BP_STRIKE = 2822, RESCUE_BP_ARPEGGIO = 3168 };
+enum {
+    SHRINE_HIT_ACCEPTED = 0x5eb, SHRINE_RESTORED = 0x5ec,
+    SHRINE_SHAKE = 0x635, SHRINE_APPEAR = 0x636, SHRINE_RAYS = 0x637,
+    SHRINE_FLASH = 0x638, SHRINE_FINISH = 0x63b, SCROLL_BLADE_RETURN = 0x445
+};
 static const uint32_t effect_base = 0x800c7f08u;
 static const unsigned woods_swings[] = {
     BFM_FOREST_SWING_SOUND, BFM_WOODS_FUSION_FOLLOWUP_SOUND, BFM_WOODS_LUMINA_SWING_SOUND
@@ -17,20 +23,23 @@ static const unsigned woods_swings[] = {
 static const unsigned woods_actor_sounds[] = {
     BFM_WOODS_RING_SOUND, BFM_WOODS_PINK_BITE_SOUND, BFM_WOODS_LENO_BARK_SOUND,
     BFM_WOODS_LENO_YELP_SOUND, BFM_WOODS_SPLASH_SOUND,
-    BFM_FOREST_HIT_SOUND, BFM_WOODS_FUSION_FINISH_HIT_SOUND, BFM_WOODS_CHARGED_SLASH_SOUND
+    BFM_FOREST_HIT_SOUND, BFM_WOODS_FUSION_FINISH_HIT_SOUND, BFM_WOODS_CHARGED_SLASH_SOUND,
+    BFM_WOODS_CRYSTAL_HIT_SOUND, BFM_WOODS_CRYSTAL_BREAK_SOUND,
+    BFM_WOODS_RESCUE_DEPART_SOUND, BFM_WOODS_RESCUE_VANISH_SOUND
 };
 enum {
     CLEFT_SWINGS = 9,
     CLEFT_ACTORS = CLEFT_SWINGS + sizeof woods_swings / sizeof *woods_swings,
     CLEFT_PICKUP = CLEFT_ACTORS + sizeof woods_actor_sounds / sizeof *woods_actor_sounds,
-    CLEFT_RECOVERY, CLEFT_CHARGE, CLEFT_FULL_CHARGE, CLEFT_HOP, CLEFT_CLIPS
+    CLEFT_RECOVERY, CLEFT_CHARGE, CLEFT_FULL_CHARGE, CLEFT_HOP,
+    CLEFT_BP_STRIKE, CLEFT_BP_ARPEGGIO, CLEFT_CLIPS
 };
 typedef struct {
     const MusashiDiscMedia *disc;
     const uint8_t *data;
     size_t bytes;
     unsigned key, group;
-    BfmPalaceBank *common, *scene;
+    BfmPalaceBank *common, *scene, *score;
     uint8_t volume[256], pitch[256];
 } Sources;
 typedef struct {
@@ -38,9 +47,10 @@ typedef struct {
     BfmSpuEnvelope envelope;
     uint8_t control[20];
     unsigned delay, gain, center, pitch, field, sample_in_field, gate, gate_samples;
-    int key, tuning, modulated, slide, done;
+    int key, tuning, modulated, slide, done, ntsc_fields;
     int sequence_base;
-    unsigned sequence_gain, sequence_start, fade_start, fade_step;
+    unsigned sequence_gain, sequence_start;
+    const uint16_t *sequence_levels;
     unsigned slide_hold, slide_step[2];
     int slide_goal[2];
     size_t phase;
@@ -49,7 +59,8 @@ typedef struct {
     int previous, phase, done;
 } Resampler;
 typedef struct {
-    Layer initial;
+    Layer initial[MAX_LAYERS];
+    unsigned count;
     uint8_t pitch_table[256];
 } KeyedTone;
 typedef struct {
@@ -62,7 +73,7 @@ typedef struct {
     const Clip *clip;
     unsigned command;
     size_t frame;
-    Layer layer;
+    Layer layers[MAX_LAYERS];
     Resampler resampler;
 } Playback;
 struct BfmBedroomEffects {
@@ -136,22 +147,52 @@ static unsigned pitch(const uint8_t table[256], const Layer *l)
 
 static int instrument_open(const Sources *s, unsigned bank, unsigned instrument, Layer *l)
 {
-    uint8_t map[12], pair[2];
-    if ((bank && bank != s->key) || !read_data(s, 0x80064d44u+12*bank, map, sizeof map) ||
-        instrument >= map[4] || !read_data(s, word(map)+2*instrument, pair, 2)) return 0;
-    const BfmPalaceBank *vab = bank ? s->scene : s->common;
+    const BfmPalaceBank *vab;
+    unsigned program, layer;
+    if (bank & 0x80u) {
+        /* These notes name a program and tone in the currently mounted score bank. */
+        vab = s->score;
+        program = bank & 0x7fu;
+        layer = instrument;
+    } else {
+        uint8_t map[12], pair[2];
+        if ((bank && bank != s->key) || !read_data(s, 0x80064d44u+12*bank, map, sizeof map) ||
+            instrument >= map[4] || !read_data(s, word(map)+2*instrument, pair, 2)) return 0;
+        vab = bank ? s->scene : s->common;
+        program = pair[0];
+        layer = pair[1];
+    }
     BfmPalaceTone tone;
     BfmSpuSample encoded;
-    if (!bfm_room_effect_tone(vab, pair[0], pair[1], &tone) ||
+    if (!bfm_room_effect_tone(vab, program, layer, &tone) ||
         !bfm_palace_sound_sample(vab, tone.sample, &encoded) ||
         !bfm_spu_sample_decode(encoded.data, encoded.bytes, &l->sample)) return 0;
     l->center = tone.center;
-    l->tuning = tone.tuning;
+    l->tuning = bank & 0x80u ? 0 : tone.tuning;
     bfm_spu_envelope_start(&l->envelope,(uint16_t)tone.adsr1,(uint16_t)tone.adsr2);
     return 1;
 }
 
-static int layer_open(const Sources *s, const uint8_t d[20], Layer *l)
+/* Type 8 holds the starting key and measures both goals relative to it.
+ * Type 0 names the two absolute keys, with no initial hold. */
+static int pitch_slide(Layer *l)
+{
+    int relative = half(l->control) == 8;
+    const uint8_t *points = l->control + (relative ? 4 : 2);
+    l->slide = 1;
+    l->slide_hold = relative ? half(l->control+2) : 0;
+    l->slide_step[0] = half(points);
+    l->slide_step[1] = half(points+6);
+    for (unsigned i=0; i<2; ++i) {
+        unsigned goal = half(points+2+2*i);
+        l->slide_goal[i] = relative ? l->key + (int16_t)goal : (int)goal;
+        if (l->slide_goal[i] < 0 || l->slide_goal[i] >= 127*256) return 0;
+    }
+    l->gate = half(points+8);
+    return 1;
+}
+
+static int layer_open(const Sources *s, const uint8_t d[20], Layer *l, int sustained)
 {
     if (d[4] || d[7] || d[5]>=128 || d[6]>=128 || !instrument_open(s,d[8],d[9],l)) return 0;
     l->delay = half(d+2) * (SPU_RATE/60);
@@ -163,21 +204,8 @@ static int layer_open(const Sources *s, const uint8_t d[20], Layer *l)
         if (!read_data(s, command, l->control, 4)) return 0;
         unsigned control = half(l->control);
         if (control == 0 || control == 8) {
-            /* Both slides have a note target and a release target. Type 8
-             * holds the starting key first and measures both goals from it. */
-            unsigned relative = control == 8;
-            if (!read_data(s, command, l->control, relative ? 14 : 12)) return 0;
-            const uint8_t *points = l->control + (relative ? 4 : 2);
-            l->slide = 1;
-            l->slide_hold = relative ? half(l->control+2) : 0;
-            l->slide_step[0] = half(points);
-            l->slide_step[1] = half(points+6);
-            for (unsigned i = 0; i < 2; ++i) {
-                unsigned goal = half(points+2+2*i);
-                l->slide_goal[i] = relative ? l->key + (int16_t)goal : (int)goal;
-                if (l->slide_goal[i] < 0 || l->slide_goal[i] >= 127*256) return 0;
-            }
-            l->gate = half(points+8);
+            if (!read_data(s, command, l->control, control == 8 ? 14 : 12) || !pitch_slide(l))
+                return 0;
         } else if (control == 1) {
             /* Two successive pitch targets, with a separate glide on release. */
             if (!read_data(s, command, l->control, 16) ||
@@ -197,7 +225,7 @@ static int layer_open(const Sources *s, const uint8_t d[20], Layer *l)
             l->modulated = 1;
         }
     }
-    return l->pitch && (l->gate || l->modulated || l->sample.loop_start == l->sample.frames);
+    return l->pitch && (sustained || l->gate || l->modulated || l->sample.loop_start == l->sample.frames);
 }
 
 static int approach(int value, int target, int step)
@@ -206,13 +234,11 @@ static int approach(int value, int target, int step)
     return value-target < step ? target : value-step;
 }
 
-/* Three sequence-level gain controls are applied to each active voice.
- * A fade command drives the first control on the sequence's field clock. */
+/* The first of the three sequence gain controls can change on the field clock. */
 static unsigned sequence_level(const Layer *voice, unsigned field)
 {
-    unsigned elapsed = field > voice->fade_start ? field - voice->fade_start : 0;
-    unsigned fade = voice->fade_step * elapsed;
-    unsigned level = fade < 16383 ? 16383 - fade : 0;
+    unsigned index = field < SEQUENCE_FIELDS ? field : SEQUENCE_FIELDS;
+    unsigned level = voice->sequence_levels ? voice->sequence_levels[index] : 16383;
     unsigned gain = voice->sequence_gain * level >> 14;
     gain = gain * 16383u >> 14;
     return gain * 16383u >> 14;
@@ -222,7 +248,7 @@ static void sound_field(const uint8_t table[256], Layer *l)
 {
     const uint8_t *c = l->control;
     unsigned t = ++l->field;
-    if (l->fade_step) l->gain = sequence_level(l, l->sequence_start + t);
+    if (l->sequence_levels) l->gain = sequence_level(l, l->sequence_start + t);
     if (half(c) == 1) {
         if (l->gate && t == l->gate) bfm_spu_envelope_release(&l->envelope);
         if (l->envelope.stage == BFM_SPU_ENVELOPE_RELEASE) {
@@ -292,8 +318,8 @@ static int next_sample(const uint8_t table[256], Layer *l)
     if (!level && l->envelope.stage == BFM_SPU_ENVELOPE_RELEASE) l->done = 1;
     if (l->gate_samples && !--l->gate_samples) bfm_spu_envelope_release(&l->envelope);
     int output = (int)((int64_t)v*level*l->gain / (32767*16384));
-    unsigned field = l->field + (l->fade_step ? l->sequence_start : 0);
-    unsigned period = half(l->control) == 1 || half(l->control) == 10 || l->fade_step
+    unsigned field = l->field + (l->sequence_levels ? l->sequence_start : 0);
+    unsigned period = l->ntsc_fields || half(l->control) == 1 || half(l->control) == 10 || l->sequence_levels
         ? field_sample(field+1)-field_sample(field) : SPU_RATE/60;
     if (++l->sample_in_field == period) {
         l->sample_in_field = 0;
@@ -365,27 +391,43 @@ static int prepare(const Sources *s, unsigned command, Clip *clip)
         uint8_t d[20];
         if (count == MAX_LAYERS || !read_data(s,address,d,sizeof d)) goto done;
         if (word(d+12)) {
-            if (command != BFM_WOODS_GUARD_SOUND || count || half(d+14)) goto done;
+            if ((command != BFM_WOODS_GUARD_SOUND && command != BFM_WOODS_TERRAIN_HIT_FIRST &&
+                 command != SHRINE_HIT_ACCEPTED && command != BFM_WOODS_CRYSTAL_HIT_SOUND) ||
+                count || half(d+14)) goto done;
             /* This is the same-command protection interval, not a delay
              * before the blow sounds or a key-off for the instrument. */
             clip->retrigger_frames = ((uint64_t)half(d+12)*OUTPUT_RATE*1001u+59999u)/60000u;
         }
-        if (!layer_open(s,d,&layers[count])) goto done;
-        if (command == BFM_WOODS_FULL_CHARGE_SOUND)
+        int rings = command == BFM_EARTH_SCROLL_RINGS_SOUND;
+        if (!layer_open(s,d,&layers[count],rings)) goto done;
+        layers[count].ntsc_fields = d[8] == 32 || (d[8] & 0x80) ||
+            command == BFM_WOODS_CRYSTAL_BREAK_SOUND || command == BFM_WOODS_RESCUE_DEPART_SOUND ||
+            command == BFM_WOODS_RESCUE_VANISH_SOUND ||
+            (s->group == 4 && command == BFM_WOODS_FUSION_FOLLOWUP_SOUND);
+        if (command == BFM_WOODS_FULL_CHARGE_SOUND || layers[count].ntsc_fields)
             layers[count].delay = field_sample(half(d+2));
         ++count;
         if (!d[11]) break;
         address += sizeof d;
     }
-    if (command == BFM_WOODS_CHARGE_SOUND) {
-        if (count != 1 || !layers[0].gate || layers[0].slide || layers[0].modulated) goto done;
-        clip->tone = malloc(sizeof *clip->tone);
+    if (command == BFM_WOODS_CHARGE_SOUND || command == SHRINE_APPEAR ||
+        command == BFM_EARTH_SCROLL_RINGS_SOUND) {
+        if (command == BFM_WOODS_CHARGE_SOUND) {
+            if (count != 1 || !layers[0].gate || layers[0].slide || layers[0].modulated) goto done;
+            layers[0].gate_samples = field_sample(layers[0].gate);
+            layers[0].gate = 0;
+        }
+        /* The appearance plays beyond eight seconds; two ring voices loop
+         * until the player closes the named scroll page. Keep their envelopes
+         * and (for the rings) the staggered key-ons live. */
+        clip->tone = calloc(1, sizeof *clip->tone);
         if (!clip->tone) goto done;
-        clip->tone->initial = layers[0];
-        clip->tone->initial.gate_samples = field_sample(layers[0].gate);
-        clip->tone->initial.gate = 0;
+        clip->tone->count = count;
+        for (unsigned i = 0; i < count; ++i) {
+            clip->tone->initial[i] = layers[i];
+            layers[i].sample = (BfmDecodedSpuSample){0};
+        }
         memcpy(clip->tone->pitch_table, s->pitch, sizeof s->pitch);
-        layers[0].sample = (BfmDecodedSpuSample){0}; /* The clip owns the decoded note. */
         clip->id = command;
         result = 1;
     } else {
@@ -398,15 +440,18 @@ done:
 
 static int prepare_sequence(const Sources *s, unsigned command, Clip *clip)
 {
-    enum { MAX_NOTES = 32 };
+    enum { MAX_NOTES = 48 };
     uint8_t entry[4], track[12];
     if (!select_command(s, command, entry, NULL) || (entry[0] & 0x7f) != 5 || entry[2]) return 0;
     uint32_t tracks = entry[1] ? word(s->data+s->bytes-4) : 0x80068a54u;
-    if (!read_data(s, tracks+12*entry[3], track, sizeof track) || track[8] != 0x10)
+    if (!read_data(s, tracks+12*entry[3], track, sizeof track) ||
+        (track[8] != 0x10 && track[8] != 0x12))
         return 0;
     uint32_t cursor = word(track), repeat_start = 0;
     unsigned repeats = 0, count = 0, field = 0, attenuation = 0;
-    unsigned fade_start = 0, fade_step = 0;
+    uint16_t levels[SEQUENCE_FIELDS+1];
+    for (unsigned i=0; i<=SEQUENCE_FIELDS; ++i) levels[i] = 16383;
+    const uint16_t *active_levels = NULL;
     int transpose = 0;
     Layer timbre = {0}, notes[MAX_NOTES];
     unsigned instrument = 0, bank = 0;
@@ -427,16 +472,16 @@ static int prepare_sequence(const Sources *s, unsigned command, Clip *clip)
             repeat_start = cursor;
             continue;
         }
-        if (op == 0x84) {
-            /* The maze's second phrase fades toward silence. Earlier notes
-             * can still be ringing when the next field first lowers gain. */
-            if (note[0] || fade_step || !half(note+1)) break;
-            fade_step = half(note+1);
-            fade_start = field;
-            for (unsigned i = 0; i < count; ++i) {
-                notes[i].fade_start = fade_start;
-                notes[i].fade_step = fade_step;
-            }
+        if (op == 0x84 || op == 0x86) {
+            unsigned step = half(note+1);
+            if (note[0] >= 128 || (op == 0x84 ? !step : step != 0)) break;
+            int target = note[0]*16383 >> 7;
+            if (op == 0x86) levels[field] = (uint16_t)target;
+            for (unsigned i=field+1; i<=SEQUENCE_FIELDS; ++i)
+                levels[i] = (uint16_t)approach(levels[i-1], target, (int)step);
+            /* Notes from the previous phrase can still be ringing. */
+            active_levels = levels;
+            for (unsigned i=0; i<count; ++i) notes[i].sequence_levels = levels;
             cursor += 4;
             continue;
         }
@@ -460,7 +505,7 @@ static int prepare_sequence(const Sources *s, unsigned command, Clip *clip)
         if (op == 0x80) {
             /* A phrase may redefine its voice priority without changing
              * instrument. The village well uses its mounted area bank. */
-            if (note[8] > 1 || note[11]) break;
+            if (note[8] > 2 || note[11]) break;
             if (timbre.sample.pcm) {
                 if (note[9] != instrument || note[10] != bank) break;
             } else {
@@ -476,20 +521,27 @@ static int prepare_sequence(const Sources *s, unsigned command, Clip *clip)
         voice->pitch = pitch(s->pitch,voice);
         unsigned gate = half(note+4), interval = half(note+6);
         if (op == 0x80 && word(note+16)) {
-            if (!read_data(s,word(note+16),voice->control,sizeof voice->control) ||
-                half(voice->control) != 10 || !half(voice->control+16)) break;
-            gate = half(voice->control+16);
-            voice->sequence_base = voice->key;
-            voice->modulated = 1;
+            if (!read_data(s,word(note+16),voice->control,14)) break;
+            if (half(voice->control) == 8) {
+                if (!pitch_slide(voice)) break;
+                gate = voice->gate;
+                voice->ntsc_fields = 1;
+            } else {
+                if (half(voice->control) != 10 ||
+                    !read_data(s,word(note+16),voice->control,sizeof voice->control) ||
+                    !half(voice->control+16)) break;
+                gate = half(voice->control+16);
+                voice->sequence_base = voice->key;
+                voice->modulated = 1;
+            }
         }
         if (!voice->pitch || (!gate && voice->sample.loop_start < voice->sample.frames) ||
-            gate > 480-field || interval > 480-field) break;
+            gate > SEQUENCE_FIELDS-field || interval > SEQUENCE_FIELDS-field) break;
         voice->delay = field_sample(field);
         voice->gate_samples = field_sample(field+gate)-voice->delay;
         voice->sequence_gain = half(s->volume+2*(note[2]-attenuation))*127u >> 7;
         voice->sequence_start = field;
-        voice->fade_start = fade_start;
-        voice->fade_step = fade_step;
+        voice->sequence_levels = active_levels;
         voice->gain = sequence_level(voice,field);
         if (!interval) {
             /* The final note can end scheduling directly and ring out. */
@@ -549,7 +601,9 @@ static BfmBedroomEffects *town_effects_load(const MusashiDiscMedia *disc, unsign
 
 BfmBedroomEffects *bfm_village_knock_sound_load(const MusashiDiscMedia *disc)
 {
-    const unsigned commands[] = { BFM_VILLAGE_KNOCK_SOUND, BFM_VILLAGE_WELL_SOUND };
+    const unsigned commands[] = {
+        BFM_VILLAGE_KNOCK_SOUND, BFM_VILLAGE_WELL_SOUND, BFM_WOODS_LENO_BARK_SOUND
+    };
     return town_effects_load(disc, 2, commands, sizeof commands / sizeof *commands, 0);
 }
 
@@ -568,8 +622,15 @@ BfmBedroomEffects *bfm_woods_box_sound_load(const MusashiDiscMedia *disc)
     static const unsigned contacts[] = {
         BFM_WOODS_WATER_ENTRY_SOUND,
         BFM_ROOTRICK_IMPACT_SOUND, BFM_WALL_CLIMB_FIRST_SOUND, BFM_WALL_CLIMB_SECOND_SOUND,
-        BFM_ROOTRICK_STUMBLE_LANDING_SOUND, BFM_WOODS_HURT_SOUND, BFM_WOODS_LUMINA_SWING_SOUND
+        BFM_ROOTRICK_STUMBLE_LANDING_SOUND, BFM_WOODS_HURT_SOUND, BFM_WOODS_LUMINA_SWING_SOUND,
+        BFM_FOREST_SWING_SOUND, BFM_WOODS_FUSION_FOLLOWUP_SOUND, BFM_WOODS_TERRAIN_HIT_FIRST,
+        SHRINE_HIT_ACCEPTED, SCROLL_BLADE_RETURN
     };
+    static const unsigned ceremony[] = {
+        SHRINE_SHAKE, SHRINE_APPEAR, SHRINE_RAYS, SHRINE_FLASH, BFM_EARTH_SCROLL_RINGS_SOUND, SHRINE_FINISH
+    };
+    _Static_assert(5 + sizeof contacts / sizeof *contacts + sizeof ceremony / sizeof *ceremony <= CLEFT_CLIPS,
+                   "Twinpeak clip capacity");
     Sources s = {.disc = disc, .group = (room >> 12) & 15u, .key = room >> 16};
     uint8_t *area = bfm_archive_effect_data(disc, "SC02.CD", BOX_MEMBER, &s.bytes);
     s.data = area;
@@ -588,6 +649,22 @@ BfmBedroomEffects *bfm_woods_box_sound_load(const MusashiDiscMedia *disc)
         !prepare_sequence(&s, BFM_WOODS_PICKUP_SOUND, &effects->clips[3+count]))) {
         bfm_bedroom_effects_free(effects);
         effects = NULL;
+    }
+    if (effects) {
+        /* Upon the accepted blow the shrine mounts the ceremony's bank 32.
+         * The late restored-shrine cue uses the current score's instruments.
+         * The ordinary room contacts above keep their original bank 24. */
+        s.score = bfm_archive_sound_bank_load(disc, "SC03.CD", 45);
+        if (s.score) prepare(&s, SHRINE_RESTORED, &effects->clips[4+count]);
+        bfm_palace_sound_bank_free(s.score);
+        s.score = NULL;
+        bfm_palace_sound_bank_free(s.scene);
+        s.scene = bfm_archive_sound_bank_load(disc, "SC03.CD", 59);
+        s.key = 32;
+        if (s.scene) {
+            for (size_t i = 0; i < sizeof ceremony / sizeof *ceremony; ++i)
+                prepare(&s, ceremony[i], &effects->clips[5+count+i]);
+        }
     }
     bfm_palace_sound_bank_free(s.common);
     bfm_palace_sound_bank_free(s.scene);
@@ -757,6 +834,16 @@ BfmBedroomEffects *bfm_menu_effects_load(const MusashiDiscMedia *disc)
     return common_effects_load(disc, commands, sizeof commands / sizeof *commands);
 }
 
+BfmBedroomEffects *bfm_castle_menu_effects_load(const MusashiDiscMedia *disc)
+{
+    static const unsigned commands[] = {
+        BFM_ROOM_MOVE_SOUND, BFM_ROOM_ACCEPT_SOUND, 0x45a, 0x45d, 0x45f, 0x473, 0x474
+    };
+    BfmBedroomEffects *effects = common_effects_load(disc, commands, sizeof commands / sizeof *commands);
+    if (effects) effects->replace_matching = 1;
+    return effects;
+}
+
 /* Cleft's eight surface contacts select the same mounted effect as guarding.
  * Keep one decoded clip for every selector which actually resolves to it. */
 static void prepare_terrain_hits(const Sources *s, BfmBedroomEffects *effects)
@@ -791,6 +878,8 @@ BfmBedroomEffects *bfm_woods_shrink_sound_load(const MusashiDiscMedia *disc)
     }
     prepare_sequence(&s, BFM_BODY_LEVEL_SOUND, &effects->clips[2]);
     prepare_sequence(&s, BFM_WOODS_PICKUP_SOUND, &effects->clips[CLEFT_PICKUP]);
+    prepare_sequence(&s, RESCUE_BP_STRIKE, &effects->clips[CLEFT_BP_STRIKE]);
+    prepare_sequence(&s, RESCUE_BP_ARPEGGIO, &effects->clips[CLEFT_BP_ARPEGGIO]);
     for (unsigned i=0; i<sizeof woods_swings/sizeof *woods_swings; ++i)
         prepare(&s, woods_swings[i], &effects->clips[CLEFT_SWINGS+i]);
     prepare(&s, BFM_WOODS_CARRY_THROW_SOUND, &effects->clips[8]);
@@ -857,7 +946,8 @@ void bfm_bedroom_effects_free(BfmBedroomEffects *e)
     for (unsigned i=0; i<sizeof e->clips/sizeof *e->clips; ++i) {
         Clip *clip = &e->clips[i];
         if (clip->tone) {
-            bfm_spu_sample_free(&clip->tone->initial.sample);
+            for (unsigned j = 0; j < clip->tone->count; ++j)
+                bfm_spu_sample_free(&clip->tone->initial[j].sample);
             free(clip->tone);
         }
         free(clip->mono);
@@ -868,7 +958,7 @@ void bfm_bedroom_effects_free(BfmBedroomEffects *e)
 static void start_voice(Playback *p, const Clip *clip, unsigned command)
 {
     *p = (Playback){.clip=clip, .command=command};
-    if (clip->tone) p->layer = clip->tone->initial;
+    if (clip->tone) memcpy(p->layers, clip->tone->initial, clip->tone->count * sizeof *p->layers);
 }
 
 void bfm_bedroom_effects_stop(BfmBedroomEffects *effects)
@@ -879,15 +969,26 @@ void bfm_bedroom_effects_stop(BfmBedroomEffects *effects)
 void bfm_bedroom_effects_start(BfmBedroomEffects *e, unsigned command)
 {
     if (!e || !command) return;
+    if (command == BFM_WOODS_RESCUE_BP_SOUND) {
+        /* The BP refill starts two common sequences on the same sound tick. */
+        bfm_bedroom_effects_start(e, RESCUE_BP_STRIKE);
+        bfm_bedroom_effects_start(e, RESCUE_BP_ARPEGGIO);
+        return;
+    }
     unsigned clip_command = command;
     if (command >= BFM_WOODS_TERRAIN_HIT_FIRST && command <= BFM_WOODS_TERRAIN_HIT_LAST &&
         (e->terrain_aliases & (1u << (command - BFM_WOODS_TERRAIN_HIT_FIRST))))
         clip_command = BFM_WOODS_GUARD_SOUND;
-    if (command == BFM_WOODS_STOP_CHARGE_SOUND) {
+    if (command == BFM_WOODS_STOP_CHARGE_SOUND || command == BFM_EARTH_SCROLL_STOP_RINGS_SOUND) {
         for (unsigned i = 0; i < VOICES; ++i) {
             Playback *p = &e->playing[i];
-            if (p->clip && p->clip->id == BFM_WOODS_CHARGE_SOUND)
-                bfm_spu_envelope_release(&p->layer.envelope);
+            if (p->clip && p->clip->tone && p->command == (command & 0xffffu)) {
+                for (unsigned j = 0; j < p->clip->tone->count; ++j) {
+                    Layer *layer = &p->layers[j];
+                    if (layer->delay) layer->done = 1;
+                    else bfm_spu_envelope_release(&layer->envelope);
+                }
+            }
         }
         return;
     }
@@ -899,7 +1000,7 @@ void bfm_bedroom_effects_start(BfmBedroomEffects *e, unsigned command)
             for (unsigned j=0; j<VOICES; ++j) {
                 Playback *p = &e->playing[j];
                 if (p->clip && p->command == command &&
-                    !(p->clip->tone && p->layer.envelope.stage == BFM_SPU_ENVELOPE_RELEASE)) {
+                    !(p->clip->tone && p->layers[0].envelope.stage == BFM_SPU_ENVELOPE_RELEASE)) {
                     if (p->frame >= e->clips[i].retrigger_frames)
                         start_voice(p, &e->clips[i], command);
                     return;
@@ -928,7 +1029,7 @@ void bfm_bedroom_effects_mix(BfmBedroomEffects *e, int16_t *stereo, size_t frame
         if (p->clip->tone) {
             for (size_t i = 0; i < frames; ++i) {
                 int16_t value;
-                if (!next_frame(p->clip->tone->pitch_table, &p->layer, 1, &p->resampler, &value)) break;
+                if (!next_frame(p->clip->tone->pitch_table, p->layers, p->clip->tone->count, &p->resampler, &value)) break;
                 mix_sample(stereo+2*i,value);
             }
             if (p->resampler.done) p->clip = NULL;

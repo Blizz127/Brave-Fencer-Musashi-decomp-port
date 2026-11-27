@@ -208,12 +208,13 @@ BfmSqvResult bfm_sqv_archive_track_load(const MusashiDiscMedia *disc, const char
     int sc03 = !strcmp(archive, "SC03.CD");
     int twinpeak = sc03 && (member == 50 || (member >= 37 && member <= 39));
     int allows_wheel = twinpeak || member == FOREST_MEMBER || member == 75 || member == 34 || member == 0;
-    int single = twinpeak || (sc01 && member == FOREST_MEMBER) || (sc03 && (member == 4 || member == 9 || member == 67)) ||
+    int single = twinpeak || (sc01 && member == FOREST_MEMBER) ||
+                 (sc03 && (member == 4 || member == 9 || member == 67 || member == 72)) ||
                  (sc02 && member == 25) ||
                  (!strcmp(archive, "SC06.CD") && member == 38);
     int triple = (sc01 && (member == PALACE_MEMBER || member == 75)) || (sc03 && member == 68);
     int two_tracks = (sc02 && (member == 23 || member == 34)) ||
-                     (sc03 && member == 0) || (!strcmp(archive, "SC04.CD") && member == 13);
+                     (sc03 && (member == 0 || member == 45)) || (!strcmp(archive, "SC04.CD") && member == 13);
     if (!single && !two_tracks && !triple) return BFM_SQV_UNSUPPORTED;
     unsigned tracks = single ? 1 : two_tracks ? 2 : MAX_TRACKS;
     if (track >= tracks) return BFM_SQV_INVALID;

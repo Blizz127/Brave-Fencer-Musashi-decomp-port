@@ -12,6 +12,7 @@ BfmVillageLower *bfm_village_lower_resume(const MusashiDiscMedia *disc, BfmBedro
 /* Valid on the field update in which the controlled player presses into
  * the inn wall. The mounted descriptor lives until the lower field closes. */
 const uint8_t *bfm_village_lower_inn_transfer(const BfmVillageLower *lower);
+const uint8_t *bfm_village_lower_castle_transfer(const BfmVillageLower *lower);
 const uint8_t *bfm_village_lower_shop_transfer(const BfmVillageLower *lower);
 const BfmVillageMotion *bfm_village_lower_departure(const BfmVillageLower *lower);
 void bfm_village_lower_free(BfmVillageLower *lower);

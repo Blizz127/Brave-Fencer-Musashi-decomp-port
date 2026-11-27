@@ -79,8 +79,16 @@ BfmWoodsSignModel *bfm_woods_sign_model_load(const uint8_t *scene, size_t bytes,
         offset += 20;
     }
     if (offset == end-first) return NULL;
-    const uint8_t *resource = mounted(scene,bytes,UINT32_C(0x8018bdb8),12);
-    if (!resource) return NULL;
+    return bfm_woods_sign_model_from_placement(scene,bytes,first + (uint32_t)offset,
+                                               UINT32_C(0x8018bdb8));
+}
+
+BfmWoodsSignModel *bfm_woods_sign_model_from_placement(const uint8_t *scene, size_t bytes,
+                                                       uint32_t row, uint32_t kit)
+{
+    const uint8_t *placement = mounted(scene,bytes,row,20);
+    const uint8_t *resource = mounted(scene,bytes,kit,12);
+    if (!placement || !resource) return NULL;
     const uint8_t *shape = mounted(scene,bytes,u32le(resource+8),16);
     if (!shape || u32le(shape)) return NULL;
     BfmForestGuardBox box;
@@ -94,7 +102,7 @@ BfmWoodsSignModel *bfm_woods_sign_model_load(const uint8_t *scene, size_t bytes,
         scene,bytes,origin,u32le(resource+4),&count);
     if (!mesh) return NULL;
     BfmWoodsSignModel *sign = calloc(1,sizeof *sign);
-    if (sign && (count != 1 || !read_model(sign,musashi_forest_player_mesh_part(mesh,0),placement+offset))) {
+    if (sign && (count != 1 || !read_model(sign,musashi_forest_player_mesh_part(mesh,0),placement))) {
         free(sign);
         sign = NULL;
     }

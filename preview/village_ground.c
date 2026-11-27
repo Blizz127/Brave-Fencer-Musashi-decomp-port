@@ -29,7 +29,7 @@ struct BfmVillageGround {
     Slice tables[TABLE_COUNT];
     int origin_x, origin_z, width, depth;
     unsigned exit_material, passage_wall;
-    int forest_thresholds, recheck_bank_floor;
+    int lower_village, recheck_bank_floor, summit_contacts;
 };
 
 static unsigned read16(const uint8_t *p)
@@ -65,12 +65,11 @@ BfmVillageGround *bfm_village_ground_open(const uint8_t *scene, size_t bytes, ui
         end = offset;
     }
     if (room == UINT32_C(0x8018c794)) view.exit_material = 0x106;
+    view.summit_contacts = room == UINT32_C(0x801961e8);
     view.recheck_bank_floor = room == UINT32_C(0x8018ea38);
     if (room == UINT32_C(0x80192b18)) {
         view.exit_material = 0x105;
-        /* Both approaches to the forest have a level threshold and a
-         * vertical wall carrying the same material. */
-        view.forest_thresholds = 1;
+        view.lower_village = 1;
     }
     if (room == UINT32_C(0x8018ea38) || room == UINT32_C(0x801910e4) ||
         room == UINT32_C(0x801961e8) || room == UINT32_C(0x8018c890))
@@ -184,7 +183,9 @@ static int floors(const BfmVillageGround *g, const int start[3], int end[3],
     for (size_t i = 0; i < list.bytes; i += 2) {
         Face face;
         if (!read_face(g, read16(list.data + i), &face)) return -1;
-        int threshold = g->forest_thresholds && (face.material == 0x109 || face.material == 0x10a);
+        /* Castle and forest thresholds carry the exit material on the walkable floor. */
+        int threshold = g->lower_village && (face.material == 0x107 ||
+                                             face.material == 0x109 || face.material == 0x10a);
         int thorn = bank_events && (uint8_t)face.material == BFM_FOREST_BANK_THORN_REASON;
         if (face.planes[0].normal[1] >= -1024 ||
             ((face.material & 0x300) && face.material != g->exit_material && !threshold && !thorn) ||
@@ -299,19 +300,74 @@ BfmVillageGroundResult bfm_village_ground_step(const BfmVillageGround *g, const 
 BfmVillageGroundResult bfm_village_ground_wall_step(const BfmVillageGround *g,
     const int16_t from[3], int16_t to[3], BfmForestContact *floor, uint16_t *wall)
 {
-    return sweep(g, from, to, floor, 0, wall, NULL, NULL);
-}
+    if (!g || !g->summit_contacts || !from || !to || !floor)
+        return sweep(g, from, to, floor, 0, wall, NULL, NULL);
 
-BfmVillageGroundResult bfm_village_ground_air(const BfmVillageGround *g, const int16_t from[3],
-                                             int16_t to[3], BfmForestContact *floor)
-{
-    return sweep(g, from, to, floor, 1, NULL, NULL, NULL);
+    int16_t proposed[3];
+    memcpy(proposed, to, sizeof proposed);
+    uint16_t marked = 0;
+    BfmVillageGroundResult direct = sweep(g, from, to, floor, 0, &marked, NULL, NULL);
+    if (wall) *wall = marked;
+    if (marked || direct == BFM_VILLAGE_GROUND_BLOCKED) return direct;
+
+    /* The upper walkway has slanted retaining faces. At a shared edge the
+     * foot meets both a floor and a wall. Apply their successive projections
+     * in the mounted cell's order before looking up the supporting normal. */
+    uint16_t material;
+    unsigned contact = bfm_village_ground_support_probe(g, 0, from, proposed, &material);
+    if (!(contact & 0x2000) || !(contact & 0x8000)) return direct;
+    int16_t supported[3];
+    memcpy(supported, proposed, sizeof supported);
+    BfmForestContact corrected;
+    if (sweep(g, proposed, supported, &corrected, 0, NULL, NULL, NULL) != BFM_VILLAGE_GROUND_FOOTING)
+        return direct;
+    memcpy(to, supported, sizeof supported);
+    *floor = corrected;
+    return BFM_VILLAGE_GROUND_FOOTING;
 }
 
 BfmVillageGroundResult bfm_village_ground_air_contact(const BfmVillageGround *g,
     const int16_t from[3], int16_t to[3], BfmForestContact *floor, int *wall_hit)
 {
+    if (g && g->summit_contacts && from && to && floor) {
+        /* A falling player can cross a slightly tilted retaining wall above
+         * the lower floor. It corrects the swept foot without ending the fall. */
+        int16_t foot[3];
+        memcpy(foot, to, sizeof foot);
+        uint16_t material;
+        unsigned contact = bfm_village_ground_support_probe(g, 1, from, foot, &material);
+        if (contact == (0x2000 | 0x8000)) {
+            /* The steep face can push a descending foot back over the lip.
+             * Confirm its supporting floor at that corrected position. */
+            int16_t supported[3];
+            memcpy(supported, foot, sizeof supported);
+            BfmForestContact landing;
+            if (sweep(g, foot, supported, &landing, 0, NULL, NULL, NULL) == BFM_VILLAGE_GROUND_FOOTING) {
+                memcpy(to, supported, sizeof supported);
+                *floor = landing;
+                if (wall_hit) *wall_hit = 1;
+                return BFM_VILLAGE_GROUND_FOOTING;
+            }
+        }
+        if (contact == 0x8000) {
+            memcpy(to, foot, sizeof foot);
+            if (wall_hit) *wall_hit = 1;
+            return BFM_VILLAGE_GROUND_AIR;
+        }
+    }
     return sweep(g, from, to, floor, 1, NULL, wall_hit, NULL);
+}
+
+BfmVillageGroundResult bfm_village_ground_air(const BfmVillageGround *g, const int16_t from[3],
+                                             int16_t to[3], BfmForestContact *floor)
+{
+    return bfm_village_ground_air_contact(g, from, to, floor, NULL);
+}
+
+BfmVillageGroundResult bfm_village_ground_air_passage(const BfmVillageGround *g,
+    const int16_t from[3], int16_t to[3], BfmForestContact *floor, uint16_t *wall)
+{
+    return sweep(g, from, to, floor, 1, wall, NULL, NULL);
 }
 
 BfmVillageGroundResult bfm_village_ground_bank_step(const BfmVillageGround *g,

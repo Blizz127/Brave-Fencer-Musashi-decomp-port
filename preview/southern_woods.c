@@ -12,7 +12,9 @@
 #include "forest_message_art.h"
 #include "woods_sign_model.h"
 #include "woods_lardwick_field.h"
-#include "woods_resident_glow_art.h"
+#include "woods_lardwick_art.h"
+#include "woods_lardwick_player.h"
+#include "village_talk_camera.h"
 #include "woods_caster.h"
 #include "woods_caster_loot.h"
 #include "woods_caster_burst.h"
@@ -55,7 +57,10 @@ struct BfmSouthernWoods {
     uint16_t (*tiles)[1024];
     BfmWoodsSignModel *sign;
     BfmWoodsLardwickField lardwick;
-    BfmWoodsResidentGlowArt *lardwick_art;
+    BfmWoodsLardwickArt *lardwick_art;
+    BfmWoodsLardwickPlayer rescue_player;
+    BfmVillageTalkCamera rescue_camera;
+    int rescue_awarding;
     BfmWoodsCaster *caster;
     BfmWoodsCasterLoot *loot;
     BfmWoodsCasterBurst *burst;
@@ -136,7 +141,7 @@ void bfm_southern_woods_free(BfmSouthernWoods *woods)
     bfm_woods_caster_burst_free(woods->burst);
     bfm_woods_caster_loot_free(woods->loot);
     bfm_woods_caster_free(woods->caster);
-    bfm_woods_resident_glow_art_free(woods->lardwick_art);
+    bfm_woods_lardwick_art_free(woods->lardwick_art);
     bfm_woods_sign_model_free(woods->sign);
     bfm_village_motion_free(woods->motion);
     bfm_village_field_clear(&woods->field);
@@ -162,7 +167,7 @@ BfmSouthernWoods *bfm_southern_woods_open(const MusashiDiscMedia *disc, BfmBedro
     if (!bfm_woods_lardwick_field_open(&woods->lardwick, woods->scene, woods->bytes,
                                        next.state.variables)) goto fail;
     if (woods->lardwick.active) {
-        woods->lardwick_art = bfm_woods_resident_glow_art_load(woods->scene, woods->bytes);
+        woods->lardwick_art = bfm_woods_lardwick_art_load(woods->scene, woods->bytes, &woods->lardwick);
         if (!woods->lardwick_art) goto fail;
     }
     bfm_woods_water_load(&woods->water, tiles);
@@ -184,7 +189,7 @@ BfmSouthernWoods *bfm_southern_woods_open(const MusashiDiscMedia *disc, BfmBedro
     if (!end || memcmp(woods->sign_text,(const uint8_t[]){5,2,1,1},4)) goto fail;
     woods->sign_bytes = (size_t)(end - woods->sign_text) + 1;
     woods->sign = bfm_woods_sign_model_load(woods->scene,woods->bytes,UINT32_C(0x8018ea38));
-    woods->writing = bfm_castle_message_art_load(disc,woods->scene,woods->bytes,tiles,0x5fd88);
+    woods->writing = bfm_southern_woods_message_art_load(disc,woods->scene,woods->bytes,tiles);
     woods->caster = bfm_woods_caster_load(woods->scene, woods->bytes);
     woods->loot = bfm_woods_caster_loot_open(woods->scene, woods->bytes);
     woods->leno_art = bfm_woods_leno_actor_open(woods->scene, woods->bytes);
@@ -292,6 +297,8 @@ int bfm_southern_woods_draw_retry(BfmSouthernWoods *woods, const BfmForestHud *h
 
 int bfm_southern_woods_close(BfmSouthernWoods *woods)
 {
+    if (woods->lardwick.window)
+        return bfm_woods_lardwick_close(&woods->lardwick);
     if (bfm_woods_leno_in_dialogue(woods->leno))
         return bfm_woods_leno_close_message(woods->leno);
     if (woods->award_open) {
@@ -450,7 +457,7 @@ static int charged_contacts(BfmSouthernWoods *woods, BfmGameplayRun *run,
     const BfmWoodsChargedWeapon *weapon = bfm_woods_caster_melee_weapon(woods->melee);
     BfmWoodsChargedTargets targets = {
         .casters=woods->caster, .king=woods->king, .leno=woods->leno,
-        .ground=bfm_village_motion_ground(woods->motion)
+        .ground=bfm_village_motion_ground(woods->motion), .lardwick=&woods->lardwick
     };
     BfmWoodsChargedResult result;
     if (swing->charge_started) woods->cut_sounded_surface = 0;
@@ -460,6 +467,7 @@ static int charged_contacts(BfmSouthernWoods *woods, BfmGameplayRun *run,
                     run, weapon->credit, heading, swing->strength, swing->from,
                     swing->to[ray], &result)) return 0;
             if (result.contacts) {
+                if (result.freed_captive) room_sound(woods, BFM_WOODS_CRYSTAL_HIT_SOUND);
                 if (!bfm_woods_charged_impact_issue(&woods->charged_impact,
                         result.point, result.normal, view->eye)) return 0;
                 room_sound(woods, result.impact_sound);
@@ -488,13 +496,23 @@ static void sword_contacts(BfmSouthernWoods *woods, unsigned yaw)
 {
     const BfmWoodsCasterMeleeFrame *swing = &woods->swing;
     int connected = 0;
-    for (unsigned target = 1; target <= BFM_WOODS_CASTERS; ++target) {
-        for (unsigned ray = 0; ray < swing->rays; ++ray) {
-            int16_t hit[3];
+    for (unsigned ray = 0; ray < swing->rays; ++ray) {
+        int16_t hit[3], end[3], normal[3];
+        uint16_t material;
+        memcpy(end, swing->to[ray], sizeof end);
+        bfm_village_ground_blade(bfm_village_motion_ground(woods->motion), swing->from,
+                                 end, normal, &material);
+        if (bfm_woods_lardwick_contact(&woods->lardwick, swing->event, swing->from, end, hit, NULL) &&
+            bfm_woods_lardwick_strike(&woods->lardwick, swing->event)) {
+            memcpy(end, hit, sizeof end);
+            bfm_woods_caster_melee_connected(woods->melee);
+            room_sound(woods, BFM_WOODS_CRYSTAL_HIT_SOUND);
+        }
+        for (unsigned target = 1; target <= BFM_WOODS_CASTERS; ++target) {
             if (bfm_woods_caster_sword(woods->caster, target, swing->event, swing->strength, yaw,
-                                      swing->from, swing->to[ray], hit)) {
+                                      swing->from, end, hit)) {
                 connected = 1;
-                break;
+                memcpy(end, hit, sizeof end);
             }
         }
     }
@@ -696,6 +714,65 @@ static int step_charge(BfmSouthernWoods *woods, BfmGameplayRun *run, int entered
     return 1;
 }
 
+/* The scene's walk target is local to the newly released Soldier. Both
+ * orders and the conversation camera sample his placed model on this field. */
+static int begin_rescue_approach(BfmSouthernWoods *woods, const BfmWoodsLardwickEvents *event)
+{
+    const BfmWoodsLardwickField *f = &woods->lardwick;
+    const uint32_t scene_origin = UINT32_C(0x80128158);
+    if (event->camera < scene_origin || woods->bytes < 16 ||
+        event->camera - scene_origin > woods->bytes - 16) return 0;
+    uint8_t station[8];
+    for (unsigned i = 0; i < 4; ++i) {
+        uint16_t v = i == 3 ? (uint16_t)f->soldier_yaw : (uint16_t)f->root.xyz[i];
+        station[2*i] = (uint8_t)v;
+        station[2*i+1] = (uint8_t)(v >> 8);
+    }
+    BfmForestTransform model;
+    bfm_forest_actor_root(f->soldier_yaw, f->root.xyz, &model);
+    uint32_t walk = (uint16_t)event->approach_x | ((uint32_t)(uint16_t)event->approach_z << 16);
+    return bfm_village_talk_camera_frame(&woods->rescue_camera, station,
+               woods->scene + (event->camera - scene_origin), &woods->presented_camera) &&
+           bfm_woods_lardwick_player_queue(&woods->rescue_player, 4, walk, &model, f->root.xyz) &&
+           bfm_woods_lardwick_player_queue(&woods->rescue_player, 10, 0, &model, f->root.xyz);
+}
+
+static int step_rescue_player(BfmSouthernWoods *woods, int yaw, int player_ready,
+                              BfmForestMessage **opened)
+{
+    if (woods->rescue_awarding) {
+        BfmLardwickAwardFrame frame;
+        const BfmBedroomView *view = bfm_bedroom_field_view(woods->field.field);
+        if (!bfm_woods_lardwick_award_step(&woods->lardwick.award, woods->motion, view,
+                                           !woods->lardwick.window, &frame)) return 0;
+        if (frame.open_notice &&
+            !open_field_message(opened, bfm_woods_lardwick_notice(&woods->lardwick))) return 0;
+        room_sound(woods, frame.sound);
+        woods->rescue_player.ready = frame.complete;
+        if (frame.complete) woods->rescue_awarding = 0;
+        return 1;
+    }
+    return bfm_woods_lardwick_player_step(&woods->rescue_player, woods->motion, yaw, player_ready);
+}
+
+static int step_rescue_script(BfmSouthernWoods *woods, BfmGameplayRun *run,
+                              BfmForestMessage **opened)
+{
+    BfmWoodsLardwickEvents event;
+    if (!bfm_woods_lardwick_release_step(&woods->lardwick, run, woods->save, woods->main,
+            woods->main_bytes, woods->presented_camera.eye, woods->rescue_player.ready,
+            !woods->rescue_camera.phase, opened, &event)) return 0;
+    room_sound(woods, event.sound);
+    if (event.begin_approach && !begin_rescue_approach(woods, &event)) return 0;
+    if (event.camera_release) bfm_village_talk_camera_release(&woods->rescue_camera);
+    if (event.award_begin) {
+        if (!bfm_woods_lardwick_award_begin(&woods->lardwick.award, woods->motion)) return 0;
+        woods->rescue_awarding = 1;
+        woods->rescue_player.ready = 0;
+    }
+    return 1;
+}
+
 int bfm_southern_woods_step_field_at(BfmSouthernWoods *woods, BfmGameplayRun *run,
                                      BfmFieldInput field, unsigned actor_tick, BfmForestMessage **opened)
 {
@@ -726,6 +803,9 @@ int bfm_southern_woods_step_field_at(BfmSouthernWoods *woods, BfmGameplayRun *ru
         field = (BfmFieldInput){0};
     }
     if (woods->life != ALIVE) return 1;
+    int rescuing = bfm_woods_lardwick_busy(&woods->lardwick);
+    int rescue_locked = bfm_woods_lardwick_controls_locked(&woods->lardwick);
+    if (rescue_locked) field = (BfmFieldInput){0};
     if (run) bfm_village_motion_woods_condition(woods->motion, bfm_field_tired_stance(run->player.record));
     const BfmVillagePlayer *p = bfm_village_motion_player(woods->motion);
     int actors_running = !bfm_woods_fusion_awarding(woods->fusion);
@@ -742,7 +822,7 @@ int bfm_southern_woods_step_field_at(BfmSouthernWoods *woods, BfmGameplayRun *ru
      * the acquisition pose and its three message pages suspend it. */
     int return_clock = woods->save->destination[2] == 3 &&
                        bfm_village_motion_ingress_clock_running(woods->motion);
-    if (run && (p->controlled || was_in_water || return_clock) && actors_running && !dog_talking &&
+    if (run && (p->controlled || was_in_water || return_clock) && actors_running && !dog_talking && !rescue_locked &&
         !bfm_village_motion_woods_departing(woods->motion))
         bfm_village_clock_step(woods->save, 0);
     bfm_village_daylight_step(&woods->daylight, woods->save->progress[0x37], woods->tiles);
@@ -764,7 +844,7 @@ int bfm_southern_woods_step_field_at(BfmSouthernWoods *woods, BfmGameplayRun *ru
     }
     if (run) {
         memcpy(run->player.record, woods->save->progress, sizeof run->player.record);
-        if (!receive_contact(woods, run, field, actors_running && !was_in_water && !dog_talking && !woods->award_open))
+        if (!receive_contact(woods, run, field, !rescue_locked && actors_running && !was_in_water && !dog_talking && !woods->award_open))
             return 0;
     }
     int reacting = !was_in_water && woods->reaction.movement_locked;
@@ -825,7 +905,10 @@ int bfm_southern_woods_step_field_at(BfmSouthernWoods *woods, BfmGameplayRun *ru
         room_sound(woods, woods->swing.sound);
     }
     int yaw = bfm_village_motion_view_yaw(woods->presented_camera.eye,woods->presented_camera.target);
-    if (p->destination == 0x3026 && p->entrance == 1 && bfm_village_motion_transfer(woods->motion)) {
+    int scripted_motion = rescuing && (woods->rescue_player.count || woods->rescue_awarding);
+    if (scripted_motion) {
+        if (!step_rescue_player(woods, yaw, !woods->swing.action, opened)) return 0;
+    } else if (p->destination == 0x3026 && p->entrance == 1 && bfm_village_motion_transfer(woods->motion)) {
         if (!bfm_village_motion_woods_departure_step(woods->motion,yaw,run)) return 0;
     } else if (cut_field) {
         if (woods->swing.face_slot &&
@@ -849,6 +932,7 @@ int bfm_southern_woods_step_field_at(BfmSouthernWoods *woods, BfmGameplayRun *ru
                 yaw, !locked && field.cross_pressed, !locked && field.cross_held,
                 actors_running, woods->lilies, run, standing)) return 0;
     }
+    if (rescuing && !scripted_motion) woods->rescue_player.ready = !woods->swing.action;
     memcpy(endpoint,p->root.xyz,sizeof endpoint);
     if (!water_events(woods, run, p)) return 0;
     if ((p->events & BFM_VILLAGE_WATER_HIT) && bfm_woods_carry_active(&woods->carry))
@@ -884,6 +968,7 @@ int bfm_southern_woods_step_field_at(BfmSouthernWoods *woods, BfmGameplayRun *ru
         if (!open_field_message(opened, bfm_field_message_borrow(woods->sign_text, woods->sign_bytes)))
             return 0;
     }
+    if (rescuing && !step_rescue_script(woods, run, opened)) return 0;
     if (actors_running) {
         bfm_southern_woods_rescue_field_step(woods, run, actor_tick);
         if (!update_dog(woods, run, &carry, opened)) return 0;
@@ -896,6 +981,10 @@ int bfm_southern_woods_step_field_at(BfmSouthernWoods *woods, BfmGameplayRun *ru
         memcpy(woods->camera.eye, presented->eye, sizeof presented->eye);
         memcpy(woods->camera.target, presented->target, sizeof presented->target);
     }
+    if (woods->rescue_camera.phase) {
+        bfm_village_talk_camera_step(&woods->rescue_camera, presented);
+        if (!woods->rescue_camera.phase) woods->camera = *presented;
+    }
     if (!bfm_bedroom_field_set_focal(woods->field.field, presented->focal)) return 0;
     bfm_bedroom_field_viewpoint(woods->field.field, presented->eye, presented->target, 1, 1);
     const BfmBedroomView *view = bfm_bedroom_field_view(woods->field.field);
@@ -904,6 +993,17 @@ int bfm_southern_woods_step_field_at(BfmSouthernWoods *woods, BfmGameplayRun *ru
         if (woods->swing.rays && woods->swing.event != 11) sword_contacts(woods, p->root.yaw);
         if (!charged_contacts(woods, run, p->root.yaw, view) ||
             !bfm_woods_charged_impact_step(&woods->charged_impact, run, view)) return 0;
+        if (!rescuing && bfm_woods_lardwick_controls_locked(&woods->lardwick)) {
+            /* The hit was delivered this field. Acquiring the scripted player
+             * exits either Lumina attack immediately, before its recovery. */
+            BfmWoodsCasterMeleeFrame ended;
+            if (!bfm_woods_caster_melee_step(woods->melee, run, &p->root,
+                    &(BfmWoodsCasterMeleeInput){0}, &ended) ||
+                !bfm_village_motion_combat_face(woods->motion, 17)) return 0;
+            woods->swing.pose = woods->swing.selected_pose = 0;
+            woods->swing.action = woods->guard_swing = 0;
+            field = (BfmFieldInput){0};
+        }
     }
     if (actors_running) {
         if (!bfm_woods_caster_step(woods->caster, view, &p->root, run)) return 0;
@@ -1060,10 +1160,8 @@ int bfm_southern_woods_draw(BfmSouthernWoods *woods, const uint8_t flags[64],
     if ((woods->spell.player_lit && !bfm_bedroom_figure_lights(woods->field.hero, woods->daylight.lamps)) ||
         !bfm_woods_lilies_add(woods->lilies, woods->field.hero, view) ||
         !bfm_woods_king_add(woods->king, woods->field.hero, view) ||
-        (woods->lardwick_art && !bfm_woods_resident_glow_art_add(woods->lardwick_art,
-            woods->field.hero, view, woods->lardwick.root.xyz, woods->lardwick.root.yaw,
-            woods->lardwick.light_pitch, woods->lardwick.light_yaw, woods->lardwick.flash,
-            woods->lardwick.lights_active)) ||
+        (woods->lardwick_art && !bfm_woods_lardwick_art_add(woods->lardwick_art,
+            woods->field.hero, view, &woods->lardwick, woods->age)) ||
         !bfm_woods_water_effect_append(&woods->splash, woods->field.hero, view) ||
         !bfm_woods_fusion_art_append(woods->field.hero, view, NULL, NULL, &woods->water_digits) ||
         !bfm_woods_caster_add(woods->caster, woods->field.hero, view) ||
@@ -1087,7 +1185,15 @@ int bfm_southern_woods_draw(BfmSouthernWoods *woods, const uint8_t flags[64],
                                       woods->tiles,&pixels[0][0])) return 0;
     bfm_woods_water_draw(&woods->water, woods->age, woods->field.field, woods->tiles,
                          &pixels[0][0], draw_actors, woods);
-    if (window) bfm_forest_message_art_draw(woods->writing,window,pixels);
+    if (window && woods->lardwick.window == BFM_LARDWICK_WINDOW_SOLDIER) {
+        int speaker[3], hero[3];
+        if (!bfm_bedroom_project(view, woods->lardwick.root.xyz, speaker) ||
+            !bfm_bedroom_project(view, p->root.xyz, hero) ||
+            !bfm_forest_message_art_draw_placed(woods->writing, window, (int16_t)(speaker[0]-160),
+                                                speaker[0] >= hero[0], pixels)) return 0;
+    } else if (window) {
+        bfm_forest_message_art_draw(woods->writing, window, pixels);
+    }
     bfm_woods_body_notice_draw(&woods->body_notice, woods->tiles, pixels);
     return 1;
 }

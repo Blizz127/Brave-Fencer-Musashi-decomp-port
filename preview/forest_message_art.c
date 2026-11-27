@@ -15,6 +15,7 @@ struct BfmForestMessageArt {
     uint8_t glyph[GLYPHS][FONT_HEIGHT];
     uint32_t portrait[4][40][32], tail[16][16], prompt[12][12], ink[16];
     uint32_t paper, highlight, outline;
+    uint32_t (*soldier)[32];
 };
 
 static unsigned le16(const uint8_t *p)
@@ -42,6 +43,17 @@ static uint32_t rgb(uint16_t c)
 {
     return UINT32_C(0xff000000) | ((c & 31u) * 255 / 31) << 16 |
            (((c >> 5) & 31u) * 255 / 31) << 8 | ((c >> 10) & 31u) * 255 / 31;
+}
+
+static void decode_portrait(uint32_t face[40][32], const uint16_t tiles[512][1024],
+                            unsigned left, unsigned top, const uint16_t palette[16])
+{
+    for (unsigned y = 0; y < 40; ++y)
+        for (unsigned x = 0; x < 32; ++x) {
+            unsigned packed = tiles[top + y][left + x/4];
+            uint16_t color = palette[(packed >> (4 * (x & 3))) & 15];
+            face[y][x] = color ? rgb(color) : 0;
+        }
 }
 
 static int read_art(BfmForestMessageArt *art, const MusashiDiscMedia *disc,
@@ -94,12 +106,7 @@ static int read_art(BfmForestMessageArt *art, const MusashiDiscMedia *disc,
         unsigned left = face ? 448 + 8 * face : 624;
         unsigned top = face ? 400 : 416;
         unsigned palette = face ? 456 + face : 296;
-        for (unsigned y = 0; y < 40; ++y)
-            for (unsigned x = 0; x < 32; ++x) {
-                unsigned packed = tiles[top + y][left + x/4];
-                uint16_t color = tiles[palette][352+((packed >> (4*(x & 3))) & 15)];
-                art->portrait[face][y][x] = color ? rgb(color) : 0;
-            }
+        decode_portrait(art->portrait[face], tiles, left, top, &tiles[palette][352]);
     }
     return 1;
 }
@@ -111,6 +118,7 @@ static BfmForestMessageArt *load_art(const MusashiDiscMedia *disc, const uint8_t
         return NULL;
     BfmForestMessageArt *art = malloc(sizeof(*art));
     if (!art) return NULL;
+    art->soldier = NULL;
     if (!read_art(art, disc, scene + inset, tiles)) {
         free(art);
         return NULL;
@@ -143,8 +151,31 @@ BfmForestMessageArt *bfm_castle_message_art_load(const MusashiDiscMedia *disc, c
     return load_art(disc, scene, bytes, tiles, inset);
 }
 
+BfmForestMessageArt *bfm_southern_woods_message_art_load(const MusashiDiscMedia *disc,
+    const uint8_t *scene, size_t bytes, const uint16_t tiles[512][1024])
+{
+    /* SC03/29 stores independent texture and CLUT coordinates for each speaker. */
+    enum { INSET = 0x5fd88, FACE = 0x80187e78u - 0x80128158u,
+           CLUT = 0x80187ebcu - 0x80128158u };
+    if (!scene || bytes < CLUT + 4) return NULL;
+    unsigned left = le16(scene + FACE), top = le16(scene + FACE + 2);
+    unsigned palette_x = le16(scene + CLUT), palette_y = le16(scene + CLUT + 2);
+    if (left > 1024 - 8 || top > 512 - 40 || palette_x > 1024 - 16 || palette_y >= 512)
+        return NULL;
+    BfmForestMessageArt *art = load_art(disc, scene, bytes, tiles, INSET);
+    if (!art) return NULL;
+    art->soldier = malloc(40 * sizeof *art->soldier);
+    if (!art->soldier) {
+        free(art);
+        return NULL;
+    }
+    decode_portrait(art->soldier, tiles, left, top, &tiles[palette_y][palette_x]);
+    return art;
+}
+
 void bfm_forest_message_art_free(BfmForestMessageArt *art)
 {
+    if (art) free(art->soldier);
     free(art);
 }
 
@@ -206,13 +237,15 @@ static void draw_bubble(const BfmForestMessageArt *art, int center, int tail_x, 
 static void draw_portrait(const BfmForestMessageArt *art, int right, int left,
                           unsigned portrait, uint32_t pixels[240][320])
 {
-    if (!portrait || portrait > 4) return;
-    unsigned face = portrait - 1;
+    const uint32_t (*face)[32] = NULL;
+    if (portrait >= 1 && portrait <= 4) face = art->portrait[portrait - 1];
+    else if (portrait == 9) face = art->soldier;
+    if (!face) return;
     for (unsigned y = 0; y < 40; ++y)
         for (unsigned x = 0; x < 32; ++x) {
             BfmDialoguePoint uv = right ? bfm_dialogue_reflected_texel(x, y, 32, 40, 39) :
                                                       (BfmDialoguePoint){(int)x, (int)y};
-            uint32_t color = art->portrait[face][uv.y][uv.x];
+            uint32_t color = face[uv.y][uv.x];
             if (color) pixels[24+y][left+x] = color;
         }
 }
@@ -321,7 +354,8 @@ void bfm_bedroom_message_art_draw_side(const BfmForestMessageArt *art, const Bfm
 int bfm_forest_message_art_draw_placed(const BfmForestMessageArt *art, const BfmForestMessageFrame *frame,
                                        int16_t offset, int on_right, uint32_t pixels[240][320])
 {
-    if (!art || !frame || !pixels || !art->has_tail_limits || (on_right != 0 && on_right != 1))
+    if (!art || !frame || !pixels || !art->has_tail_limits || (on_right != 0 && on_right != 1) ||
+        (frame->portrait == 9 && !art->soldier))
         return 0;
     int scale = bubble_scale_x(frame->text_columns, 8);
     if (on_right) scale = -scale;

@@ -32,6 +32,7 @@ int bfm_woods_box_visit_step_at(BfmWoodsBoxVisit *visit, BfmGameplayRun *run,
                                 BfmFieldInput input, unsigned actor_tick, BfmForestMessage **opened);
 int bfm_woods_box_visit_close(BfmWoodsBoxVisit *visit, unsigned answer);
 int bfm_woods_box_visit_take_hud(BfmWoodsBoxVisit *visit);
+int bfm_woods_box_visit_rest_hud(const BfmWoodsBoxVisit *visit, BfmForestHud *hud);
 void bfm_woods_box_visit_score_applied(BfmWoodsBoxVisit *visit, unsigned selector);
 unsigned bfm_woods_box_visit_score(const BfmWoodsBoxVisit *visit);
 int bfm_woods_box_visit_take_retired_window(BfmWoodsBoxVisit *visit);

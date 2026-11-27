@@ -48,10 +48,10 @@ static int source_part(const uint8_t *p, size_t bytes, int scene_materials, Sour
      * are relative to the object directory, twelve bytes after the header. */
     if (bytes < HEADER_BYTES || u32le(p) != 0x41 || u32le(p+4) ||
         u32le(p+8) != 1) return 0;
-    /* The near-bank actors use scale label -1 and the rifle round uses 3.
-     * Both supply vertices already expressed in model units. */
+    /* The bank actors (-1), Earth shrine (1) and rifle round (3) all
+     * supply their scene vertices in model units. */
     uint32_t scale = u32le(p+36);
-    if (scale && !(scene_materials && (scale == UINT32_MAX || scale == 3))) return 0;
+    if (scale && !(scene_materials && (scale == UINT32_MAX || scale == 1 || scale == 3))) return 0;
     size_t vertices = u32le(p+12), normals = u32le(p+20), primitives = u32le(p+28);
     size_t nv = u32le(p+16), nn = u32le(p+24), nf = u32le(p+32);
     size_t extent = bytes - 12;

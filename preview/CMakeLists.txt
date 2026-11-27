@@ -61,6 +61,23 @@ add_executable(musashi_native_boot
     southern_woods.c
     woods_box_return.c
     woods_box_visit.c
+    woods_earth_shrine.c
+    woods_twinpeak_player_blade.c
+    woods_twinpeak_stride.c
+    woods_earth_shrine_view.c
+    woods_earth_shrine_visit.c
+    woods_earth_shrine_field.c
+    woods_earth_shrine_hit.c
+    woods_earth_shrine_release.c
+    woods_earth_shrine_player.c
+    woods_earth_shrine_scene_art.c
+    woods_earth_shrine_presentation.c
+    woods_earth_shrine_burst.c
+    woods_earth_shrine_fragments.c
+    woods_earth_shrine_tiles.c
+    woods_earth_scroll_touch.c
+    woods_earth_player_award.c
+    woods_earth_award_effect.c
     woods_rootrick_actor.c
     woods_rootrick_art.c
     woods_rootrick_blocking.c
@@ -93,6 +110,10 @@ add_executable(musashi_native_boot
     woods_water_effect.c
     woods_sign_model.c
     woods_lardwick_field.c
+    woods_lardwick_art.c
+    woods_lardwick_award.c
+    woods_lardwick_motes.c
+    woods_lardwick_player.c
     woods_resident_glow_art.c
     woods_award_effect.c
     woods_blade_sparks.c
@@ -116,6 +137,9 @@ add_executable(musashi_native_boot
     woods_leno.c
     woods_carry.c
     village_leno_delivery.c
+    village_earth_return.c
+    village_earth_return_cast.c
+    village_earth_portrait.c
     woods_king.c
     woods_king_art.c
     woods_king_reward.c
@@ -136,6 +160,8 @@ add_executable(musashi_native_boot
     village_field.c
     village_field_defeat.c
     village_gate.c
+    village_upper_guard.c
+    village_upper_landmarks.c
     village_greeting.c
     village_impact.c
     village_impact_sound.c
@@ -296,6 +322,10 @@ add_executable(musashi_native_boot
     forest_message.c
     castle_drawbridge.c
     castle_drawbridge_view.c
+    castle_audience.c
+    castle_audience_dialogue.c
+    castle_audience_stage.c
+    castle_audience_visitors.c
     steam_knight.c
     steam_knight_event.c
     steam_knight_finale.c
