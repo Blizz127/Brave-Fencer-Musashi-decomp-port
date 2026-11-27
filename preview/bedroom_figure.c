@@ -634,6 +634,72 @@ BfmBedroomVisitor *bfm_bedroom_visitor_load(const uint8_t *scene, size_t size,
     return visitor;
 }
 
+static Transform actor_root(int heading, const int position[3], unsigned horizontal_q12, unsigned vertical_q12)
+{
+    int sine, cosine;
+    angle((unsigned)heading,&sine,&cosine);
+    Transform root;
+    rotation(0,4096,sine,cosine,0,4096,root.r);
+    for (unsigned row = 0; row < 3; ++row) {
+        root.r[row][0] = floor_q12((int64_t)root.r[row][0] * horizontal_q12);
+        root.r[row][1] = floor_q12((int64_t)root.r[row][1] * vertical_q12);
+        root.r[row][2] = floor_q12((int64_t)root.r[row][2] * horizontal_q12);
+    }
+    memcpy(root.t,position,sizeof(root.t));
+    return root;
+}
+
+static void collect_actor_shadow(BfmBedroomFigure *figure, const BfmBedroomView *view, const Transform *eye,
+                   const int position[3], int heading, const BfmBedroomRoot *ground,
+                   const ShadowRect *shadow, int size)
+{
+    if (!ground || ground->shadow_visible) {
+        const MusashiForestPlayerVector underside = {0,4096,0};
+        const uint8_t neutral[3] = {128,128,128};
+        uint32_t ink = shade(figure,figure->direction,&underside,neutral);
+        BfmBedroomBody caster = {.heading=(int)((2048u-(unsigned)heading) & 4095u),
+                                 .shadow_normal={0,-4096,0}};
+        for (unsigned k = 0; k < 3; ++k) {
+            caster.shadow_position[k] = ground ? ground->shadow_xyz[k] : position[k];
+            /* This independent floor sprite keeps its authored size even when
+             * the caster is above the ground or has disappeared. */
+            caster.position[k] = caster.shadow_position[k];
+            if (ground) caster.shadow_normal[k] = ground->shadow_normal[k];
+        }
+        collect_shadow(figure,view,eye,&caster,shadow,size,ink);
+    }
+}
+
+int bfm_bedroom_figure_add_morph(BfmBedroomFigure *figure, const BfmBedroomView *view,
+                     const MusashiForestPlayerPart *part, const BfmBedroomRoot *root,
+                     unsigned horizontal_q12, unsigned vertical_q12,
+                     const uint8_t shadow[12], unsigned shadow_size)
+{
+    ShadowRect shadow_rect;
+    if (!figure || !view || !part || !root || !shadow || figure->next || !figure->surface.pixels ||
+        view->focal <= 0 || view->focal > UINT16_MAX || !read_shadow(&shadow_rect, shadow) ||
+        horizontal_q12 > INT16_MAX || vertical_q12 > INT16_MAX || shadow_size > INT16_MAX ||
+        part->face_count == SIZE_MAX || !reserve_faces(figure, part->face_count + 1)) return 0;
+    if (root->shadow_visible) {
+        for (unsigned k = 0; k < 3; ++k)
+            if (root->shadow_normal[k] < -4096 || root->shadow_normal[k] > 4096) return 0;
+        if (root->shadow_normal[1] >= 0) return 0;
+    }
+    const int position[3] = {root->xyz[0], root->xyz[1], root->xyz[2]};
+    Transform world = actor_root(root->yaw, position, horizontal_q12, vertical_q12);
+    Transform eye;
+    memcpy(eye.r, view->axes, sizeof eye.r);
+    memcpy(eye.t, view->translation, sizeof eye.t);
+    collect_actor_shadow(figure, view, &eye, position, root->yaw, root, &shadow_rect, (int)shadow_size);
+    Transform posed = compose(&eye, &world);
+    BfmBedroomView camera = {.focal = view->focal};
+    memcpy(camera.axes, posed.r, sizeof camera.axes);
+    memcpy(camera.translation, posed.t, sizeof camera.translation);
+    collect_part(figure, &camera, &world, part, 0);
+    qsort(figure->faces, figure->count, sizeof(*figure->faces), back_to_front);
+    return 1;
+}
+
 int bfm_bedroom_visitor_add(const BfmBedroomVisitor *visitor, BfmBedroomFigure *figure,
                            const BfmBedroomView *view, unsigned index,
                            const int position[3], int heading, uint32_t pose_address)
@@ -665,34 +731,12 @@ int bfm_bedroom_visitor_add_scaled(const BfmBedroomVisitor *visitor, BfmBedroomF
              ground->shadow_normal[1] >= 0)) return 0;
     }
     if (!reserve_faces(figure, (parts ? visitor->faces[index] : 0) + 1)) return 0;
-    int sine, cosine;
-    angle((unsigned)heading,&sine,&cosine);
-    Transform root, eye;
-    rotation(0,4096,sine,cosine,0,4096,root.r);
-    for (unsigned row = 0; row < 3; ++row) {
-        root.r[row][0] = floor_q12((int64_t)root.r[row][0] * horizontal_q12);
-        root.r[row][1] = floor_q12((int64_t)root.r[row][1] * vertical_q12);
-        root.r[row][2] = floor_q12((int64_t)root.r[row][2] * horizontal_q12);
-    }
-    memcpy(root.t,position,sizeof(root.t));
+    Transform root = actor_root(heading, position, horizontal_q12, vertical_q12);
+    Transform eye;
     memcpy(eye.r,view->axes,sizeof(eye.r));
     memcpy(eye.t,view->translation,sizeof(eye.t));
     Transform base = compose(&eye,&root);
-    if (!ground || ground->shadow_visible) {
-        const MusashiForestPlayerVector underside = {0,4096,0};
-        const uint8_t neutral[3] = {128,128,128};
-        uint32_t ink = shade(figure,figure->direction,&underside,neutral);
-        BfmBedroomBody caster = {.heading=(int)((2048u-(unsigned)heading) & 4095u),
-                                 .shadow_normal={0,-4096,0}};
-        for (unsigned k = 0; k < 3; ++k) {
-            caster.shadow_position[k] = ground ? ground->shadow_xyz[k] : position[k];
-            /* This independent floor sprite keeps its authored size even when
-             * the caster is above the ground or has disappeared. */
-            caster.position[k] = caster.shadow_position[k];
-            if (ground) caster.shadow_normal[k] = ground->shadow_normal[k];
-        }
-        collect_shadow(figure,view,&eye,&caster,&visitor->shadow,12288,ink);
-    }
+    collect_actor_shadow(figure, view, &eye, position, heading, ground, &visitor->shadow, 12288);
     figure->visitors_added |= 1u << index;
     const uint8_t *pose = visitor->scene + offset;
     for (unsigned i = 0; i < parts; ++i, pose += 8) {

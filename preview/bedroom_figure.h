@@ -2,6 +2,7 @@
 #ifndef BFM_BEDROOM_FIGURE_H
 #define BFM_BEDROOM_FIGURE_H
 #include "bedroom_field.h"
+#include "bedroom_travel.h"
 #include "forest_dust.h"
 #include "musashi_forest_player_mesh.h"
 
@@ -38,6 +39,12 @@ int bfm_bedroom_figure_prepare(BfmBedroomFigure *figure, const BfmBedroomView *v
  * figure queue, before its first draw. Both use the room's normal depth order. */
 int bfm_bedroom_figure_add_fusion(BfmBedroomFigure *figure, const BfmBedroomView *view,
                      const BfmForestActor *blade, const BfmForestDustCard *cards, size_t count);
+/* Submit a one-part actor whose shape has already been evaluated. The
+ * geometry and mounted shadow record are borrowed for this call. */
+int bfm_bedroom_figure_add_morph(BfmBedroomFigure *figure, const BfmBedroomView *view,
+                     const MusashiForestPlayerPart *part, const BfmBedroomRoot *root,
+                     unsigned horizontal_q12, unsigned vertical_q12,
+                     const uint8_t shadow[12], unsigned shadow_size);
 /* Supply this callback to the field's ordering-table draw. */
 int bfm_bedroom_figure_next_depth(const BfmBedroomFigure *figure);
 void bfm_bedroom_figure_draw_to(void *figure, int depth);
