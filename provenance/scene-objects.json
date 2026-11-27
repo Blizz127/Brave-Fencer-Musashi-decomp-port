@@ -145,6 +145,12 @@
       "file": "extracted/overlays/sc01/0009.pac0.bin",
       "base": 2148696408,
       "sha256": "2a28025aa6cd05bc439cab60215a16a21749dae91871effc0698e51f5c61f039"
+    },
+    "sc03_0028": {
+      "kind": "blob",
+      "file": "extracted/overlays/sc03/0028.pac0.bin",
+      "base": 2148696408,
+      "sha256": "aabefa6c93b0a3d15df0bdada079baa0c38c642254a1039b276475075d65b706"
     }
   },
   "matches": [
@@ -8617,6 +8623,32 @@
       "origin": "Independently reconstructed from USA SC01.CD member 0009 and matched against its complete linked function extent.",
       "source_sha256": "edba8acf9e5621d160fbd9669d7deb0ca588df9804f0aa8107fc70173c41b9de",
       "span_sha256": "3615d1e935b813de586d8b81209db996f24f6965116c0913cb3eda28bc7554da"
+    },
+    {
+      "name": "func_801884AC",
+      "region": "sc03_0028",
+      "vram": 2149090476,
+      "size": 160,
+      "source": "src/overlays/sc03_0028/801884ac.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03 member 28. The Skullpion supply bucket waits for its crew and boss states before reversing for the next cable crossing.",
+      "source_sha256": "6cced55cdf25b5dc7ccf384628c0525b8e02d3addd987631c50634bc4d2ba8b3",
+      "span_sha256": "1f3504e996947d1f41f6599fd181caef84660dfac3bc5dfd0a2de0c12d13c2b9"
+    },
+    {
+      "name": "func_80187AB0",
+      "region": "sc03_0028",
+      "vram": 2149087920,
+      "size": 84,
+      "source": "src/overlays/sc03_0028/80187ab0.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03 member 28. Waits out Skullpion's nonfatal hit recovery, restores the camera, clears the boss's core pointer and releases the core.",
+      "source_sha256": "64710e6ca24270e580deece98ccbf518a5c28453af5c608c48c7198ff1ef5ff5",
+      "span_sha256": "cb5c41d10cb14e74de4be4f1bbc8c0f494506cb77af7f33138fbea9a02d61bd4"
     }
   ]
 }
