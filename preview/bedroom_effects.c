@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "bedroom_effects.h"
+#include "../pc_port/forest_player_archive.h"
 #include "bedroom_record.h"
 #include "bedroom_score.h"
 #include "palace_sound_bank.h"
@@ -35,8 +36,8 @@ typedef struct {
     BfmDecodedSpuSample sample;
     BfmSpuEnvelope envelope;
     uint8_t control[20];
-    unsigned delay, gain, center, pitch, field, sample_in_field, gate;
-    int key, modulated, done;
+    unsigned delay, gain, center, pitch, field, sample_in_field, gate, gate_samples;
+    int key, tuning, modulated, done;
     size_t phase;
 } Layer;
 
@@ -83,34 +84,39 @@ static int description(const Sources *s, unsigned command, uint32_t *address)
     return 1;
 }
 
-static unsigned pitch(const Sources *s, int key, unsigned center)
+static unsigned pitch(const Sources *s, const Layer *l)
 {
-    key += (60-(int)center)*256;
+    int key = l->key + (60-(int)l->center)*256 - 2*l->tuning;
     if (key < 0 || key >= 127*256) return 0;
     const uint8_t *p = s->pitch+2*(key>>8);
     unsigned low = half(p), high = half(p+2);
     return low + ((high-low)*(unsigned)(key&255) >> 8);
 }
 
-static int layer_open(const Sources *s, const uint8_t d[20], Layer *l)
+static int instrument_open(const Sources *s, unsigned bank, unsigned instrument, Layer *l)
 {
     uint8_t map[12], pair[2];
-    unsigned bank = d[8], instrument = d[9];
-    if ((bank && bank != s->key) || d[4] || d[7] || d[5]>=128 || d[6]>=128 ||
-        !read_data(s, 0x80064d44u+12*bank, map, sizeof map) || instrument >= map[4] ||
-        !read_data(s, word(map)+2*instrument, pair, 2)) return 0;
+    if ((bank && bank != s->key) || !read_data(s, 0x80064d44u+12*bank, map, sizeof map) ||
+        instrument >= map[4] || !read_data(s, word(map)+2*instrument, pair, 2)) return 0;
     const BfmPalaceBank *vab = bank ? s->scene : s->common;
     BfmPalaceTone tone;
     BfmSpuSample encoded;
-    if (!bfm_room_effect_tone(vab, pair[0], pair[1], &tone) || tone.tuning ||
+    if (!bfm_room_effect_tone(vab, pair[0], pair[1], &tone) ||
         !bfm_palace_sound_sample(vab, tone.sample, &encoded) ||
         !bfm_spu_sample_decode(encoded.data, encoded.bytes, &l->sample)) return 0;
+    l->center = tone.center;
+    l->tuning = tone.tuning;
+    bfm_spu_envelope_start(&l->envelope,(uint16_t)tone.adsr1,(uint16_t)tone.adsr2);
+    return 1;
+}
+
+static int layer_open(const Sources *s, const uint8_t d[20], Layer *l)
+{
+    if (d[4] || d[7] || d[5]>=128 || d[6]>=128 || !instrument_open(s,d[8],d[9],l)) return 0;
     l->delay = half(d+2) * (SPU_RATE/60);
     l->gain = ((half(s->volume+2*d[6])*127 >> 7)*127) >> 7;
-    l->center = tone.center;
     l->key = d[5]*256;
-    l->pitch = pitch(s,l->key,l->center);
-    bfm_spu_envelope_start(&l->envelope,(uint16_t)tone.adsr1,(uint16_t)tone.adsr2);
+    l->pitch = pitch(s,l);
     if (word(d+12)) return 0;
     if (word(d+16)) {
         uint32_t command = word(d+16);
@@ -147,7 +153,7 @@ static void sound_field(const Sources *s, Layer *l)
         l->key = approach(l->key,c[7]*256,(int)half(c+4));
         if (l->key == c[7]*256) l->modulated = 2;
     } else l->key = approach(l->key,c[11]*256,(int)half(c+8));
-    l->pitch = pitch(s,l->key,l->center);
+    l->pitch = pitch(s,l);
 }
 
 static int next_sample(const Sources *s, Layer *l)
@@ -166,6 +172,7 @@ static int next_sample(const Sources *s, Layer *l)
         else l->phase = l->sample.loop_start*4096 + (l->phase-end*4096)%(span*4096);
     }
     if (!level && l->envelope.stage == BFM_SPU_ENVELOPE_RELEASE) l->done = 1;
+    if (l->gate_samples && !--l->gate_samples) bfm_spu_envelope_release(&l->envelope);
     if (++l->sample_in_field == SPU_RATE/60) {
         l->sample_in_field = 0;
         sound_field(s,l);
@@ -176,6 +183,38 @@ static int next_sample(const Sources *s, Layer *l)
 static int16_t limited(int value)
 {
     return (int16_t)(value > INT16_MAX ? INT16_MAX : value < INT16_MIN ? INT16_MIN : value);
+}
+
+static int render_layers(const Sources *s, Layer layers[], unsigned count,
+                         unsigned command, Clip *clip)
+{
+    size_t capacity = OUTPUT_RATE;
+    clip->mono = malloc(capacity * sizeof *clip->mono);
+    if (!clip->mono) return 0;
+    int previous = 0, phase = 0;
+    for (;;) {
+        int current = 0, active = 0;
+        for (unsigned i = 0; i < count; ++i) {
+            current += next_sample(s, &layers[i]);
+            active |= !layers[i].done;
+        }
+        if (phase <= 0) {
+            if (clip->frames == capacity) {
+                if (capacity >= OUTPUT_RATE*8) return 0;
+                capacity *= 2;
+                int16_t *p = realloc(clip->mono, capacity*sizeof *p);
+                if (!p) return 0;
+                clip->mono = p;
+            }
+            clip->mono[clip->frames++] = limited(current + (int)((int64_t)(previous-current)*(-phase)/OUTPUT_RATE));
+            phase += SPU_RATE;
+        }
+        if (!active) break;
+        previous = current;
+        phase -= OUTPUT_RATE;
+    }
+    clip->id = command;
+    return 1;
 }
 
 static int prepare(const Sources *s, unsigned command, Clip *clip)
@@ -193,35 +232,83 @@ static int prepare(const Sources *s, unsigned command, Clip *clip)
         if (!d[11]) break;
         address += sizeof d;
     }
-    size_t capacity = OUTPUT_RATE;
-    clip->mono = malloc(capacity * sizeof *clip->mono);
-    if (!clip->mono) goto done;
-    int previous = 0, phase = 0;
-    for (;;) {
-        int current = 0, active = 0;
-        for (unsigned i = 0; i < count; ++i) {
-            current += next_sample(s, &layers[i]);
-            active |= !layers[i].done;
-        }
-        if (phase <= 0) {
-            if (clip->frames == capacity) {
-                if (capacity >= OUTPUT_RATE*8) goto done;
-                capacity *= 2;
-                int16_t *p = realloc(clip->mono, capacity*sizeof *p);
-                if (!p) goto done;
-                clip->mono = p;
-            }
-            clip->mono[clip->frames++] = limited(current + (previous-current)*(-phase)/OUTPUT_RATE);
-            phase += SPU_RATE;
-        }
-        if (!active) break;
-        previous = current;
-        phase -= OUTPUT_RATE;
-    }
-    clip->id = command;
-    result = 1;
+    result = render_layers(s,layers,count,command,clip);
 done:
     for (unsigned i=0; i<MAX_LAYERS; ++i) bfm_spu_sample_free(&layers[i].sample);
+    return result;
+}
+
+/* Field counts in the resident note sequence use the NTSC sound service. */
+static unsigned field_sample(unsigned field)
+{
+    return (unsigned)((uint64_t)field*SPU_RATE*1001u/60000u);
+}
+
+static int prepare_body_alert(const Sources *s, Clip *clip)
+{
+    enum { MAX_NOTES = 32 };
+    uint8_t entry[4], track[12];
+    if (!read_data(s, 0x8006451cu+4*BFM_BODY_LEVEL_SOUND, entry, sizeof entry) ||
+        entry[0] != 0x85 || entry[1] || entry[2] ||
+        !read_data(s, 0x80068a54u+12*entry[3], track, sizeof track) || track[8] != 0x10)
+        return 0;
+    uint32_t cursor = word(track), repeat_start = 0;
+    unsigned repeats = 0, count = 0, field = 0, attenuation = 0;
+    Layer timbre = {0}, notes[MAX_NOTES];
+    int result = 0;
+    for (unsigned steps=0; steps<128; ++steps) {
+        uint8_t note[20];
+        if (cursor >= effect_base || !read_data(s,cursor,note,4)) break;
+        unsigned op = note[3];
+        if (op == 0x87) {
+            if (count && !repeats && !note[0] && !note[1] && !note[2])
+                result = render_layers(s,notes,count,BFM_BODY_LEVEL_SOUND,clip);
+            break;
+        }
+        if (op == 0x82) {
+            if (repeats || !note[0] || note[1] || note[2]) break;
+            repeats = note[0];
+            cursor += 4;
+            repeat_start = cursor;
+            continue;
+        }
+        if (op == 0x85) {
+            /* This phrase repeats at the same pitch with a softer echo. */
+            if (!repeats || note[0] || note[1] >= 128 || note[2]) break;
+            if (--repeats) {
+                attenuation += note[1];
+                cursor = repeat_start;
+            } else {
+                attenuation = 0;
+                cursor += 4;
+            }
+            continue;
+        }
+        if (op != 0x80 && op != 0x81) break;
+        unsigned bytes = op == 0x80 ? 20 : 8;
+        if (count == MAX_NOTES || !read_data(s,cursor,note,bytes) ||
+            note[2] >= 128 || note[2] < attenuation) break;
+        if (op == 0x80) {
+            if (timbre.sample.pcm || note[8] || note[10] || note[11] || word(note+16) ||
+                !instrument_open(s,note[10],note[9],&timbre)) break;
+        }
+        if (!timbre.sample.pcm) break;
+        Layer *voice = &notes[count++];
+        *voice = timbre;
+        voice->key = (int)half(note);
+        voice->pitch = pitch(s,voice);
+        unsigned gate = half(note+4), interval = half(note+6);
+        if (!voice->pitch || !gate || gate > 480-field || interval > 480-field) break;
+        voice->delay = field_sample(field);
+        voice->gate_samples = field_sample(field+gate)-voice->delay;
+        unsigned gain = half(s->volume+2*(note[2]-attenuation))*127u >> 7;
+        /* The sequence's three volume controls start at full scale. */
+        for (unsigned i=0; i<3; ++i) gain = gain*16383u >> 14;
+        voice->gain = gain;
+        field += interval;
+        cursor += bytes;
+    }
+    bfm_spu_sample_free(&timbre.sample);
     return result;
 }
 
@@ -345,10 +432,51 @@ BfmBedroomEffects *bfm_menu_effects_load(const MusashiDiscMedia *disc)
 
 BfmBedroomEffects *bfm_woods_shrink_sound_load(const MusashiDiscMedia *disc)
 {
-    /* The award uses the common bank despite the visual effect loading
-     * from the equipped skill member. Its resident row selects the tone. */
-    const unsigned command = BFM_WOODS_SHRINK_SOUND;
-    return common_effects_load(disc, &command, 1);
+    Sources s = {.disc = disc};
+    s.common = bfm_archive_sound_bank_load(disc, "MAIN.CD", 2);
+    BfmBedroomEffects *effects = NULL;
+    if (s.common && load_tables(&s)) effects = calloc(1, sizeof *effects);
+    if (!effects || !prepare(&s,BFM_WOODS_SHRINK_SOUND,&effects->clips[0])) {
+        bfm_bedroom_effects_free(effects);
+        bfm_palace_sound_bank_free(s.common);
+        return NULL;
+    }
+    prepare_body_alert(&s, &effects->clips[2]);
+
+    /* The award uses the common bank. The cast uses the mounted skill's
+     * own bank, selected by its resident player resource record. */
+    ForestPlayerArchive player;
+    uint8_t row[8];
+    enum { CLEFT_WOODS = 29 };
+    uint8_t *area = bfm_archive_effect_data(disc, "SC03.CD", CLEFT_WOODS, &s.bytes);
+    if (forest_player_archive_open(disc, &player) &&
+        forest_player_archive_read(&player, UINT32_C(0x800d3784), row, sizeof row)) {
+        s.key = word(row + 4);
+        s.scene = bfm_archive_sound_bank_load(disc, "MAIN.CD", word(row));
+        if (s.scene) prepare(&s, BFM_WOODS_SHRINK_CAST_SOUND, &effects->clips[1]);
+    }
+    if (area && s.bytes >= 28) {
+        /* The flattened King sounds through the equipped Shrink bank.
+         * Its bite uses the room bank, even while it is small. */
+        const uint8_t *dir = area+s.bytes-28;
+        s.data = area;
+        s.group = half(dir);
+        if (s.scene) prepare(&s, BFM_WOODS_KING_STOMP_SOUND, &effects->clips[3]);
+        bfm_palace_sound_bank_free(s.scene);
+        s.scene = bfm_archive_sound_bank_load(disc, "SC03.CD", CLEFT_WOODS);
+        uint32_t descriptor;
+        uint8_t key;
+        if (s.scene && description(&s, BFM_WOODS_KING_BITE_SOUND, &descriptor) &&
+            read_data(&s, descriptor+8, &key, 1) && key >= half(dir+4) &&
+            key-half(dir+4) < half(dir+2)) {
+            s.key = key;
+            prepare(&s, BFM_WOODS_KING_BITE_SOUND, &effects->clips[4]);
+        }
+    }
+    bfm_palace_sound_bank_free(s.scene);
+    free(area);
+    bfm_palace_sound_bank_free(s.common);
+    return effects;
 }
 
 void bfm_bedroom_effects_free(BfmBedroomEffects *e)

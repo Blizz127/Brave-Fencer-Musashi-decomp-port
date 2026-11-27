@@ -148,10 +148,10 @@ BfmPalaceBank *bfm_archive_sound_bank_load(const MusashiDiscMedia *disc, const c
         if (bytes < SECTOR || bytes > left)
             return NULL;
         if (header_bytes) {
-            /* Resident effects, Gunshot and the summit follow-up use paired
+            /* Resident effects, equipped abilities and the summit follow-up use paired
              * PAC2 headers and extended sample bodies. */
             int extended = type == 0x103 &&
-                ((!strcmp(archive, "MAIN.CD") && (member == 2 || member == 15)) ||
+                ((!strcmp(archive, "MAIN.CD") && (member == 2 || member == 15 || member == 19)) ||
                  (!strcmp(archive, "SC02.CD") && member == 2));
             if ((type != 3 && !extended) || key != header_key)
                 return NULL;

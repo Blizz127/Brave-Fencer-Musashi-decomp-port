@@ -7,7 +7,9 @@ typedef struct BfmBedroomEffects BfmBedroomEffects;
 enum { BFM_ROOM_AWARD_SOUND = 0x6a6, BFM_ROOM_MOVE_SOUND = 0x62f, BFM_ROOM_ACCEPT_SOUND = 0x630 };
 enum { BFM_FOREST_SWING_SOUND = 0x400, BFM_FOREST_HIT_SOUND = 0x437,
        BFM_FOREST_GUNSHOT_SOUND = 0x476 };
-enum { BFM_VILLAGE_KNOCK_SOUND = 0x516, BFM_WOODS_SHRINK_SOUND = 0x989 };
+enum { BFM_VILLAGE_KNOCK_SOUND = 0x516, BFM_WOODS_SHRINK_CAST_SOUND = 0x479,
+       BFM_WOODS_SHRINK_SOUND = 0x989, BFM_BODY_LEVEL_SOUND = 0xb2c,
+       BFM_WOODS_KING_STOMP_SOUND = 0x6a8, BFM_WOODS_KING_BITE_SOUND = 0xad3 };
 BfmBedroomEffects *bfm_woods_shrink_sound_load(const MusashiDiscMedia *disc);
 BfmBedroomEffects *bfm_village_knock_sound_load(const MusashiDiscMedia *disc);
 BfmBedroomEffects *bfm_forest_swing_sound_load(const MusashiDiscMedia *disc);
