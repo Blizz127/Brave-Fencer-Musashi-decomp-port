@@ -157,6 +157,12 @@
       "file": "extracted/overlays/sc03/0031.pac0.bin",
       "base": 2148696408,
       "sha256": "2652dceec890acfa48032a86e2164b4df014d195654f0516ea314fa659bfc71f"
+    },
+    "sc03_0107": {
+      "kind": "blob",
+      "file": "extracted/overlays/sc03/0107.bin",
+      "base": 2148694360,
+      "sha256": "e86ac8360807db552291599b9bcf3dd93aa501f53694a3f3a1da0941cc3b66b9"
     }
   },
   "matches": [
@@ -8681,6 +8687,84 @@
       "origin": "Independently reconstructed from USA SC03 member 31. Advances a hinged-stone impact puff and releases it when its mounted animation ends.",
       "source_sha256": "aefb69f3be4014c7d9c1490b58877bc8fb330dd4e739d8575ae2db2697856016",
       "span_sha256": "b603a7635b46769619bb67bd9628fb53a5489eee7b694b2ac4ad1a4f14e83368"
+    },
+    {
+      "name": "func_8017D728",
+      "region": "sc03_0107",
+      "vram": 2149046056,
+      "size": 8,
+      "source": "src/overlays/sc03_0107/8017d728.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 107. The western mine entrance score selector returns 0x49.",
+      "source_sha256": "818d489257871057c542f8539605f51c74d89f922306cf4d8eb818a731555440",
+      "span_sha256": "c06e552882fe7669bc9501d2fd5fc1a450e05a37226e991053040b8fcfc3c51d"
+    },
+    {
+      "name": "func_8017D730",
+      "region": "sc03_0107",
+      "vram": 2149046064,
+      "size": 60,
+      "source": "src/overlays/sc03_0107/8017d730.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 107. Both direction signs use the four-state actor dispatch.",
+      "source_sha256": "86f2ac6d9ed9ad07af5bf8afa7a792e5c684275fbe1d95985827463644caca3f",
+      "span_sha256": "6a82979f56e44e0fe964fe5a575a2d8169f01e925a207fe9f9b8f678b90280d1"
+    },
+    {
+      "name": "func_8017D76C",
+      "region": "sc03_0107",
+      "vram": 2149046124,
+      "size": 100,
+      "source": "src/overlays/sc03_0107/8017d76c.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 107. The sign loads its resources and registers an interaction callback.",
+      "source_sha256": "23789fcfa1ca6f1ddc363f5a88155f9afe0c3b53ce85d757256f5655a03d45f6",
+      "span_sha256": "1fcaf2f83c381f45e522f4f3c89775e4d7da710490ee6611d62ede05ac718d6e"
+    },
+    {
+      "name": "func_8017D7D0",
+      "region": "sc03_0107",
+      "vram": 2149046224,
+      "size": 8,
+      "source": "src/overlays/sc03_0107/8017d7d0.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 107. An initialized sign waits for its interaction callback.",
+      "source_sha256": "6c5837bfae0fa3113a60d138e6ffd57204fd6c1453c8d7454380f05883554d22",
+      "span_sha256": "6d64edf91449c1b17746c1ef18afa2eb25c70bdf1322ab3df5a2630993b7e2f1"
+    },
+    {
+      "name": "func_8017D7D8",
+      "region": "sc03_0107",
+      "vram": 2149046232,
+      "size": 96,
+      "source": "src/overlays/sc03_0107/8017d7d8.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 107. The placed sign variant selects its direction script.",
+      "source_sha256": "bcbaaffaa97ae542b4d097f7a787e6cb618a9bf0a1123706b263eb0217ac4d7d",
+      "span_sha256": "73699cfc555104854c2a513e3675706be01700880741adcbee2248b8758103ef"
+    },
+    {
+      "name": "func_8017D838",
+      "region": "sc03_0107",
+      "vram": 2149046328,
+      "size": 64,
+      "source": "src/overlays/sc03_0107/8017d838.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 107. The sign returns to its idle state after its script finishes.",
+      "source_sha256": "231565dbd6caf95a496ed4d6a1e37f30230cb65922cea2aafa6d0f2b868afe6b",
+      "span_sha256": "da7257fef41710bcf414e63d031eaf90f2632b54a2563624139c446d2ccf30ad"
     }
   ]
 }
