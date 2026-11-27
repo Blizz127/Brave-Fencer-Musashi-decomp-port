@@ -155,6 +155,8 @@ static void draw_bubble(const BfmForestMessageArt *art, int tail_x, int right,
                         const BfmForestMessageFrame *frame, uint32_t pixels[240][320])
 {
     int step = (int)frame->border_step, mix = (int)frame->jagged_mix;
+    /* The compact centered bubble spans 28 six-pixel cells plus the portrait and border. */
+    int scale_x = frame->text_columns == 28 ? step * 512 * (28 * 6 + 56) / 154 : step * 904;
     BfmDialoguePoint border[CORNERS], inset[CORNERS];
     for (unsigned i = 0; i < CORNERS; ++i) {
         BfmDialoguePoint a = art->contour[0][i], b = art->contour[1][i];
@@ -162,7 +164,7 @@ static void draw_bubble(const BfmForestMessageArt *art, int tail_x, int right,
             a.x = -a.x;
             b.x = -b.x;
         }
-        border[i].x = 160 + coordinate(a.x, b.x, mix, step * 904);
+        border[i].x = 160 + coordinate(a.x, b.x, mix, scale_x);
         border[i].y = 44 + coordinate(a.y, b.y, mix, step * 4096 / 6);
         BfmDialoguePoint delta = art->inset[mix > 2][i];
         if (right) delta.x = -delta.x;
@@ -181,7 +183,7 @@ static void draw_bubble(const BfmForestMessageArt *art, int tail_x, int right,
     }
 }
 
-static void draw_portrait(const BfmForestMessageArt *art, int right,
+static void draw_portrait(const BfmForestMessageArt *art, int right, int inset,
                           unsigned portrait, uint32_t pixels[240][320])
 {
     unsigned face = portrait == 2 || portrait == 3 ? portrait - 1 : 0;
@@ -190,7 +192,7 @@ static void draw_portrait(const BfmForestMessageArt *art, int right,
             BfmDialoguePoint uv = right ? bfm_dialogue_reflected_texel(x, y, 32, 40, 39) :
                                                       (BfmDialoguePoint){(int)x, (int)y};
             uint32_t color = art->portrait[face][uv.y][uv.x];
-            if (color) pixels[24+y][(right ? 256 : 32)+x] = color;
+            if (color) pixels[24+y][(right ? 256-inset : 32+inset)+x] = color;
         }
 }
 
@@ -237,8 +239,9 @@ static void draw_message(const BfmForestMessageArt *art, int tail_x, int right, 
     if (frame->style == 1) draw_notice(frame->border_scale, pixels);
     else draw_bubble(art, tail_x, right, frame, pixels);
     if (!frame->text_visible) return;
-    if (frame->portrait) draw_portrait(art, right, frame->portrait, pixels);
-    int text_x = frame->style == 1 ? 52 : right ? 32 : 72;
+    int inset = frame->text_columns == 28 ? (36 - 28) * 6 / 2 : 0;
+    if (frame->portrait) draw_portrait(art, right, inset, frame->portrait, pixels);
+    int text_x = frame->style == 1 ? 52 : (right ? 32 : 72) + inset;
     if (frame->choices && frame->answer && frame->answer <= 3) draw_choice(text_x, frame->choice_row + frame->answer, pixels);
     for (int row = 0; row < 3; ++row)
         for (unsigned col = 0; col < 36; ++col) {

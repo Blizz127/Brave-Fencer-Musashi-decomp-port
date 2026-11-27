@@ -53,18 +53,29 @@ int bfm_village_talk_camera_frame(BfmVillageTalkCamera *talk, const uint8_t *sta
      * are room-space angles. Only the aim offset turns with the resident. */
     int x = s16le(camera), z = s16le(camera + 4);
     int c = cosine(heading), s = sine(heading);
-    talk->close_target[0] = s16le(station) + fixed_floor(c*x + s*z);
-    talk->close_target[1] = s16le(station + 2) + s16le(camera + 2);
-    talk->close_target[2] = s16le(station + 4) + fixed_floor(c*z - s*x);
+    int close_eye[3], close_target[3];
+    close_target[0] = s16le(station) + fixed_floor(c*x + s*z);
+    close_target[1] = s16le(station + 2) + s16le(camera + 2);
+    close_target[2] = s16le(station + 4) + fixed_floor(c*z - s*x);
     int horizontal = cosine(pitch);
     int arm[3] = { fixed_floor(sine(yaw) * horizontal), sine(pitch),
                    fixed_floor(cosine(yaw) * horizontal) };
     for (unsigned i = 0; i < 3; ++i)
-        talk->close_eye[i] = talk->close_target[i] + fixed_floor(-distance * arm[i]);
-    memcpy(talk->eye, current->eye, sizeof(talk->eye));
-    memcpy(talk->target, current->target, sizeof(talk->target));
-    memcpy(talk->entry_eye, current->eye, sizeof(talk->entry_eye));
-    memcpy(talk->entry_target, current->target, sizeof(talk->entry_target));
+        close_eye[i] = close_target[i] + fixed_floor(-distance * arm[i]);
+    return bfm_village_talk_camera_world(talk, close_eye, close_target, current, current);
+}
+
+int bfm_village_talk_camera_world(BfmVillageTalkCamera *talk,
+                                  const int close_eye[3], const int close_target[3],
+                                  const BfmVillageCamera *entry, const BfmVillageCamera *current)
+{
+    if (!talk || !current || !entry || !close_eye || !close_target) return 0;
+    memcpy(talk->close_eye, close_eye, sizeof talk->close_eye);
+    memcpy(talk->close_target, close_target, sizeof talk->close_target);
+    memcpy(talk->eye, current->eye, sizeof talk->eye);
+    memcpy(talk->target, current->target, sizeof talk->target);
+    memcpy(talk->entry_eye, entry->eye, sizeof talk->entry_eye);
+    memcpy(talk->entry_target, entry->target, sizeof talk->entry_target);
     talk->phase = CLOSE;
     talk->return_ticks = 0;
     return 1;

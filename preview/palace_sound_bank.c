@@ -88,7 +88,7 @@ static BfmPalaceBank *read_score_bank(const MusashiDiscMedia *disc, const char *
         if (middle < 12 || middle > bytes - 8 || last) return NULL;
         final_track = 4 + middle;
     } else {
-        int single = member == 78 || (!strcmp(archive, "SC03.CD") && member == 67) ||
+        int single = member == 78 || (!strcmp(archive, "SC03.CD") && (member == 4 || member == 67)) ||
                      (!strcmp(archive, "SC02.CD") && member == 25);
         if (!single || middle || last) return NULL;
     }
@@ -151,7 +151,7 @@ BfmPalaceBank *bfm_archive_sound_bank_load(const MusashiDiscMedia *disc, const c
             /* Resident effects, equipped abilities and the summit follow-up use paired
              * PAC2 headers and extended sample bodies. */
             int extended = type == 0x103 &&
-                ((!strcmp(archive, "MAIN.CD") && (member == 2 || member == 15 || member == 19)) ||
+                ((!strcmp(archive, "MAIN.CD") && (member == 2 || member == 15 || member == 18 || member == 19)) ||
                  (!strcmp(archive, "SC02.CD") && member == 2));
             if ((type != 3 && !extended) || key != header_key)
                 return NULL;

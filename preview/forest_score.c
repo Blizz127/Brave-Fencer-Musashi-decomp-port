@@ -231,7 +231,7 @@ static int known_wheel(const Orchestra *o, unsigned channel, unsigned program, u
 }
 
 /* Keep fractional event deadlines through device and output conversion. */
-static int prepare_schedule(BfmForestScore *score)
+static int prepare_schedule(BfmForestScore *score, int nightmare)
 {
     const BfmSqvTrack *track = &score->track;
     if (!track->event_count || track->event_count > SIZE_MAX / sizeof(*score->deadlines)) return 0;
@@ -263,9 +263,20 @@ static int prepare_schedule(BfmForestScore *score)
             (e->kind == BFM_SQV_PITCH_BEND && !known_wheel(&score->orchestra, e->channel, program[e->channel], e->number))) {
             uint64_t frames = elapsed * score->rate / denominator;
             if (!frames || frames > SIZE_MAX / (2 * sizeof(int16_t))) return 0;
-            if (e->kind == BFM_SQV_CONTROL && e->channel == 0 && e->number == 99 && e->value == 30 &&
-                i + 2 == track->event_count && track->events[i + 1].kind == BFM_SQV_END &&
-                track->events[i + 1].tick == e->tick && score->phrase && score->phrase < i) {
+            int return_marker = e->kind == BFM_SQV_CONTROL && e->channel == 0 &&
+                                e->number == 99 && e->value == 30 && score->phrase && score->phrase < i;
+            int repeat = return_marker && i + 2 == track->event_count &&
+                         e[1].kind == BFM_SQV_END && e[1].tick == e->tick;
+            if (nightmare) {
+                /* The nightmare phrase returns before the last instrument's
+                 * key-off and end event. Both follow the marker by two ticks. */
+                if (!return_marker || i + 3 != track->event_count ||
+                    e[1].kind != BFM_SQV_NOTE_OFF || e[1].channel != 6 || e[1].number != 52 ||
+                    e[1].tick < e->tick || e[1].tick - e->tick != 2 ||
+                    e[2].kind != BFM_SQV_END || e[2].tick != e[1].tick) return 0;
+                repeat = 1;
+            }
+            if (repeat) {
                 score->repeat_period = score->deadlines[i] - score->deadlines[score->phrase - 1];
                 if (score->repeat_period < score->divisor) return 0;
             }
@@ -419,8 +430,9 @@ static BfmForestScore *load_score(const MusashiDiscMedia *disc, unsigned rate, c
         if (!bfm_bedroom_resident_data(disc, UINT32_C(0x8006ab30), score->orchestra.pitch_tables,
                                        sizeof(score->orchestra.pitch_tables))) goto fail;
     }
+    int nightmare = !strcmp(archive, "SC03.CD") && member == 4 && track == 0;
     if (bfm_sqv_archive_track_load(disc, archive, member, track, &score->track) != BFM_SQV_OK ||
-        !prepare_schedule(score)) goto fail;
+        !prepare_schedule(score, nightmare)) goto fail;
     score->orchestra.bank = bfm_archive_sound_bank_load(disc, archive, member);
     if (!score->orchestra.bank) goto fail;
     /* Resolve instruments and validate the mounted note/voice ownership on

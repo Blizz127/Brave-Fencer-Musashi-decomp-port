@@ -11,7 +11,7 @@ typedef union {
 typedef struct {
     u16 kind, action;
     u32 position[3], velocity[3];
-    u8 pad1c[4];
+    u32 movement_countdown;
     u32 model;
     ForestPlayerWord field_24;
     ForestPlayerWord local_y;

@@ -16,7 +16,35 @@ struct BfmInnProfile {
     CsStorage *storage;
     uint8_t image[CS_IMAGE_BYTES];
     uint8_t readback[CS_IMAGE_BYTES];
+    uint8_t attempted[CS_IMAGE_BYTES];
+    int verification_pending;
 };
+
+typedef const char *(*SaveFile)(const uint8_t *, unsigned, const BfmSaveRecord *,
+                                BfmInnCardCommit, void *, const MusashiDiscMedia *);
+
+enum CardState { CARD_PRIOR_IMAGE, CARD_ATTEMPTED_IMAGE, CARD_UNCONFIRMED };
+
+/* Only our two known images can resolve an interrupted verification. Leave a
+ * third image untouched, even if it contains a perfectly readable save. */
+static enum CardState pending_state(BfmInnProfile *profile)
+{
+    if (!profile->verification_pending) return CARD_PRIOR_IMAGE;
+    if (cs_storage_snapshot(profile->storage, 0, profile->readback) != CS_MEDIA_OK)
+        return CARD_UNCONFIRMED;
+    if (memcmp(profile->readback, profile->attempted, sizeof profile->image) == 0)
+        return CARD_ATTEMPTED_IMAGE;
+    if (memcmp(profile->readback, profile->image, sizeof profile->image) != 0)
+        return CARD_UNCONFIRMED;
+    profile->verification_pending = 0;
+    return CARD_PRIOR_IMAGE;
+}
+
+static void accept_readback(BfmInnProfile *profile)
+{
+    memcpy(profile->image, profile->readback, sizeof profile->image);
+    profile->verification_pending = 0;
+}
 
 static int new_directory(const char *path)
 {
@@ -39,11 +67,15 @@ static int checked_commit(void *context, unsigned slot, const uint8_t *expected,
                           const uint8_t *replacement)
 {
     BfmInnProfile *profile = context;
-    if (!cs_storage_commit(profile->storage, slot, expected, replacement) ||
-        cs_storage_snapshot(profile->storage, slot, profile->readback) != CS_MEDIA_OK ||
-        memcmp(profile->readback, replacement, sizeof profile->image) != 0)
+    if (!cs_storage_commit(profile->storage, slot, expected, replacement))
         return 0;
-    memcpy(profile->image, profile->readback, sizeof profile->image);
+    if (cs_storage_snapshot(profile->storage, slot, profile->readback) != CS_MEDIA_OK ||
+        memcmp(profile->readback, replacement, sizeof profile->image) != 0) {
+        memcpy(profile->attempted, replacement, sizeof profile->attempted);
+        profile->verification_pending = 1;
+        return 0;
+    }
+    accept_readback(profile);
     return 1;
 }
 
@@ -95,21 +127,54 @@ failed:
     return NULL;
 }
 
-void bfm_inn_profile_menu(BfmInnProfile *profile, BfmSaveMenu *menu)
+const BfmSaveRecord *bfm_inn_profile_menu(BfmInnProfile *profile, BfmSaveMenu *menu)
 {
+    enum CardState state = pending_state(profile);
+    if (state == CARD_UNCONFIRMED) {
+        *menu = (BfmSaveMenu){ .issue = "Card unverified. Reopen the menu." };
+        return NULL;
+    }
+    if (state == CARD_ATTEMPTED_IMAGE) accept_readback(profile);
     bfm_save_menu_read_image(menu, profile->image, sizeof profile->image);
+    if (state == CARD_ATTEMPTED_IMAGE && !menu->issue && menu->page == BFM_SAVE_PICK &&
+        menu->selected < 4 && menu->rows[menu->selected].state == BFM_SAVE_VALID)
+        return &menu->records[menu->selected];
+    return NULL;
+}
+
+static int same_save(void *context, unsigned slot, const uint8_t *expected,
+                     const uint8_t *replacement)
+{
+    (void)slot;
+    (void)expected;
+    return memcmp(context, replacement, CS_IMAGE_BYTES) == 0;
+}
+
+static const char *save_record(BfmInnProfile *profile, unsigned file, const BfmSaveRecord *record,
+                               const MusashiDiscMedia *disc, SaveFile write_file)
+{
+    if (!profile) return "This card is read-only.";
+    enum CardState state = pending_state(profile);
+    if (state == CARD_UNCONFIRMED) return "Card unverified. Retry Save.";
+    if (state == CARD_ATTEMPTED_IMAGE) {
+        /* Re-encode against the old card to recognize an exact retry, including
+         * the selected file and record. This callback only compares bytes. */
+        const char *different = write_file(profile->image, file, record, same_save,
+                                           profile->readback, disc);
+        accept_readback(profile);
+        if (!different) return NULL;
+    }
+    return write_file(profile->image, file, record, checked_commit, profile, disc);
 }
 
 const char *bfm_inn_profile_save(BfmInnProfile *profile, unsigned file, const BfmSaveRecord *record,
                                  const MusashiDiscMedia *disc)
 {
-    if (!profile) return "This card is read-only.";
-    return bfm_inn_card_save(profile->image, file, record, checked_commit, profile, disc);
+    return save_record(profile, file, record, disc, bfm_inn_card_save);
 }
 
 const char *bfm_chapter_profile_save(BfmInnProfile *profile, unsigned file,
                                      const BfmSaveRecord *record, const MusashiDiscMedia *disc)
 {
-    if (!profile) return "This card is read-only.";
-    return bfm_chapter_card_save(profile->image, file, record, checked_commit, profile, disc);
+    return save_record(profile, file, record, disc, bfm_chapter_card_save);
 }

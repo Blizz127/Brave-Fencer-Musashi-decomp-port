@@ -27,4 +27,9 @@ BfmVillageGroundResult bfm_village_ground_wall_step(const BfmVillageGround *grou
 BfmVillageGroundResult bfm_village_ground_air(const BfmVillageGround *ground,
     const int16_t from[3], int16_t to[3], BfmForestContact *floor);
 
+/* Clip a blade ray against the mounted room. A hit shortens the endpoint
+ * and supplies the face's Q12 normal and full material. A miss preserves all three. */
+int bfm_village_ground_blade(const BfmVillageGround *ground, const int16_t from[3],
+                            int16_t end[3], int16_t normal[3], uint16_t *material);
+
 #endif

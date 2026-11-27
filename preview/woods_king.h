@@ -32,6 +32,14 @@ void bfm_woods_king_touch(BfmWoodsKing *king, const int16_t player[3]);
 int bfm_woods_king_strike(BfmWoodsKing *king, unsigned cause,
                           const int16_t from[3], const int16_t to[3]);
 
+/* Both charged contacts share the King's recoil latch. A new blade hit
+ * supplies the shared spark's contact/normal and the mounted hit sound.
+ * A new wave hit supplies the root for the wave producer's damage roll. */
+int bfm_woods_king_charged_blade(BfmWoodsKing *king, const int16_t from[3],
+                                 const int16_t to[3], int16_t hit[3], int16_t normal[3],
+                                 unsigned *sound);
+int bfm_woods_king_charged_wave(BfmWoodsKing *king, const int16_t spine[3], int16_t hit[3]);
+
 /* Shrink uses the spell spine's distance to the actor root. Its caller
  * dispatches a hit only when the eligible root is within the spell radius. */
 const int16_t *bfm_woods_king_shrink_root(const BfmWoodsKing *king);

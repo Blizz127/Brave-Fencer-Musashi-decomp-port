@@ -20,6 +20,7 @@ const uint8_t *bfm_woods_shrink_motion_pose(const BfmWoodsShrinkMotion *motion,
                                            BfmWoodsShrinkClip clip, unsigned key);
 /* An uploaded face uses word zero. EMPTY instead requests a resident facial move.
  * Apply the selected upload on entry and restore the normal face on exit. */
+unsigned bfm_woods_shrink_motion_face_slot(const BfmWoodsShrinkMotion *motion, BfmWoodsShrinkClip clip);
 uint32_t bfm_woods_shrink_motion_face_word(const BfmWoodsShrinkMotion *motion, BfmWoodsShrinkClip clip);
 int bfm_woods_shrink_motion_face(const BfmWoodsShrinkMotion *motion, BfmWoodsShrinkClip clip,
                                 uint16_t tiles[512][1024]);

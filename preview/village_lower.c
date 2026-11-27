@@ -2,6 +2,8 @@
 #include "village_lower.h"
 #include "village_field.h"
 #include "village_clock.h"
+#include "village_chimney.h"
+#include "village_sunrays.h"
 #include "village_lighting.h"
 #include "../pc_port/forest_player_bytes.h"
 #include "village_mayor.h"
@@ -25,17 +27,22 @@ struct BfmVillageLower {
     size_t scene_bytes, module_bytes;
     uint8_t *module;
     uint16_t (*tiles)[1024];
+    const uint8_t *palette_rows, *palette_gains;
+    unsigned palette_count, palette_phase, palette_wait, gain[3];
     BfmVillageMotion *motion;
     BfmVillageField field;
     BfmVillageCamera camera, presented;
     BfmVillageCameraTurn turn;
     BfmVillageMayorStage *stage;
     BfmVillageStreetScenery *scenery;
+    BfmVillageChimney *chimney;
+    BfmVillageSunrays *sunrays;
+    int static_actors_registered;
     BfmVillageShopDoors *shop_doors;
     BfmVillageMayorDialogue talk;
     BfmSaveRecord *save;
     BfmForestMessageArt *art;
-    unsigned age;
+    unsigned age, entry_script_updates;
     int latch, anchor, right;
 };
 
@@ -46,11 +53,15 @@ void bfm_village_lower_free(BfmVillageLower *lower)
     bfm_village_mayor_stage_free(lower->stage);
     bfm_village_shop_doors_free(lower->shop_doors);
     bfm_village_street_scenery_free(lower->scenery);
+    bfm_village_chimney_free(lower->chimney);
+    bfm_village_sunrays_free(lower->sunrays);
     bfm_village_motion_free(lower->motion);
     bfm_village_field_clear(&lower->field);
     free(lower->module);
     free(lower);
 }
+
+static int begin_palette_rows(BfmVillageLower *lower, unsigned phase);
 
 static BfmVillageLower *lower_open(const MusashiDiscMedia *disc, BfmBedroomEntry *entry,
                                    const BfmVillageMotion *departed, const uint8_t *main,
@@ -74,13 +85,16 @@ static BfmVillageLower *lower_open(const MusashiDiscMedia *disc, BfmBedroomEntry
                         lower->module, lower->module_bytes, UINT32_C(0x80190fb0));
     lower->shop_doors = bfm_village_shop_doors_load(lower->scene, lower->scene_bytes, room_root);
     lower->scenery = bfm_village_street_scenery_load(lower->scene, lower->scene_bytes, room_root);
-    if (!lower->scenery || !lower->stage || !lower->shop_doors ||
+    lower->chimney = bfm_village_chimney_open(disc, lower->scene, lower->scene_bytes);
+    lower->sunrays = bfm_village_sunrays_open(disc, lower->scene, lower->scene_bytes);
+    if (!lower->sunrays || !lower->chimney || !lower->scenery || !lower->stage || !lower->shop_doors ||
         !bfm_scene_read_tiles(disc, "MAIN.CD", 10, tiles) ||
         !bfm_scene_read_tiles(disc, "SC03.CD", next.scene_member, tiles)) goto fail;
+    lower->tiles = tiles;
+    if (!begin_palette_rows(lower, next.state.progress[0x37])) goto fail;
     bfm_village_mayor_portrait_load(tiles);
     lower->art = bfm_castle_message_art_load(disc, lower->scene, lower->scene_bytes, tiles, 0x65a84);
     if (!lower->art) goto fail;
-    lower->tiles = tiles;
     lower->save = &entry->state;
     const BfmVillagePlayer *p = bfm_village_motion_player(lower->motion);
     bfm_village_camera_lower(&lower->camera, p->root.xyz, 1);
@@ -127,6 +141,88 @@ static const uint8_t *scene_pointer(const BfmVillageLower *lower, const uint8_t 
     return lower->scene + (address - scene_origin);
 }
 
+/* The lower street remaps palette rows already in video memory. Its room
+ * descriptor supplies direct-color texture rectangles and their destinations. */
+static void draw_palette_rows(BfmVillageLower *lower)
+{
+    for (unsigned i = lower->palette_count; i > 0; --i) {
+        const uint8_t *row = lower->palette_rows + 16 * (i - 1);
+        unsigned page = u16le(row + 4);
+        unsigned sx = 64 * (page & 15) + u16le(row);
+        unsigned sy = 16 * (page & 16) + u16le(row + 2);
+        unsigned dx = u16le(row + 8), dy = u16le(row + 10);
+        unsigned width = u16le(row + 12), height = u16le(row + 14);
+        for (unsigned y = 0; y < height; ++y) {
+            for (unsigned x = 0; x < width; ++x) {
+                unsigned texel = lower->tiles[sy + y][sx + x];
+                if (!texel) continue;
+                unsigned color = texel & 0x8000;
+                for (unsigned c = 0; c < 3; ++c) {
+                    unsigned v = ((texel >> (5*c)) & 31) * lower->gain[c] / 128;
+                    color |= (v > 31 ? 31 : v) << (5*c);
+                }
+                lower->tiles[dy + y][dx + x] = (uint16_t)color;
+            }
+        }
+    }
+}
+
+static int begin_palette_rows(BfmVillageLower *lower, unsigned phase)
+{
+    const uint8_t *room = lower->scene + (room_root - scene_origin);
+    if (phase >= 5 || u32le(room + 0xa4) != 0x11) return 0;
+    const uint8_t *list = scene_pointer(lower, room + 0xa0, 2);
+    if (!list) return 0;
+    unsigned count = u16le(list);
+    if (!count || !scene_pointer(lower, room + 0xa0, 2 + 16 * count)) return 0;
+    lower->palette_count = count;
+    lower->palette_rows = list + 2;
+    for (unsigned i = 0; i < count; ++i) {
+        const uint8_t *r = lower->palette_rows + 16 * i;
+        unsigned u = u16le(r), v = u16le(r + 2), page = u16le(r + 4);
+        unsigned x = u16le(r + 8), y = u16le(r + 10);
+        unsigned width = u16le(r + 12), height = u16le(r + 14);
+        if (((page >> 7) & 3) != 2 || !width || !height ||
+            u + width > 256 || v + height > 256 || 64 * (page & 15) + u + width > 1024 ||
+            x + width > 1024 || y + height > 512) return 0;
+    }
+    lower->palette_gains = lower->scene + (UINT32_C(0x8018dca4) - scene_origin);
+    for (unsigned i = 0; i < 15; ++i)
+        if (u32le(lower->palette_gains + 4 * i) > 255) return 0;
+    lower->palette_phase = phase;
+    for (unsigned c = 0; c < 3; ++c)
+        lower->gain[c] = u32le(lower->palette_gains + 12 * phase + 4 * c);
+    draw_palette_rows(lower);
+    return 1;
+}
+
+static void step_palette_rows(BfmVillageLower *lower, unsigned phase)
+{
+    if (phase >= 5) return;
+    if (phase != lower->palette_phase) {
+        lower->palette_phase = phase;
+        lower->palette_wait = 0;
+    }
+    if (lower->palette_wait) {
+        --lower->palette_wait;
+        return;
+    }
+    const uint8_t *goal = lower->palette_gains + 12 * phase;
+    int changed = 0;
+    for (unsigned c = 0; c < 3; ++c) {
+        unsigned old = lower->gain[c], target = u32le(goal + 4 * c);
+        unsigned next = target;
+        if (old > target && old - target > 4) next = old - 4;
+        if (target > old && target - old > 4) next = old + 4;
+        changed |= next != old;
+        lower->gain[c] = next;
+    }
+    if (changed) {
+        draw_palette_rows(lower);
+        lower->palette_wait = 1;
+    }
+}
+
 const uint8_t *bfm_village_lower_inn_transfer(const BfmVillageLower *lower)
 {
     if (!lower || bfm_village_mayor_stage_active(lower->stage)) return NULL;
@@ -158,9 +254,33 @@ void bfm_village_lower_close(BfmVillageLower *lower, unsigned answer)
     if (lower->talk.finished) bfm_village_mayor_stage_finish(lower->stage);
 }
 
-int bfm_village_lower_step_field(BfmVillageLower *lower, BfmFieldInput field,
-                                BfmForestMessage **opened)
+void bfm_village_lower_begin_hotelo_reveal(BfmVillageLower *lower)
 {
+    /* Entering Hotelo's street runs two actor callbacks. The second releases
+     * the script after the clock service has already run for that update. */
+    lower->entry_script_updates = 2;
+}
+
+void bfm_village_lower_register_actors(BfmVillageLower *lower, BfmGameplayRun *run)
+{
+    if (!run || lower->static_actors_registered) return;
+    /* The morning light is placed directly in the street. Its first pass
+     * precedes the ordinary updates of the street controller's children. */
+    bfm_village_sunrays_step(lower->sunrays, run, lower->save->progress[0x39]);
+    lower->static_actors_registered = 1;
+}
+
+void bfm_village_lower_step_ambient(BfmVillageLower *lower, BfmGameplayRun *run)
+{
+    bfm_village_sunrays_step(lower->sunrays, run, lower->save->progress[0x39]);
+    bfm_village_chimney_step(lower->chimney, run, lower->save->progress[0x39]);
+    bfm_village_street_vane_step(lower->scenery, run);
+}
+
+int bfm_village_lower_step_gameplay(BfmVillageLower *lower, BfmGameplayRun *run,
+                                   BfmFieldInput field, BfmForestMessage **opened)
+{
+    bfm_village_lower_register_actors(lower, run);
     const BfmVillagePlayer *p = bfm_village_motion_player(lower->motion);
     int active = bfm_village_mayor_stage_active(lower->stage);
     if (!active && p->controlled && field.square_pressed &&
@@ -168,8 +288,10 @@ int bfm_village_lower_step_field(BfmVillageLower *lower, BfmFieldInput field,
         lower->talk = (BfmVillageMayorDialogue){0};
         active = 1;
     }
-    if (!active && !bfm_village_motion_step(lower->motion, field.x, field.y,
-                                (lower->camera.yaw + 2048) & 4095)) return 0;
+    if (!active && !bfm_village_motion_step_field(lower->motion, field.x, field.y,
+                                      (lower->camera.yaw + 2048) & 4095, run)) return 0;
+    /* Musashi advances before the smoke actor in the lower street. */
+    bfm_village_lower_step_ambient(lower, run);
     if (!active && p->controlled && !(p->events & BFM_VILLAGE_TRANSFER))
         bfm_village_camera_turn(&lower->camera, &lower->turn, field.camera_turn);
     else
@@ -193,9 +315,17 @@ int bfm_village_lower_step_field(BfmVillageLower *lower, BfmFieldInput field,
             if (lower->talk.finished) bfm_village_mayor_stage_finish(lower->stage);
         }
     }
-    if (!active && !(p->events & BFM_VILLAGE_TRANSFER)) bfm_village_clock_step(lower->save, 0);
+    step_palette_rows(lower, lower->save->progress[0x37]);
+    if (lower->entry_script_updates) --lower->entry_script_updates;
+    else if (!active && !(p->events & BFM_VILLAGE_TRANSFER)) bfm_village_clock_step(lower->save, 0);
     ++lower->age;
     return bfm_village_motion_face(lower->motion, lower->tiles);
+}
+
+int bfm_village_lower_step_field(BfmVillageLower *lower, BfmFieldInput field,
+                                BfmForestMessage **opened)
+{
+    return bfm_village_lower_step_gameplay(lower, NULL, field, opened);
 }
 
 int bfm_village_lower_step(BfmVillageLower *lower, int x, int y, int square,
@@ -242,8 +372,11 @@ int bfm_village_lower_draw(BfmVillageLower *lower, unsigned tick, const uint8_t 
     bfm_village_shop_doors_prepare(lower->shop_doors, camera, lower->tiles, &pixels[0][0], lower->save);
     if (!bfm_village_mayor_stage_prepare(lower->stage, camera, lower->tiles, &pixels[0][0]) ||
         !bfm_village_street_scenery_prepare(lower->scenery, camera, lower->tiles, &pixels[0][0]) ||
-        !bfm_village_mayor_stage_add(lower->stage, lower->field.hero, camera)) return 0;
+        !bfm_village_mayor_stage_add(lower->stage, lower->field.hero, camera) ||
+        !bfm_village_chimney_add(lower->chimney, lower->field.hero, camera) ||
+        !bfm_village_street_vane_add(lower->scenery, lower->field.hero, camera)) return 0;
     bfm_bedroom_field_draw(lower->field.field, lower->tiles, &pixels[0][0], draw_figures, lower);
+    bfm_village_sunrays_draw(lower->sunrays, pixels);
     if (window) {
         if (lower->latch) {
             const int16_t *mayor = bfm_village_mayor_stage_position(lower->stage);

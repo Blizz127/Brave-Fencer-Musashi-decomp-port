@@ -2,7 +2,8 @@
 #ifndef BFM_CABLE_SPARKS_H
 #define BFM_CABLE_SPARKS_H
 #include "bedroom_field.h"
-#include "forest_raster.h"
+#include "forest_dust.h"
+#include "forest_pose.h"
 #include "gameplay_run.h"
 
 typedef struct BfmCableSparks BfmCableSparks;
@@ -11,6 +12,18 @@ typedef struct {
     unsigned count;
     BfmForestRasterVertex vertices[4];
 } BfmCableSparkFace;
+
+/* Each fork uses four mounted pitch/roll pairs. The caller owns the
+ * contact's world origin, rotational basis and field-effect slot lifetime. */
+unsigned bfm_field_spark_fork(const BfmForestTransform *basis, const uint8_t *orientations,
+                              size_t size, const int16_t origin[3], unsigned age,
+                              const BfmBedroomView *view, BfmForestDustCard out[4]);
+/* Supply one shared random draw at a new trail's birth. Its projected
+ * segment lasts from age one through five, including its initial point. */
+void bfm_field_spark_velocity(const BfmForestTransform *basis, uint16_t random,
+                              int16_t velocity[3]);
+int bfm_field_spark_trail(const int16_t origin[3], const int16_t velocity[3], unsigned age,
+                          const BfmBedroomView *view, BfmForestDustCard *out);
 
 /* Four little-endian pitch/roll pairs from the mounted cable scene. */
 BfmCableSparks *bfm_cable_sparks_open(const uint8_t *orientations, size_t size);

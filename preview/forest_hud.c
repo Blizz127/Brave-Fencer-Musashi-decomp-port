@@ -30,6 +30,7 @@ struct BfmForestHud {
     uint8_t vitality[20], dial[20], weekday[7];
     uint16_t orb[7], digit[10];
     unsigned inset, remaining, hiding, modal;
+    uint8_t detector_active, detector_step, detector_phase, rim_boost, rebuild_rims;
     GaugeMode gauge_mode;
     unsigned fill, green, charge_color;
     DisplayPoints points[3];
@@ -171,10 +172,29 @@ void bfm_castle_hud_command_closed(BfmForestHud *hud)
 
 void bfm_forest_hud_tick(BfmForestHud *hud)
 {
-    if (hud && hud->remaining) {
+    if (!hud) return;
+    hud->rim_boost = 0;
+    if (hud->remaining) {
         if (hud->hiding) hud->inset += hud->remaining;
         else hud->inset -= hud->remaining;
-        --hud->remaining;
+        if (!--hud->remaining) {
+            hud->detector_phase = 0;
+            hud->rebuild_rims = 1;
+        }
+    } else if (hud->rebuild_rims) {
+        hud->rebuild_rims = 0;
+    } else if (hud->detector_active) {
+        unsigned phase = hud->detector_phase;
+        hud->rim_boost = (uint8_t)(phase < 128 ? phase : 255 - phase);
+        hud->detector_phase += hud->detector_step;
+    }
+}
+
+void bfm_forest_hud_detector(BfmForestHud *hud, int active, unsigned step)
+{
+    if (hud) {
+        hud->detector_active = active != 0;
+        hud->detector_step = (uint8_t)step;
     }
 }
 
@@ -210,7 +230,7 @@ static uint32_t rgb(unsigned color)
            (((color>>5)&31u)*255/31) << 8 | (((color>>10)&31u)*255/31);
 }
 
-static void sprite(Canvas *c, const Sprite *s, unsigned xpage)
+static void sprite(Canvas *c, const Sprite *s, unsigned xpage, unsigned red_boost)
 {
     const uint16_t (*tiles)[1024] = c->hud->tiles;
     unsigned clut_y = (s->palette >> 6) & 511, clut_x = (s->palette & 63)*16;
@@ -224,14 +244,17 @@ static void sprite(Canvas *c, const Sprite *s, unsigned xpage)
             unsigned u = ((s->uv & 255) + (unsigned)ix) & 255;
             unsigned packed = tiles[256+v][xpage+u/4];
             unsigned color = tiles[clut_y][clut_x + ((packed >> (4*(u&3)))&15)];
-            if (color) c->pixels[y][x] = rgb(color);
+            if (color) {
+                unsigned red = ((color & 31u) * (128 + red_boost)) >> 7;
+                c->pixels[y][x] = rgb((color & ~31u) | (red < 31 ? red : 31));
+            }
         }
     }
 }
 static void glyph(Canvas *c, int x, int y, unsigned uv, unsigned palette)
 {
     Sprite s = {x,y,8,8,uv,palette};
-    sprite(c,&s,320);
+    sprite(c,&s,320,0);
 }
 static void number(Canvas *c, int x, int y, unsigned value, unsigned slots, unsigned palette)
 {
@@ -322,7 +345,7 @@ static void ornaments(Canvas *c, const BfmForestStatusValues *v, int inset)
     for (int i = 4; i >= 0; --i) {
         s[i].x += i < 3 ? -inset : inset;
         s[i].y += inset + (i == 2 ? meter_y : 0);
-        sprite(c,&s[i],384);
+        sprite(c,&s[i],384,(i == 0 || i == 3) ? c->hud->rim_boost : 0);
     }
 }
 

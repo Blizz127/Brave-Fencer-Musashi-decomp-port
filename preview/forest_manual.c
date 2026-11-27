@@ -109,6 +109,10 @@ static BfmForestManualResult ground_control(BfmForestManual *state,
         actor->field_2c.word = 0;
         actor->state = 0;
         actor->phase = 1;
+        if (!fixed_pace && actor->kind <= 1) {
+            actor->kind = 0;
+            actor->action = 1;
+        }
         state->moving = 0;
         state->after_jump = 0;
         state->motion = state->elapsed = 0;
@@ -129,7 +133,8 @@ static BfmForestManualResult ground_control(BfmForestManual *state,
         memset(actor->velocity, 0, sizeof actor->velocity);
         actor->field_24.word = actor->local_y.word = 0;
         actor->field_2c.word = start;
-        actor->state = actor->phase = 1;
+        actor->kind = actor->state = 1;
+        actor->action = actor->phase = 1;
         memcpy(state->ground_normal, ground.normal, sizeof state->ground_normal);
         state->moving = 1;
         state->motion = WALK;
@@ -212,11 +217,12 @@ int bfm_forest_jump_begin(BfmForestJump *jump, const BfmForestField *field,
     int32_t speed = actor->state ? actor->field_2c.word : -(9 * Q16 - ACCELERATION);
     if (speed > 0 || speed < -(11 * Q16 + 5 * Q16 / 8))
         return 0;
-    *jump = (BfmForestJump){.active = 1, .ground = ground};
-    actor->field_24.word = 0;
+    *jump = (BfmForestJump){.active = 1, .fall_gravity = -18 * Q16, .ground = ground};
+    memset(actor->velocity, 0, sizeof actor->velocity);
+    actor->field_24.word = actor->local_y.word = 0;
     actor->field_2c.word = speed;
-    actor->local_y.word = -18 * Q16;
-    actor->state = 2;
+    actor->kind = actor->state = 2;
+    actor->action = 1;
     return 1;
 }
 
@@ -232,63 +238,82 @@ int bfm_forest_fall_begin(BfmForestJump *jump, BfmForestManual *manual,
     if (actor->state != 1 || (manual->last_descent <= 0 && manual->left_support != LEFT_FIRST_CREEK_BANK))
         return 0;
     *jump = (BfmForestJump){.active = 1, .descending = 1, .steering = 1,
-                            .walk_off = 1};
+                            .walk_off = 1,
+                            .fall_gravity = manual->last_descent > 0 ? manual->last_descent : 0};
     manual->on_bridge = 0;
     manual->left_support = ON_FLOOR;
-    actor->state = 3;
-    actor->local_y.word = manual->last_descent > 0 ? manual->last_descent : 0;
+    actor->kind = actor->state = 3;
+    actor->action = 1;
+    actor->movement_countdown = 4;
+    actor->local_y.word = 0;
     return 1;
 }
 
-/* The opening near bank is a one-in-one grade. While the feet are on it
- * the observed slide descends eight units per update. Directional input
- * adds a quarter-unit of local acceleration, and neutral retains the
- * lateral drift while the downhill surface still carries the player. */
+/* Input accumulates in world space. Each update converts it back to the
+ * player model's local axes before ordinary movement rotates it out again.
+ * Both fixed-point rotations round, even when the headings cancel. */
+static int slide_velocity(ForestPlayerState *next, int16_t heading,
+                          int32_t steer[2], int moving, int16_t normal_z)
+{
+    ForestPlayerState rotation = {0};
+    if (moving) {
+        rotation.field_2c.word = -Q16 / 4;
+        if (!bfm_forest_level_velocity(&rotation, 0, heading, 0)) return 0;
+        for (unsigned i = 0; i < 2; ++i) {
+            int64_t sum = (int64_t)steer[i] + (int32_t)rotation.velocity[i * 2];
+            if (sum < INT32_MIN || sum > INT32_MAX) return 0;
+            steer[i] = (int32_t)sum;
+        }
+    }
+    int64_t downhill = (int64_t)normal_z * 64 + steer[1];
+    if (downhill < INT32_MIN || downhill > INT32_MAX) return 0;
+    rotation.field_24.word = steer[0];
+    rotation.local_y.word = 8 * Q16;
+    rotation.field_2c.word = (int32_t)downhill;
+    if (!bfm_forest_level_velocity(&rotation, 0, (int16_t)-heading, 0)) return 0;
+    next->field_24.word = (int32_t)rotation.velocity[0];
+    next->local_y.word = (int32_t)rotation.velocity[1];
+    next->field_2c.word = (int32_t)rotation.velocity[2];
+    return bfm_forest_level_velocity(next, 0, heading, 0);
+}
+
 static int creek_slide_step(BfmForestJump *jump, const BfmForestField *field,
     ForestPlayerState *actor, const BfmForestCamera *camera, int x, int y,
     int16_t *yaw, int16_t cached[3])
 {
     ForestPlayerState next = *actor;
     int32_t steer[2] = {jump->slide_steer[0], jump->slide_steer[1]};
-    int16_t heading = *yaw;
-    if (x || y) {
-        if (!bfm_forest_manual_heading(camera, x, y, &heading)) return 0;
-        next.field_24.word = next.local_y.word = 0;
-        next.field_2c.word = -Q16 / 4;
-        if (!bfm_forest_level_velocity(&next, 0, heading, 0)) return 0;
-        steer[0] += (int32_t)next.velocity[0];
-        steer[1] += (int32_t)next.velocity[2];
-    }
-    int32_t travel[3] = {steer[0], 8 * Q16, 8 * Q16 + steer[1]};
+    int16_t heading = *yaw, normal_z;
+    if ((x || y) && !bfm_forest_manual_heading(camera, x, y, &heading)) return 0;
+    if (!bfm_forest_creek_slope_normal(field, cached, &normal_z) ||
+        !slide_velocity(&next, heading, steer, x || y, normal_z)) return 0;
+
+    func_801473EC(&next);
     int16_t foot[3];
-    for (unsigned i = 0; i < 3; ++i) {
-        next.position[i] += (uint32_t)travel[i];
+    for (unsigned i = 0; i < 3; ++i)
         foot[i] = (int16_t)(next.position[i] >> 16);
-    }
-    int16_t normal_z;
-    int support = bfm_forest_creek_slope_step(field, cached, foot, &normal_z);
+    int support = bfm_forest_creek_slide_contact(field, cached, foot);
     if (!support) return 0;
-    int32_t downhill = 4 * Q16 * normal_z / 4096;
-    if (support == 2) {
-        /* Leaving the incline carries a smaller horizontal component into
-         * free flight. Its first update keeps the eight-unit descent. */
+    if (support == 1) {
+        for (unsigned i = 0; i < 3; ++i)
+            next.position[i] = ((uint32_t)(uint16_t)foot[i] << 16) | (next.position[i] & 0xffff);
+        if (next.movement_countdown) --next.movement_countdown;
+        if (!next.movement_countdown) steer[0] = steer[1] = 0;
+        next.kind = next.state = 4;
+    } else {
+        /* The last slide update moves before transferring to free fall.
+         * Its local X, Y and Z are still the incoming airborne velocity. */
+        next.kind = next.state = 3;
+        next.movement_countdown = 4;
+        if (next.field_2c.word < -(11 * Q16 + 5 * Q16 / 8))
+            next.field_2c.word = -(11 * Q16 + 5 * Q16 / 8);
         jump->creek_slide = 0;
+        jump->slide_air = 1;
+        jump->fall_gravity = 0;
+        jump->phase_elapsed = 0;
         jump->steering = 1;
         jump->neutral_ticks = 0;
-        actor->kind = actor->state = 3;
-        actor->action = actor->phase = 1;
-        actor->field_24.word = 0;
-        actor->field_2c.word = -downhill;
-        actor->local_y.word = 8 * Q16 - 13 * Q16 / 8;
-        *yaw = 2048;
-        return 2;
     }
-    for (unsigned i = 0; i < 3; ++i)
-        next.position[i] = ((uint32_t)(uint16_t)foot[i] << 16) | (next.position[i] & 0xffff);
-    next.velocity[0] = (uint32_t)steer[0];
-    next.velocity[1] = 8 * Q16;
-    next.velocity[2] = (uint32_t)(downhill + steer[1]);
-    next.kind = next.state = 4;
     next.action = next.phase = 1;
     jump->slide_steer[0] = steer[0];
     jump->slide_steer[1] = steer[1];
@@ -307,17 +332,17 @@ BfmForestJumpResult bfm_forest_player_jump_tick(BfmForestJump *jump, const BfmFo
         x < -1 || x > 1 || y < -1 || y > 1)
         return BFM_FOREST_JUMP_BOUNDARY;
     if (jump->creek_slide) {
-        int moved = creek_slide_step(jump, field, actor, camera, x, y, yaw, cached);
-        if (!moved) return BFM_FOREST_JUMP_BOUNDARY;
-        if (moved == 1) return BFM_FOREST_JUMP_AIRBORNE;
+        return creek_slide_step(jump, field, actor, camera, x, y, yaw, cached)
+             ? BFM_FOREST_JUMP_AIRBORNE : BFM_FOREST_JUMP_BOUNDARY;
     }
     if (jump->landed) {
+        memset(actor->velocity, 0, sizeof actor->velocity);
         ++jump->elapsed;
         ++jump->phase_elapsed;
         if (x || y || ++jump->recovery >= 10) {
             jump->active = 0;
-            actor->state = x || y;
-            actor->phase = 1;
+            actor->kind = actor->state = x || y;
+            actor->action = actor->phase = 1;
             if (actor->state) {
                 /* Ground locomotion starts from the whole, signed part of
                  * the airborne forward velocity. Keep position fractions. */
@@ -341,21 +366,27 @@ BfmForestJumpResult bfm_forest_player_jump_tick(BfmForestJump *jump, const BfmFo
     } else if (++next_jump.neutral_ticks > 3) {
         next_jump.steering = 0;
     }
+    if (next.state == 3 || next_jump.walk_off) {
+        if (x || y) next.movement_countdown = 4;
+        else if (next.movement_countdown) --next.movement_countdown;
+    }
     const int32_t max_speed = 11 * Q16 + 5 * Q16 / 8;
     int32_t speed = next.field_2c.word;
     if (x || y) {
-        speed -= ACCELERATION;
+        if (next_jump.slide_air && speed > -8 * Q16)
+            speed = -9 * Q16;
+        else
+            speed -= ACCELERATION;
         if (speed < -max_speed) speed = -max_speed;
     }
+    if (next_jump.slide_air && !next.movement_countdown) {
+        next.field_24.word = next.local_y.word = 0;
+        next_jump.steering = 0;
+    }
     next.field_2c.word = next_jump.steering ? speed : 0;
-    /* On the first unsupported update the actor continues across the rim.
-     * Its preceding touchdown supplies the vertical speed on the next one. */
+    /* The stride crossing the rim still travels horizontally. Falling then
+     * adds gravity to height independently of the model's rotated velocity. */
     int leaving_rim = next_jump.walk_off && !next_jump.elapsed;
-    int32_t retained_descent = next.local_y.word;
-    if (leaving_rim)
-        next.local_y.word = 0;
-    else
-        next.local_y.word += !cross_held && next.local_y.word < 0 ? 21 * Q16 / 8 : 13 * Q16 / 8;
     if (!bfm_forest_level_velocity(&next, 0, next_yaw, 0))
         return BFM_FOREST_JUMP_BOUNDARY;
     /* The stride leaving the rim still uses grounded acceleration. Carry
@@ -364,12 +395,19 @@ BfmForestJumpResult bfm_forest_player_jump_tick(BfmForestJump *jump, const BfmFo
         speed = -11 * Q16;
     next.field_2c.word = speed;
     func_801473EC(&next);
+    if (!leaving_rim) {
+        if (next_jump.fall_gravity < 31 * Q16)
+            next_jump.fall_gravity += !cross_held && next_jump.fall_gravity < 0 ? 21 * Q16 / 8 : 13 * Q16 / 8;
+        next.position[1] += (uint32_t)next_jump.fall_gravity;
+    }
     int16_t end[3];
     for (unsigned a = 0; a < 3; ++a)
         end[a] = (int16_t)(next.position[a] >> 16);
     int landed = 0, water = 0, slide = 0;
     int *water_contact = has_dry_bank ? &water : NULL;
-    if (!bfm_forest_player_air_step(field, cached, end, &next_jump.ground, &landed, water_contact)) {
+    int creek_air = next_jump.slide_air && water_contact &&
+                    bfm_forest_creek_slide_air(field, cached, end, water_contact);
+    if (!creek_air && !bfm_forest_player_air_step(field, cached, end, &next_jump.ground, &landed, water_contact)) {
         slide = has_dry_bank && bfm_forest_creek_slope_contact(field, cached, end);
         if (!slide) {
             /* Keep falling in the last supported column when a lateral route
@@ -387,23 +425,24 @@ BfmForestJumpResult bfm_forest_player_jump_tick(BfmForestJump *jump, const BfmFo
     }
     if (slide) {
         next_jump.creek_slide = next_jump.walk_off = 1;
+        next_jump.slide_air = 0;
+        next_jump.fall_gravity = 0;
+        next_jump.slide_steer[0] = next_jump.slide_steer[1] = 0;
         next.kind = next.state = 4;
         next.action = next.phase = 1;
     }
-    if (leaving_rim)
-        next.local_y.word = retained_descent;
-    else
+    if (!leaving_rim)
         ++next_jump.phase_elapsed;
-    if (!next_jump.descending && next.local_y.word >= 0) {
+    if (!next_jump.descending && next_jump.fall_gravity >= 0) {
         next_jump.descending = 1;
         next_jump.phase_elapsed = 0;
     }
     for (unsigned a = 0; a < 3; ++a)
         next.position[a] = ((uint32_t)(uint16_t)end[a] << 16) | (next.position[a] & 0xffff);
-    if (landed) {
-        next_jump.touchdown_velocity = next.local_y.word;
+    if (landed && !water) {
+        next.action = 2;
+        next_jump.touchdown_velocity = next_jump.fall_gravity;
         next.local_y.word = 0;
-        memset(next.velocity, 0, sizeof next.velocity);
         next_jump.landed = 1;
         next_jump.phase_elapsed = 0;
     }

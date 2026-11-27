@@ -6,12 +6,19 @@
 enum { SECTOR = 2048, TILE = 32, PICTURE_TILES = 3, UNIT = 4096 };
 enum { INACTIVE, CONTRACTING, HOLDING, BRIGHTENING, FADING };
 
+typedef struct {
+    unsigned member, palette_sector, palette_command, picture_sector;
+} AwardPicture;
+
+static const AwardPicture satiate = {18, 4, 0x838, 0};
+static const AwardPicture shrink = {19, 3, 0x1358, 19};
+
 /* The three vertically adjacent 32-word tiles are in a separate upload from
  * the skill's equipment art. Validate the entire upload before touching VRAM. */
-static int upload_picture(const MusashiDiscMedia *disc, unsigned word_x, unsigned y,
+static int upload_picture(const MusashiDiscMedia *disc, const AwardPicture *picture,
+                          unsigned word_x, unsigned y,
                           uint16_t tiles[512][1024], uint16_t *clut)
 {
-    enum { MEMBER = 19, PALETTE_SECTION = 3, UPLOAD_SECTOR = 19 };
     uint8_t header[SECTOR], image[PICTURE_TILES * SECTOR], command[20], palette[32];
     size_t total;
     if (!disc || !tiles || word_x % TILE || y % TILE || word_x > 1024 - TILE ||
@@ -19,18 +26,19 @@ static int upload_picture(const MusashiDiscMedia *disc, unsigned word_x, unsigne
         !musashi_disc_media_read_root_range(disc, "MAIN.CD", 0, header, sizeof header, &total))
         return 0;
     uint32_t count = u32le(header);
-    if (count <= MEMBER || count > (SECTOR - 8) / 8) return 0;
-    const uint8_t *entry = header + 8 + 8 * MEMBER;
+    if (count <= picture->member || count > (SECTOR - 8) / 8) return 0;
+    const uint8_t *entry = header + 8 + 8 * picture->member;
     uint32_t start = u32le(entry), length = u32le(entry + 4);
     if (!start || start > total / SECTOR || length > total - (size_t)start * SECTOR ||
-        length < (UPLOAD_SECTOR + 1 + PICTURE_TILES) * SECTOR) return 0;
+        length < (picture->picture_sector + 1 + PICTURE_TILES) * SECTOR ||
+        length < (picture->palette_sector + 1) * SECTOR) return 0;
     size_t member = (size_t)start * SECTOR;
-    size_t section = member + PALETTE_SECTION * SECTOR;
-    const size_t command_offset = 0x1358;
+    size_t section = member + picture->palette_sector * SECTOR;
+    const size_t command_offset = picture->palette_command;
     if (!musashi_disc_media_read_root_range(disc, "MAIN.CD", section, header, sizeof header, &total) ||
         memcmp(header, "PAC", 4) || u32le(header + 4) != 1) return 0;
     size_t section_bytes = u32le(header + 12);
-    if (section_bytes > length - PALETTE_SECTION*SECTOR ||
+    if (section_bytes > length - picture->palette_sector * SECTOR ||
         section_bytes < SECTOR + command_offset + sizeof command) return 0;
     size_t payload = section + SECTOR;
     if (!musashi_disc_media_read_root_range(disc, "MAIN.CD", payload + command_offset, command,
@@ -44,7 +52,7 @@ static int upload_picture(const MusashiDiscMedia *disc, unsigned word_x, unsigne
         !musashi_disc_media_read_root_range(disc, "MAIN.CD", payload + (colors-origin), palette,
                                             sizeof palette, &total)) return 0;
 
-    size_t at = member + UPLOAD_SECTOR * SECTOR;
+    size_t at = member + picture->picture_sector * SECTOR;
     if (!musashi_disc_media_read_root_range(disc, "MAIN.CD", at, header, sizeof header, &total) ||
         memcmp(header, "PAC", 4) || u32le(header + 4) || u32le(header + 8) != PICTURE_TILES ||
         u32le(header + 12) != sizeof image + SECTOR) return 0;
@@ -113,16 +121,22 @@ static void contract(BfmWoodsAwardEffect *effect)
     }
 }
 
-int bfm_woods_award_effect_step(BfmWoodsAwardEffect *effect, const MusashiDiscMedia *disc,
-                               const uint8_t *scene, size_t bytes, uint16_t tiles[512][1024],
-                               int release_award)
+int bfm_woods_award_effect_step_ability(BfmWoodsAwardEffect *effect, const MusashiDiscMedia *disc,
+                                       const uint8_t *scene, size_t bytes, uint16_t tiles[512][1024],
+                                       unsigned released_ability)
 {
     if (!effect) return 0;
-    if (release_award) {
+    if (released_ability) {
+        const AwardPicture *picture;
+        switch (released_ability) {
+        case 3: picture = &satiate; break;
+        case 13: picture = &shrink; break;
+        default: return 0;
+        }
         BfmWoodsAwardEffect fresh = {.phase = CONTRACTING, .scale = 4*UNIT};
         unsigned x, y;
         if (effect->phase || !load_shape(&fresh, scene, bytes, &x, &y) ||
-            !upload_picture(disc, x, y, tiles, &fresh.picture.material.clut)) return 0;
+            !upload_picture(disc, picture, x, y, tiles, &fresh.picture.material.clut)) return 0;
         *effect = fresh;
         return 1;
     }
@@ -152,6 +166,14 @@ int bfm_woods_award_effect_step(BfmWoodsAwardEffect *effect, const MusashiDiscMe
     default: return 0;
     }
     return 1;
+}
+
+int bfm_woods_award_effect_step(BfmWoodsAwardEffect *effect, const MusashiDiscMedia *disc,
+                               const uint8_t *scene, size_t bytes, uint16_t tiles[512][1024],
+                               int release_award)
+{
+    return bfm_woods_award_effect_step_ability(effect, disc, scene, bytes, tiles,
+                                              release_award ? 13 : 0);
 }
 
 static int scale_corner(int coordinate, int scale)

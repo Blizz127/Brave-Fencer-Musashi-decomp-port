@@ -13,18 +13,24 @@ enum { LINES = 11, MAX_KEYS = 8, QUARTER_BACK = 3072, TURN_MASK = 4095,
        WORLD_CUTOFF = 20, MUSIC_WAIT = 70, SCORE_REQUEST = 1 + MUSIC_WAIT + 2,
        COLD_SCORE_READY = 28, POST_LINE_WAIT = 210, RELEASE_WAIT = 40 };
 typedef enum {
-    STAGGER, SPIN, PAUSE, FALL, BOUNCE, WAIT_FOR_LINE, SPEAK, RESTORE, WAIT_FOR_RELEASE, RELEASE, FADE, FINISHED, FAILED
+    STAGGER, SPIN, PAUSE, FALL, BOUNCE, WAIT_FOR_LINE, SPEAK, WOODS_CHOOSER,
+    WOODS_RELEASE_SCORE, WOODS_WAIT_STREAM, WOODS_HANDOFF, WOODS_WIPE, WOODS_TRANSFER,
+    RESTORE, WAIT_FOR_RELEASE, RELEASE, FADE, FINISHED, FAILED
 } DefeatPhase;
 typedef struct {
     BfmForestPose key[MAX_KEYS];
+    uint32_t frame[MAX_KEYS];
     unsigned count;
 } DefeatClip;
 
 struct BfmRetryScreen {
+    const MusashiDiscMedia *disc;
     const BfmForestField *field;
     BfmForestTerrain *terrain;
     const MusashiForestPlayerMesh *hero;
     void (*restore_status)(BfmForestStatus *);
+    BfmWoodsRetryPresentation woods;
+    BfmWoodsRetryPage recovery;
     BfmGameplayRun *run;
     ForestPlayerArchive archive;
     BfmForestCamera camera;
@@ -34,11 +40,12 @@ struct BfmRetryScreen {
     BfmForestMessage *page;
     uint32_t line[LINES + 1], visible;
     DefeatClip clip[2];
-    unsigned clip_index, key, yaw, pitch, age, timer, generation;
-    int velocity, shorten;
+    unsigned clip_index, key, yaw, pitch, age, timer, generation, wipe_shade;
+    int velocity, shorten, voice_stopped, choice_changed;
     int16_t feet[3];
     DefeatPhase phase;
-    BfmRetryAudioEvent audio_event;
+    BfmRetryAudioEvent audio_event, pending_woods_score;
+    int woods_score_started;
 };
 
 /* The shared player program names its model and successive frame records.
@@ -57,6 +64,7 @@ static int load_clip(const ForestPlayerArchive *archive, uint32_t program, Defea
         if (i == MAX_KEYS || frame > UINT32_MAX - 16 ||
             !forest_player_archive_read(archive, frame + 16, packed, sizeof packed) ||
             !bfm_forest_pose_decode(packed, sizeof packed, &clip->key[i])) return 0;
+        clip->frame[i] = frame;
     }
     return 0;
 }
@@ -139,6 +147,7 @@ static BfmRetryScreen *open_screen(const MusashiDiscMedia *disc, const uint8_t *
         !last_camera || !last_target || !feet) return NULL;
     BfmRetryScreen *s = calloc(1, sizeof *s);
     if (!s) return NULL;
+    s->disc = disc;
     s->run = gameplay;
     memcpy(s->feet, feet, sizeof s->feet);
     s->yaw = yaw & TURN_MASK;
@@ -177,12 +186,18 @@ BfmRetryScreen *bfm_retry_screen_open_mounted(const MusashiDiscMedia *disc,
                                              const int32_t last_target[3], const int16_t feet[3],
                                              unsigned yaw, uint32_t visible_parts)
 {
-    if (!room || !room->terrain || !room->hero) return NULL;
+    if (!room) return NULL;
+    if (room->woods) {
+        if (!room->woods->draw_actor || !room->woods->wipe_step) return NULL;
+    } else if (!room->terrain || !room->hero) {
+        return NULL;
+    }
     BfmRetryScreen *s = open_screen(disc, room->data, room->bytes, gameplay,
                                     last_camera, last_target, feet, yaw, visible_parts);
     if (s) {
         s->terrain = room->terrain;
         s->hero = room->hero;
+        if (room->woods) s->woods = *room->woods;
         s->restore_status = room->restore_status;
     }
     return s;
@@ -284,10 +299,100 @@ static int move_camera(BfmRetryScreen *s)
     return bfm_forest_camera_look_at(eye, target, (uint16_t)projection, &s->camera);
 }
 
-int bfm_retry_screen_step(BfmRetryScreen *s, unsigned held_pad, unsigned pressed_pad)
+static int open_woods_page(BfmRetryScreen *s, BfmWoodsRetryPage next)
+{
+    BfmForestMessage *page = NULL;
+    switch (next) {
+    case BFM_WOODS_RESTORE_BOX:
+    case BFM_WOODS_RESTORE_SAVED:
+    case BFM_WOODS_RESTART_CHAPTER:
+        /* The chooser has a one-update grace count. The branch without a
+         * checkpoint uses the longer death-line grace period. A face edge
+         * during the death line skips the remaining count. */
+        s->phase = WOODS_RELEASE_SCORE;
+        s->timer = next == BFM_WOODS_RESTART_CHAPTER ? POST_LINE_WAIT : 1;
+        if (s->shorten) s->timer = 0;
+        s->timer += 2;
+        break;
+    default:
+        page = bfm_woods_retry_window(s->disc, next);
+        if (!page) {
+            s->phase = FAILED;
+            return 0;
+        }
+        s->phase = WOODS_CHOOSER;
+        break;
+    }
+    bfm_forest_message_free(s->page);
+    s->page = page;
+    s->recovery = next;
+    return 1;
+}
+
+BfmWoodsRetryPage bfm_retry_screen_woods_destination(const BfmRetryScreen *s)
+{
+    return s && s->phase == WOODS_TRANSFER ? s->recovery : BFM_WOODS_RETRY_INVALID;
+}
+
+/* The score request runs on the game's thread and can fail while mounting
+ * the track. Playback and the physical audio device have separate clocks. */
+int bfm_retry_screen_woods_score_result(BfmRetryScreen *s, BfmRetryAudioEvent event, int accepted)
+{
+    if (!s || !s->woods.draw_actor || event == BFM_RETRY_AUDIO_NONE) return 0;
+    if (!accepted || s->pending_woods_score != event ||
+        (event == BFM_RETRY_AUDIO_FADE_OUT && !s->woods_score_started)) {
+        s->phase = FAILED;
+        return 0;
+    }
+    s->pending_woods_score = BFM_RETRY_AUDIO_NONE;
+    if (event == BFM_RETRY_AUDIO_START) s->woods_score_started = 1;
+    return 1;
+}
+
+static void advance_woods_transfer(BfmRetryScreen *s)
+{
+    if (s->phase == WOODS_RELEASE_SCORE) {
+        if (--s->timer) return;
+        s->audio_event = BFM_RETRY_AUDIO_FADE_OUT;
+        s->timer = RELEASE_WAIT;
+        s->phase = WOODS_WAIT_STREAM;
+    } else if (s->phase == WOODS_WAIT_STREAM) {
+        if (s->timer) {
+            --s->timer;
+            return;
+        }
+        /* The mounted score has loaded synchronously. The defeat page owns
+         * the field's outstanding optical work. Poll its live service state,
+         * including a pending read or pause, after the scene grace period. */
+        if (bfm_forest_voice_status(s->voice) == BFM_FOREST_VOICE_IDLE) {
+            s->phase = WOODS_HANDOFF;
+            s->timer = 2;
+        }
+    } else if (s->phase == WOODS_HANDOFF) {
+        /* One scene update publishes readiness. The next actor update
+         * releases the outgoing scene, which starts its wipe at zero. */
+        if (!--s->timer) {
+            s->phase = WOODS_WIPE;
+            s->wipe_shade = 0;
+        }
+    } else {
+        s->wipe_shade += s->woods.wipe_step;
+        if (s->wipe_shade >= 255) {
+            s->wipe_shade = 255;
+            s->phase = WOODS_TRANSFER;
+        }
+    }
+}
+
+int bfm_retry_screen_choose_step(BfmRetryScreen *s, unsigned held_pad, unsigned pressed_pad,
+                                 int direction, int cancel, int accept)
 {
     const unsigned face = BFM_FOREST_TRIANGLE | BFM_FOREST_CIRCLE | BFM_FOREST_CROSS | BFM_FOREST_SQUARE;
-    if (!s || s->phase == FAILED) return -1;
+    if (!s) return -1;
+    s->voice_stopped = 0;
+    s->choice_changed = 0;
+    if (s->pending_woods_score != BFM_RETRY_AUDIO_NONE) s->phase = FAILED;
+    if (s->phase == FAILED) return -1;
     s->audio_event = BFM_RETRY_AUDIO_NONE;
     if (s->phase == FINISHED) return 1;
     bfm_forest_voice_step(s->voice);
@@ -321,8 +426,12 @@ int bfm_retry_screen_step(BfmRetryScreen *s, unsigned held_pad, unsigned pressed
                 s->phase = SPEAK;
             }
             break;
-        case SPEAK: {
-            if (pressed_pad & face) s->shorten = 1;
+        case SPEAK:
+        case WOODS_CHOOSER: {
+            if (s->phase == WOODS_CHOOSER)
+                s->choice_changed = bfm_field_message_choose(s->page, direction, cancel, accept);
+            else if (pressed_pad & face)
+                s->shorten = 1;
             const BfmForestMessageFrame *frame = bfm_forest_voice_page(
                 s->voice, s->page, &s->generation, !!(pressed_pad & BFM_FOREST_CROSS),
                 !!(pressed_pad & BFM_FOREST_CIRCLE));
@@ -330,11 +439,24 @@ int bfm_retry_screen_step(BfmRetryScreen *s, unsigned held_pad, unsigned pressed
                 s->phase = FAILED;
                 return -1;
             }
+            s->voice_stopped = !!(frame->events & BFM_FOREST_VOICE_STOP);
             if (frame->events & BFM_FOREST_MESSAGE_CLOSED) {
-                s->phase = RESTORE;
+                if (s->woods.draw_actor) {
+                    BfmWoodsRetryPage next = s->phase == SPEAK ? bfm_woods_retry_begin(s->run) :
+                        bfm_woods_retry_answer(s->run, s->recovery, frame->choices ? frame->answer : 0);
+                    if (!open_woods_page(s, next)) return -1;
+                } else {
+                    s->phase = RESTORE;
+                }
             }
             break;
         }
+        case WOODS_RELEASE_SCORE:
+        case WOODS_WAIT_STREAM:
+        case WOODS_HANDOFF:
+        case WOODS_WIPE:
+            advance_woods_transfer(s);
+            break;
         case RESTORE:
             if (s->restore_status) s->restore_status(&s->run->player);
             s->phase = WAIT_FOR_RELEASE;
@@ -364,7 +486,14 @@ int bfm_retry_screen_step(BfmRetryScreen *s, unsigned held_pad, unsigned pressed
             break;
         }
     }
+    if (s->woods.draw_actor) s->pending_woods_score = s->audio_event;
     return s->phase == FINISHED;
+}
+
+int bfm_retry_screen_step(BfmRetryScreen *s, unsigned held_pad, unsigned pressed_pad)
+{
+    return bfm_retry_screen_choose_step(s, held_pad, pressed_pad, 0, 0,
+                                        !!(pressed_pad & BFM_FOREST_CROSS));
 }
 
 int bfm_retry_screen_keep_world(const BfmRetryScreen *s)
@@ -381,10 +510,10 @@ static unsigned dim_channel(unsigned channel, unsigned subtract)
 }
 
 /* The outgoing transfer overlays uniform subtractive grey on the completed
- * picture. Its brightness increases by sixteen per update. */
-static void fade_actor(uint32_t pixels[240][320], unsigned update)
+ * picture. Scanout and subtraction use five-bit color channels. */
+static void fade_actor(uint32_t pixels[240][320], unsigned shade)
 {
-    unsigned subtract = 2 * update;
+    unsigned subtract = shade >> 3;
     for (unsigned y = 10; y < 230; ++y)
         for (unsigned x = 0; x < 320; ++x) {
             uint32_t p = pixels[y][x];
@@ -403,19 +532,26 @@ int bfm_retry_screen_draw(const BfmRetryScreen *s, const BfmForestHud *hud,
         for (unsigned y = 0; y < 240; ++y)
             for (unsigned x = 0; x < 320; ++x) pixels[y][x] = 0xff000000u;
     if (s->phase == FINISHED) return 1;
-    BfmForestTransform root;
-    bfm_forest_actor_pitch_yaw(s->pitch, s->yaw, s->feet, &root);
-    const BfmForestPose *pose = &s->clip[s->clip_index].key[s->key];
     const BfmForestModelLighting *light = bfm_retry_screen_keep_world(s) ? NULL : &s->light;
-    int drawn = s->field ? bfm_forest_draw_player_only(s->field, &s->camera, pose, &root,
-                                                       s->visible, light, pixels)
-                         : bfm_forest_terrain_draw_player_only(s->terrain, &s->camera, s->hero,
-                                                               pose, &root, s->visible, light, pixels);
-    if (!drawn) return 0;
-    if (hud && s->phase <= SPEAK) bfm_forest_hud_draw(hud, &s->run->player, pixels);
-    if (art && s->phase == SPEAK)
+    const DefeatClip *clip = &s->clip[s->clip_index];
+    if (s->woods.draw_actor) {
+        if (!s->woods.draw_actor(s->woods.context, &s->camera, clip->frame[s->key],
+                                 s->yaw, s->pitch, s->visible, light, pixels)) return 0;
+    } else {
+        BfmForestTransform root;
+        bfm_forest_actor_pitch_yaw(s->pitch, s->yaw, s->feet, &root);
+        const BfmForestPose *pose = &clip->key[s->key];
+        int drawn = s->field ? bfm_forest_draw_player_only(s->field, &s->camera, pose, &root,
+                                                           s->visible, light, pixels)
+                             : bfm_forest_terrain_draw_player_only(s->terrain, &s->camera, s->hero,
+                                                                   pose, &root, s->visible, light, pixels);
+        if (!drawn) return 0;
+    }
+    if (hud && s->phase <= WOODS_TRANSFER) bfm_forest_hud_draw(hud, &s->run->player, pixels);
+    if (art && (s->phase == SPEAK || s->phase == WOODS_CHOOSER))
         bfm_forest_message_art_draw(art, bfm_forest_message_frame(s->page), pixels);
-    if (s->phase == FADE) fade_actor(pixels, s->timer);
+    if (s->phase == FADE) fade_actor(pixels, 16 * s->timer);
+    if (s->phase == WOODS_WIPE || s->phase == WOODS_TRANSFER) fade_actor(pixels, s->wipe_shade);
     return 1;
 }
 
@@ -427,6 +563,8 @@ BfmRetryAudioEvent bfm_retry_screen_audio_event(BfmRetryScreen *s)
     return event;
 }
 
+int bfm_retry_screen_voice_stopped(const BfmRetryScreen *s) { return s && s->voice_stopped; }
+int bfm_retry_screen_choice_changed(const BfmRetryScreen *s) { return s && s->choice_changed; }
 ForestVoice *bfm_retry_screen_voice(const BfmRetryScreen *s) { return s ? s->voice : NULL; }
 unsigned bfm_retry_screen_generation(const BfmRetryScreen *s) { return s ? s->generation : 0; }
 void bfm_retry_screen_free(BfmRetryScreen *s)

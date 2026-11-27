@@ -118,7 +118,7 @@ fail:
     return NULL;
 }
 
-int bfm_inn_field_step(BfmInnField *inn, uint16_t pressed)
+int bfm_inn_field_step_run(BfmInnField *inn, uint16_t pressed, struct BfmGameplayRun *run)
 {
     if (!inn) return 0;
     inn->updated_greeting = 0;
@@ -126,6 +126,8 @@ int bfm_inn_field_step(BfmInnField *inn, uint16_t pressed)
     ++inn->age;
     const BfmBedroomRoot *player = bfm_bedroom_travel_root(inn->travel);
     BfmBedroomAction action = BFM_BEDROOM_NONE;
+    BfmBedroomStance stance = BFM_BEDROOM_STANCE_INACTIVE;
+    int service = bfm_inn_greeting_service(inn->greeting);
     if (bfm_inn_greeting_leaving(inn->greeting)) ++inn->exit_age;
     if (player->busy) {
         if (!bfm_bedroom_travel_step(inn->travel, inn->camera.eye, inn->camera.target)) return 0;
@@ -142,10 +144,12 @@ int bfm_inn_field_step(BfmInnField *inn, uint16_t pressed)
         default: break;
         }
     } else if (!inn->greeting) {
+        stance = BFM_BEDROOM_STANCE_SCRIPTED;
         inn->greeting = bfm_inn_greeting_open(inn->module, inn->module_size, inn->scene,
                                               (size_t)(inn->module - inn->scene), inn->record);
         if (!inn->greeting) return 0;
     } else if (!bfm_inn_greeting_leaving(inn->greeting)) {
+        stance = BFM_BEDROOM_STANCE_SCRIPTED;
         if (!bfm_inn_greeting_step(inn->greeting, pressed, inn->voice_status)) return 0;
         inn->updated_greeting = 1;
         if (bfm_inn_greeting_leaving(inn->greeting)) {
@@ -157,8 +161,16 @@ int bfm_inn_field_step(BfmInnField *inn, uint16_t pressed)
         }
         if (bfm_inn_greeting_finished(inn->greeting)) inn->finished = 1;
     }
-    return bfm_bedroom_motion_step(inn->motion, action, &inn->pose) &&
+    /* The service and room-selection panels hold the counter view. The
+     * follow-up conversation resumes Musashi's standing pose at the counter. */
+    if (run && service) return 1;
+    return bfm_bedroom_motion_step_field(inn->motion, action, run, stance, &inn->pose) &&
            bfm_bedroom_motion_face(inn->motion, inn->tiles);
+}
+
+int bfm_inn_field_step(BfmInnField *inn, uint16_t pressed)
+{
+    return bfm_inn_field_step_run(inn,pressed,NULL);
 }
 
 int bfm_inn_field_draw(BfmInnField *inn, int dialogue, uint32_t pixels[240][320])

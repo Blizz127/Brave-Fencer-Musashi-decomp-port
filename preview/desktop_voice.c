@@ -6,6 +6,7 @@
 #include "tower_disc_music.h"
 #include "forest_score.h"
 #include "bedroom_effects.h"
+#include "bedroom.h"
 #include "cable_sound.h"
 #include "village_impact_sound.h"
 #include "palace_effects.h"
@@ -28,7 +29,7 @@ typedef struct VoiceClip {
 struct DesktopVoice {
     PalaceVoice *decoder;
     const ForestVoice *active_source;
-    BfmBedroomEffects *room_effects, *forest_swing;
+    BfmBedroomEffects *room_effects[BFM_ROOM_BANK_COUNT], *forest_swing;
     BfmPalaceEffects *effects;
     BfmCableSound *slider;
     BfmTowerBellSound *bell;
@@ -144,7 +145,8 @@ static void SDLCALL render_voice(void *userdata, Uint8 *stream, int bytes)
     if (v->bell) bfm_tower_bell_sound_mix(v->bell, (int16_t *)(void *)stream, frames);
     if (v->landing) bfm_village_impact_sound_mix(v->landing, (int16_t *)(void *)stream, frames);
     if (v->slider) bfm_cable_sound_mix(v->slider,(int16_t *)(void *)stream,frames);
-    bfm_bedroom_effects_mix(v->room_effects, (int16_t *)(void *)stream, frames);
+    for (unsigned i = 0; i < BFM_ROOM_BANK_COUNT; ++i)
+        bfm_bedroom_effects_mix(v->room_effects[i], (int16_t *)(void *)stream, frames);
     if (v->court != COURT_IDLE)
         bfm_palace_effects_mix(v->effects, SDL_GetTicks64() - v->opening_start,
                               (int16_t *)(void *)stream, frames);
@@ -226,6 +228,13 @@ static void stop_tower_music(DesktopVoice *v)
     v->tower_music_entrance = 0;
 }
 
+static int has_room_effects(const DesktopVoice *v)
+{
+    for (unsigned i = 0; i < BFM_ROOM_BANK_COUNT; ++i)
+        if (v->room_effects[i]) return 1;
+    return 0;
+}
+
 static void stop_voice(DesktopVoice *v, int leaving_room)
 {
     if (!v) return;
@@ -243,7 +252,7 @@ static void stop_voice(DesktopVoice *v, int leaving_room)
         stop_tower_music(v);
         v->room_score = v->fading_score = NULL;
         v->defeat_playing = 0;
-        v->room_effects = NULL;
+        memset(v->room_effects, 0, sizeof v->room_effects);
         v->slider = NULL;
         v->landing = NULL;
         v->bell = NULL;
@@ -255,7 +264,7 @@ static void stop_voice(DesktopVoice *v, int leaving_room)
     v->active_source = NULL;
     v->forest_score_requested = v->forest_score_waiting = 0;
     v->selected = v->message_ready = v->playing = v->reported = 0;
-    int room_audio = v->bell || v->landing || v->slider || v->room_score || v->fading_score || v->room_effects || v->defeat_playing || v->tower_music;
+    int room_audio = v->bell || v->landing || v->slider || v->room_score || v->fading_score || has_room_effects(v) || v->defeat_playing || v->tower_music;
     if (v->device) {
         SDL_UnlockAudioDevice(v->device);
         if (!room_audio) SDL_PauseAudioDevice(v->device, 1);
@@ -302,7 +311,8 @@ int bfm_desktop_voice_defeat_score(DesktopVoice *v, const MusashiDiscMedia *disc
         }
         break;
     case BFM_DEFEAT_SCORE_FADE_OUT:
-        if (v->defeat_playing) bfm_castle_score_fade(v->defeat_score);
+        accepted = v->defeat_playing && v->defeat_score;
+        if (accepted) bfm_castle_score_fade(v->defeat_score);
         break;
     default:
         accepted = 0;
@@ -380,16 +390,29 @@ void bfm_desktop_voice_slider(DesktopVoice *v, BfmCableSound *slider, int event)
     }
 }
 
-void bfm_desktop_voice_room_effect(DesktopVoice *v, BfmBedroomEffects *effects, unsigned command)
+void bfm_desktop_voice_room_effects(DesktopVoice *v, const BfmBedroomSound *events, size_t count)
 {
-    if (!v || !effects || !command) return;
+    if (!v || !events || !count) return;
+    int submitted = 0;
     if (v->device) SDL_LockAudioDevice(v->device);
-    v->room_effects = effects;
-    bfm_bedroom_effects_start(effects, command);
+    for (size_t i = 0; i < count; ++i) {
+        const BfmBedroomSound *event = &events[i];
+        if (!event->effects || !event->command || (unsigned)event->bank >= BFM_ROOM_BANK_COUNT) continue;
+        v->room_effects[event->bank] = event->effects;
+        bfm_bedroom_effects_start(event->effects, event->command);
+        submitted = 1;
+    }
     if (v->device) {
         SDL_UnlockAudioDevice(v->device);
-        SDL_PauseAudioDevice(v->device, 0);
+        if (submitted) SDL_PauseAudioDevice(v->device, 0);
     }
+}
+
+void bfm_desktop_voice_room_effect(DesktopVoice *v, BfmBedroomEffects *effects, unsigned command)
+{
+    if (!effects || !command) return;
+    BfmBedroomSound event = {effects, command, BFM_ROOM_SCENE_BANK};
+    bfm_desktop_voice_room_effects(v, &event, 1);
 }
 
 void bfm_desktop_voice_forest_swing(DesktopVoice *v)
@@ -405,6 +428,17 @@ void bfm_desktop_voice_forest_hit(DesktopVoice *v)
 void bfm_desktop_voice_forest_gunshot(DesktopVoice *v)
 {
     if (v) bfm_desktop_voice_room_effect(v, v->forest_swing, BFM_FOREST_GUNSHOT_SOUND);
+}
+
+void bfm_desktop_voice_release_room_effects(DesktopVoice *v)
+{
+    if (!v) return;
+    if (v->device) SDL_LockAudioDevice(v->device);
+    for (unsigned i = 0; i < BFM_ROOM_BANK_COUNT; ++i) {
+        bfm_bedroom_effects_stop(v->room_effects[i]);
+        v->room_effects[i] = NULL;
+    }
+    if (v->device) SDL_UnlockAudioDevice(v->device);
 }
 
 void bfm_desktop_voice_room_score(DesktopVoice *v, BfmForestScore *score)
@@ -454,7 +488,7 @@ void bfm_desktop_voice_event(DesktopVoice *v, const SDL_AudioDeviceEvent *e)
         v->playing = 0;
     } else if (e->type == SDL_AUDIODEVICEADDED && !v->device) {
         open_device(v);
-        int room_audio = v->bell || v->landing || v->slider || v->room_effects || v->room_score || v->fading_score || v->defeat_playing || v->tower_music;
+        int room_audio = v->bell || v->landing || v->slider || has_room_effects(v) || v->room_score || v->fading_score || v->defeat_playing || v->tower_music;
         if (v->device && (room_audio || (v->forest_score_requested && v->forest_score))) {
             SDL_PauseAudioDevice(v->device, 0);
         } else if (v->device && v->court == COURT_PLAYING && v->effects) {

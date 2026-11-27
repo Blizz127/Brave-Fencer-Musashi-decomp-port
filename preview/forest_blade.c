@@ -51,6 +51,17 @@ static void cross_product(const double a[3], const double b[3], double out[3])
 int bfm_forest_blade_transform(const int8_t anchors[2][3], const BfmForestTransform *root,
                                const int32_t eye[3], BfmForestTransform *transform)
 {
+    if (!anchors) return 0;
+    int16_t points[2][3];
+    for (unsigned point = 0; point < 2; ++point)
+        for (unsigned axis = 0; axis < 3; ++axis)
+            points[point][axis] = anchors[point][axis];
+    return bfm_forest_blade_transform_points(points, root, eye, transform);
+}
+
+int bfm_forest_blade_transform_points(const int16_t anchors[2][3], const BfmForestTransform *root,
+                                      const int32_t eye[3], BfmForestTransform *transform)
+{
     if (!anchors || !root || !eye || !transform) return 0;
     double axis[3], toward[3], across[3], normal[3];
     BfmForestTransform result;

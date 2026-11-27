@@ -17,6 +17,7 @@ typedef struct {
 } FaceRect;
 typedef struct {
     uint32_t word;
+    unsigned slot;
     FaceRect rect[2];
 } Face;
 struct BfmWoodsShrinkMotion {
@@ -97,6 +98,7 @@ static int read_face(Face *face, const ForestPlayerArchive *resident, uint32_t t
      * contains exactly one image or one resident tag followed by the end. */
     const uint8_t *key = u32le(program) == 3 ? program + 8 : program;
     if (u32le(key + 4) != 0) return 0;
+    face->slot = slot;
     uint32_t image = u32le(key);
     if ((image & UINT32_C(0xfffffff8)) == UINT32_C(0x40000000)) {
         face->word = image;
@@ -228,6 +230,11 @@ const uint8_t *bfm_woods_shrink_motion_pose(const BfmWoodsShrinkMotion *motion,
                                            BfmWoodsShrinkClip clip, unsigned key)
 {
     return key < bfm_woods_shrink_motion_count(motion, clip) ? motion->body[clip].packets[key] : NULL;
+}
+
+unsigned bfm_woods_shrink_motion_face_slot(const BfmWoodsShrinkMotion *motion, BfmWoodsShrinkClip clip)
+{
+    return motion && (unsigned)clip < 4 ? motion->face[clip].slot : 0;
 }
 
 uint32_t bfm_woods_shrink_motion_face_word(const BfmWoodsShrinkMotion *motion, BfmWoodsShrinkClip clip)

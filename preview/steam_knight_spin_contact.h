@@ -5,8 +5,14 @@
 #include "forest_pose.h"
 #include "gameplay_run.h"
 
+typedef struct { uint16_t body, fusion, lumina, exp_limit[4]; } BfmWeaponRank;
 typedef struct {
-    struct { uint16_t body, fusion, lumina, exp_limit[4]; } ranks[30];
+    uint16_t fusion_percent, fusion_spread, lumina_percent, lumina_spread;
+    int can_critical;
+} BfmWeaponPower;
+
+typedef struct {
+    BfmWeaponRank ranks[30];
     uint16_t fusion_percent, fusion_spread, lumina_percent, lumina_spread;
     uint16_t target_mask;
 } BfmSteamSpinData;
@@ -20,6 +26,12 @@ typedef struct {
     int16_t pivot[3], ends[3][3];
     unsigned count;
 } BfmSteamSpinSegments;
+
+/* Ordinary and charged blades share the resident rank table, stat modifiers
+ * and critical check. The move supplies its percentages and critical eligibility. */
+int bfm_weapon_ranks_load(const MusashiDiscMedia *disc, BfmWeaponRank ranks[30]);
+int bfm_weapon_roll(const BfmWeaponRank ranks[30], const BfmWeaponPower *power,
+                    BfmGameplayRun *run, uint32_t actor_flags, BfmSteamSpinRoll *out);
 
 /* Mount the equipped first scroll's charged move from the current hall. */
 int bfm_steam_spin_load(const MusashiDiscMedia *disc, const uint8_t *scene,

@@ -31,8 +31,8 @@ typedef enum {
  * A positive landing result retains the contact until the recovery finishes. */
 typedef struct {
     unsigned active, elapsed, neutral_ticks, descending, landed, recovery, phase_elapsed;
-    int steering, walk_off, creek_slide;
-    int32_t slide_steer[2];
+    int steering, walk_off, creek_slide, slide_air;
+    int32_t slide_steer[2], fall_gravity;
     int32_t touchdown_velocity;
     BfmForestContact ground;
 } BfmForestJump;

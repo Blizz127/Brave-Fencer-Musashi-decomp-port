@@ -220,6 +220,9 @@ int bfm_forest_thrown_probe(const BfmForestField *field, const int16_t from[3],
                             int16_t to[3], int follow_ground, int *grounded);
 /* A remembered recovery foot must lie on the actual level bank. */
 int bfm_forest_dry_creek_bank(const BfmForestField *field, const int16_t foot[3]);
+/* Find the first safe landing on one ring around the remembered dry foot. */
+int bfm_forest_creek_rescue_foot(const BfmForestField *field, const int16_t bank[3],
+                                 unsigned ring, int16_t foot[3]);
 /* Resolve the level stride that first leaves the supported near bank. */
 int bfm_forest_walks_off_creek_bank(const BfmForestField *field, const int16_t from[3],
                                     const int16_t end[3]);
@@ -228,10 +231,21 @@ int bfm_forest_walks_off_creek_bank(const BfmForestField *field, const int16_t f
 int bfm_forest_creek_bank_stride(const BfmForestField *field, const int16_t from[3], int16_t end[3]);
 /* Acquire only the downward, bounded near-grade contact of a failed air sweep. */
 int bfm_forest_creek_slope_contact(const BfmForestField *field, const int16_t from[3], int16_t end[3]);
+/* Return the near-bank normal used to initialize the slide's world velocity. */
+int bfm_forest_creek_slope_normal(const BfmForestField *field, const int16_t from[3],
+                                  int16_t *normal_z);
+/* Sweep the velocity-integrated foot through the room's ordered solid faces.
+ * Return 1 with the corrected foot, 2 above open water, or 0 outside the route. */
+int bfm_forest_creek_slide_contact(const BfmForestField *field, const int16_t from[3],
+                                   int16_t end[3]);
 /* Continue a supported slide (1), or leave its finite toe for air (2).
  * Both report the incline's Z normal if requested. Only 1 changes the foot. */
 int bfm_forest_creek_slope_step(const BfmForestField *field, const int16_t from[3],
                                 int16_t end[3], int16_t *normal_z);
+/* Follow descending post-slide movement above the first creek and return its
+ * actual surface impact. Other material or platform contacts use normal air movement. */
+int bfm_forest_creek_slide_air(const BfmForestField *field, const int16_t from[3],
+                               int16_t to[3], int *water);
 /* The hero can additionally enter the bounded first-creek water surface. */
 int bfm_forest_player_air_step(const BfmForestField *field, const int16_t from[3],
                                int16_t to[3], BfmForestContact *contact, int *landed, int *water);

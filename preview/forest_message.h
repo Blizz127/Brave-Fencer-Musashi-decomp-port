@@ -31,6 +31,7 @@ typedef struct {
     /* Opening and closing size, and blend from round to pointed corners. */
     unsigned border_step, border_scale, jagged_mix, style, portrait;
     unsigned choice_row;
+    unsigned text_columns; /* 28 for the compact portrait bubble, 36 for the full width. */
 } BfmForestMessageFrame;
 
 /* Open on the update where the doorway gives focus to its message slot.
@@ -40,6 +41,10 @@ BfmForestMessage *bfm_forest_message_open(const uint8_t *program, size_t length)
 BfmForestMessage *bfm_field_message_open(const uint8_t *program, size_t length);
 /* The room keeps its mounted bytes alive until this cursor is freed. */
 BfmForestMessage *bfm_field_message_borrow(const uint8_t *program, size_t length);
+/* The field keeps its program and live flag bank available until the notice closes. */
+BfmForestMessage *bfm_field_message_borrow_notice(const uint8_t *program, size_t length,
+                                                uint8_t flags[64], unsigned active_flag);
+int bfm_field_message_keeps_control(const BfmForestMessage *message);
 /* The room keeps this mounted, NUL-terminated reading entry alive for the window. */
 int bfm_field_message_insert_text(BfmForestMessage *message, const uint8_t *text, size_t bytes);
 /* Apply fresh navigation/accept edges while the choice window owns input. */

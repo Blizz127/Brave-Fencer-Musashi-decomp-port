@@ -36,4 +36,7 @@ int bfm_forest_cast_load(BfmForestCast *cast, const MusashiDiscMedia *disc,
  * entry, and uses the returned pose and part visibility. */
 BfmForestCastEvent bfm_forest_cast_tick(BfmForestCast *cast, BfmForestStatus *status,
     int r1_held, int square_pressed, int moving, int blade_away);
+/* The field has already sampled shoulder charge before resolving contact. */
+BfmForestCastEvent bfm_forest_cast_after_charge(BfmForestCast *cast, BfmForestStatus *status,
+    int r1_held, int square_pressed, int moving, int blade_away);
 #endif

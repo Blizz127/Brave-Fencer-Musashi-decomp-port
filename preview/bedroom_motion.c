@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "bedroom_motion.h"
+#include "woods_slope.h"
+#include "gameplay_run.h"
 #include <stdlib.h>
 
 enum { PART_POSE_BYTES = 256 };
@@ -14,17 +16,22 @@ typedef struct {
 typedef struct {
     uint32_t program;
     unsigned cursor, remaining, interval;
-    int ended;
+    enum { STREAM_ACTIVE, STREAM_LOOP, STREAM_HOLD, STREAM_END } boundary;
 } Channel;
 
-enum Activity { QUIET, TILTING, UNROLLING, RISING, YAWNING, STANDING, RETURNING, STARTING_RUN, SHOWING_FUSION, COLLECTING, KNOCKING };
+enum Activity { QUIET, TILTING, UNROLLING, RISING, YAWNING, STANDING, RECOVERING_STANCE, RETURNING, STARTING_RUN, SHOWING_FUSION, COLLECTING, KNOCKING };
+
+enum RestPhase { RESTING, SHIFTING, AFTER_SHIFT, DRAWING, READY };
 
 struct BfmBedroomMotion {
     Region main, scene;
     uint32_t body_bank, face_bank;
     Channel body, face;
     enum Activity activity;
+    enum RestPhase rest_phase;
+    unsigned rest_cycles;
     unsigned pitch, angular_speed;
+    int tired;
     uint32_t face_upload;
     BfmBedroomPose frame;
 };
@@ -77,18 +84,18 @@ static int next_word(const BfmBedroomMotion *m, Channel *channel, uint32_t *out)
 static int advance(BfmBedroomMotion *m, Channel *channel, int body)
 {
     if (!channel->remaining || --channel->remaining) return 1;
-    channel->ended = 0;
+    channel->boundary = STREAM_ACTIVE;
     for (unsigned budget = 0; budget < 256; ++budget) {
         uint32_t command, operand;
         if (!next_word(m, channel, &command)) return 0;
         switch (command) {
         case 0: /* End and keep the last frame. */
         case 2: /* Hold; the action can resume at the following command. */
-            channel->ended = 1;
+            channel->boundary = command == 2 ? STREAM_HOLD : STREAM_END;
             return 1;
         case 1:
             channel->cursor = 0;
-            channel->ended = 1;
+            channel->boundary = STREAM_LOOP;
             break;
         case 3:
             if (!next_word(m, channel, &operand) || !operand || operand > 255) return 0;
@@ -154,6 +161,34 @@ static int select_body(BfmBedroomMotion *m, unsigned index)
     return previous == m->body.program || advance(m, &m->body, 1);
 }
 
+int bfm_bedroom_motion_direct(BfmBedroomMotion *motion, uint32_t program)
+{
+    if (!motion || !program) return 0;
+    if (motion->body.program == program) return 1;
+    BfmBedroomMotion next = *motion;
+    start(&next.body, program);
+    next.activity = QUIET;
+    next.frame.draw_current = 1;
+    if (!advance(&next, &next.body, 1)) return 0;
+    *motion = next;
+    return 1;
+}
+
+BfmBodyMarker bfm_bedroom_motion_marker(const BfmBedroomMotion *motion)
+{
+    if (motion && motion->body.boundary == STREAM_HOLD) return BFM_BODY_HOLD;
+    if (motion && motion->body.boundary == STREAM_END) return BFM_BODY_END;
+    return BFM_BODY_PLAYING;
+}
+
+int bfm_bedroom_motion_resume(BfmBedroomMotion *motion)
+{
+    if (bfm_bedroom_motion_marker(motion) != BFM_BODY_HOLD) return 0;
+    motion->body.remaining = motion->body.interval;
+    motion->body.boundary = STREAM_ACTIVE;
+    return 1;
+}
+
 static int pair(BfmBedroomMotion *m, unsigned body, unsigned face)
 {
     return select_body(m, body) &&
@@ -177,7 +212,7 @@ BfmBedroomMotion *bfm_bedroom_motion_open(const uint8_t *scene, size_t scene_byt
     return m;
 }
 
-static int update(BfmBedroomMotion *m, BfmBedroomAction action)
+static int update(BfmBedroomMotion *m, BfmBedroomAction action, int field_standing)
 {
     int update_body = 1;
     m->frame.knock_contact = 0;
@@ -188,6 +223,16 @@ static int update(BfmBedroomMotion *m, BfmBedroomAction action)
         m->pitch = 4073;
         m->angular_speed = 0;
         m->activity = TILTING;
+        break;
+    case BFM_BEDROOM_NIGHTMARE_SLEEP:
+        /* The recovery room starts the sleeping loop with the existing face. */
+        if (!select_body(m, 39)) return 0;
+        m->pitch = 3072;
+        m->activity = QUIET;
+        break;
+    case BFM_BEDROOM_NIGHTMARE_HOLD:
+        /* Stop on the current body pose while the facial channel continues. */
+        m->body.remaining = 0;
         break;
     case BFM_BEDROOM_RISE:
         start(&m->body, 0x80185d9cu);
@@ -284,7 +329,7 @@ static int update(BfmBedroomMotion *m, BfmBedroomAction action)
         if (pitch < 3072) {
             m->pitch = 3072;
             m->body.remaining = 1;
-            m->body.ended = 0;
+            m->body.boundary = STREAM_ACTIVE;
             m->activity = UNROLLING;
         } else m->pitch = pitch;
     } else if (m->activity == STARTING_RUN && action == BFM_BEDROOM_NONE) {
@@ -297,14 +342,18 @@ static int update(BfmBedroomMotion *m, BfmBedroomAction action)
          * resumes on the following player update. */
         if (!pair(m, 0, 17)) return 0;
         m->activity = QUIET;
-    } else if (m->activity == KNOCKING && m->body.ended) {
+    } else if (m->activity == KNOCKING && m->body.boundary) {
         /* Keep the lowered hand until the scene orders the backward walk. */
         m->frame.draw_current = 0;
         m->frame.finished = 1;
         m->activity = QUIET;
-    } else if (m->body.ended && m->activity != QUIET && m->activity != SHOWING_FUSION) {
+    } else if (m->body.boundary && m->activity == RECOVERING_STANCE && m->tired) {
+        if (!pair(m, 5, 28)) return 0;
+    } else if (m->body.boundary && m->activity != QUIET && m->activity != SHOWING_FUSION &&
+               !(field_standing && m->activity == STANDING)) {
         if (m->activity == UNROLLING && !pair(m, 39, 31)) return 0;
         if (m->activity == YAWNING && !select_body(m, 37)) return 0;
+        if (m->activity == RECOVERING_STANCE) m->activity = STANDING;
         if (m->activity == STANDING) {
             if (!select_body(m, 0)) return 0;
             m->frame.draw_current = 0;
@@ -321,15 +370,135 @@ static int update(BfmBedroomMotion *m, BfmBedroomAction action)
     return 1;
 }
 
-int bfm_bedroom_motion_step(BfmBedroomMotion *motion, BfmBedroomAction action,
-                            BfmBedroomPose *frame)
+int bfm_bedroom_motion_reenter_stance(BfmBedroomMotion *m, int tired)
 {
-    if (!motion || !frame) return 0;
+    if (!m) return 0;
+    if (tired < 0) tired = m->tired;
+    if (!pair(m, tired ? 5 : 4, tired ? 28 : 17)) return 0;
+    m->activity = RECOVERING_STANCE;
+    m->tired = tired;
+    return 1;
+}
+
+int bfm_bedroom_motion_ability_pose(BfmBedroomMotion *m, unsigned face_slot, int finished,
+                                    BfmBedroomPose *frame)
+{
+    if (!m || !frame || (face_slot && !select_slot(m, &m->face, m->face_bank, face_slot))) return 0;
+    if (!finished) return 1;
+    /* The ability used its own body program. Select the ordinary entry clip
+     * even if the old locomotion channel happened to remember that clip.
+     * The face is shared; selecting neutral twice preserves its hold. */
+    m->body.program = 0;
+    m->rest_phase = RESTING;
+    m->rest_cycles = 0;
+    if (!bfm_bedroom_motion_reenter_stance(m, -1)) return 0;
+    *frame = m->frame;
+    return 1;
+}
+
+int bfm_bedroom_motion_reenter_fall(BfmBedroomMotion *m, int moving)
+{
+    if (!m || !pair(m, moving ? 15 : 13, 34)) return 0;
+    m->activity = QUIET;
+    return 1;
+}
+
+int bfm_bedroom_motion_reenter_slide(BfmBedroomMotion *m)
+{
+    if (!m || !select_body(m, BFM_WOODS_SLOPE_BODY)) return 0;
+    m->activity = QUIET;
+    return 1;
+}
+
+void bfm_bedroom_motion_stance_condition(BfmBedroomMotion *m, int tired)
+{
+    if (m) m->tired = tired;
+}
+
+/* The room advances both mounted channels before running the standing
+ * action. Its facial choice and its body loop counter are independent. */
+static int standing_field(BfmBedroomMotion *m, BfmGameplayRun *run, BfmBedroomStance stance)
+{
+    if (m->tired) return m->body.boundary == STREAM_ACTIVE || pair(m, 5, 28);
+    if (m->face.boundary && !m->face.remaining) {
+        unsigned neutral = m->rest_phase < DRAWING ? 17 : 19;
+        uint32_t blink;
+        if (!word(m, m->face_bank + 4 * (neutral + 1), &blink)) return 0;
+        if (m->face.program == blink) {
+            if (!select_slot(m, &m->face, m->face_bank, neutral)) return 0;
+        } else if (!(bfm_gameplay_random(run) & 15) &&
+                   !select_slot(m, &m->face, m->face_bank, neutral + 1)) return 0;
+    }
+    if (!m->body.boundary) return 1;
+    if (m->activity == STANDING) {
+        m->activity = QUIET;
+        m->frame.draw_current = 0;
+    }
+    if (stance == BFM_BEDROOM_STANCE_SCRIPTED) {
+        m->rest_phase = RESTING;
+        m->rest_cycles = 0;
+    }
+    switch (m->rest_phase) {
+    case RESTING:
+        if (++m->rest_cycles == 5) {
+            m->rest_cycles = 0;
+            m->rest_phase = SHIFTING;
+            return select_body(m, 1);
+        }
+        break;
+    case SHIFTING:
+        m->rest_phase = AFTER_SHIFT;
+        return select_body(m, 0);
+    case AFTER_SHIFT:
+        if (++m->rest_cycles == 3) {
+            m->rest_cycles = 0;
+            if (stance == BFM_BEDROOM_STANCE_SHEATHED) {
+                m->rest_phase = RESTING;
+                return select_body(m, 0);
+            }
+            m->rest_phase = DRAWING;
+            return select_body(m, 2);
+        }
+        break;
+    case DRAWING:
+        m->rest_phase = READY;
+        m->frame.show_weapon = 0;
+        return pair(m, 3, 19);
+    case READY:
+        return 1;
+    }
+    /* Repeated base cycles restart their clip at its first key. */
+    m->body.program = 0;
+    return select_body(m, 0);
+}
+
+int bfm_bedroom_motion_step_field(BfmBedroomMotion *motion, BfmBedroomAction action,
+                                  BfmGameplayRun *run, BfmBedroomStance stance,
+                                  BfmBedroomPose *frame)
+{
+    if (!motion || !frame || (unsigned)stance > BFM_BEDROOM_STANCE_SHEATHED) return 0;
     BfmBedroomMotion next = *motion;
-    if (!update(&next, action)) return 0;
+    int standing = run && stance != BFM_BEDROOM_STANCE_INACTIVE;
+    if (!update(&next, action, standing)) return 0;
+    if (standing) {
+        uint32_t saved_random = run->random_state;
+        if (!standing_field(&next, run, stance)) {
+            run->random_state = saved_random;
+            return 0;
+        }
+    } else {
+        next.rest_phase = RESTING;
+        next.rest_cycles = 0;
+    }
     *motion = next;
     *frame = next.frame;
     return 1;
+}
+
+int bfm_bedroom_motion_step(BfmBedroomMotion *motion, BfmBedroomAction action,
+                            BfmBedroomPose *frame)
+{
+    return bfm_bedroom_motion_step_field(motion, action, NULL, BFM_BEDROOM_STANCE_INACTIVE, frame);
 }
 
 static unsigned halfword(const uint8_t *p)
@@ -366,6 +535,19 @@ static int upload(const BfmBedroomMotion *m, uint32_t address, unsigned count, u
             for (unsigned x = 0; x < u->width; ++x)
                 tiles[u->y + y][u->x + x] = halfword(u->pixels + 2 * (y*u->width + x));
     }
+    return 1;
+}
+
+int bfm_bedroom_motion_external_face(BfmBedroomMotion *motion, unsigned slot,
+                                     int already_stepped, BfmBedroomPose *frame)
+{
+    if (!motion || !frame) return 0;
+    BfmBedroomMotion next = *motion;
+    uint32_t prior = next.face.program;
+    if (slot && !select_slot(&next,&next.face,next.face_bank,slot)) return 0;
+    if ((!already_stepped || prior != next.face.program) && !advance(&next,&next.face,0)) return 0;
+    frame->face_word = next.frame.face_word;
+    *motion = next;
     return 1;
 }
 

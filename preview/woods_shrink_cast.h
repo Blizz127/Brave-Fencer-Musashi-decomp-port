@@ -21,6 +21,8 @@ typedef struct {
     unsigned sound;             /* Emission edge; the wind-up has already spent its BP. */
     int player_lit;
     BfmBedroomLight lamps[3];   /* Replace daylight only when preparing the player's mesh. */
+    unsigned face_slot;
+    int finished; /* Ordinary ground recovery, distinct from a reaction interrupt. */
 } BfmWoodsShrinkFrame;
 
 BfmWoodsShrinkCast *bfm_woods_shrink_cast_open(const MusashiDiscMedia *disc,

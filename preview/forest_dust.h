@@ -55,6 +55,13 @@ int bfm_forest_project_effect_quad(const BfmForestCamera *camera,
                                    const int16_t corners[4][3], BfmForestDustCard *card);
 
 int bfm_forest_dust_load(BfmForestDust *dust, const MusashiDiscMedia *disc);
+/* A shared-slot room starts the particle on allocation and advances it at
+ * its own slot visit, including its first visit. Zero means it has retired. */
+int bfm_forest_foot_dust_start(BfmForestDustParticle *particle, BfmForestDustEmission event,
+                               const int16_t player[3], const int32_t eye[3], int yaw);
+int bfm_forest_foot_dust_advance(BfmForestDustParticle *particle);
+int bfm_forest_foot_dust_project(const BfmForestDust *dust, const BfmForestDustParticle *particle,
+                                 const BfmForestCamera *camera, unsigned slot, BfmForestDustCard *card);
 
 /* Call once per actor update, after resolving the player's world position.
  * The camera eye and yaw belong to the update that requests the effect. */

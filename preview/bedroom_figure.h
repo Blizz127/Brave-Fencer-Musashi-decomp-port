@@ -18,6 +18,7 @@ typedef struct {
     const BfmForestBlade *blade;
     const int8_t *lumina_guard, *lumina_blade;
     unsigned blade_tick, green_blade;
+    int16_t lumina_scale_q12; /* Drawn sword mesh only. Zero uses normal size. */
 } BfmBedroomBody;
 
 typedef struct {
@@ -28,17 +29,46 @@ typedef struct {
 /* Replace the three directional lights for the whole figure queue. The room
  * ambient light is common to Musashi and the other actors in the field. */
 int bfm_bedroom_figure_lights(BfmBedroomFigure *figure, const BfmBedroomLight lights[3]);
+void bfm_bedroom_figure_model_lighting(BfmBedroomFigure *figure,
+                                      const BfmForestModelLighting *lighting);
 
 BfmBedroomFigure *bfm_bedroom_figure_load(const MusashiDiscMedia *disc,
                      const uint8_t *scene, size_t scene_bytes, uint32_t room_address,
                      uint32_t face_address, uint32_t shadow_address);
 void bfm_bedroom_figure_free(BfmBedroomFigure *figure);
+/* Musashi's world model transform includes the supporting surface and pose
+ * pitch. Field attachments may use it even if the frame is not drawn. */
+int bfm_bedroom_figure_actor_root(const BfmBedroomRoot *actor, unsigned pitch,
+                                  BfmForestTransform *out);
 int bfm_bedroom_figure_prepare(BfmBedroomFigure *figure, const BfmBedroomView *view,
                      const BfmBedroomBody *body, uint16_t tiles[512][1024], uint32_t *pixels);
-/* Append the detached one-part sword and projected field quads to the prepared
- * figure queue, before its first draw. Both use the room's normal depth order. */
+enum { BFM_HERO_NORMAL_SCALE = 4096, BFM_HERO_MINI_SCALE = 1365 };
+/* World transform shared by a posed figure and its mounted effect anchors. */
+int bfm_bedroom_figure_attachment_root(const BfmBedroomRoot *actor, unsigned pitch,
+                                       unsigned body_scale_q12, const int animation_q12[3],
+                                       BfmForestTransform *out);
+/* The field selects the effective scale from the player's active status.
+ * Body position stays fixed and the shadow retains its own floor contact. */
+int bfm_bedroom_figure_prepare_scaled(BfmBedroomFigure *figure, const BfmBedroomView *view,
+                     const BfmBedroomBody *body, unsigned body_scale_q12,
+                     uint16_t tiles[512][1024], uint32_t *pixels);
+/* Independent pose scaling in model X, Y, Z. NULL uses unity on all axes. */
+int bfm_bedroom_figure_prepare_axes(BfmBedroomFigure *figure, const BfmBedroomView *view,
+                     const BfmBedroomBody *body, unsigned body_scale_q12, const int animation_q12[3],
+                     uint16_t tiles[512][1024], uint32_t *pixels);
+/* Submit a detached one-part sword, projected field quads or two-vertex
+ * additive lines while the room depth queue is still accepting geometry. */
 int bfm_bedroom_figure_add_fusion(BfmBedroomFigure *figure, const BfmBedroomView *view,
                      const BfmForestActor *blade, const BfmForestDustCard *cards, size_t count);
+/* Append the visible parts of an independently posed room actor in the field's
+ * depth order. The optional shadow uses the supplied ground projection. */
+int bfm_bedroom_figure_add_actor(BfmBedroomFigure *figure, const BfmBedroomView *view,
+                     const BfmForestActor *actor, const BfmBedroomRoot *ground,
+                     const uint8_t shadow[12], unsigned shadow_size);
+/* These models supply their own three directional lights and force the same
+ * translucency equation on every face. The room ambient still applies. */
+int bfm_bedroom_figure_add_lit_translucent(BfmBedroomFigure *figure, const BfmBedroomView *view,
+                     const BfmForestActor *actor, const BfmBedroomLight lights[3], unsigned blend);
 /* Submit a one-part actor whose shape has already been evaluated. The
  * geometry and mounted shadow record are borrowed for this call. */
 int bfm_bedroom_figure_add_morph(BfmBedroomFigure *figure, const BfmBedroomView *view,

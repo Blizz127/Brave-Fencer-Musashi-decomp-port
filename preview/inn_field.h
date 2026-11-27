@@ -12,6 +12,8 @@ BfmInnField *bfm_inn_field_open(const MusashiDiscMedia *disc, const uint8_t *tra
                                 BfmSaveRecord *record, uint16_t tiles[512][1024]);
 void bfm_inn_field_free(BfmInnField *inn);
 int bfm_inn_field_step(BfmInnField *inn, uint16_t pressed);
+struct BfmGameplayRun;
+int bfm_inn_field_step_run(BfmInnField *inn, uint16_t pressed, struct BfmGameplayRun *run);
 int bfm_inn_field_service(const BfmInnField *inn);
 int bfm_inn_field_draw(BfmInnField *inn, int show_dialogue, uint32_t pixels[240][320]);
 const BfmForestMessageFrame *bfm_inn_field_window(const BfmInnField *inn);

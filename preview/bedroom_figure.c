@@ -2,6 +2,7 @@
 #include "bedroom_visitor.h"
 #include "forest_raster.h"
 #include "forest_tether_trails.h"
+#include "woods_charged_fx.h"
 
 #include <limits.h>
 #include <math.h>
@@ -157,6 +158,18 @@ int bfm_bedroom_figure_lights(BfmBedroomFigure *figure, const BfmBedroomLight li
         }
     }
     return 1;
+}
+
+void bfm_bedroom_figure_model_lighting(BfmBedroomFigure *figure,
+                                      const BfmForestModelLighting *lighting)
+{
+    for (unsigned i = 0; i < 3; ++i) {
+        figure->ambient[i] = lighting->ambient[i];
+        for (unsigned j = 0; j < 3; ++j) {
+            figure->direction[i][j] = lighting->direction[i][j];
+            figure->color[i][j] = lighting->color[i][j];
+        }
+    }
 }
 
 static int light_matrix(BfmBedroomFigure *figure, const uint8_t *room)
@@ -322,7 +335,7 @@ static void collect_part(BfmBedroomFigure *figure, const BfmBedroomView *camera,
  * body. Separation from the mounting plane shrinks the footprint during a fall. */
 static void collect_shadow(BfmBedroomFigure *figure, const BfmBedroomView *view,
                            const Transform *eye, const BfmBedroomBody *body, const ShadowRect *rect,
-                           int size, uint32_t rgb)
+                           int size, unsigned divisor, uint32_t rgb)
 {
     const double turn = 6.28318530717958647693 / 4096;
     double yaw = -((int)((unsigned)body->heading & 4095)) * turn;
@@ -333,6 +346,7 @@ static void collect_shadow(BfmBedroomFigure *figure, const BfmBedroomView *view,
     memcpy(ground.t,body->shadow_position,sizeof(ground.t));
     int separation = body->shadow_position[1] - body->position[1];
     int scale = (768-separation)*size/768;
+    scale /= (int)divisor;
     if (scale <= 0 || scale > INT16_MAX) return;
     Transform posed = compose(eye,&ground);
     BfmBedroomView camera = {.focal=view->focal};
@@ -383,16 +397,19 @@ static void lumina_quad(const BfmBedroomBody *body, unsigned face, int16_t xyz[4
  * axis in actor coordinates. The two mounted outlines face the camera. */
 static void collect_blade(BfmBedroomFigure *figure, const BfmBedroomView *view,
                           const BfmBedroomBody *body, const Transform *root,
-                          const Transform *eye, int lumina)
+                          const Transform *eye, const int model_scale[3], int lumina)
 {
-    int8_t anchors[2][3];
+    int16_t anchors[2][3];
     BfmForestTransform player, halo;
-    memcpy(anchors, body->pose+(lumina ? 8 : 0), sizeof anchors);
+    const uint8_t *packed = body->pose + (lumina ? 8 : 0);
+    for (unsigned point = 0; point < 2; ++point)
+        for (unsigned axis = 0; axis < 3; ++axis)
+            anchors[point][axis] = (int16_t)floor_q12((int8_t)packed[3*point+axis] * model_scale[axis]);
     for (unsigned i = 0; i < 3; ++i) {
         for (unsigned j = 0; j < 3; ++j) player.rotation[i][j] = (int16_t)root->r[i][j];
         player.translation[i] = root->t[i];
     }
-    if (!bfm_forest_blade_transform(anchors, &player, view->eye, &halo)) return;
+    if (!bfm_forest_blade_transform_points(anchors, &player, view->eye, &halo)) return;
     Transform world;
     for (unsigned i = 0; i < 3; ++i) {
         for (unsigned j = 0; j < 3; ++j) world.r[i][j] = halo.rotation[i][j];
@@ -434,8 +451,90 @@ static int back_to_front(const void *a, const void *b)
     return x->order < y->order ? 1 : x->order > y->order ? -1 : 0;
 }
 
+static Transform model_transform(const BfmForestTransform *source)
+{
+    Transform transform;
+    for (unsigned i = 0; i < 3; ++i) {
+        for (unsigned j = 0; j < 3; ++j) transform.r[i][j] = source->rotation[i][j];
+        transform.t[i] = source->translation[i];
+    }
+    return transform;
+}
+
+int bfm_bedroom_figure_actor_root(const BfmBedroomRoot *actor, unsigned pose_pitch,
+                                  BfmForestTransform *out)
+{
+    if (!actor || !out || actor->normal[1] >= 0) return 0;
+    int normal[3];
+    for (unsigned k = 0; k < 3; ++k) {
+        normal[k] = actor->normal[k];
+        if (normal[k] < -4096 || normal[k] > 4096) return 0;
+    }
+    const double radians = 6.28318530717958647693 / 4096;
+    double yaw = (actor->yaw & 4095)*radians, pitch = (pose_pitch & 4095)*radians;
+    Transform root = {0}, slope = support_rotation(normal);
+    rotation((int)lround(4096*sin(pitch)), (int)lround(4096*cos(pitch)),
+             (int)lround(4096*sin(yaw)), (int)lround(4096*cos(yaw)), 0, 4096, root.r);
+    root = compose(&slope, &root);
+    for (unsigned i = 0; i < 3; ++i) {
+        for (unsigned j = 0; j < 3; ++j) out->rotation[i][j] = (int16_t)root.r[i][j];
+        out->translation[i] = actor->xyz[i];
+    }
+    return 1;
+}
+
+static int scale_factors(unsigned body_scale_q12, const int animation_q12[3], int scale[3])
+{
+    if (body_scale_q12 != BFM_HERO_NORMAL_SCALE && body_scale_q12 != BFM_HERO_MINI_SCALE)
+        return 0;
+    for (unsigned axis = 0; axis < 3; ++axis) {
+        int factor = animation_q12 ? animation_q12[axis] : BFM_HERO_NORMAL_SCALE;
+        if (factor <= 0 || factor > INT16_MAX) return 0;
+        scale[axis] = (int)body_scale_q12 * factor / 4096;
+    }
+    return 1;
+}
+
+static Transform scaled_root(const BfmForestTransform *player_root, const int scale[3])
+{
+    Transform root = model_transform(player_root);
+    /* Scale local columns while preserving the floor contact and translation. */
+    for (unsigned col = 0; col < 3; ++col)
+        if (scale[col] != BFM_HERO_NORMAL_SCALE)
+            for (unsigned row = 0; row < 3; ++row)
+                root.r[row][col] = floor_q12((int64_t)root.r[row][col] * scale[col]);
+    return root;
+}
+
+int bfm_bedroom_figure_attachment_root(const BfmBedroomRoot *actor, unsigned pitch,
+                                       unsigned body_scale_q12, const int animation_q12[3],
+                                       BfmForestTransform *out)
+{
+    int scale[3];
+    if (!scale_factors(body_scale_q12, animation_q12, scale) ||
+        !bfm_bedroom_figure_actor_root(actor, pitch, out)) return 0;
+    Transform model = scaled_root(out, scale);
+    for (unsigned i = 0; i < 3; ++i)
+        for (unsigned j = 0; j < 3; ++j) out->rotation[i][j] = (int16_t)model.r[i][j];
+    return 1;
+}
+
 int bfm_bedroom_figure_prepare(BfmBedroomFigure *figure, const BfmBedroomView *view,
                      const BfmBedroomBody *body, uint16_t tiles[512][1024], uint32_t *pixels)
+{
+    return bfm_bedroom_figure_prepare_scaled(figure, view, body, BFM_HERO_NORMAL_SCALE, tiles, pixels);
+}
+
+int bfm_bedroom_figure_prepare_scaled(BfmBedroomFigure *figure, const BfmBedroomView *view,
+                     const BfmBedroomBody *body, unsigned body_scale_q12,
+                     uint16_t tiles[512][1024], uint32_t *pixels)
+{
+    return bfm_bedroom_figure_prepare_axes(figure, view, body, body_scale_q12, NULL, tiles, pixels);
+}
+
+int bfm_bedroom_figure_prepare_axes(BfmBedroomFigure *figure, const BfmBedroomView *view,
+                     const BfmBedroomBody *body, unsigned body_scale_q12, const int animation_q12[3],
+                     uint16_t tiles[512][1024], uint32_t *pixels)
 {
     if (!figure) return 0;
     figure->count = figure->next = 0;
@@ -443,6 +542,8 @@ int bfm_bedroom_figure_prepare(BfmBedroomFigure *figure, const BfmBedroomView *v
     figure->surface.pixels = NULL;
     figure->x_min = 320; figure->x_max = -1;
     figure->y_min = 230; figure->y_max = 9;
+    int model_scale[3];
+    if (!scale_factors(body_scale_q12, animation_q12, model_scale)) return 0;
     if (!view || !tiles || !pixels || !body || !body->pose || body->pose_bytes < 256 ||
         view->focal <= 0 || view->focal > 65535 ||
         (body->face_word && (body->face_word & ~7u) != UINT32_C(0x40000000)))
@@ -467,31 +568,37 @@ int bfm_bedroom_figure_prepare(BfmBedroomFigure *figure, const BfmBedroomView *v
     }
     figure->surface = (BfmForestRaster){.tiles=(const uint16_t (*)[1024])tiles,
                         .pixels=(uint32_t (*)[320])pixels,.top=10,.bottom=229};
-    Transform root, eye;
-    const double radians = 6.28318530717958647693 / 4096;
-    double yaw = ((unsigned)body->heading & 4095)*radians;
-    double pitch = ((unsigned)body->pitch & 4095)*radians;
-    rotation((int)lround(4096*sin(pitch)), (int)lround(4096*cos(pitch)),
-             (int)lround(4096*sin(yaw)), (int)lround(4096*cos(yaw)), 0, 4096, root.r);
-    Transform slope = support_rotation(body->surface_normal);
-    memset(root.t, 0, sizeof(root.t));
-    root = compose(&slope,&root);
-    memcpy(root.t, body->position, sizeof(root.t));
-    memcpy(eye.r, view->axes, sizeof(eye.r));
-    memcpy(eye.t, view->translation, sizeof(eye.t));
+    BfmBedroomRoot placement = {.yaw=(unsigned)body->heading};
+    for (unsigned i = 0; i < 3; ++i) {
+        placement.xyz[i] = (int16_t)body->position[i];
+        placement.normal[i] = (int16_t)body->surface_normal[i];
+    }
+    BfmForestTransform player_root;
+    if (!bfm_bedroom_figure_actor_root(&placement, (unsigned)body->pitch, &player_root)) return 0;
+    Transform root = scaled_root(&player_root, model_scale), eye;
+    memcpy(eye.r, view->axes, sizeof eye.r);
+    memcpy(eye.t, view->translation, sizeof eye.t);
+    int mini = body_scale_q12 == BFM_HERO_MINI_SCALE;
     Transform base = compose(&eye,&root);
-    if (body->shadow_visible) collect_shadow(figure,view,&eye,body,&figure->shadow,8192,0x808080u);
+    if (body->shadow_visible)
+        collect_shadow(figure,view,&eye,body,&figure->shadow,8192,mini ? 3 : 1,0x808080u);
     for (unsigned i = 0; i < MUSASHI_FOREST_PLAYER_PARTS; ++i) {
         if (!(body->visible_parts & (UINT32_C(1) << i))) continue;
         Transform local = local_pose(body->pose+16,i);
+        if (i == 25 && body->lumina_scale_q12) {
+            for (unsigned row = 0; row < 3; ++row)
+                for (unsigned col = 0; col < 3; ++col)
+                    local.r[row][col] = floor_q12((int64_t)local.r[row][col] * body->lumina_scale_q12);
+        }
         Transform world = compose(&root,&local), posed = compose(&base,&local);
         BfmBedroomView camera = {.focal=view->focal};
         memcpy(camera.axes, posed.r, sizeof(camera.axes));
         memcpy(camera.translation, posed.t, sizeof(camera.translation));
         collect_part(figure,&camera,&world,musashi_forest_player_mesh_part(figure->mesh,i),i < 2);
     }
-    if (body->blade) collect_blade(figure, view, body, &root, &eye, 0);
-    if (body->lumina_guard && body->lumina_blade) collect_blade(figure, view, body, &root, &eye, 1);
+    if (!mini && body->blade) collect_blade(figure, view, body, &root, &eye, model_scale, 0);
+    if (!mini && body->lumina_guard && body->lumina_blade)
+        collect_blade(figure, view, body, &root, &eye, model_scale, 1);
     qsort(figure->faces,figure->count,sizeof(*figure->faces),back_to_front);
     return 1;
 }
@@ -508,25 +615,22 @@ static int reserve_faces(BfmBedroomFigure *figure, size_t extra)
     return 1;
 }
 
-static Transform model_transform(const BfmForestTransform *source)
-{
-    Transform transform;
-    for (unsigned i = 0; i < 3; ++i) {
-        for (unsigned j = 0; j < 3; ++j) transform.r[i][j] = source->rotation[i][j];
-        transform.t[i] = source->translation[i];
-    }
-    return transform;
-}
-
 int bfm_bedroom_figure_add_fusion(BfmBedroomFigure *figure, const BfmBedroomView *view,
                      const BfmForestActor *blade, const BfmForestDustCard *cards, size_t count)
 {
+    enum { effect_capacity = BFM_TETHER_CARDS + BFM_FOREST_DAMAGE_DIGIT_CARDS };
+    _Static_assert((unsigned)BFM_WOODS_CHARGED_CARDS <= effect_capacity,
+                   "Figure queue must admit a complete charged wave and ribbon");
     if (!figure || !view || figure->next || !figure->surface.pixels ||
-        count > BFM_TETHER_CARDS + BFM_FOREST_DAMAGE_DIGIT_CARDS || (count && !cards) || view->focal <= 0 ||
+        count > effect_capacity || (count && !cards) || view->focal <= 0 ||
         view->focal > UINT16_MAX) return 0;
     if (!count && !blade) return 1;
-    for (size_t i = 0; i < count; ++i)
-        if (cards[i].material.count != 4 || cards[i].bucket > INT_MAX) return 0;
+    for (size_t i = 0; i < count; ++i) {
+        const BfmForestRasterMaterial *material = &cards[i].material;
+        if (cards[i].bucket > INT_MAX || material->count < 2 || material->count > 4) return 0;
+        if (material->count == 2 && (material->textured || !material->translucent ||
+                                     ((material->page >> 5) & 3) != 1)) return 0;
+    }
     const MusashiForestPlayerPart *part = NULL;
     if (blade) {
         if (!blade->mesh || !blade->root || !blade->pose || blade->visible_parts != 1) return 0;
@@ -554,7 +658,8 @@ int bfm_bedroom_figure_add_fusion(BfmBedroomFigure *figure, const BfmBedroomView
         face->material = card->material;
         face->depth = (int)card->bucket;
         face->order = figure->count++;
-        for (unsigned k = 0; k < 4; ++k) include_pixel(figure, face->v[k].x, face->v[k].y);
+        for (unsigned k = 0; k < face->material.count; ++k)
+            include_pixel(figure, face->v[k].x, face->v[k].y);
     }
     qsort(figure->faces, figure->count, sizeof(*figure->faces), back_to_front);
     return 1;
@@ -571,7 +676,10 @@ void bfm_bedroom_figure_draw_to(void *context, int depth)
     if (!figure) return;
     while (figure->next < figure->count && figure->faces[figure->next].depth >= depth) {
         const FigureFace *face = &figure->faces[figure->next++];
-        bfm_forest_raster_face(&figure->surface,&face->material,face->v);
+        if (face->material.count == 2)
+            bfm_forest_raster_additive_line(&figure->surface, face->v);
+        else
+            bfm_forest_raster_face(&figure->surface, &face->material, face->v);
     }
     /* The room scanout maps five-bit channels to RGB using integer division.
      * The shared raster stores the same codes with bit replication. */
@@ -666,8 +774,85 @@ static void collect_actor_shadow(BfmBedroomFigure *figure, const BfmBedroomView 
             caster.position[k] = caster.shadow_position[k];
             if (ground) caster.shadow_normal[k] = ground->shadow_normal[k];
         }
-        collect_shadow(figure,view,eye,&caster,shadow,size,ink);
+        collect_shadow(figure,view,eye,&caster,shadow,size,1,ink);
     }
+}
+
+static int add_actor(BfmBedroomFigure *figure, const BfmBedroomView *view,
+                     const BfmForestActor *actor, const BfmBedroomRoot *ground,
+                     const uint8_t shadow[12], unsigned shadow_size,
+                     const BfmBedroomLight lights[3], unsigned blend)
+{
+    if (!figure || !view || !actor || !actor->mesh || !actor->pose || !actor->root ||
+        figure->next || !figure->surface.pixels || view->focal <= 0 || view->focal > UINT16_MAX)
+        return 0;
+    ShadowRect rect;
+    if (ground && (!shadow || !shadow_size || shadow_size > INT16_MAX || !read_shadow(&rect, shadow)))
+        return 0;
+    if (ground && ground->shadow_visible) {
+        for (unsigned k = 0; k < 3; ++k)
+            if (ground->shadow_normal[k] < -4096 || ground->shadow_normal[k] > 4096) return 0;
+        if (ground->shadow_normal[1] >= 0) return 0;
+    }
+
+    size_t faces = ground && ground->shadow_visible ? 1 : 0;
+    for (unsigned i = 0, mask = actor->visible_parts; mask; ++i, mask >>= 1) {
+        if (!(mask & 1)) continue;
+        if (i >= MUSASHI_FOREST_PLAYER_PARTS) return 0;
+        const MusashiForestPlayerPart *part = musashi_forest_player_mesh_part(actor->mesh, i);
+        if (!part || part->face_count > SIZE_MAX - faces) return 0;
+        faces += part->face_count;
+    }
+    if (!faces) return 1;
+    if (!reserve_faces(figure, faces)) return 0;
+
+    Transform eye;
+    memcpy(eye.r, view->axes, sizeof eye.r);
+    memcpy(eye.t, view->translation, sizeof eye.t);
+    Transform root = model_transform(actor->root);
+    Transform base = compose(&eye, &root);
+    if (ground && ground->shadow_visible)
+        collect_actor_shadow(figure, view, &eye, root.t, ground->yaw, ground, &rect, (int)shadow_size);
+    size_t first_body = figure->count;
+    int direction[3][3], color[3][3];
+    if (lights) {
+        memcpy(direction, figure->direction, sizeof direction);
+        memcpy(color, figure->color, sizeof color);
+        if (!bfm_bedroom_figure_lights(figure, lights)) return 0;
+    }
+    for (unsigned i = 0, mask = actor->visible_parts; mask; ++i, mask >>= 1) {
+        if (!(mask & 1)) continue;
+        Transform local = model_transform(&actor->pose->local[i]);
+        Transform world = compose(&root, &local), posed = compose(&base, &local);
+        BfmBedroomView camera = {.focal = view->focal};
+        memcpy(camera.axes, posed.r, sizeof camera.axes);
+        memcpy(camera.translation, posed.t, sizeof camera.translation);
+        collect_part(figure, &camera, &world, musashi_forest_player_mesh_part(actor->mesh, i), 0);
+    }
+    if (lights) {
+        memcpy(figure->direction, direction, sizeof direction);
+        memcpy(figure->color, color, sizeof color);
+        for (size_t i = first_body; i < figure->count; ++i) {
+            BfmForestRasterMaterial *material = &figure->faces[i].material;
+            material->translucent = 1;
+            material->page = (uint16_t)((material->page & ~0x60u) | (blend << 5));
+        }
+    }
+    qsort(figure->faces, figure->count, sizeof(*figure->faces), back_to_front);
+    return 1;
+}
+
+int bfm_bedroom_figure_add_actor(BfmBedroomFigure *figure, const BfmBedroomView *view,
+                     const BfmForestActor *actor, const BfmBedroomRoot *ground,
+                     const uint8_t shadow[12], unsigned shadow_size)
+{
+    return add_actor(figure, view, actor, ground, shadow, shadow_size, NULL, 0);
+}
+
+int bfm_bedroom_figure_add_lit_translucent(BfmBedroomFigure *figure, const BfmBedroomView *view,
+                     const BfmForestActor *actor, const BfmBedroomLight lights[3], unsigned blend)
+{
+    return lights && blend <= 3 && add_actor(figure, view, actor, NULL, NULL, 0, lights, blend);
 }
 
 int bfm_bedroom_figure_add_morph(BfmBedroomFigure *figure, const BfmBedroomView *view,

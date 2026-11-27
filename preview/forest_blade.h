@@ -23,6 +23,9 @@ int bfm_palace_blade_load(BfmForestBlade *blade, const uint8_t *scene, size_t by
 /* Orient the halo around the current weapon axis, toward the camera. */
 int bfm_forest_blade_transform(const int8_t anchors[2][3], const BfmForestTransform *root,
                                const int32_t eye[3], BfmForestTransform *transform);
+/* Field actors may scale each signed pose endpoint before orienting the halo. */
+int bfm_forest_blade_transform_points(const int16_t anchors[2][3], const BfmForestTransform *root,
+                                      const int32_t eye[3], BfmForestTransform *transform);
 int bfm_forest_blade_quad(const BfmForestBlade *blade, unsigned face, unsigned tick,
                            int16_t xyz[4][3], uint32_t rgb[4]);
 #endif

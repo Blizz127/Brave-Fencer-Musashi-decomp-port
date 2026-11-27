@@ -5,9 +5,16 @@
 #include "musashi_disc_media.h"
 
 typedef struct {
-    uint16_t prefix[8], digits[10];
-    int16_t slide[6], height;
-    uint8_t pulse[4], palette, count, frame, delta;
+    uint16_t prefix[8];
+    int16_t height;
+    uint8_t palette, count, frame, delta;
+} BfmWoodsRankLabel;
+
+typedef struct {
+    BfmWoodsRankLabel body, fusion, lumina;
+    uint16_t digits[10];
+    int16_t slide[6];
+    uint8_t pulse[4];
 } BfmWoodsBodyNotice;
 
 /* Load once from the US southern Woods field and its mounted executable.
@@ -17,6 +24,10 @@ int bfm_woods_body_notice_load(BfmWoodsBodyNotice *notice, const MusashiDiscMedi
 /* Start once on a Body rank gain of 1 to 9. Draw that first update before
  * stepping. Step once per subsequent 30 Hz field update. */
 void bfm_woods_body_notice_start(BfmWoodsBodyNotice *notice, unsigned delta);
+/* A single contact can increase both weapons. Each nonzero gain restarts
+ * that weapon's own display, independently of Body and the other weapon. */
+void bfm_woods_weapon_notice_start(BfmWoodsBodyNotice *notice, unsigned lumina_delta,
+                                   unsigned fusion_delta);
 void bfm_woods_body_notice_step(BfmWoodsBodyNotice *notice);
 void bfm_woods_body_notice_draw(const BfmWoodsBodyNotice *notice,
                                const uint16_t tiles[512][1024], uint32_t pixels[240][320]);

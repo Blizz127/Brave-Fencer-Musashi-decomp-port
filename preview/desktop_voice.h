@@ -47,10 +47,15 @@ void bfm_desktop_voice_landing(DesktopVoice *voice, struct BfmVillageImpactSound
 struct BfmCableSound;
 void bfm_desktop_voice_slider(DesktopVoice *voice, struct BfmCableSound *slider, int event);
 struct BfmBedroomEffects;
+struct BfmBedroomSound;
+/* Submit one field in issue order under a single SDL audio-device lock. */
+void bfm_desktop_voice_room_effects(DesktopVoice *voice, const struct BfmBedroomSound *events,
+                                    size_t count);
 void bfm_desktop_voice_room_effect(DesktopVoice *voice, struct BfmBedroomEffects *effects, unsigned command);
 struct BfmForestScore;
 /* The active room retains its score until the desktop stops. */
 void bfm_desktop_voice_room_skip(DesktopVoice *voice);
+void bfm_desktop_voice_release_room_effects(DesktopVoice *v);
 void bfm_desktop_voice_room_score(DesktopVoice *voice, struct BfmForestScore *score);
 struct ForestVoice;
 /* Supply the clocked field transport to SDL. Giant Forest provides its NTSC

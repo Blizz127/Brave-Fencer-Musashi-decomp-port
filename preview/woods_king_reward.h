@@ -8,6 +8,8 @@ typedef struct {
     uint8_t ranks[30][16];
     uint16_t figure_price;
     uint8_t figure_trend;
+    uint16_t caster_price;
+    uint8_t caster_trend;
 } BfmWoodsKingReward;
 
 int bfm_woods_king_reward_load(BfmWoodsKingReward *reward, const MusashiDiscMedia *disc,
@@ -17,4 +19,9 @@ int bfm_woods_king_reward_load(BfmWoodsKingReward *reward, const MusashiDiscMedi
 unsigned bfm_woods_king_reward_apply(const BfmWoodsKingReward *reward, unsigned experience,
                                      BfmSaveRecord *save);
 
+
+/* A purple caster defeated by a weapon unlocks the next figure and awards
+ * its own Body experience through the same rank table as the King. */
+unsigned bfm_woods_caster_reward_apply(const BfmWoodsKingReward *reward, unsigned experience,
+                                       BfmSaveRecord *save);
 #endif

@@ -32,6 +32,10 @@ int bfm_bedroom_entry(const MusashiDiscMedia *disc, const BfmSaveRecord *record,
                       BfmBedroomEntry *out);
 int bfm_castle_room_entry(const MusashiDiscMedia *disc, const uint8_t *transfer,
                       BfmBedroomEntry *entry);
+/* Validate the restored room without changing the checkpoint banks. For
+ * a saved-data restart, SC03 member 3 owns the later exit to the village. */
+int bfm_woods_restart_entry(const MusashiDiscMedia *disc, const BfmSaveRecord *record,
+                            BfmBedroomEntry *out);
 /* Mounted effect selector directory with its room-dependent sound rows. */
 uint8_t *bfm_archive_effect_data(const MusashiDiscMedia *disc, const char *archive,
                                  unsigned member, size_t *size);

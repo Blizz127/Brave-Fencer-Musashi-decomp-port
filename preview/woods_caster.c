@@ -1,5 +1,9 @@
 /* SPDX-License-Identifier: MIT */
 #include "woods_caster.h"
+#include "woods_caster_ring.h"
+#include "woods_charged_hit.h"
+#include "forest_damage_digits.h"
+#include "woods_satiate_actor.h"
 #include "bedroom_visitor.h"
 #include "field_waypoint.h"
 #include "forest_guard_contact.h"
@@ -29,7 +33,7 @@ typedef struct {
 
 typedef enum {
     OUTSIDE, WAIT_FOR_VIEW, APPEAR, SCAN, WALK, RUSH, VANISH,
-    HIDDEN, EMERGE, APPROACH, CAST, ABSORBED, RELEASING, HIT_REACTION
+    HIDDEN, EMERGE, APPROACH, CAST, ABSORBED, RELEASING, HIT_REACTION, DYING
 } Phase;
 
 typedef struct {
@@ -39,12 +43,20 @@ typedef struct {
     unsigned remaining, key;
     ClipId clip;
     int bound, tether_width;
-    unsigned meter;
+    unsigned meter, health, last_strike;
+    BfmBedroomRoot last_place;
+    int began_death, dropped;
 } Caster;
 
 struct BfmWoodsCaster {
     const uint8_t *scene;
     size_t bytes;
+    BfmWoodsSatiateActor *satiate;
+    unsigned shrink_reward, satiate_reward, cast_sound;
+    unsigned health, damage_scale, body_exp, sword_sound, satiate_sword_sound;
+    const uint8_t *damage_palette;
+    BfmForestDamageDigits digits[BFM_FOREST_STRIKE_SLOTS];
+    BfmWoodsCasterRings *rings;
     Caster actor[BFM_WOODS_CASTERS];
     Clip motion[CLIPS];
     BfmForestGuardBox body;
@@ -104,8 +116,10 @@ static int read_placements(BfmWoodsCaster *casters, const uint8_t *scene, size_t
 
 BfmWoodsCaster *bfm_woods_caster_load(const uint8_t *scene, size_t bytes)
 {
-    const uint8_t *profile = mounted(scene,bytes,UINT32_C(0x801c473c),46);
+    const uint8_t *profile = mounted(scene,bytes,UINT32_C(0x801c473c),50);
     if (!profile || u16le(profile) != 64 || !u16le(profile+2) || u16le(profile+44) != 13) return NULL;
+    const uint8_t *pink = mounted(scene,bytes,UINT32_C(0x801c9278),46);
+    if (!pink || u16le(pink+44) != 3) return NULL;
     const uint8_t *model = mounted(scene,bytes,u32le(profile+4),5*4);
     if (!model || u32le(model+16)) return NULL;
     for (unsigned i = 0; i < 4; ++i)
@@ -114,6 +128,15 @@ BfmWoodsCaster *bfm_woods_caster_load(const uint8_t *scene, size_t bytes)
     if (!shape || u32le(shape)) return NULL;
     BfmWoodsCaster *casters = calloc(1,sizeof(*casters));
     if (!casters) return NULL;
+    casters->health = u16le(profile);
+    casters->body_exp = u16le(profile+46);
+    casters->sword_sound = u16le(profile+20);
+    casters->satiate_sword_sound = u16le(pink+20);
+    casters->damage_scale = u16le(profile+48);
+    casters->damage_palette = mounted(scene,bytes,UINT32_C(0x8018a974),1);
+    if (!casters->damage_palette || !casters->damage_scale) goto fail;
+    casters->shrink_reward = u16le(profile+44);
+    casters->satiate_reward = u16le(pink+44);
     casters->scene = scene;
     casters->bytes = bytes;
     for (unsigned k = 0; k < 3; ++k) {
@@ -129,7 +152,9 @@ BfmWoodsCaster *bfm_woods_caster_load(const uint8_t *scene, size_t bytes)
     uint32_t table = u32le(profile+4), models[BFM_WOODS_CASTERS] = {table,table};
     casters->model = bfm_bedroom_visitor_load(scene,bytes,models,BFM_WOODS_CASTERS,UINT32_C(0x80189128));
     casters->ground = bfm_village_ground_open(scene,bytes,woods_room);
-    if (casters->model && casters->ground) return casters;
+    casters->satiate = bfm_woods_satiate_actor_load(scene,bytes);
+    casters->rings = bfm_woods_rings_load(scene,bytes);
+    if (casters->model && casters->ground && casters->satiate && casters->rings) return casters;
 fail:
     bfm_woods_caster_free(casters);
     return NULL;
@@ -138,6 +163,8 @@ fail:
 void bfm_woods_caster_free(BfmWoodsCaster *casters)
 {
     if (!casters) return;
+    bfm_woods_rings_free(casters->rings);
+    bfm_woods_satiate_actor_free(casters->satiate);
     bfm_bedroom_visitor_free(casters->model);
     bfm_village_ground_free(casters->ground);
     free(casters);
@@ -250,8 +277,22 @@ static void next_pose(const BfmWoodsCaster *casters, Caster *actor)
 }
 
 static void update_caster(BfmWoodsCaster *casters, Caster *actor, const BfmBedroomView *view,
-                          const BfmBedroomRoot *player)
+                          const BfmBedroomRoot *player, unsigned option)
 {
+    actor->began_death = actor->dropped = 0;
+    if (actor->phase == DYING) {
+        if (!actor->remaining) {
+            actor->began_death = 1;
+            actor->remaining = 16;
+        } else if (!--actor->remaining) {
+            actor->dropped = 1;
+            place_home(actor);
+            actor->yaw = actor->key = actor->last_strike = 0;
+            actor->health = casters->health;
+            enter(actor,ABSORBED,64,REST_POSE);
+        }
+        return;
+    }
     if (actor->bound) {
         /* Fusion keeps the contact key still while the visible body narrows. */
         int desired = (144-(int)actor->meter)*4096/144;
@@ -264,6 +305,8 @@ static void update_caster(BfmWoodsCaster *casters, Caster *actor, const BfmBedro
         int64_t range = distance2(actor->home,player->xyz);
         if (range > 1536*1536 && range < 1600*1600) {
             place_home(actor);
+            actor->health = option ? casters->health : casters->health*3/2;
+            actor->last_strike = 0;
             enter(actor,WAIT_FOR_VIEW,0,REST_POSE);
         }
         return;
@@ -289,7 +332,10 @@ static void update_caster(BfmWoodsCaster *casters, Caster *actor, const BfmBedro
     }
     if (actor->phase == HIT_REACTION) {
         if (--actor->remaining) next_pose(casters,actor);
-        else enter(actor,SCAN,32,REST_POSE);
+        else {
+            actor->last_strike = 0;
+            enter(actor,SCAN,32,REST_POSE);
+        }
         return;
     }
     if (actor->phase == WAIT_FOR_VIEW) {
@@ -340,8 +386,17 @@ static void update_caster(BfmWoodsCaster *casters, Caster *actor, const BfmBedro
         }
         break;
     case CAST:
+        if (range > 288*288) {
+            enter(actor,SCAN,32,REST_POSE);
+            break;
+        }
         if (actor->remaining >= 22) track(actor,error);
-        if (range > 288*288 || !--actor->remaining) enter(actor,SCAN,32,REST_POSE);
+        if (actor->remaining == 21 || actor->remaining == 11 || actor->remaining == 1) {
+            unsigned stage = (21-actor->remaining)/10;
+            bfm_woods_rings_emit(casters->rings,actor->xyz,actor->yaw,stage,option);
+            if (!stage) casters->cast_sound = 1314;
+        }
+        if (!--actor->remaining) enter(actor,SCAN,32,REST_POSE);
         break;
     default:
         break;
@@ -349,18 +404,76 @@ static void update_caster(BfmWoodsCaster *casters, Caster *actor, const BfmBedro
 }
 
 int bfm_woods_caster_step(BfmWoodsCaster *casters, const BfmBedroomView *view,
-                          const BfmBedroomRoot *player)
+                          const BfmBedroomRoot *player, BfmGameplayRun *run)
 {
     if (!casters || !view || !player) return 0;
+    if (!bfm_woods_satiate_actor_step(casters->satiate,view,player,run)) return 0;
+    for (unsigned k = 0; k < BFM_FOREST_STRIKE_SLOTS; ++k)
+        bfm_forest_damage_digits_advance(&casters->digits[k]);
+    casters->cast_sound = 0;
+    const BfmForestStatus *status = run ? &run->player : NULL;
+    unsigned option = status ? status->record[0x36] : 0;
     for (unsigned i = 0; i < BFM_WOODS_CASTERS; ++i)
-        update_caster(casters,&casters->actor[i],view,player);
+        update_caster(casters,&casters->actor[i],view,player,option);
+    bfm_woods_rings_step(casters->rings,player->xyz,bfm_woods_ring_mini_active(status),option);
     return 1;
+}
+
+int bfm_woods_caster_faces(const BfmWoodsCaster *casters, uint16_t tiles[512][1024])
+{
+    return casters && bfm_woods_satiate_actor_face(casters->satiate,tiles);
+}
+
+unsigned bfm_woods_caster_west_strike(const BfmWoodsCaster *casters)
+{
+    return casters ? bfm_woods_satiate_actor_strike(casters->satiate) : 0;
+}
+
+unsigned bfm_woods_caster_west_strike_yaw(const BfmWoodsCaster *casters)
+{
+    return casters ? bfm_woods_satiate_actor_strike_yaw(casters->satiate) : 0;
 }
 
 static int visible(const Caster *actor)
 {
     return actor->phase != OUTSIDE && actor->phase != WAIT_FOR_VIEW &&
-           actor->phase != HIDDEN && actor->phase != ABSORBED;
+           actor->phase != HIDDEN && actor->phase != ABSORBED && actor->phase != DYING;
+}
+
+static int add_numbers(const BfmWoodsCaster *casters, BfmBedroomFigure *figure,
+                       const BfmBedroomView *view)
+{
+    BfmForestCamera camera = {.projection=(uint16_t)view->focal};
+    for (unsigned i = 0; i < 3; ++i) {
+        for (unsigned j = 0; j < 3; ++j) camera.rotation[i][j] = (int16_t)view->axes[i][j];
+        camera.translation[i] = view->translation[i];
+    }
+    for (unsigned k = 0; k < BFM_FOREST_STRIKE_SLOTS; ++k) {
+        if (!casters->digits[k].amount) continue;
+        BfmForestDustCard cards[BFM_FOREST_DAMAGE_DIGIT_CARDS];
+        unsigned n = bfm_forest_damage_digits_project(&casters->digits[k],&camera,cards);
+        if (n && !bfm_bedroom_figure_add_fusion(figure,view,NULL,cards,n)) return 0;
+    }
+    return 1;
+}
+
+static void actor_scale(const Caster *actor, unsigned *width, unsigned *height)
+{
+    *width = *height = 4096;
+    if ((actor->bound && actor->tether_width >= 0) || actor->phase == RELEASING) {
+        *width = (unsigned)actor->tether_width;
+    } else if (actor->phase == HIDDEN || actor->phase == DYING) {
+        *width = 0;  /* Its independent floor shadow stays visible. */
+    } else if (actor->phase == APPEAR || actor->phase == EMERGE || actor->phase == VANISH) {
+        unsigned tick = actor->remaining;
+        if (actor->phase != VANISH && tick == 8) tick = 7;
+        BfmForestTransform phase;
+        bfm_forest_actor_root(tick*128,actor->xyz,&phase);
+        unsigned sine = (unsigned)phase.rotation[0][2];
+        unsigned cosine = (unsigned)phase.rotation[0][0];
+        *width = actor->phase == VANISH ? sine : cosine;
+        *height += 2*(actor->phase == VANISH ? cosine : sine);
+    }
 }
 
 int bfm_woods_caster_add(const BfmWoodsCaster *casters, BfmBedroomFigure *figure,
@@ -369,22 +482,9 @@ int bfm_woods_caster_add(const BfmWoodsCaster *casters, BfmBedroomFigure *figure
     if (!casters || !figure || !view) return 0;
     for (unsigned i = 0; i < BFM_WOODS_CASTERS; ++i) {
         const Caster *actor = &casters->actor[i];
-        if (!visible(actor) && actor->phase != HIDDEN) continue;
-        unsigned width = 4096, height = 4096;
-        if ((actor->bound && actor->tether_width >= 0) || actor->phase == RELEASING) {
-            width = (unsigned)actor->tether_width;
-        } else if (actor->phase == HIDDEN) {
-            width = 0;  /* Its independent floor shadow stays visible. */
-        } else if (actor->phase == APPEAR || actor->phase == EMERGE || actor->phase == VANISH) {
-            unsigned tick = actor->remaining;
-            if (actor->phase != VANISH && tick == 8) tick = 7;
-            BfmForestTransform phase;
-            bfm_forest_actor_root(tick*128,actor->xyz,&phase);
-            unsigned sine = (unsigned)phase.rotation[0][2];
-            unsigned cosine = (unsigned)phase.rotation[0][0];
-            width = actor->phase == VANISH ? sine : cosine;
-            height += 2*(actor->phase == VANISH ? cosine : sine);
-        }
+        if (!visible(actor) && actor->phase != HIDDEN && actor->phase != DYING) continue;
+        unsigned width, height;
+        actor_scale(actor,&width,&height);
         const Clip *clip = &casters->motion[actor->clip];
         uint32_t pose = u32le(clip->rows+actor->key*8) & ~UINT32_C(0x01000000);
         int position[3] = {actor->xyz[0],actor->xyz[1],actor->xyz[2]};
@@ -396,7 +496,23 @@ int bfm_woods_caster_add(const BfmWoodsCaster *casters, BfmBedroomFigure *figure
                                            pose,width,height,&ground))
             return 0;
     }
-    return 1;
+    return bfm_woods_satiate_actor_add(casters->satiate,figure,view) &&
+           bfm_woods_rings_add(casters->rings,figure,view) && add_numbers(casters,figure,view);
+}
+
+const BfmWoodsCasterRingHit *bfm_woods_caster_spell(const BfmWoodsCaster *casters)
+{
+    return casters ? bfm_woods_rings_hit(casters->rings) : NULL;
+}
+
+unsigned bfm_woods_caster_west_sound(const BfmWoodsCaster *casters)
+{
+    return casters ? bfm_woods_satiate_actor_sound(casters->satiate) : 0;
+}
+
+unsigned bfm_woods_caster_cast_sound(const BfmWoodsCaster *casters)
+{
+    return casters ? casters->cast_sound : 0;
 }
 
 static const Caster *active(const BfmWoodsCaster *casters, int target)
@@ -410,6 +526,8 @@ static const Caster *active(const BfmWoodsCaster *casters, int target)
 int bfm_woods_caster_root(const BfmWoodsCaster *casters, int target, int16_t root[3])
 {
     const Caster *actor = active(casters,target);
+    if (casters && target == BFM_WOODS_SATIATE_TARGET)
+        return bfm_woods_satiate_actor_root(casters->satiate,root);
     if (!actor || !root) return 0;
     memcpy(root,actor->xyz,sizeof(actor->xyz));
     return 1;
@@ -418,6 +536,8 @@ int bfm_woods_caster_root(const BfmWoodsCaster *casters, int target, int16_t roo
 int bfm_woods_caster_target(const BfmWoodsCaster *casters, int target, int16_t center[3])
 {
     const Caster *actor = active(casters,target);
+    if (casters && target == BFM_WOODS_SATIATE_TARGET)
+        return bfm_woods_satiate_actor_target(casters->satiate,center);
     if (!actor || !center) return 0;
     BfmForestTransform root;
     bfm_forest_actor_root((unsigned)actor->yaw,actor->xyz,&root);
@@ -432,6 +552,11 @@ int bfm_woods_caster_contact(const BfmWoodsCaster *casters, const int16_t start[
     int nearest = 0;
     int64_t best = INT64_MAX;
     int16_t best_hit[3], best_center[3];
+    /* The west placement precedes the two casters in the room roster. */
+    if (bfm_woods_satiate_actor_contact(casters->satiate,start,end,best_hit,best_center)) {
+        nearest = BFM_WOODS_SATIATE_TARGET;
+        best = distance2(start,best_hit);
+    }
     for (int target = 1; target <= BFM_WOODS_CASTERS; ++target) {
         const Caster *actor = active(casters,target);
         if (!actor || actor->bound) continue;
@@ -454,8 +579,155 @@ int bfm_woods_caster_contact(const BfmWoodsCaster *casters, const int16_t start[
     return nearest;
 }
 
+unsigned bfm_woods_caster_ability(const BfmWoodsCaster *casters, int target)
+{
+    if (!casters) return 0;
+    if (target == BFM_WOODS_SATIATE_TARGET) return casters->satiate_reward;
+    return target >= 1 && target <= BFM_WOODS_CASTERS ? casters->shrink_reward : 0;
+}
+
+static Caster *strike_target(BfmWoodsCaster *casters, unsigned target, unsigned event)
+{
+    if (!casters || !target || target > BFM_WOODS_CASTERS) return NULL;
+    Caster *actor = &casters->actor[target-1];
+    if (!visible(actor) || actor->bound || actor->phase == VANISH || actor->phase == RELEASING ||
+        actor->last_strike == event || !actor->health) return NULL;
+    return actor;
+}
+
+void bfm_woods_caster_number(BfmWoodsCaster *casters, const int16_t impact[3], unsigned amount)
+{
+    if (!casters || !impact || !amount || amount > UINT16_MAX) return;
+    for (unsigned k=0; k < BFM_FOREST_STRIKE_SLOTS; ++k) {
+        if (casters->digits[k].amount) continue;
+        bfm_forest_damage_digits_start_data(&casters->digits[k],casters->damage_palette,impact,(uint16_t)amount);
+        break;
+    }
+}
+
+static unsigned receive_strike(BfmWoodsCaster *casters, Caster *actor, unsigned event,
+                               unsigned raw_damage, unsigned heading, const int16_t impact[3])
+{
+    unsigned damage = raw_damage*casters->damage_scale/4096;
+    if (!damage) damage = 1;
+    bfm_woods_caster_number(casters,impact,damage);
+    actor->yaw = (int)((heading+2048u)&4095u);
+    actor->last_strike = event;
+    if (damage >= actor->health) {
+        actor->health = 0;
+        memcpy(actor->last_place.xyz,actor->xyz,sizeof actor->xyz);
+        actor->last_place.yaw = (unsigned)actor->yaw;
+        enter(actor,DYING,0,REST_POSE);
+    } else {
+        actor->health -= damage;
+        enter(actor,HIT_REACTION,casters->motion[HIT_POSE].length,HIT_POSE);
+        actor->key = 0;
+    }
+    return damage;
+}
+
+static unsigned blade_strike(BfmWoodsCaster *casters, unsigned target, unsigned event,
+                             unsigned raw_damage, unsigned hero_yaw, const int16_t start[3],
+                             const int16_t end[3], int16_t impact[3], int16_t normal[3], unsigned *sound)
+{
+    int blade_event = (event >= 1 && event <= 4) || event == 11 || event == 18 || event == 19;
+    if (!casters || !blade_event || !raw_damage || raw_damage > INT16_MAX || !start || !end || !impact)
+        return 0;
+    if (target == BFM_WOODS_SATIATE_TARGET && event == 11) {
+        if (!bfm_woods_satiate_actor_charged_contact(casters->satiate,start,end,impact,normal)) return 0;
+        bfm_woods_satiate_actor_charged_recoil(casters->satiate,hero_yaw);
+        if (sound) *sound = casters->satiate_sword_sound;
+        return BFM_WOODS_CASTER_RECOIL_ONLY;
+    }
+    Caster *actor = strike_target(casters,target,event);
+    if (!actor) return 0;
+    int16_t center[3];
+    BfmForestTransform root;
+    bfm_forest_actor_root((unsigned)actor->yaw,actor->xyz,&root);
+    BfmForestGuardBox shape = casters->body;
+    if (actor->phase == APPEAR || actor->phase == EMERGE) {
+        unsigned width, height;
+        actor_scale(actor,&width,&height);
+        /* The tagged contact box follows the completed warp transform. */
+        for (unsigned axis = 0; axis < 3; ++axis) {
+            int scale = (int)(axis == 1 ? height : width);
+            int reciprocal = (1<<24)/scale;
+            shape.low[axis] = (int16_t)(shape.low[axis]*scale >> 12);
+            shape.high[axis] = (int16_t)(shape.high[axis]*scale >> 12);
+            for (unsigned row = 0; row < 3; ++row) {
+                int completed = root.rotation[row][axis]*scale >> 12;
+                root.rotation[row][axis] = (int16_t)(completed*reciprocal >> 12);
+            }
+        }
+    }
+    if (!bfm_forest_guard_contact_point(&shape,&root,start,end,center,impact,normal)) return 0;
+    if (sound) *sound = casters->sword_sound;
+    return receive_strike(casters,actor,event,raw_damage,hero_yaw,impact);
+}
+
+unsigned bfm_woods_caster_sword(BfmWoodsCaster *casters, unsigned target,
+                                unsigned event, unsigned raw_damage, unsigned hero_yaw,
+                                const int16_t start[3], const int16_t end[3], int16_t impact[3])
+{
+    return blade_strike(casters,target,event,raw_damage,hero_yaw,start,end,impact,NULL,NULL);
+}
+
+unsigned bfm_woods_caster_charged_blade(BfmWoodsCaster *casters, unsigned target, unsigned strength,
+                                       unsigned heading, const int16_t from[3], const int16_t to[3],
+                                       int16_t impact[3], int16_t normal[3], unsigned *sound)
+{
+    return blade_strike(casters,target,11,strength,heading,from,to,impact,normal,sound);
+}
+
+unsigned bfm_woods_caster_charged_wave(BfmWoodsCaster *casters, unsigned target,
+                                      const BfmWoodsChargedHit *hit, BfmGameplayRun *run,
+                                      const int16_t wave_xyz[3], unsigned heading, int16_t impact[3])
+{
+    if (!casters || !hit || !run || !wave_xyz || !impact) return 0;
+    Caster *actor = NULL;
+    int16_t position[3];
+    if (target == BFM_WOODS_SATIATE_TARGET) {
+        if (!bfm_woods_satiate_actor_charged_target(casters->satiate,position)) return 0;
+    } else {
+        actor = strike_target(casters,target,11);
+        if (!actor) return 0;
+        memcpy(position,actor->xyz,sizeof position);
+    }
+    if (distance2(wave_xyz,position) >= 80*80) return 0;
+    unsigned power = bfm_woods_charged_wave_damage(hit,run);
+    if (!power) return 0;
+    memcpy(impact,position,sizeof position);
+    if (!actor) {
+        bfm_woods_satiate_actor_charged_recoil(casters->satiate,heading);
+        return BFM_WOODS_CASTER_RECOIL_ONLY;
+    }
+    return receive_strike(casters,actor,11,power,heading,impact);
+}
+
+int bfm_woods_caster_burst(const BfmWoodsCaster *casters, unsigned target, BfmBedroomRoot *where)
+{
+    if (!casters || target < 1 || target > BFM_WOODS_CASTERS || !where) return 0;
+    const Caster *actor = &casters->actor[target-1];
+    if (!actor->began_death) return 0;
+    *where = actor->last_place;
+    return 1;
+}
+
+int bfm_woods_caster_defeat(const BfmWoodsCaster *casters, unsigned target,
+                            int16_t where[3], unsigned *body_exp)
+{
+    if (!casters || target < 1 || target > BFM_WOODS_CASTERS || !where || !body_exp) return 0;
+    const Caster *actor = &casters->actor[target-1];
+    if (!actor->dropped) return 0;
+    memcpy(where,actor->last_place.xyz,sizeof actor->xyz);
+    *body_exp = casters->body_exp;
+    return 1;
+}
+
 int bfm_woods_caster_latch(BfmWoodsCaster *casters, int target)
 {
+    if (casters && target == BFM_WOODS_SATIATE_TARGET)
+        return bfm_woods_satiate_actor_latch(casters->satiate);
     const Caster *actor = active(casters,target);
     if (!actor || actor->bound) return 0;
     Caster *tethered = &casters->actor[target-1];
@@ -467,6 +739,10 @@ int bfm_woods_caster_latch(BfmWoodsCaster *casters, int target)
 
 void bfm_woods_caster_meter(BfmWoodsCaster *casters, int target, unsigned meter)
 {
+    if (casters && target == BFM_WOODS_SATIATE_TARGET) {
+        bfm_woods_satiate_actor_meter(casters->satiate,meter);
+        return;
+    }
     if (!casters || target < 1 || target > BFM_WOODS_CASTERS) return;
     Caster *actor = &casters->actor[target-1];
     if (actor->bound) actor->meter = meter > 128 ? 128 : meter;
@@ -474,6 +750,10 @@ void bfm_woods_caster_meter(BfmWoodsCaster *casters, int target, unsigned meter)
 
 void bfm_woods_caster_release(BfmWoodsCaster *casters, int target)
 {
+    if (casters && target == BFM_WOODS_SATIATE_TARGET) {
+        bfm_woods_satiate_actor_release(casters->satiate);
+        return;
+    }
     if (!casters || target < 1 || target > BFM_WOODS_CASTERS) return;
     Caster *actor = &casters->actor[target-1];
     if (!actor->bound) return;
@@ -484,10 +764,14 @@ void bfm_woods_caster_release(BfmWoodsCaster *casters, int target)
 
 int bfm_woods_caster_absorb(BfmWoodsCaster *casters, int target)
 {
+    if (casters && target == BFM_WOODS_SATIATE_TARGET)
+        return bfm_woods_satiate_actor_absorb(casters->satiate);
     if (!active(casters,target)) return 0;
     Caster *actor = &casters->actor[target-1];
     if (!actor->bound) return 0;
     actor->bound = 0;
+    actor->health = casters->health;
+    actor->last_strike = 0;
     /* Absorption rearms this placement at home. Its body and shadow stay
      * absent through the cooldown and until the player clears the bank. */
     place_home(actor);

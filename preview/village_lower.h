@@ -14,9 +14,14 @@ BfmVillageLower *bfm_village_lower_resume(const MusashiDiscMedia *disc, BfmBedro
 const uint8_t *bfm_village_lower_inn_transfer(const BfmVillageLower *lower);
 const BfmVillageMotion *bfm_village_lower_departure(const BfmVillageLower *lower);
 void bfm_village_lower_free(BfmVillageLower *lower);
+void bfm_village_lower_begin_hotelo_reveal(BfmVillageLower *lower);
 const BfmVillagePlayer *bfm_village_lower_player(const BfmVillageLower *lower);
 int bfm_village_lower_step(BfmVillageLower *lower, int x, int y, int square,
                           BfmForestMessage **opened);
+void bfm_village_lower_register_actors(BfmVillageLower *lower, BfmGameplayRun *run);
+void bfm_village_lower_step_ambient(BfmVillageLower *lower, BfmGameplayRun *run);
+int bfm_village_lower_step_gameplay(BfmVillageLower *lower, BfmGameplayRun *run,
+                                   BfmFieldInput field, BfmForestMessage **opened);
 int bfm_village_lower_step_field(BfmVillageLower *lower, BfmFieldInput field,
                                 BfmForestMessage **opened);
 void bfm_village_lower_close(BfmVillageLower *lower, unsigned answer);

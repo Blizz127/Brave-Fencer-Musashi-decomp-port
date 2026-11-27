@@ -5,6 +5,8 @@
 #include "village_ground.h"
 #include "village_residents.h"
 #include "woods_lily.h"
+#include "woods_carry.h"
+#include "woods_slope.h"
 
 #include <limits.h>
 #include <math.h>
@@ -35,18 +37,25 @@ struct BfmVillageMotion {
     int airborne, landed;
     BfmWoodsLilies *lilies;
     unsigned rider;
+    BfmWoodsSlope slope;
+    int sliding;
     struct {
         int active, stride, steering, pressed, held, previous_x, previous_y;
+        int hurt_fall;
+        int32_t side_q16, vertical_q16;
+        int inherited_velocity;
         unsigned neutral, phase_tick;
         enum BfmForestJumpPhase phase;
     } jump;
     int32_t fall_speed;
     uint16_t material;
+    const uint8_t *trail_gate;
     BfmBedroomRoot crossing;
     int64_t position[3];
     int32_t starting_speed, speed;
+    enum { FOOT_QUIET, FOOT_START, FOOT_STOP, FOOT_RUNNING, FOOT_BRAKING } foot;
     int walking, pending, message_due;
-    enum { NO_TALK, TALK_APPROACH, TALK_FACE, TALK_HOLD, READ_SIGN } talk;
+    enum { NO_TALK, TALK_APPROACH, TALK_FACE, TALK_HOLD, READ_SIGN, LENO_TURN, LENO_GESTURE } talk;
     unsigned talk_dispatch;
     int16_t talk_x, talk_z, resident_x, resident_z;
 };
@@ -242,18 +251,19 @@ fail:
     return NULL;
 }
 
-static int move(BfmVillageMotion *m, int speed, int vertical, int require_floor)
-{
-    ForestPlayerState velocity = {0};
-    velocity.field_2c.word = -speed;
+typedef struct {
+    BfmVillageGroundResult result;
+    BfmForestContact terrain;
+    unsigned rider;
+} SlopeSupport;
 
-    if (!bfm_forest_level_velocity(&velocity, 0, (int16_t)m->player.root.yaw, 0)) return 0;
-    /* Gravity can pass the horizontal speed bound on a long fall. */
-    velocity.velocity[1] = (uint32_t)vertical;
+static int displace(BfmVillageMotion *m, const uint32_t velocity[3], int require_floor,
+                    BfmWoodsMotionContact *contact, SlopeSupport *sliding)
+{
     int64_t next[3];
     BfmBedroomRoot candidate = m->player.root;
     for (int i = 0; i < 3; ++i) {
-        uint32_t v = velocity.velocity[i];
+        uint32_t v = velocity[i];
         int64_t signed_v = (int64_t)v - (v > INT32_MAX ? INT64_C(4294967296) : 0);
         next[i] = m->position[i] + signed_v;
         int64_t whole = high(next[i]);
@@ -261,29 +271,58 @@ static int move(BfmVillageMotion *m, int speed, int vertical, int require_floor)
         candidate.xyz[i] = (int16_t)whole;
     }
     if (require_floor) {
-        BfmForestContact floor;
-        BfmVillageGroundResult hit = m->airborne ?
+        BfmForestContact floor = {0};
+        if (sliding) {
+            /* A slide first meets actors along its proposed stride. Terrain
+             * then tests that corrected foot, independently of actor support. */
+            if (m->rider)
+                sliding->rider = bfm_woods_lilies_support(m->lilies, m->rider,
+                                                         m->player.root.xyz, candidate.xyz);
+            if (!sliding->rider) {
+                int stationary = !memcmp(m->player.root.xyz, candidate.xyz, sizeof candidate.xyz);
+                sliding->rider = bfm_woods_lilies_land(m->lilies, m->player.root.xyz,
+                                                      candidate.xyz, stationary);
+            }
+        }
+        BfmVillageGroundResult hit = !sliding && m->airborne ?
             bfm_village_ground_air(m->ground,m->player.root.xyz,candidate.xyz,&floor) :
             bfm_village_ground_wall_step(m->ground,m->player.root.xyz,candidate.xyz,&floor,
                                          &m->player.wall_contact);
-        if (m->lilies) {
+        if (sliding) {
+            sliding->result = hit;
+            sliding->terrain = floor;
+            if (hit != BFM_VILLAGE_GROUND_BLOCKED) m->rider = sliding->rider;
+            if (hit == BFM_VILLAGE_GROUND_AIR && sliding->rider) {
+                floor.normal[1] = -4096;
+                hit = BFM_VILLAGE_GROUND_FOOTING;
+            }
+        } else if (m->lilies) {
             /* Gravity advances independently of the regular movement vector.
              * A stationary fall uses the short support ray at the new foot. */
             unsigned pad;
-            if (m->airborne && !m->rider && vertical > 0) {
-                int short_probe = (!velocity.velocity[0] && !velocity.velocity[2]) ||
+            if (m->airborne && !m->rider && velocity[1] != 0 && velocity[1] <= INT32_MAX) {
+                int short_probe = (!velocity[0] && !velocity[2]) ||
                     !memcmp(m->player.root.xyz,candidate.xyz,sizeof candidate.xyz);
                 pad = bfm_woods_lilies_land(m->lilies,m->player.root.xyz,candidate.xyz,short_probe);
             } else {
                 pad = bfm_woods_lilies_support(m->lilies,m->rider,m->player.root.xyz,candidate.xyz);
             }
             if (pad) {
-                floor = (BfmForestContact){.height=candidate.xyz[1], .normal={0,-4096,0}};
+                floor = (BfmForestContact){.height=candidate.xyz[1], .normal={0,-4096,0}, .slope=0x2000};
                 hit = BFM_VILLAGE_GROUND_FOOTING;
             }
             if (hit != BFM_VILLAGE_GROUND_BLOCKED) m->rider = pad;
         }
         if (hit == BFM_VILLAGE_GROUND_BLOCKED) return 1;
+        if (contact) {
+            if (hit == BFM_VILLAGE_GROUND_FOOTING) {
+                contact->slope = floor.slope;
+                contact->material = floor.flags;
+                if (floor.slope == 0x8000) hit = BFM_VILLAGE_GROUND_AIR;
+            }
+            contact->landed = m->airborne && hit == BFM_VILLAGE_GROUND_FOOTING;
+            contact->lost_support = !m->airborne && hit == BFM_VILLAGE_GROUND_AIR;
+        }
         if (hit == BFM_VILLAGE_GROUND_FOOTING) {
             m->landed = m->airborne;
             m->airborne = 0;
@@ -302,6 +341,17 @@ static int move(BfmVillageMotion *m, int speed, int vertical, int require_floor)
     return 1;
 }
 
+static int move(BfmVillageMotion *m, int speed, int vertical, int require_floor)
+{
+    ForestPlayerState velocity = {0};
+    velocity.field_2c.word = -speed;
+
+    if (!bfm_forest_level_velocity(&velocity, 0, (int16_t)m->player.root.yaw, 0)) return 0;
+    /* Gravity can pass the horizontal speed bound on a long fall. */
+    velocity.velocity[1] = (uint32_t)vertical;
+    return displace(m,velocity.velocity,require_floor,NULL,NULL);
+}
+
 int bfm_village_motion_view_yaw(const int32_t eye[3], const int32_t target[3])
 {
     if (!eye || !target) return 0;
@@ -311,6 +361,8 @@ int bfm_village_motion_view_yaw(const int32_t eye[3], const int32_t target[3])
 static int turn(BfmVillageMotion *m)
 {
     int delta = (int)((m->turn-m->player.root.yaw+2048) & 4095)-2048;
+    /* A positive half-turn keeps its original direction in the greeting. */
+    if (m->talk == LENO_TURN && delta == -2048 && m->turn > m->player.root.yaw) delta = 2048;
     int step = delta/4;
     if (!step) step = delta/2;
     if (!step) step = delta;
@@ -374,7 +426,8 @@ static int talking_input(BfmVillageMotion *m, int camera, BfmBedroomAction *acti
     return 1;
 }
 
-static int ordinary_input(BfmVillageMotion *m, int x, int y, int camera, BfmBedroomAction *action)
+static int ordinary_input(BfmVillageMotion *m, int x, int y, int camera,
+                          BfmBedroomAction *action, int *standing)
 {
     int magnitude = bfm_pad_magnitude(x,y);
     int steer = magnitude >= 16;
@@ -394,13 +447,18 @@ static int ordinary_input(BfmVillageMotion *m, int x, int y, int camera, BfmBedr
     if (!steer && !m->airborne) {
         if (m->walking) {
             *action = BFM_BEDROOM_STAND;
+            m->foot = FOOT_STOP;
             m->brake = m->speed == 11*Q;
             m->brake_frame = 0;
             m->walking = 0;
         } else if (m->brake) {
-            if (++m->brake_frame < m->brake_count)
+            if (++m->brake_frame < m->brake_count) {
+                m->foot = FOOT_BRAKING;
                 return move(m,4*Q,0,1);
+            }
             m->brake = 0;
+        } else if (standing) {
+            *standing = 1;
         }
         return 1;
     }
@@ -409,12 +467,14 @@ static int ordinary_input(BfmVillageMotion *m, int x, int y, int camera, BfmBedr
         m->walking = 1;
         m->speed = m->starting_speed;
         *action = BFM_BEDROOM_WALK;
+        m->foot = FOOT_START;
         return 1;
     }
     int was_airborne = m->airborne;
     int speed = m->speed+Q/16;
     int limit = m->airborne ? 11*Q+5*Q/8 : 11*Q;
     m->speed = speed < limit ? speed : limit;
+    if (!m->airborne && m->speed >= 11*Q) m->foot = FOOT_RUNNING;
     if (steer) speed = speed*magnitude/127;
     if (!m->airborne && speed < 9*Q+Q/4) *action = BFM_BEDROOM_WALK;
     if (m->airborne && m->fall_speed < 31*Q) m->fall_speed += GRAVITY;
@@ -424,8 +484,46 @@ static int ordinary_input(BfmVillageMotion *m, int x, int y, int camera, BfmBedr
     return 1;
 }
 
-static int woods_input(BfmVillageMotion *m, int x, int y, int camera, BfmBedroomAction *action)
+static int slope_step(BfmVillageMotion *m, int x, int y, int camera)
 {
+    int steer = x || y;
+    if (steer) m->player.root.yaw = (unsigned)(camera + bfm_waypoint_heading(-x, y)) & 4095;
+    int32_t world[3], local[3];
+    bfm_woods_slope_move(&m->slope, steer, m->player.root.yaw, world, local);
+    const uint32_t delta[3] = {(uint32_t)world[0], (uint32_t)world[1], (uint32_t)world[2]};
+    SlopeSupport support = {0};
+    if (!displace(m, delta, 1, NULL, &support)) return 0;
+    if (support.result == BFM_VILLAGE_GROUND_BLOCKED) return 1;
+    BfmWoodsSlopeResult result = bfm_woods_slope_contact(&m->slope,
+        support.terrain.slope, support.rider != 0, support.terrain.normal);
+    if (result == BFM_WOODS_SLOPE_CONTINUE) return 1;
+    m->sliding = 0;
+    m->landed = 0;
+    if (result == BFM_WOODS_SLOPE_IDLE) {
+        m->speed = 0;
+        return bfm_bedroom_motion_reenter_stance(m->ordinary, -1);
+    }
+    m->airborne = 1;
+    m->rider = 0;
+    m->fall_speed = 0;
+    m->speed = -local[2];
+    if (m->speed > 11*Q + 5*Q/8) m->speed = 11*Q + 5*Q/8;
+    m->jump.inherited_velocity = 1;
+    m->jump.side_q16 = local[0];
+    m->jump.vertical_q16 = local[1];
+    m->jump.active = m->jump.hurt_fall = 1;
+    m->jump.stride = m->jump.steering = local[0] || local[2];
+    m->jump.phase = BFM_FOREST_JUMP_FALLING;
+    return bfm_bedroom_motion_reenter_fall(m->ordinary, m->jump.stride);
+}
+
+static int woods_input(BfmVillageMotion *m, int x, int y, int camera,
+                       BfmBedroomAction *action, int *standing)
+{
+    if (m->sliding) {
+        if (!m->slope.settling || !m->jump.pressed) return slope_step(m, x, y, camera);
+        m->sliding = 0;
+    }
     int power = bfm_pad_magnitude(x,y);
     if (power > 127) power = 127;
     int steer = power >= 16;
@@ -433,6 +531,8 @@ static int woods_input(BfmVillageMotion *m, int x, int y, int camera, BfmBedroom
         int recovering = m->jump.active;
         m->jump.active = 1;
         m->jump.stride = m->walking && steer && x == m->jump.previous_x && y == m->jump.previous_y;
+        m->jump.hurt_fall = m->jump.inherited_velocity = 0;
+        m->jump.side_q16 = m->jump.vertical_q16 = 0;
         m->jump.phase = BFM_FOREST_JUMP_RISING;
         m->jump.phase_tick = m->jump.neutral = 0;
         m->jump.steering = steer;
@@ -447,9 +547,11 @@ static int woods_input(BfmVillageMotion *m, int x, int y, int camera, BfmBedroom
             m->player.root.yaw = (unsigned)(camera+bfm_waypoint_heading(-x,y)) & 4095;
             m->jump.steering = 1;
             m->jump.neutral = 0;
-            m->speed += Q/16;
+            if (m->jump.inherited_velocity && m->speed < 8*Q) m->speed = 9*Q;
+            else m->speed += Q/16;
             if (m->speed > 11*Q+5*Q/8) m->speed = 11*Q+5*Q/8;
         } else if (++m->jump.neutral > 3) {
+            m->jump.side_q16 = m->jump.vertical_q16 = 0;
             m->jump.steering = 0;
             m->speed = 0;
         }
@@ -460,7 +562,14 @@ static int woods_input(BfmVillageMotion *m, int x, int y, int camera, BfmBedroom
         m->rider = 0;
         m->fall_speed += m->fall_speed < 0 && !m->jump.held ? 21*Q/8 : GRAVITY;
         if (m->fall_speed > 31*Q) m->fall_speed = 31*Q;
-        if (!move(m,speed,m->fall_speed,1)) return 0;
+        if (m->jump.inherited_velocity) {
+            ForestPlayerState velocity = {0};
+            velocity.field_24.word = m->jump.side_q16;
+            velocity.field_2c.word = -speed;
+            if (!bfm_forest_level_velocity(&velocity, 0, (int16_t)m->player.root.yaw, 0)) return 0;
+            velocity.velocity[1] = (uint32_t)m->fall_speed + (uint32_t)m->jump.vertical_q16;
+            if (!displace(m, velocity.velocity, 1, NULL, NULL)) return 0;
+        } else if (!move(m,speed,m->fall_speed,1)) return 0;
         ++m->jump.phase_tick;
         if (m->landed) {
             m->jump.phase = BFM_FOREST_JUMP_LANDING;
@@ -476,22 +585,66 @@ static int woods_input(BfmVillageMotion *m, int x, int y, int camera, BfmBedroom
     }
     if (m->jump.active && (++m->jump.phase_tick >= 10 || steer))
         m->jump.active = 0;
-    return ordinary_input(m,x,y,camera,action);
+    return ordinary_input(m,x,y,camera,action,m->jump.active ? NULL : standing);
 }
 
 static const uint8_t *exit_floor(const BfmVillageMotion *m)
 {
+    if (m->trail_gate && (m->player.wall_contact & 0xffu) == 3) {
+        const int16_t *foot = m->player.root.xyz;
+        int dy = foot[1] - read16(m->trail_gate + 2);
+        if (abs(foot[0] - read16(m->trail_gate)) <= 256 &&
+            abs(foot[2] - read16(m->trail_gate + 4)) <= 256 &&
+            dy - 3 <= 256 && dy + 1 >= -256) return m->outgoing;
+    }
     if (m->material == 0x106) return m->cleft;
-    if (m->material == (m->room == 0x80192b18u ? 0x105 : 5)) return m->outgoing;
+    if (m->room != UINT32_C(0x8018ea38) &&
+        m->material == (m->room == UINT32_C(0x80192b18) ? 0x105 : 5)) return m->outgoing;
     return NULL;
 }
 
-static int advance(BfmVillageMotion *m, int stick_x, int stick_y, int camera)
+/* Consume the preceding sweep's contact before the current action can replace it. */
+static void begin_field(BfmVillageMotion *m)
+{
+    BfmVillagePlayer *p = &m->player;
+    const uint8_t *door = p->phase == BFM_VILLAGE_CONTROL && !m->transfer ? exit_floor(m) : NULL;
+    m->foot = FOOT_QUIET;
+    p->events = 0;
+    p->wall_contact = 0;
+    if (door) {
+        m->transfer = door;
+        m->crossing = p->root;
+        p->destination = (uint16_t)read16(m->transfer);
+        p->entrance = m->transfer[2];
+        p->events |= BFM_VILLAGE_TRANSFER;
+    }
+}
+
+static int woods_air_pose(BfmVillageMotion *m)
+{
+    const BfmWoodsJumpPose *poses = bfm_woods_lilies_jump_poses(m->lilies);
+    enum BfmForestJumpPhase phase = m->jump.phase;
+    unsigned tick = m->jump.phase_tick;
+    if (!poses) return 0;
+    if (m->jump.hurt_fall && phase == BFM_FOREST_JUMP_FALLING) {
+        /* A hit restarts the interrupted gait's entry keys. The last one
+         * holds for an extra update before the normal falling loop. */
+        const BfmForestJumpPoses *clip = m->jump.stride ? &poses->stride : &poses->standing;
+        unsigned entry = clip->count[BFM_FOREST_JUMP_RISING];
+        if (tick <= entry) phase = BFM_FOREST_JUMP_RISING;
+        else tick = tick-entry+1;
+    }
+    return bfm_woods_jump_pose_apply(poses,m->jump.stride,phase,tick,
+                                    m->resident.data,m->resident.bytes,&m->player.pose);
+}
+
+static int advance(BfmVillageMotion *m, int stick_x, int stick_y, int camera,
+                   struct BfmGameplayRun *run, int idle_allowed)
 {
     BfmVillagePlayer *p = &m->player;
     BfmBedroomAction action = BFM_BEDROOM_NONE;
-    p->events = 0;
-    p->wall_contact = 0;
+    int standing = 0;
+    begin_field(m);
     switch (p->phase) {
     case BFM_VILLAGE_RIDE:
         ++p->movement;
@@ -575,16 +728,6 @@ static int advance(BfmVillageMotion *m, int stick_x, int stick_y, int camera)
         }
         break;
     case BFM_VILLAGE_CONTROL: {
-        /* The lower ridge support is marked 0x105; the returning side
-         * of the same seam uses the upper field's ordinary floor tag 5. */
-        const uint8_t *door = exit_floor(m);
-        if (!m->transfer && door) {
-            m->transfer = door;
-            m->crossing = p->root;
-            p->destination = (uint16_t)read16(m->transfer);
-            p->entrance = m->transfer[2];
-            p->events |= BFM_VILLAGE_TRANSFER;
-        }
         if (m->ingress) {
             if (m->ingress == 1) {
                 action = BFM_BEDROOM_WALK;
@@ -605,7 +748,8 @@ static int advance(BfmVillageMotion *m, int stick_x, int stick_y, int camera)
                     m->brake = 1;
                     m->brake_frame = m->brake_count - 12;
                 }
-                if (!ordinary_input(m,0,0,camera,&action)) return 0;
+                if (!ordinary_input(m,0,0,camera,&action,NULL)) return 0;
+                m->foot = FOOT_QUIET;
             }
             if (m->ingress == 6 + m->ingress_walk) {
                 p->controlled = 1;
@@ -614,29 +758,65 @@ static int advance(BfmVillageMotion *m, int stick_x, int stick_y, int camera)
         } else if (m->talk != NO_TALK) {
             if (!talking_input(m,camera,&action)) return 0;
         } else if (m->lilies) {
-            if (!woods_input(m,stick_x,stick_y,camera,&action)) return 0;
-        } else if (!ordinary_input(m,stick_x,stick_y,camera,&action)) return 0;
+            if (!woods_input(m,stick_x,stick_y,camera,&action,&standing)) return 0;
+        } else if (!ordinary_input(m,stick_x,stick_y,camera,&action,&standing)) return 0;
         break;
     }
     }
     if (!publish_root(m)) return 0;
     if (p->phase <= BFM_VILLAGE_IMPACT) return 1;
-    if (!bfm_bedroom_motion_step(m->ordinary,action,&p->pose)) return 0;
+    BfmBedroomStance stance = standing && idle_allowed && p->controlled && !m->transfer
+        ? BFM_BEDROOM_STANCE_IDLE : BFM_BEDROOM_STANCE_INACTIVE;
+    if (!bfm_bedroom_motion_step_field(m->ordinary,action,run,stance,&p->pose)) return 0;
     if (m->brake) {
         p->pose.pose = at(&m->resident,read32(m->brake_keys+4*m->brake_frame),256);
         p->pose.show_lumina = 0;
     }
-    if (m->lilies && m->jump.active)
-        return bfm_woods_jump_pose_apply(bfm_woods_lilies_jump_poses(m->lilies),m->jump.stride,
-            m->jump.phase,m->jump.phase_tick,m->resident.data,m->resident.bytes,&p->pose);
+    if (m->lilies && m->jump.active) return woods_air_pose(m);
+    return 1;
+}
+
+int bfm_village_motion_step_field(BfmVillageMotion *m, int x, int y, int camera_yaw,
+                                  struct BfmGameplayRun *run)
+{
+    if (!m || x < -127 || x > 127 || y < -127 || y > 127) return 0;
+    BfmVillageMotion next = *m;
+    if (!advance(&next,x,y,camera_yaw & 4095,run,1)) return 0;
+    *m = next;
     return 1;
 }
 
 int bfm_village_motion_step(BfmVillageMotion *m, int x, int y, int camera_yaw)
 {
-    if (!m || x < -127 || x > 127 || y < -127 || y > 127) return 0;
+    return bfm_village_motion_step_field(m,x,y,camera_yaw,NULL);
+}
+
+static int advance_platforms(BfmVillageMotion *m, int carry_rider)
+{
+    int16_t carry[3];
+    bfm_woods_lilies_tick(m->lilies,m->rider,m->player.root.xyz,carry);
+    if (!m->rider || !carry_rider) return 1;
+    /* The first airborne stride owns X/Z but still starts at the pad's
+     * current height. Guard recoil uses this same moving-platform pass. */
+    if (m->airborne) carry[0] = carry[2] = 0;
+    for (unsigned i = 0; i < 3; ++i) m->position[i] += (int64_t)carry[i]*Q;
+    return publish_root(m);
+}
+
+int bfm_village_motion_step_woods_field(BfmVillageMotion *m, int x, int y, int camera_yaw,
+    int cross_pressed, int cross_held, int actors_running, BfmWoodsLilies *lilies,
+    struct BfmGameplayRun *run, int idle_allowed)
+{
+    if (!m || !lilies || x < -127 || x > 127 || y < -127 || y > 127 ||
+        m->room != UINT32_C(0x8018ea38)) return 0;
     BfmVillageMotion next = *m;
-    if (!advance(&next,x,y,camera_yaw & 4095)) return 0;
+    next.lilies = lilies;
+    next.jump.pressed = cross_pressed;
+    next.jump.held = cross_held;
+    if (actors_running && !advance_platforms(&next,1)) return 0;
+    if (!advance(&next,x,y,camera_yaw & 4095,run,actors_running && idle_allowed)) return 0;
+    next.jump.previous_x = x;
+    next.jump.previous_y = y;
     *m = next;
     return 1;
 }
@@ -645,31 +825,316 @@ int bfm_village_motion_step_woods(BfmVillageMotion *m, int x, int y, int camera_
                                  int cross_pressed, int cross_held, int actors_running,
                                  BfmWoodsLilies *lilies)
 {
-    if (!m || !lilies || x < -127 || x > 127 || y < -127 || y > 127 ||
-        m->room != UINT32_C(0x8018ea38)) return 0;
+    return bfm_village_motion_step_woods_field(m,x,y,camera_yaw,cross_pressed,cross_held,
+                                               actors_running,lilies,NULL,0);
+}
+
+int bfm_village_motion_leno_greeting(BfmVillageMotion *m, BfmWoodsLilies *lilies,
+    int actors_running, const int16_t target[3], int speaking)
+{
+    if (!m || !target || !lilies || m->room != UINT32_C(0x8018ea38) ||
+        (m->talk != NO_TALK && m->talk != LENO_TURN && m->talk != LENO_GESTURE)) return 0;
     BfmVillageMotion next = *m;
     next.lilies = lilies;
-    next.jump.pressed = cross_pressed;
-    next.jump.held = cross_held;
-    int16_t carry[3] = {0};
-    if (actors_running) bfm_woods_lilies_tick(lilies,next.rider,next.player.root.xyz,carry);
-    if (next.rider && actors_running) {
-        /* The first airborne stride owns X/Z. Its height still starts at
-         * the pad's current top on this update. */
-        if (next.airborne) carry[0] = carry[2] = 0;
-        for (unsigned i = 0; i < 3; ++i) next.position[i] += (int64_t)carry[i]*Q;
-        if (!publish_root(&next)) return 0;
+    if (actors_running && !advance_platforms(&next, 0)) return 0;
+    begin_field(&next);
+
+    BfmBedroomAction action = BFM_BEDROOM_NONE;
+    if (next.talk == NO_TALK) {
+        if (!next.player.controlled) return 0;
+        /* The script interrupts locomotion at the earned meeting point. */
+        next.turn = (unsigned)bfm_waypoint_heading(next.player.root.xyz[0] - target[0],
+                                                   next.player.root.xyz[2] - target[2]);
+        next.talk_dispatch = 2;
+        next.talk = LENO_TURN;
+        next.player.controlled = 0;
+        next.player.root.busy = 1;
+        next.walking = next.brake = next.landed = next.speed = next.fall_speed = 0;
+        memset(&next.jump, 0, sizeof next.jump);
+        action = BFM_BEDROOM_ENTER;
     }
-    if (!advance(&next,x,y,camera_yaw & 4095)) return 0;
-    next.jump.previous_x = x;
-    next.jump.previous_y = y;
+    if (next.talk_dispatch) --next.talk_dispatch;
+    else if (next.talk == LENO_TURN) turn(&next);
+    if (speaking && next.talk == LENO_TURN) {
+        /* The greeting uses the resident's slot 33 collecting gesture. */
+        next.talk = LENO_GESTURE;
+        action = BFM_BEDROOM_COLLECT;
+    }
+    if (!publish_root(&next) ||
+        !bfm_bedroom_motion_step(next.ordinary, action, &next.player.pose)) return 0;
     *m = next;
     return 1;
+}
+
+int bfm_village_motion_end_leno_greeting(BfmVillageMotion *m)
+{
+    if (!m || (m->talk != LENO_TURN && m->talk != LENO_GESTURE)) return 0;
+    m->talk = NO_TALK;
+    m->player.controlled = 1;
+    m->player.root.busy = 0;
+    return 1;
+}
+
+static int carry_pose(BfmVillageMotion *m, const BfmWoodsCarryFrame *frame, int bracing)
+{
+    BfmBedroomPose *body = &m->player.pose;
+    if (frame->pose < 16) return 0;
+    const uint8_t *mounted = at(&m->resident,frame->pose-16,256);
+    if (!mounted || !bfm_bedroom_motion_external_face(m->ordinary,frame->face_slot,bracing,body)) return 0;
+    body->pose = mounted;
+    body->show_lumina = 0;
+    if (!bracing) body->show_weapon = 0;
+    return 1;
+}
+
+int bfm_village_motion_brace(BfmVillageMotion *m, const BfmWoodsCarryFrame *frame)
+{
+    return m && frame && (!frame->pose || carry_pose(m,frame,1));
+}
+
+int bfm_village_motion_carry(BfmVillageMotion *m, int x, int y, int camera, int actors_running,
+                             BfmWoodsLilies *lilies, const BfmWoodsCarryFrame *frame)
+{
+    if (!m || !frame || !lilies || !m->player.controlled || m->airborne ||
+        m->room != UINT32_C(0x8018ea38) || x < -127 || x > 127 || y < -127 || y > 127) return 0;
+    BfmVillageMotion next = *m;
+    next.lilies = lilies;
+    if (actors_running && !advance_platforms(&next,1)) return 0;
+    begin_field(&next);
+    if (frame->event == BFM_CARRY_LIFT) {
+        memset(&next.jump,0,sizeof next.jump);
+        next.walking = next.landed = next.brake = next.speed = next.fall_speed = 0;
+    }
+    if (frame->turn)
+        next.player.root.yaw = (unsigned)(camera+bfm_waypoint_heading(-x,y)) & 4095;
+    if (!move(&next,frame->speed_q16,0,1) || !publish_root(&next)) return 0;
+    if (next.airborne) {
+        next.speed = frame->speed_q16;
+        next.fall_speed = 0;
+        if (!bfm_bedroom_motion_step(next.ordinary,BFM_BEDROOM_FALL,&next.player.pose)) return 0;
+    } else if (frame->finished) {
+        if (!bfm_bedroom_motion_step(next.ordinary,BFM_BEDROOM_REST,&next.player.pose)) return 0;
+    } else if (!carry_pose(&next,frame,0)) return 0;
+    *m = next;
+    return 1;
+}
+
+/* Sample the support top at fixed X/Z on either side of the platform tick.
+ * A rising pad can meet stationary airborne feet while the hurt owns XYZ. */
+static unsigned lily_top(const BfmWoodsLilies *lilies, const int16_t feet[3], int16_t *height)
+{
+    const int16_t above[3] = {feet[0], INT16_MIN, feet[2]};
+    int16_t below[3] = {feet[0], INT16_MAX, feet[2]};
+    unsigned pad = bfm_woods_lilies_support(lilies,0,above,below);
+    *height = below[1];
+    return pad;
+}
+
+int bfm_village_motion_woods_reaction(BfmVillageMotion *m, BfmWoodsLilies *lilies,
+    BfmWoodsReactionMotion kind, int32_t dx_q16, int32_t dz_q16, BfmWoodsMotionContact *contact)
+{
+    if (!m || !lilies || !contact || !m->player.controlled || m->room != UINT32_C(0x8018ea38) ||
+        (unsigned)kind > BFM_WOODS_GUARD_RECOIL ||
+        (kind != BFM_WOODS_GUARD_RECOIL && (dx_q16 || dz_q16))) return 0;
+    BfmVillageMotion next = *m;
+    next.lilies = lilies;
+    if (kind == BFM_WOODS_HURT_START) {
+        next.sliding = 0;
+        if (!next.jump.active) {
+            next.jump.steering = next.walking;
+            next.jump.stride = next.walking;
+        }
+        if (!next.jump.steering) next.speed = 0;
+        next.fall_speed = 0;
+        next.brake = next.landed = next.walking = next.jump.active = 0;
+    }
+    const int16_t *feet = m->player.root.xyz;
+    int16_t before_y = 0;
+    unsigned before_pad = kind == BFM_WOODS_GUARD_RECOIL ? 0 : lily_top(lilies,feet,&before_y);
+    if (!advance_platforms(&next,kind == BFM_WOODS_GUARD_RECOIL)) return 0;
+    begin_field(&next);
+    BfmWoodsMotionContact hit = {0};
+    if (kind == BFM_WOODS_GUARD_RECOIL) {
+        next.speed = next.fall_speed = 0;
+        const uint32_t delta[3] = {(uint32_t)dx_q16,0,(uint32_t)dz_q16};
+        if (!displace(&next,delta,1,&hit,NULL)) return 0;
+    } else {
+        int16_t after_y;
+        unsigned after_pad = lily_top(lilies,feet,&after_y);
+        if (next.airborne && before_pad && after_pad == before_pad && before_y >= feet[1] &&
+            after_y <= feet[1] && after_y < before_y) {
+            hit.landed = 1;
+            hit.slope = 0x2000;
+            next.rider = after_pad;
+            next.airborne = 0;
+            next.material = 0;
+            next.player.root.normal[0] = next.player.root.normal[2] = 0;
+            next.player.root.normal[1] = -4096;
+        } else if (!next.airborne) {
+            /* Recheck support without accepting any new walking movement.
+             * A pad that has moved below the frozen feet no longer carries them. */
+            if (next.rider && (after_pad != next.rider || after_y > feet[1])) next.rider = 0;
+            const uint32_t still[3] = {0};
+            if (!displace(&next,still,1,&hit,NULL)) return 0;
+            memcpy(next.position,m->position,sizeof next.position);
+        }
+    }
+    if (!publish_root(&next)) return 0;
+    *m = next;
+    *contact = hit;
+    return 1;
+}
+
+int bfm_village_motion_ability_pose(BfmVillageMotion *m, unsigned face_slot, int finished)
+{
+    return m && bfm_bedroom_motion_ability_pose(m->ordinary, face_slot, finished, &m->player.pose);
+}
+
+int bfm_village_motion_combat_face(BfmVillageMotion *m, unsigned slot)
+{
+    return m && bfm_bedroom_motion_external_face(m->ordinary, slot, 0, &m->player.pose);
+}
+
+int bfm_village_motion_woods_cut(BfmVillageMotion *m, BfmWoodsLilies *lilies,
+                                unsigned cancel_countdown, int finishing, int *supported)
+{
+    if (!m || !lilies || !supported || !m->player.controlled || m->room != UINT32_C(0x8018ea38))
+        return 0;
+    m->lilies = lilies;
+    if (cancel_countdown) m->slope.remaining = cancel_countdown;
+    if (!advance_platforms(m, 1)) return 0;
+    begin_field(m);
+    *supported = 1;
+    if (finishing) return publish_root(m) && bfm_village_motion_woods_recover(m, 0);
+
+    /* The action retains the recoil's planted feet; ordinary directional
+     * input and jump are not sampled during the cut. */
+    const uint32_t still[3] = {0};
+    BfmWoodsMotionContact contact = {0};
+    if (!displace(m, still, 1, &contact, NULL) || !publish_root(m)) return 0;
+    if (contact.lost_support || m->airborne) {
+        *supported = 0;
+        if (m->speed > 0xba000) m->speed = 0xba000;
+        m->jump.stride = m->speed != 0;
+        if (!bfm_bedroom_motion_reenter_fall(m->ordinary, m->jump.stride) ||
+            !bfm_village_motion_woods_recover(m, 1)) return 0;
+        m->jump.inherited_velocity = 1;
+        return 1;
+    }
+    if (contact.slope & 0x4000) {
+        m->sliding = 1;
+        m->landed = m->brake = m->walking = 0;
+        bfm_woods_slope_begin(&m->slope, m->player.root.normal, m->slope.remaining);
+        *supported = 0;
+        return bfm_bedroom_motion_reenter_slide(m->ordinary) &&
+               bfm_bedroom_motion_step(m->ordinary, BFM_BEDROOM_NONE, &m->player.pose);
+    }
+    return 1;
+}
+
+int bfm_village_motion_woods_recover(BfmVillageMotion *m, int resume_fall)
+{
+    if (!m || !m->lilies || !m->player.controlled || m->room != UINT32_C(0x8018ea38)) return 0;
+    BfmVillageMotion next = *m;
+    int stride = next.jump.stride;
+    memset(&next.jump,0,sizeof next.jump);
+    next.walking = next.brake = next.landed = 0;
+    next.airborne = !!resume_fall;
+    next.fall_speed = 0;
+    if (next.airborne) {
+        next.rider = 0;
+        next.jump.active = next.jump.hurt_fall = 1;
+        next.jump.phase = BFM_FOREST_JUMP_FALLING;
+        next.jump.stride = stride;
+        next.jump.steering = next.speed != 0;
+        if (!woods_air_pose(&next)) return 0;
+    } else {
+        next.speed = 0;
+        if (!bfm_bedroom_motion_step(next.ordinary,BFM_BEDROOM_REST,&next.player.pose)) return 0;
+    }
+    *m = next;
+    return 1;
+}
+
+void bfm_village_motion_woods_condition(BfmVillageMotion *m, int tired)
+{
+    if (m) bfm_bedroom_motion_stance_condition(m->ordinary, tired);
+}
+
+int bfm_village_motion_woods_revive(BfmVillageMotion *m, int tired)
+{
+    if (!m || !m->lilies || !m->player.controlled || m->room != UINT32_C(0x8018ea38)) return 0;
+    BfmVillageMotion next = *m;
+    int16_t feet[3];
+    memcpy(feet, next.player.root.xyz, sizeof feet);
+    unsigned rider = next.rider ?
+        bfm_woods_lilies_support(next.lilies, next.rider, next.player.root.xyz, feet) : 0;
+    if (!rider) rider = bfm_woods_lilies_land(next.lilies, next.player.root.xyz, feet, 1);
+    next.rider = rider;
+    if (rider) {
+        for (unsigned i = 0; i < 3; ++i)
+            next.position[i] = (int64_t)feet[i]*Q + (next.position[i] & (Q-1));
+        if (!publish_root(&next)) return 0;
+    }
+    /* The standing terrain test extends the usual zero-length floor sweep
+     * by eight units downward. Its projected endpoint is used only to
+     * classify support; a stationary terrain hit does not snap the feet. */
+    if (feet[1] > INT16_MAX - 8) return 0;
+    int16_t end[3] = {feet[0], feet[1]+8, feet[2]};
+    BfmForestContact floor;
+    BfmVillageGroundResult hit = bfm_village_ground_step(next.ground, feet, end, &floor);
+    unsigned support = rider ? 1u : 0u;
+    if (hit == BFM_VILLAGE_GROUND_FOOTING) {
+        support |= floor.slope;
+        next.material = floor.flags;
+        memcpy(next.player.root.normal, floor.normal, sizeof floor.normal);
+    } else {
+        next.material = 0;
+        next.player.root.normal[0] = next.player.root.normal[2] = 0;
+        next.player.root.normal[1] = -4096;
+    }
+    next.landed = next.walking = next.brake = next.sliding = 0;
+    next.fall_speed = 0;
+    memset(&next.jump, 0, sizeof next.jump);
+    next.airborne = !support || support == 0x8000;
+    if (next.airborne) {
+        next.rider = 0;
+        next.jump.active = next.jump.hurt_fall = 1;
+        next.jump.phase = BFM_FOREST_JUMP_FALLING;
+        next.jump.inherited_velocity = 1;
+        next.jump.stride = next.jump.steering = next.speed != 0;
+        if (!bfm_bedroom_motion_reenter_fall(next.ordinary, next.jump.stride)) return 0;
+    } else if (support & 0x4000u) {
+        next.sliding = 1;
+        bfm_woods_slope_begin(&next.slope, floor.normal, 0);
+        if (!bfm_bedroom_motion_reenter_slide(next.ordinary)) return 0;
+    } else {
+        next.speed = 0;
+        if (!bfm_bedroom_motion_reenter_stance(next.ordinary, tired)) return 0;
+    }
+    *m = next;
+    return 1;
+}
+
+int bfm_village_motion_woods_sliding(const BfmVillageMotion *m)
+{
+    return m && m->sliding;
 }
 
 int bfm_village_motion_grounded(const BfmVillageMotion *m)
 {
     return m && m->player.controlled && !m->airborne;
+}
+
+BfmForestDustEmission bfm_village_motion_foot_dust(const BfmVillageMotion *m, unsigned actor_tick)
+{
+    if (!m || !m->lilies || !m->player.controlled || m->transfer || m->jump.active)
+        return BFM_FOREST_DUST_NONE;
+    if (m->foot == FOOT_START || (m->foot == FOOT_RUNNING && !(actor_tick & 7)))
+        return BFM_FOREST_DUST_TRAIL;
+    if (m->foot == FOOT_STOP || (m->foot == FOOT_BRAKING && !(actor_tick & 3)))
+        return BFM_FOREST_DUST_BRAKE;
+    return BFM_FOREST_DUST_NONE;
 }
 
 const uint8_t *bfm_village_motion_transfer(const BfmVillageMotion *m)
@@ -738,6 +1203,7 @@ int bfm_village_motion_place(BfmVillageMotion *m, const BfmBedroomRoot *root)
     memset(&next.jump,0,sizeof next.jump);
     next.speed = next.fall_speed = 0;
     next.material = 0;
+    next.player.wall_contact = 0;
     if (!publish_root(&next) ||
         !bfm_bedroom_motion_step(next.ordinary,BFM_BEDROOM_ENTER,&next.player.pose)) return 0;
     *m = next;
@@ -754,7 +1220,7 @@ static BfmVillageMotion *walking_field(const BfmVillageMotion *departed,
     if (departed) {
         const uint8_t *door = departed->transfer;
         if (!door || read16(door) != (upper ? 0x1011 : 0x1010) ||
-            entrance != 1 || door[2] != entrance) return NULL;
+            (entrance != 1 && !(upper && entrance == 2)) || door[2] != entrance) return NULL;
     } else if (!main || upper || entrance != 10) return NULL;
     BfmVillageMotion *m = calloc(1,sizeof *m);
     if (!m) return NULL;
@@ -781,7 +1247,9 @@ static BfmVillageMotion *walking_field(const BfmVillageMotion *departed,
     if (!velocity || read32(velocity+8) < 0u-11u*Q || !read32(velocity+8)) goto fail;
     m->starting_speed = (int32_t)(0u-read32(velocity+8));
     BfmBedroomRoot root = {0};
-    if (departed) root = departed->crossing;
+    /* The two streets meet on a continuous seam. The trail instead places
+     * the player at the receiving upper gate's anchor and heading. */
+    if (departed && entrance == 1) root = departed->crossing;
     else {
         for (int i = 0; i < 3; ++i) root.xyz[i] = (int16_t)read16(entry+16+2*i);
         root.yaw = (unsigned)read16(entry+22) & 4095;
@@ -830,10 +1298,33 @@ fail:
     return NULL;
 }
 
+int bfm_village_motion_trail_gate(BfmVillageMotion *m, unsigned story)
+{
+    if (!m || m->room != UINT32_C(0x8018ea38)) return 0;
+    /* The early Cleft visit registers a 512-unit exit actor. The tagged
+     * wall requests entry 0 only when the player's short foot probe also
+     * intersects this live volume. */
+    if (story >= 200) return 1;
+    const uint8_t *room = at(&m->scene, m->room, 0xcc);
+    const uint8_t *actor = room ? at(&m->scene, read32(room+0xb4), 20) : NULL;
+    if (!actor || read16(actor+6) != 363) return 0;
+    const uint8_t *exit = at(&m->scene, read32(actor+16), 36);
+    if (!exit || read32(exit) != UINT32_C(0x00021011)) return 0;
+    m->trail_gate = actor;
+    m->outgoing = exit;
+    return 1;
+}
+
+const BfmVillageGround *bfm_village_motion_ground(const BfmVillageMotion *m)
+{
+    return m ? m->ground : NULL;
+}
+
 BfmVillageMotion *bfm_village_motion_arrive(const BfmVillageMotion *departed, const uint8_t *scene,
                                             size_t bytes, uint32_t room_address)
 {
-    return walking_field(departed, NULL, 0, scene, bytes, room_address, 1);
+    const uint8_t *door = bfm_village_motion_transfer(departed);
+    return door ? walking_field(departed, NULL, 0, scene, bytes, room_address, door[2]) : NULL;
 }
 
 BfmVillageMotion *bfm_village_motion_resume(const uint8_t *scene, size_t bytes,

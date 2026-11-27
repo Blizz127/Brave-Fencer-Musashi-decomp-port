@@ -11,6 +11,13 @@ typedef struct {
 
 typedef struct {
     BfmForestImpactAnimation burst, strip;
+    int tilt;
+} BfmForestImpactArt;
+
+enum { BFM_FOREST_IMPACT_PROGRAM_BYTES = 172 };
+
+typedef struct {
+    BfmForestImpactAnimation burst, strip;
     int32_t origin[3], burst_origin[3];
     BfmForestTransform face;
     int16_t strip_rotation[3][3];
@@ -19,6 +26,14 @@ typedef struct {
 
 /* Decode the field effect's packed Q12 contact normal into its pointing angles. */
 void bfm_forest_impact_angles(const int16_t surface[3], int *pitch, int *yaw);
+
+/* The field owns the mounted tilt table, two sprite descriptions and cell
+ * sequences. They must remain valid while any impact is drawing. */
+int bfm_forest_impact_art_load(BfmForestImpactArt *art, const uint8_t *program,
+                               size_t bytes, unsigned tilt_index);
+int bfm_forest_impact_start_art(BfmForestImpact *impact, const BfmForestImpactArt *art,
+                                const int16_t contact[3], const int16_t normal[3],
+                                const int32_t camera_eye[3]);
 
 /* Issue once for a confirmed grounded Fusion strike. Contact and its outward
  * Q12 normal come from the resolved hit surface. The room owns the borrowed

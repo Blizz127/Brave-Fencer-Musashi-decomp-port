@@ -24,17 +24,10 @@ int bfm_forest_sweep_begin(BfmForestSweep *sweep, const BfmForestField *field)
     return 1;
 }
 
-/* Each participating logical pose supplies its two signed blade anchors.
- * Save transformed points so old ribbon edges do not turn or move with the
- * current pose. */
-static int sample_edge(const MusashiDiscMedia *disc, uint32_t pose,
-                       const BfmForestTransform *root, BfmForestSweepEdge *edge)
+int bfm_forest_sweep_edge(const BfmForestTransform *root, const int8_t anchors[2][3],
+                          BfmForestSweepEdge *edge)
 {
-    ForestPlayerArchive archive;
-    int8_t anchors[2][3];
-    if (!root || pose < 16 || !forest_player_archive_open(disc, &archive) ||
-        !forest_player_archive_read(&archive, pose - 16, (uint8_t *)anchors, sizeof anchors))
-        return 0;
+    if (!root || !anchors || !edge) return 0;
     for (unsigned i = 0; i < 2; ++i) {
         for (unsigned axis = 0; axis < 3; ++axis) {
             int32_t dot = 0;
@@ -46,6 +39,21 @@ static int sample_edge(const MusashiDiscMedia *disc, uint32_t pose,
     }
     return 1;
 }
+
+/* Each participating logical pose supplies its two signed blade anchors.
+ * Save transformed points so old ribbon edges do not turn or move with the
+ * current pose. */
+static int sample_edge(const MusashiDiscMedia *disc, uint32_t pose,
+                       const BfmForestTransform *root, BfmForestSweepEdge *edge)
+{
+    ForestPlayerArchive archive;
+    int8_t anchors[2][3];
+    if (!root || pose < 16 || !forest_player_archive_open(disc, &archive) ||
+        !forest_player_archive_read(&archive, pose - 16, (uint8_t *)anchors, sizeof anchors))
+        return 0;
+    return bfm_forest_sweep_edge(root, anchors, edge);
+}
+
 
 static int curved_midpoint(const BfmForestSweepEdge *a, const BfmForestSweepEdge *b,
                            unsigned divisor, BfmForestSweepEdge *out)

@@ -8135,6 +8135,71 @@
       "origin": "Independently reconstructed from the owned USA scene overlay. Advances motion and retires the actor after contact or when the counter reaches zero.",
       "source_sha256": "d3df1d037052f7db1ffcb16ecd2490dc8d7094a9460917fa624d6c861410fb33",
       "span_sha256": "525623c2636df43f2e00ac1eccd4c48cf2c1c6f03fb1e68250007cfcbffe2705"
+    },
+    {
+      "name": "func_8014C6F4",
+      "region": "sc01_0077",
+      "vram": 2148845300,
+      "size": 364,
+      "source": "src/overlays/main_0012/8014c6f4.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Owner clean-room MAIN/0012 recovery. The Giant Forest uses the identical routine to refresh the active target and the previous whole-foot coordinates.",
+      "source_sha256": "dbcec037f7d6f70e90dc0166799af004fc890c7e89832f667f0fcb4c1b3b8a5a",
+      "span_sha256": "d32599df553d6b756106898c2cbcbb8ab3a14a98d506da6a533bd1d406033a9a"
+    },
+    {
+      "name": "func_8014C860",
+      "region": "sc01_0077",
+      "vram": 2148845664,
+      "size": 44,
+      "source": "src/overlays/sc01_0077/8014c860.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the owned USA scene overlay. Sets the previous foot position and preserves it through the next player position update.",
+      "source_sha256": "2554f4b2f23216104ccac460be1fe44e8fe515f73625192043169c162638d70d",
+      "span_sha256": "fbe5d1cb953290886822e336a8aec386a365bcc625555fc048991b47703fc1a8"
+    },
+    {
+      "name": "func_8014C88C",
+      "region": "sc01_0077",
+      "vram": 2148845708,
+      "size": 60,
+      "source": "src/overlays/sc01_0077/8014c88c.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the owned USA scene overlay. Converts the player\u2019s three fixed-point coordinates to whole coordinates and updates the active foot target.",
+      "source_sha256": "2bc5c8ef2bc82636c47945c20becf366d817b7360a8de8ba4b04f3212519a06c",
+      "span_sha256": "eef128612e123f0fb8871ceb0ff677f745ec10aa77f79f81508474cf9555853f"
+    },
+    {
+      "name": "func_8014C8C8",
+      "region": "sc01_0077",
+      "vram": 2148845768,
+      "size": 40,
+      "source": "src/overlays/sc01_0077/8014c8c8.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the owned USA scene overlay. Copies the supplied foot position into the active target and clears its status.",
+      "source_sha256": "5dcfc3d1c9a3e1aaede7dacdd0d4a3c06d7666e1ef6ae0f1ea20d00f5a74b735",
+      "span_sha256": "a69f933c1c1c3da118608a048882f4a165e754d13bdec45032174de46c7c8bca"
+    },
+    {
+      "name": "func_8014C8F0",
+      "region": "sc01_0077",
+      "vram": 2148845808,
+      "size": 40,
+      "source": "src/overlays/sc01_0077/8014c8f0.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the owned USA scene overlay. At rescue entry, restores the prior foot position and its status as the target.",
+      "source_sha256": "795f7473e34881d4849fdd10a79b0d5f08ade65695871653ab08c43260d75c54",
+      "span_sha256": "b70a855bf592f5c68c075c3fdecac1ec392ae6033def1ac472e8c315d5261862"
     }
   ]
 }

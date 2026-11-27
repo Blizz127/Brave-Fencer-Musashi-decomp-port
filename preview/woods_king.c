@@ -8,6 +8,7 @@
 #include <string.h>
 
 enum { KING = 149, REMOVED_FLAG = 157, BITE_RAYS = 6 };
+enum { CHARGED_STRIKE = 11, SHRINK_SPELL = 30, STOMP = 31 };
 enum Reaction { NONE, SHRINK, CRUSH, STRUCK };
 enum Mode { START_IDLE, IDLE, START_BITE, BITE, HURT };
 struct BfmWoodsKing {
@@ -19,7 +20,8 @@ struct BfmWoodsKing {
     enum Mode mode;
     BfmWoodsKingPose pose;
     unsigned age, next_sample, remaining, shrink_ticks, flat_ticks, width, height;
-    unsigned completed_width, completed_height, last_strike, body_points;
+    unsigned completed_width, completed_height, last_event, body_points, hit_sound;
+    uint16_t contact_flags;
     enum Reaction pending;
     int retired, attempted;
 };
@@ -59,6 +61,8 @@ static int load_bite(BfmWoodsKing *king, const uint8_t *scene, size_t bytes)
     const uint8_t *body = profile ? mounted(scene,bytes,u32le(profile+8),16) : NULL;
     if (!rays || !shape || u32le(shape) || !body || u32le(body) || s16le(profile+46) < 0) return 0;
     king->body_points = (unsigned)s16le(profile+46);
+    king->hit_sound = u16le(profile+20);
+    king->contact_flags = u16le(profile+2);
     bfm_forest_actor_root(king->root.yaw, king->root.xyz, &king->world);
     for (unsigned k = 0; k < 3; ++k) {
         king->player_box.low[k] = s16le(shape+4+4*k);
@@ -179,18 +183,46 @@ int bfm_woods_king_slide(const BfmWoodsKing *king, const int16_t previous[3],
     return 1;
 }
 
-int bfm_woods_king_strike(BfmWoodsKing *king, unsigned cause,
-                          const int16_t from[3], const int16_t to[3])
+static int blade_contact(BfmWoodsKing *king, unsigned cause, const int16_t from[3],
+                         const int16_t to[3], int16_t hit[3], int16_t normal[3])
 {
-    if (!king || !from || !to || cause < 1 || cause > 8 || king->retired || king->flat_ticks ||
-        king->pending != NONE || king->last_strike == cause) return 0;
+    if (!king || !from || !to || king->retired || king->flat_ticks || king->last_event == cause)
+        return 0;
     BfmForestGuardBox box;
     BfmForestTransform basis;
     int16_t center[3];
     body_shape(king,&box,&basis);
-    if (!bfm_forest_guard_contact(&box,&basis,from,to,center)) return 0;
+    if (!bfm_forest_guard_contact_point(&box,&basis,from,to,center,hit,normal)) return 0;
     king->pending = STRUCK;
-    king->last_strike = cause;
+    king->last_event = cause;
+    return 1;
+}
+
+int bfm_woods_king_strike(BfmWoodsKing *king, unsigned cause,
+                          const int16_t from[3], const int16_t to[3])
+{
+    return king && king->pending == NONE && cause >= 1 && cause <= 8 &&
+           blade_contact(king,cause,from,to,NULL,NULL);
+}
+
+int bfm_woods_king_charged_blade(BfmWoodsKing *king, const int16_t from[3],
+                                 const int16_t to[3], int16_t hit[3], int16_t normal[3],
+                                 unsigned *sound)
+{
+    if (!king || (king->contact_flags & 0xc100) != 0x8000 ||
+        !blade_contact(king,CHARGED_STRIKE,from,to,hit,normal)) return 0;
+    if (sound) *sound = king->hit_sound;
+    return 1;
+}
+
+int bfm_woods_king_charged_wave(BfmWoodsKing *king, const int16_t spine[3], int16_t hit[3])
+{
+    if (!king || !spine || (king->contact_flags & 0xc100) != 0x8000 ||
+        king->retired || king->flat_ticks || king->last_event == CHARGED_STRIKE ||
+        distance2(king->root.xyz,spine) >= 80*80) return 0;
+    if (hit) memcpy(hit,king->root.xyz,sizeof king->root.xyz);
+    king->pending = STRUCK;
+    king->last_event = CHARGED_STRIKE;
     return 1;
 }
 
@@ -258,7 +290,7 @@ static void advance_pose(BfmWoodsKing *king, const int16_t player[3], BfmWoodsKi
     case HURT:
         if (!--king->remaining) {
             king->mode = START_IDLE;
-            king->last_strike = 0;
+            king->last_event = 0;
         } else king->age = king->next_sample++;
         break;
     }
@@ -281,7 +313,6 @@ int bfm_woods_king_step(BfmWoodsKing *king, const int16_t previous_player[3],
         event->sound = 1704;
     } else if (king->pending == SHRINK) {
         king->shrink_ticks = 256;
-        king->last_strike = 0;
     } else if (king->pending == STRUCK) {
         set_pose(king,HURT,BFM_KING_HURT,32);
     }
@@ -303,7 +334,10 @@ int bfm_woods_king_step(BfmWoodsKing *king, const int16_t previous_player[3],
 void bfm_woods_king_touch(BfmWoodsKing *king, const int16_t player[3])
 {
     if (king && player && !king->retired && king->shrink_ticks &&
-        distance2(king->root.xyz,player) < 48*48) king->pending = CRUSH;
+        distance2(king->root.xyz,player) < 48*48) {
+        king->pending = CRUSH;
+        king->last_event = STOMP;
+    }
 }
 
 const int16_t *bfm_woods_king_shrink_root(const BfmWoodsKing *king)
@@ -316,5 +350,6 @@ int bfm_woods_king_shrink(BfmWoodsKing *king)
 {
     if (!bfm_woods_king_shrink_root(king)) return 0;
     king->pending = SHRINK;
+    king->last_event = SHRINK_SPELL;
     return 1;
 }

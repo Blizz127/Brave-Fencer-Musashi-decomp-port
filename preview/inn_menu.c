@@ -15,6 +15,8 @@ void bfm_inn_menu_begin(BfmInnMenu *menu, const BfmSaveMenu *card)
         menu->card = *card;
         menu->card.page = BFM_SAVE_PICK;
         menu->writable = 1;
+    } else if (card && card->issue) {
+        menu->card.issue = card->issue;
     } else {
         menu->card.issue = card ? "The writable card could not be read." :
                                   "Open a writable card copy to save.";
@@ -114,7 +116,8 @@ void bfm_inn_menu_complete(BfmInnMenu *menu, const BfmSaveMenu *readback, const 
         readback->selected != menu->card.selected ||
         readback->rows[menu->card.selected].state != BFM_SAVE_VALID) {
         menu->page = BFM_INN_FILE_ERROR;
-        menu->notice = "Could not verify the saved file.";
+        menu->notice = error ? "Save unconfirmed. Retry or reopen." :
+                               "Could not verify the saved file.";
         return;
     }
     menu->card = *readback;

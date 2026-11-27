@@ -109,9 +109,9 @@ struct BfmForestWalk {
     BfmForestJumpPoses stride_poses;
     int stride_x, stride_y, stride_jump;
     BfmForestJump jump;
-    int16_t dry_bank[3];
+    int16_t dry_bank[3], entrance_foot[3];
     int has_dry_bank;
-    unsigned water_age;
+    unsigned water_age, rescue_ring;
     BfmForestSpeechActor speaker;
     BfmForestManual manual;
     BfmForestHud *hud;
@@ -348,6 +348,7 @@ BfmForestWalk *bfm_forest_walk_open(const MusashiDiscMedia *disc,const RoomTrans
     w->forest_live_update = 14;
     w->disc=disc; w->field=bfm_forest_enter(disc,entry,&w->actor,&w->yaw,w->cached);
     w->entrance_yaw=w->yaw;
+    memcpy(w->entrance_foot, w->cached, sizeof w->entrance_foot);
     w->look_x = -(int)lround(sin(w->yaw * radians) * 4096) / 64;
     w->look_z = -(int)lround(cos(w->yaw * radians) * 4096) / 32;
     ForestPlayerArchive archive;
@@ -1021,6 +1022,8 @@ static int tick_hurt(BfmForestWalk *w, unsigned received, int16_t hit_yaw,
         }
         if (scripted) return 2;
         if (w->jump.creek_slide) {
+            /* Re-entering the slide after damage seeds its motion from the incline. */
+            w->jump.slide_steer[0] = w->jump.slide_steer[1] = 0;
             w->actor.kind = w->actor.state = 4;
             w->actor.action = w->actor.phase = 1;
             return 2;
@@ -1103,6 +1106,19 @@ enum { CREEK_HEALTH_COST = 15, CREEK_SINK_UPDATES = 17 };
 static int recover_from_creek(BfmForestWalk *w)
 {
     if (w->actor.kind == 25 && w->actor.action == 4) {
+        if (w->rescue_ring <= 32) {
+            if (!bfm_forest_creek_rescue_foot(w->field, w->dry_bank, w->rescue_ring, w->cached)) {
+                ++w->rescue_ring;
+                return 1;
+            }
+        } else {
+            memcpy(w->cached, w->entrance_foot, sizeof w->cached);
+            w->yaw = w->entrance_yaw;
+        }
+        for (unsigned axis = 0; axis < 3; ++axis)
+            w->actor.position[axis] = (uint32_t)(uint16_t)w->cached[axis] << 16;
+        memcpy(w->actor.position_88, w->cached, sizeof w->cached);
+        memcpy(w->actor.position_90, w->cached, sizeof w->cached);
         w->water_age = 0;
         w->jump = (BfmForestJump){0};
         w->manual = (BfmForestManual){0};
@@ -1119,6 +1135,8 @@ static int recover_from_creek(BfmForestWalk *w)
     }
     w->actor.kind = w->actor.state = 25;
     if (w->water_age == 1) {
+        /* The incoming velocity survives the splash contact field and ends on rescue entry. */
+        memset(w->actor.velocity, 0, sizeof w->actor.velocity);
         /* Rescue retains the foot position preceding water contact as the guards' target. */
         memcpy(w->actor.position_15c, w->actor.position_90, sizeof w->actor.position_15c);
         w->actor.field_a8 = 0;
@@ -1127,7 +1145,7 @@ static int recover_from_creek(BfmForestWalk *w)
     if (w->water_age <= CREEK_SINK_UPDATES) {
         w->actor.position[1] += (4u << 16) + (w->water_age << 14);
         w->cached[1] = (int16_t)(w->actor.position[1] >> 16);
-        w->actor.action = w->actor.phase = w->water_age == CREEK_SINK_UPDATES ? 3 : 2;
+        w->actor.action = w->water_age == CREEK_SINK_UPDATES ? 3 : 2;
     } else {
         int settled = 1;
         for (unsigned axis = 0; axis < 3; ++axis) {
@@ -1138,7 +1156,8 @@ static int recover_from_creek(BfmForestWalk *w)
             if (w->cached[axis] != w->dry_bank[axis]) settled = 0;
         }
         restore_whole_position(w, w->cached);
-        w->actor.action = w->actor.phase = settled ? 4 : 3;
+        w->actor.action = settled ? 4 : 3;
+        if (settled) w->rescue_ring = 1;
     }
     ++w->water_age;
     update_root(w);
@@ -1178,7 +1197,8 @@ static int step_jump(BfmForestWalk *w, const BfmForestField *room, int launched,
         if (result == BFM_FOREST_JUMP_WATER) {
             w->water_age = 1;
             w->actor.kind = w->actor.state = 3;
-            w->actor.action = w->actor.phase = 2;
+            /* The water action advances while the movement phase stays active. */
+            w->actor.action = 2;
             w->actor.field_24.word = w->actor.local_y.word = w->actor.field_2c.word = 0;
             update_root(w);
             return bfm_forest_queue_hurt_number(w->field, w->cached, CREEK_HEALTH_COST);
@@ -1187,16 +1207,9 @@ static int step_jump(BfmForestWalk *w, const BfmForestField *room, int launched,
             w->blocked_x = x;
             w->blocked_y = y;
         } else {
-            if (w->actor.kind == 3) {
-                /* Releasing direction ends the three-update carry. A fresh
-                 * direction after that starts from the stopped speed. */
-                if (!w->jump.steering) w->actor.field_2c.word = 0;
-                if (result == BFM_FOREST_JUMP_LANDED) w->actor.action = 2;
-                if (result == BFM_FOREST_JUMP_FINISHED) {
-                    w->actor.kind = w->actor.state;
-                    w->actor.action = 1;
-                }
-            }
+            /* Releasing direction ends the three-update carry. A fresh
+             * direction after that starts from the stopped speed. */
+            if (w->actor.kind == 3 && !w->jump.steering) w->actor.field_2c.word = 0;
             if (result == BFM_FOREST_JUMP_LANDED && !previously_landed && !w->jump.walk_off)
                 *dust = BFM_FOREST_DUST_BRAKE;
             if (result == BFM_FOREST_JUMP_FINISHED && !w->jump.walk_off && (x || y))

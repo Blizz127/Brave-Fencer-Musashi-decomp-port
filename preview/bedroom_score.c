@@ -27,7 +27,7 @@ int bfm_bedroom_resident_data(const MusashiDiscMedia *disc, uint32_t address, ui
  * mounted US score tables. */
 BfmForestScore *bfm_bedroom_score_load(const MusashiDiscMedia *disc, unsigned selector)
 {
-    uint8_t request[6], command[16], header[8];
+    uint8_t request[6], command[16], header[4];
     if (selector > 255 || !bfm_bedroom_resident_data(disc, 0x80063138u + 6*selector, request, sizeof request)) return NULL;
     unsigned file = half(request), id = half(request + 4);
     const char *const archives[] = {"MAIN.CD", "SC01.CD", "SC02.CD", "SC03.CD"};
@@ -39,9 +39,13 @@ BfmForestScore *bfm_bedroom_score_load(const MusashiDiscMedia *disc, unsigned se
         if (file < count) {
             int village = i == 3 && file == 0 && (selector == 0x0f || selector == 0x10);
             int station = i == 3 && file == 67 && selector == 0x32;
-            if (!(village || station || (i == 1 && file == 75) || (i == 3 && file == 68)) || id < 0x100 || id >= 0x200 ||
+            int nightmare = i == 3 && file == 4 && selector == 0x87 &&
+                            half(request + 2) == 0x180 && id == 0x180;
+            if (selector == 0x87 && !nightmare) return NULL;
+            if (!(village || station || nightmare || (i == 1 && file == 75) || (i == 3 && file == 68)) || id < 0x100 || id >= 0x200 ||
                 !bfm_bedroom_resident_data(disc,0x80068b5cu+16*(id-0x100),command,sizeof command) ||
                 half(command)!=4 || half(command+2)>127) return NULL;
+            if (nightmare && half(command + 6) != 0) return NULL;
             if (i == 1) return bfm_library_score_load(disc, 37800, half(command+6), half(command+2));
             return bfm_castle_score_load(disc, 37800, file, half(command+6), half(command+2));
         }

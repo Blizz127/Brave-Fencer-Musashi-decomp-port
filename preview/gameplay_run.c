@@ -30,6 +30,65 @@ int bfm_gameplay_new_player(BfmGameplayRun *run, const MusashiDiscMedia *disc)
     return 1;
 }
 
+void bfm_gameplay_remember_saved(BfmGameplayRun *run, const BfmSaveRecord *record)
+{
+    if (!run || !record) return;
+    run->saved_data.state = *record;
+    memset(run->saved_data.state.destination, 0, sizeof run->saved_data.state.destination);
+    run->saved_data.present = 1;
+}
+
+int bfm_gameplay_remember_box(BfmGameplayRun *run, const BfmSaveRecord *record,
+                              const uint8_t *box_destination, size_t bytes)
+{
+    if (!run || !record || !box_destination || bytes < sizeof record->destination ||
+        (!box_destination[0] && !box_destination[1])) return 0;
+    BfmSaveRecord box = *record;
+    memcpy(box.destination, box_destination, sizeof box.destination);
+    run->memory_box.state = box;
+    run->memory_box.present = 1;
+    return 1;
+}
+
+int bfm_gameplay_has_checkpoint(const BfmGameplayRun *run, BfmCheckpointKind kind)
+{
+    if (!run) return 0;
+    if (kind == BFM_CHECKPOINT_SAVED_DATA) return run->saved_data.present;
+    if (kind == BFM_CHECKPOINT_MEMORY_BOX) return run->memory_box.present;
+    return 0;
+}
+
+int bfm_gameplay_woods_recovery(const BfmGameplayRun *run, BfmCheckpointKind kind,
+                                const uint8_t *scene, size_t scene_bytes, BfmSaveRecord *out)
+{
+    if (!out || !bfm_gameplay_has_checkpoint(run, kind)) return 0;
+    BfmSaveRecord restored;
+    if (kind == BFM_CHECKPOINT_MEMORY_BOX) {
+        if (!run->has_player) return 0;
+        restored = run->memory_box.state;
+        const uint8_t *wallet = run->player.record + 0x14;
+        uint32_t units = (uint32_t)wallet[0] | (uint32_t)wallet[1] << 8 |
+                         (uint32_t)wallet[2] << 16 | (uint32_t)wallet[3] << 24;
+        int64_t signed_units = units;
+        if (units > INT32_MAX) signed_units -= INT64_C(0x100000000);
+        uint32_t half = (uint32_t)(signed_units / 2);
+        for (unsigned i = 0; i < 4; ++i)
+            restored.progress[0x14 + i] = (uint8_t)(half >> (8 * i));
+    } else {
+        enum { RECOVERY_ROOM = 0x80189d6c - 0x80128158 };
+        restored = run->saved_data.state;
+        const uint8_t *story = restored.progress + 8;
+        if (story[0] < 10 || story[0] >= 200 || story[1] || story[2] || story[3] ||
+            !scene || scene_bytes < RECOVERY_ROOM + sizeof restored.destination) return 0;
+        const uint8_t *destination = scene + RECOVERY_ROOM;
+        if (destination[0] != 0x12 || destination[1] != 0x30 ||
+            destination[2] != 0 || destination[3] != 0) return 0;
+        memcpy(restored.destination, destination, sizeof restored.destination);
+    }
+    *out = restored;
+    return 1;
+}
+
 int bfm_gameplay_advance_figures(BfmGameplayRun *run)
 {
     if (!run || !run->has_player || run->banks.variables[FIGURE_CHAPTER] != 1) return 0;

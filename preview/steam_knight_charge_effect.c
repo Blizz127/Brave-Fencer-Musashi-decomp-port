@@ -41,8 +41,11 @@ void bfm_steam_charge_release(BfmSteamChargeEffects *effects, unsigned index, ui
 
 int bfm_steam_charge_enter(BfmSteamChargeEffects *effects, uint8_t equipped_scroll)
 {
-    if (!effects || !equipped_scroll || (equipped_scroll & 0x80)) return 0;
-    return allocate_slot(effects, BFM_STEAM_CHARGE_EMITTER) >= 0;
+    if (!effects || (equipped_scroll & 0x80)) return 0;
+    int index = allocate_slot(effects, BFM_STEAM_CHARGE_EMITTER);
+    if (index < 0) return 0;
+    effects->slots[index].sound_only = !equipped_scroll;
+    return 1;
 }
 
 static void emitter_step(BfmSteamChargeEffects *effects, unsigned index, unsigned gauge,
@@ -59,16 +62,20 @@ static void emitter_step(BfmSteamChargeEffects *effects, unsigned index, unsigne
         return;
     }
     if (gauge < 24) return;
-    int center[3];
-    for (unsigned i = 0; i < 3; ++i)
-        center[i] = floor_div(anchors[0][i] + anchors[1][i], 2);
-    for (unsigned i = 0; i < 3; ++i) {
-        int64_t dot = 0;
-        for (unsigned j = 0; j < 3; ++j) dot += model->rotation[i][j] * center[j];
-        slot->tip[i] = field_coord((int64_t)model->translation[i] + floor_div(dot, 4096));
+    if (!slot->sound_only) {
+        effects->centers |= UINT32_C(1) << index;
+        int center[3];
+        for (unsigned i = 0; i < 3; ++i)
+            center[i] = floor_div(anchors[0][i] + anchors[1][i], 2);
+        for (unsigned i = 0; i < 3; ++i) {
+            int64_t dot = 0;
+            for (unsigned j = 0; j < 3; ++j) dot += model->rotation[i][j] * center[j];
+            slot->tip[i] = field_coord((int64_t)model->translation[i] + floor_div(dot, 4096));
+        }
     }
     if (++slot->timer == 4) effects->play_charge = 1;
     if (gauge < 128) {
+        if (slot->sound_only) return;
         int child = allocate_slot(effects, BFM_STEAM_CHARGE_STREAK);
         if (child >= 0) effects->slots[child].parent = (uint8_t)index;
     } else {
@@ -146,12 +153,13 @@ int bfm_steam_charge_step_shared(BfmSteamChargeEffects *effects, BfmGameplayRun 
     if (!model || !anchors) {
         for (unsigned i = 0; i < BFM_STEAM_CHARGE_SLOTS; ++i) {
             const BfmSteamChargeSlot *slot = &effects->slots[i];
-            if (slot->kind == BFM_STEAM_CHARGE_EMITTER && slot->started && gauge >= 24) return 0;
+            if (slot->kind == BFM_STEAM_CHARGE_EMITTER && slot->started && !slot->sound_only && gauge >= 24) return 0;
             if (!model && slot->kind == BFM_STEAM_CHARGE_STREAK && !slot->started &&
                 effects->slots[slot->parent].kind == BFM_STEAM_CHARGE_EMITTER) return 0;
         }
     }
     effects->line_count = 0;
+    effects->centers = 0;
     effects->play_charge = effects->stop_charge = effects->play_full = 0;
     /* Higher newborn slots are reached in this pass; lower newborn slots
      * consume their first update, including their random draw, on the next. */

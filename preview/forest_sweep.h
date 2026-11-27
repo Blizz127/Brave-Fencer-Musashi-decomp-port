@@ -20,6 +20,10 @@ typedef struct {
 int bfm_forest_sweep_begin(BfmForestSweep *sweep, const BfmForestField *field);
 int bfm_forest_sweep_step(BfmForestSweep *sweep, const MusashiDiscMedia *disc,
                           uint32_t logical_pose, const BfmForestTransform *model);
+/* Project the tip and guard in the current pose prefix through the actor
+ * transform. Use the selected weapon's two packed signed triples. */
+int bfm_forest_sweep_edge(const BfmForestTransform *root, const int8_t anchors[2][3],
+                          BfmForestSweepEdge *out);
 /* Append a transformed tip and hilt. An absent edge retires the trail. */
 int bfm_forest_sweep_append(BfmForestSweep *sweep, const BfmForestSweepEdge *edge);
 unsigned bfm_forest_sweep_project(const BfmForestSweep *sweep, const BfmForestCamera *camera,

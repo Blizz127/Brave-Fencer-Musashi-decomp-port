@@ -132,20 +132,9 @@ int bfm_bedroom_entry(const MusashiDiscMedia *disc, const BfmSaveRecord *record,
     return 1;
 }
 
-int bfm_castle_room_entry(const MusashiDiscMedia *disc, const uint8_t *transfer, BfmBedroomEntry *entry)
+static int mounted_room_member(const MusashiDiscMedia *disc, unsigned group,
+                               unsigned member, unsigned resource)
 {
-    if (!disc || !transfer || !entry) return 0;
-    uint32_t target = word(transfer);
-    unsigned member, resource, group;
-    switch (target) {
-    case 0x3002: member = 8; resource = 57; group = 1; break;
-    case 0x43000: member = 4; resource = 53; group = 1; break;
-    case 0x3004: member = 74; resource = 123; group = 1; break;
-    case 0x000a1010: case 0x02011010: member = 1; resource = 179; group = 3; break;
-    case 0x02003025: member = 29; resource = 207; group = 3; break;
-    case 0x51011: case 0x02011011: member = 2; resource = 180; group = 3; break;
-    default: return 0;
-    }
     /* LIST contains the member rows for each archive in sequence, with a
      * one-row header per archive. Validate its global and local indexes. */
     static const char *const groups[] = {"MAIN.CD", "SC01.CD", "SC02.CD", "SC03.CD"};
@@ -162,6 +151,49 @@ int bfm_castle_room_entry(const MusashiDiscMedia *disc, const uint8_t *transfer,
         !musashi_disc_media_read_root_range(disc, "LIST.CD", 8 * (resource + group + 1),
                                             row, sizeof row, &total) ||
         word(row) != start / SECTOR || word(row + 4) != length) return 0;
+    return 1;
+}
+
+static int supported_field_member(const MusashiDiscMedia *disc, uint32_t target, unsigned *result)
+{
+    unsigned member, resource, group;
+    switch (target) {
+    case 0x3002: member = 8; resource = 57; group = 1; break;
+    case 0x43000: member = 4; resource = 53; group = 1; break;
+    case 0x3004: member = 74; resource = 123; group = 1; break;
+    case 0x000a1010: case 0x02011010: member = 1; resource = 179; group = 3; break;
+    case 0x02003025: member = 29; resource = 207; group = 3; break;
+    case 0x51011: case 0x02011011: case 0x00021011: member = 2; resource = 180; group = 3; break;
+    default: return 0;
+    }
+    if (!mounted_room_member(disc, group, member, resource)) return 0;
+    *result = member;
+    return 1;
+}
+
+int bfm_woods_restart_entry(const MusashiDiscMedia *disc, const BfmSaveRecord *record,
+                            BfmBedroomEntry *out)
+{
+    if (!disc || !record || !out) return 0;
+    uint32_t target = word(record->destination);
+    unsigned member;
+    if (target == 0x3012u) {
+        member = 3;
+        if (!mounted_room_member(disc, 3, member, 181)) return 0;
+    } else if (!supported_field_member(disc, target, &member)) {
+        return 0;
+    }
+    out->state = *record;
+    out->scene_member = member;
+    return 1;
+}
+
+int bfm_castle_room_entry(const MusashiDiscMedia *disc, const uint8_t *transfer, BfmBedroomEntry *entry)
+{
+    if (!disc || !transfer || !entry) return 0;
+    uint32_t target = word(transfer);
+    unsigned member;
+    if (!supported_field_member(disc, target, &member)) return 0;
     memcpy(entry->state.destination, transfer, sizeof(entry->state.destination));
     if (target == 0x3002u) entry->state.progress[8] = 2;
     /* The field player's room initialization enables world time from story ten. */

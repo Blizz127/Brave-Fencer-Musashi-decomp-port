@@ -104,6 +104,12 @@ int bfm_woods_shrink_cast_step(BfmWoodsShrinkCast *cast, BfmForestStatus *status
             }
         }
     }
+    if (cast->active && !cast->tick)
+        frame->face_slot = bfm_woods_shrink_motion_face_slot(cast->motion, cast->clip);
+    if (cast->restore_face && !input->interrupted) {
+        frame->face_slot = bfm_woods_shrink_motion_face_slot(cast->motion, BFM_SHRINK_RECOVER_FACE);
+        frame->finished = 1;
+    }
     unsigned equipped = status->record[0x49] & 127u;
     if (!frame->sound)
         frame->target_contact = bfm_woods_shrink_shot_step(&cast->shot, equipped, input->target_root);

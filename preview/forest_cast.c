@@ -76,12 +76,12 @@ int bfm_forest_cast_load(BfmForestCast *cast, const MusashiDiscMedia *disc,
     return 1;
 }
 
-BfmForestCastEvent bfm_forest_cast_tick(BfmForestCast *cast, BfmForestStatus *status,
-    int r1_held, int square_pressed, int moving, int blade_away)
+static BfmForestCastEvent step_cast(BfmForestCast *cast, BfmForestStatus *status,
+    int r1_held, int square_pressed, int moving, int blade_away, int charge_sampled)
 {
     if (!cast || !status || !cast->stance.count) return BFM_CAST_GROUND;
     uint8_t *charge = status->record + 0x47;
-    if (cast->active_stance_gain) {
+    if (cast->active_stance_gain && !charge_sampled) {
         unsigned held_charge = cast->action == BFM_CAST_STANCE && r1_held && !blade_away
                              ? *charge + cast->active_stance_gain : 0;
         *charge = held_charge < 128 ? (uint8_t)held_charge : 128;
@@ -90,7 +90,7 @@ BfmForestCastEvent bfm_forest_cast_tick(BfmForestCast *cast, BfmForestStatus *st
         if (++cast->key >= cast->throw_clip.count)
             return cast->action = BFM_CAST_GROUND;
     } else if (!r1_held || blade_away) {
-        *charge = 0;
+        if (!charge_sampled || cast->action == BFM_CAST_STANCE) *charge = 0;
         return cast->action = BFM_CAST_GROUND;
     } else if (square_pressed && cast->action == BFM_CAST_STANCE) {
         int full = *charge >= 128;
@@ -110,7 +110,7 @@ BfmForestCastEvent bfm_forest_cast_tick(BfmForestCast *cast, BfmForestStatus *st
         cast->moving = !!moving;
         cast->action = BFM_CAST_STANCE;
         /* The first forest visit precedes the faster-charge story upgrade. */
-        if (!cast->active_stance_gain)
+        if (!charge_sampled && !cast->active_stance_gain)
             *charge = *charge > 125 ? 128 : (uint8_t)(*charge + 3);
     }
     const BfmForestCastClip *clip = cast->action == BFM_CAST_THROW ? &cast->throw_clip :
@@ -125,4 +125,16 @@ BfmForestCastEvent bfm_forest_cast_tick(BfmForestCast *cast, BfmForestStatus *st
             cast->visible &= ~((UINT32_C(1) << 21) | (UINT32_C(1) << 22));
     }
     return key->launch ? BFM_CAST_LAUNCH : cast->action;
+}
+
+BfmForestCastEvent bfm_forest_cast_tick(BfmForestCast *cast, BfmForestStatus *status,
+    int r1_held, int square_pressed, int moving, int blade_away)
+{
+    return step_cast(cast, status, r1_held, square_pressed, moving, blade_away, 0);
+}
+
+BfmForestCastEvent bfm_forest_cast_after_charge(BfmForestCast *cast, BfmForestStatus *status,
+    int r1_held, int square_pressed, int moving, int blade_away)
+{
+    return step_cast(cast, status, r1_held, square_pressed, moving, blade_away, 1);
 }

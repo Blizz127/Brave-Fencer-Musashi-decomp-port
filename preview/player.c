@@ -12,6 +12,7 @@
 #include "inn_field.h"
 #include "forest_walk.h"
 #include "gameplay_run.h"
+#include "field_waypoint.h"
 #include "bedroom.h"
 
 #include <stdio.h>
@@ -24,6 +25,13 @@ enum { LOADING_VISIBLE_FIELDS = 115, CARD_READ_VISIBLE_FIELDS = 90 };
 enum { PAD_START = 1u << 3, PAD_UP = 1u << 4, PAD_RIGHT = 1u << 5, PAD_DOWN = 1u << 6,
        PAD_LEFT = 1u << 7, PAD_L2 = 1u << 8, PAD_R2 = 1u << 9, PAD_TRIANGLE = 1u << 12,
        PAD_CIRCLE = BFM_FOREST_CIRCLE, PAD_CROSS = BFM_FOREST_CROSS, PAD_SQUARE = BFM_FOREST_SQUARE };
+
+typedef struct DesktopController {
+    SDL_GameController *handle;
+    SDL_JoystickID id;
+    uint16_t buttons;
+    struct DesktopController *next;
+} DesktopController;
 
 typedef struct Player {
     MusashiDiscMedia *disc;
@@ -39,10 +47,9 @@ typedef struct Player {
     SDL_Window *window;
     SDL_Renderer *renderer;
     SDL_Texture *texture;
-    SDL_GameController *controller;
-    SDL_JoystickID controller_id;
+    DesktopController *controllers, *controller;
     unsigned char keys[SDL_NUM_SCANCODES];
-    uint16_t digital, held, pressed;
+    uint16_t digital, held, pressed, keyboard_pressed;
     int axis_x, axis_y, axis_l2, axis_r2;
     const char *card_path;
     BfmInnProfile *save_copy;
@@ -98,40 +105,126 @@ static int field_axis(int negative, int positive, int analog) {
     return analog * 127 / (analog < 0 ? 32768 : 32767);
 }
 
-static void update_input(Player *p) {
+static uint16_t controller_mask(const Player *p) {
     uint16_t current = p->digital;
-    if (p->keys[SDL_SCANCODE_Q] || p->axis_l2 > 16000) current |= PAD_L2;
-    if (p->keys[SDL_SCANCODE_E] || p->axis_r2 > 16000) current |= PAD_R2;
+    if (p->axis_l2 > 16000) current |= PAD_L2;
+    if (p->axis_r2 > 16000) current |= PAD_R2;
+    if (p->axis_y < -16384) current |= PAD_UP;
+    if (p->axis_y > 16384) current |= PAD_DOWN;
+    if (p->axis_x < -16384) current |= PAD_LEFT;
+    if (p->axis_x > 16384) current |= PAD_RIGHT;
+    return current;
+}
+
+static void clear_presses(Player *p) {
+    p->pressed = p->keyboard_pressed = 0;
+}
+
+static void update_input(Player *p, int keyboard_event) {
+    uint16_t current = controller_mask(p);
+    if (p->keys[SDL_SCANCODE_Q]) current |= PAD_L2;
+    if (p->keys[SDL_SCANCODE_E]) current |= PAD_R2;
     if (p->keys[SDL_SCANCODE_RSHIFT]) current |= BFM_FOREST_R1;
     if (p->keys[SDL_SCANCODE_RETURN] || p->keys[SDL_SCANCODE_KP_ENTER]) current |= PAD_START;
     if (p->keys[SDL_SCANCODE_SPACE] || p->keys[SDL_SCANCODE_X]) current |= PAD_CROSS;
     if (p->keys[SDL_SCANCODE_Z] || p->keys[SDL_SCANCODE_BACKSPACE]) current |= PAD_CIRCLE;
-    if (p->keys[SDL_SCANCODE_UP] || p->axis_y < -16384) current |= PAD_UP;
-    if (p->keys[SDL_SCANCODE_DOWN] || p->axis_y > 16384) current |= PAD_DOWN;
-    if (p->keys[SDL_SCANCODE_LEFT] || p->axis_x < -16384) current |= PAD_LEFT;
-    if (p->keys[SDL_SCANCODE_RIGHT] || p->axis_x > 16384) current |= PAD_RIGHT;
+    if (p->keys[SDL_SCANCODE_UP]) current |= PAD_UP;
+    if (p->keys[SDL_SCANCODE_DOWN]) current |= PAD_DOWN;
+    if (p->keys[SDL_SCANCODE_LEFT]) current |= PAD_LEFT;
+    if (p->keys[SDL_SCANCODE_RIGHT]) current |= PAD_RIGHT;
     if (p->keys[SDL_SCANCODE_T]) current |= PAD_TRIANGLE;
     if (p->keys[SDL_SCANCODE_A]) current |= PAD_SQUARE;
-    p->pressed |= current & (uint16_t)~p->held;
+    uint16_t edges = current & (uint16_t)~p->held;
+    p->pressed |= edges;
+    if (keyboard_event) p->keyboard_pressed |= edges;
     p->held = current;
 }
 
-static void find_controller(Player *p) {
-    int n = SDL_NumJoysticks(), i;
-    for (i = 0; i < n && !p->controller; ++i) {
-        if (SDL_IsGameController(i)) p->controller = SDL_GameControllerOpen(i);
+static DesktopController *controller_for_id(Player *p, SDL_JoystickID id) {
+    for (DesktopController *pad = p->controllers; pad; pad = pad->next)
+        if (pad->id == id) return pad;
+    return NULL;
+}
+
+static void add_controller(Player *p, int index, int startup) {
+    SDL_JoystickID id = SDL_JoystickGetDeviceInstanceID(index);
+    if (id < 0 || !SDL_IsGameController(index) || controller_for_id(p, id)) return;
+    SDL_GameController *handle = SDL_GameControllerOpen(index);
+    if (!handle) return;
+    DesktopController *pad = calloc(1, sizeof *pad);
+    if (!pad) {
+        SDL_GameControllerClose(handle);
+        return;
     }
-    if (p->controller) {
-        p->controller_id = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(p->controller));
-        for (i = 0; i < SDL_CONTROLLER_BUTTON_MAX; ++i) {
-            if (SDL_GameControllerGetButton(p->controller, (SDL_GameControllerButton)i))
-                p->digital |= button_mask((unsigned int)i);
+    pad->handle = handle;
+    pad->id = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(handle));
+    for (int i = 0; i < SDL_CONTROLLER_BUTTON_MAX; ++i) {
+        if (SDL_GameControllerGetButton(handle, (SDL_GameControllerButton)i))
+            pad->buttons |= button_mask((unsigned)i);
+    }
+    pad->next = p->controllers;
+    p->controllers = pad;
+    if (p->controller) return;
+    p->controller = pad;
+    if (startup) {
+        p->digital = pad->buttons;
+        p->axis_x = SDL_GameControllerGetAxis(handle, SDL_CONTROLLER_AXIS_LEFTX);
+        p->axis_y = SDL_GameControllerGetAxis(handle, SDL_CONTROLLER_AXIS_LEFTY);
+        p->axis_l2 = SDL_GameControllerGetAxis(handle, SDL_CONTROLLER_AXIS_TRIGGERLEFT);
+        p->axis_r2 = SDL_GameControllerGetAxis(handle, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
+    }
+}
+
+static void find_controller(Player *p) {
+    int n = SDL_NumJoysticks();
+    for (int i = 0; i < n; ++i) add_controller(p, i, 1);
+    update_input(p, 0);
+}
+
+static void reset_controller_input(Player *p) {
+    p->digital = 0;
+    p->axis_x = p->axis_y = p->axis_l2 = p->axis_r2 = 0;
+}
+
+static void remove_controller(Player *p, SDL_JoystickID id) {
+    DesktopController **link = &p->controllers;
+    while (*link && (*link)->id != id) link = &(*link)->next;
+    DesktopController *pad = *link;
+    if (!pad) return;
+    *link = pad->next;
+    if (p->controller == pad) {
+        p->controller = p->controllers;
+        reset_controller_input(p);
+        p->pressed = p->keyboard_pressed;
+    }
+    SDL_GameControllerClose(pad->handle);
+    free(pad);
+}
+
+static void close_controllers(Player *p) {
+    while (p->controllers) remove_controller(p, p->controllers->id);
+}
+
+static void controller_button(Player *p, const SDL_ControllerButtonEvent *event) {
+    DesktopController *pad = controller_for_id(p, event->which);
+    uint16_t mask = button_mask(event->button);
+    if (!pad || !mask) return;
+    if (event->type == SDL_CONTROLLERBUTTONDOWN) {
+        if (pad->buttons & mask) return;
+        pad->buttons |= mask;
+        if (p->controller != pad) {
+            /* A fresh mapped button picks up an idle player's controls. */
+            if (controller_mask(p)) return;
+            if (p->flow.phase == BFM_TITLE_BEDROOM && !p->inn_service &&
+                bfm_pad_magnitude(field_axis(0, 0, p->axis_x), field_axis(0, 0, p->axis_y)) >= 16)
+                return;
+            p->controller = pad;
+            reset_controller_input(p);
         }
-        p->axis_x = SDL_GameControllerGetAxis(p->controller, SDL_CONTROLLER_AXIS_LEFTX);
-        p->axis_y = SDL_GameControllerGetAxis(p->controller, SDL_CONTROLLER_AXIS_LEFTY);
-        p->axis_l2 = SDL_GameControllerGetAxis(p->controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT);
-        p->axis_r2 = SDL_GameControllerGetAxis(p->controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
-        update_input(p);
+        p->digital |= mask;
+    } else {
+        pad->buttons &= (uint16_t)~mask;
+        if (pad == p->controller) p->digital &= (uint16_t)~mask;
     }
 }
 
@@ -146,6 +239,7 @@ static const char *bedroom_caption(uint16_t room)
     case 0x1010: return "Brave Fencer Musashi - Lower Grillin' Village";
     case 0x2017: return "Brave Fencer Musashi - Hotelo's inn";
     case 0x3025: return "Brave Fencer Musashi - Southern woods";
+    case 0x3012: return "Brave Fencer Musashi - Recovery room";
     default: return "Brave Fencer Musashi - Gameplay";
     }
 }
@@ -159,6 +253,7 @@ static void phase_changed(Player *p) {
         p->opening_finished = p->opening_seen = p->opening_skip = 0;
         p->voice_stop_field = 0;
         p->gameplay.has_player = 0;
+        p->gameplay.saved_data.present = p->gameplay.memory_box.present = 0;
         memset(p->gameplay.story_flags, 0, sizeof p->gameplay.story_flags);
         caption = "Brave Fencer Musashi - Loading New Game";
         break;
@@ -207,26 +302,17 @@ static int events(Player *p) {
                 p->redraw = 1;
             if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
                 memset(p->keys, 0, sizeof p->keys);
-                p->pressed = 0;
+                clear_presses(p);
             }
             break;
         case SDL_CONTROLLERDEVICEADDED:
-            if (!p->controller) find_controller(p);
+            add_controller(p, e.cdevice.which, 0);
             break;
         case SDL_CONTROLLERDEVICEREMOVED:
-            if (p->controller && e.cdevice.which == p->controller_id) {
-                SDL_GameControllerClose(p->controller);
-                p->controller = NULL;
-                p->controller_id = -1;
-                p->digital = 0;
-                p->axis_x = p->axis_y = 0;
-                p->axis_l2 = p->axis_r2 = 0;
-                p->pressed = 0;
-                find_controller(p);
-            }
+            remove_controller(p, e.cdevice.which);
             break;
         case SDL_CONTROLLERAXISMOTION:
-            if (p->controller && e.caxis.which == p->controller_id) {
+            if (p->controller && e.caxis.which == p->controller->id) {
                 if (e.caxis.axis == SDL_CONTROLLER_AXIS_LEFTY) p->axis_y = e.caxis.value;
                 if (e.caxis.axis == SDL_CONTROLLER_AXIS_LEFTX) p->axis_x = e.caxis.value;
                 if (e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT) p->axis_l2 = e.caxis.value;
@@ -235,14 +321,10 @@ static int events(Player *p) {
             break;
         case SDL_CONTROLLERBUTTONDOWN:
         case SDL_CONTROLLERBUTTONUP:
-            if (p->controller && e.cbutton.which == p->controller_id) {
-                uint16_t mask = button_mask(e.cbutton.button);
-                if (e.type == SDL_CONTROLLERBUTTONDOWN) p->digital |= mask;
-                else p->digital &= (uint16_t)~mask;
-            }
+            controller_button(p, &e.cbutton);
             break;
         }
-        update_input(p);
+        update_input(p, e.type == SDL_KEYDOWN || e.type == SDL_KEYUP);
     }
     return 1;
 }
@@ -304,6 +386,14 @@ static int bedroom_frame(Player *p) {
     return 1;
 }
 
+static const BfmSaveRecord *read_keeper_card(Player *p)
+{
+    if (!p->save_copy) return NULL;
+    const BfmSaveRecord *recovered = bfm_inn_profile_menu(p->save_copy, &p->saves);
+    if (recovered) bfm_gameplay_remember_saved(&p->gameplay, recovered);
+    return recovered;
+}
+
 static int keeper_service(Player *p, unsigned pressed, int previously_open)
 {
     const BfmSaveRecord *record = bfm_bedroom_inn_record(p->bedroom);
@@ -314,7 +404,7 @@ static int keeper_service(Player *p, unsigned pressed, int previously_open)
     if (!previously_open) {
         if (!p->save_art) p->save_art = bfm_save_art_load(p->disc);
         if (!p->save_art) return 0;
-        if (p->save_copy) bfm_inn_profile_menu(p->save_copy, &p->saves);
+        read_keeper_card(p);
         bfm_inn_menu_begin(&p->inn_menu, p->save_copy ? &p->saves : NULL);
         BfmInnField *inn = bfm_bedroom_inn_counter(p->bedroom);
         for (unsigned i = 0; i < 6; ++i)
@@ -326,9 +416,24 @@ static int keeper_service(Player *p, unsigned pressed, int previously_open)
     ++p->inn_age;
     if (p->inn_menu.page == BFM_INN_WRITING) {
         unsigned file = p->inn_menu.card.selected + 1;
-        const char *error = bfm_inn_profile_save(p->save_copy, file, record, p->disc);
+        if (read_keeper_card(p)) {
+            /* Time advances at the counter. Keep the earlier verified record,
+             * even when the new request targets its now-occupied slot. */
+            p->inn_menu.card = p->saves;
+            p->inn_menu.card.selected = file - 1;
+            if (p->saves.selected == file - 1) {
+                p->inn_menu.page = BFM_INN_FILE_ERROR;
+                p->inn_menu.notice = "Earlier save verified. File occupied.";
+                return 1;
+            }
+        }
+        const char *error = p->save_copy ? p->saves.issue : NULL;
+        if (!error) error = bfm_inn_profile_save(p->save_copy, file, record, p->disc);
         if (!error) bfm_inn_profile_menu(p->save_copy, &p->saves);
         bfm_inn_menu_complete(&p->inn_menu, error ? NULL : &p->saves, error);
+        if (p->inn_menu.page == BFM_INN_SAVED)
+            bfm_gameplay_remember_saved(&p->gameplay,
+                                  &p->saves.records[file - 1]);
         return 1;
     }
     BfmInnAction action = bfm_inn_menu_input(&p->inn_menu, pressed);
@@ -395,7 +500,8 @@ static int begin_completed_chapter(Player *p)
     bfm_desktop_voice_stop(p->voice);
     bfm_forest_walk_free(p->forest);
     p->forest = NULL;
-    p->pressed = p->forest_pressed = 0;
+    clear_presses(p);
+    p->forest_pressed = 0;
     p->chapter_fields = 0;
     p->flow.phase = BFM_TITLE_CHAPTER_COMPLETION;
     phase_changed(p);
@@ -408,7 +514,7 @@ static int advance_completed_chapter(Player *p, unsigned fields)
     while (p->chapter_fields < fields) {
         ++p->chapter_fields;
         uint16_t pressed = p->pressed;
-        p->pressed = 0;
+        clear_presses(p);
         BfmChapterSavePage before = p->chapter.page;
         if (!bfm_chapter_completion_step(&p->chapter, p->disc, p->save_copy, pressed)) return 0;
         if (p->chapter.page == BFM_CHAPTER_TWO_TITLE && before != BFM_CHAPTER_TWO_TITLE)
@@ -518,7 +624,7 @@ static int play(Player *p, char *error, size_t size) {
     int last_phase = -1, last_choice = -1, last_prompt = -1, last_save_view = -1;
     unsigned last_field = 0;
     bfm_title_begin(&p->flow, p->held);
-    p->pressed = 0;
+    clear_presses(p);
     phase_changed(p);
     while (events(p)) {
         uint64_t now = SDL_GetTicks64();
@@ -569,6 +675,8 @@ static int play(Player *p, char *error, size_t size) {
                         snprintf(error, size, "Could not start the mounted bedroom scene.");
                         return 2;
                     }
+                    bfm_gameplay_remember_saved(&p->gameplay,
+                                          &p->saves.records[p->saves.selected]);
                 } else if (bfm_save_menu_input(&p->saves, p->pressed)) {
                     if (p->saves.issue) {
                         p->flow.phase = BFM_TITLE_MENU;
@@ -618,8 +726,11 @@ static int play(Player *p, char *error, size_t size) {
                                                .camera_turn=service ? 0 :
                                                    !!(p->held & PAD_R2) - !!(p->held & PAD_L2),
                                                .circle_pressed=scene_input & PAD_CIRCLE,
+                                               .triangle_pressed=scene_input & PAD_TRIANGLE,
                                                .cross_pressed=scene_input & PAD_CROSS,
-                                               .cross_held=!service && (p->held & PAD_CROSS)};
+                                               .cross_held=!service && (p->held & PAD_CROSS),
+                                               .held_faces=service ? 0 : p->held &
+                                                   (PAD_TRIANGLE | PAD_CIRCLE | PAD_CROSS | PAD_SQUARE)};
                         int result = bfm_bedroom_step_field(p->bedroom,
                                     scene_input & (PAD_CIRCLE | PAD_CROSS | PAD_TRIANGLE),
                                     scene_input & PAD_CIRCLE, direction, held, scene_input & PAD_CROSS,
@@ -629,14 +740,41 @@ static int play(Player *p, char *error, size_t size) {
                             return 2;
                         }
                         if (result == BFM_BEDROOM_VOICE_STOPPED) bfm_desktop_voice_room_skip(p->voice);
+                        if (bfm_bedroom_take_effect_release(p->bedroom))
+                            bfm_desktop_voice_release_room_effects(p->voice);
                         bfm_desktop_voice_room_score(p->voice, bfm_bedroom_score(p->bedroom));
+                        BfmRetryAudioEvent retry_audio = bfm_bedroom_retry_audio(p->bedroom);
+                        BfmDefeatScoreEvent score_command = BFM_DEFEAT_SCORE_START;
+                        const char *score_action = NULL;
+                        switch (retry_audio) {
+                        case BFM_RETRY_AUDIO_FADE_FIELD:
+                            score_command = BFM_DEFEAT_SCORE_FADE_FIELD;
+                            score_action = "fade the field score";
+                            break;
+                        case BFM_RETRY_AUDIO_START:
+                            score_action = "mount and start the defeat score";
+                            break;
+                        case BFM_RETRY_AUDIO_FADE_OUT:
+                            score_command = BFM_DEFEAT_SCORE_FADE_OUT;
+                            score_action = "release the defeat score";
+                            break;
+                        default:
+                            break;
+                        }
+                        if (score_action) {
+                            int accepted = bfm_desktop_voice_defeat_score(p->voice, p->disc, score_command);
+                            if (!bfm_bedroom_retry_score_result(p->bedroom, retry_audio, accepted)) {
+                                snprintf(error, size, "Could not %s in Cleft Woods.", score_action);
+                                return 2;
+                            }
+                        }
                         int slider_event;
                         struct BfmCableSound *slider=bfm_bedroom_slider(p->bedroom,&slider_event);
                         bfm_desktop_voice_slider(p->voice,slider,slider_event);
                         bfm_desktop_voice_landing(p->voice, bfm_bedroom_landing(p->bedroom));
-                        unsigned command;
-                        struct BfmBedroomEffects *effects = bfm_bedroom_effect(p->bedroom, &command);
-                        bfm_desktop_voice_room_effect(p->voice, effects, command);
+                        const BfmBedroomSound *sounds;
+                        size_t count = bfm_bedroom_take_effects(p->bedroom, &sounds);
+                        bfm_desktop_voice_room_effects(p->voice, sounds, count);
                         unsigned generation;
                         struct ForestVoice *voice = bfm_bedroom_voice(p->bedroom, &generation);
                         bfm_desktop_voice_forest(p->voice, voice, generation,
@@ -647,7 +785,7 @@ static int play(Player *p, char *error, size_t size) {
             } else {
                 bfm_title_input(&p->flow, p->held | p->pressed);
             }
-            p->pressed = 0;
+            clear_presses(p);
             if ((int)p->flow.phase != before) {
                 phase_changed(p);
                 fields = 0;
@@ -862,7 +1000,7 @@ sdl_error:
     snprintf(error, sizeof error, "SDL could not start the display: %s", SDL_GetError());
 done:
     if (status != 0) fprintf(stderr, "%s\n", *error ? error : "The game could not start a scene.");
-    if (p->controller) SDL_GameControllerClose(p->controller);
+    close_controllers(p);
     if (p->texture) SDL_DestroyTexture(p->texture);
     if (p->renderer) SDL_DestroyRenderer(p->renderer);
     if (p->window) SDL_DestroyWindow(p->window);

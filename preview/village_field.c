@@ -74,12 +74,32 @@ int bfm_village_field_prepare(BfmVillageField *field, const BfmVillageCamera *ca
                               const uint8_t flags[64], unsigned field_age,
                               uint16_t tiles[512][1024], uint32_t *pixels)
 {
+    return bfm_village_field_prepare_scaled(field, camera, root, pose, flags, field_age,
+                    bfm_village_field_visible(pose, flags), BFM_HERO_NORMAL_SCALE, tiles, pixels);
+}
+
+int bfm_village_field_prepare_scaled(BfmVillageField *field, const BfmVillageCamera *camera,
+                              const BfmBedroomRoot *root, const BfmBedroomPose *pose,
+                              const uint8_t flags[64], unsigned field_age, uint32_t visible_parts,
+                              unsigned body_scale_q12, uint16_t tiles[512][1024], uint32_t *pixels)
+{
+    return bfm_village_field_prepare_axes(field, camera, root, pose, flags, field_age, visible_parts,
+                                         body_scale_q12, NULL, tiles, pixels);
+}
+
+int bfm_village_field_prepare_axes(BfmVillageField *field, const BfmVillageCamera *camera,
+                              const BfmBedroomRoot *root, const BfmBedroomPose *pose,
+                              const uint8_t flags[64], unsigned field_age, uint32_t visible_parts,
+                              unsigned body_scale_q12, const int animation_q12[3],
+                              uint16_t tiles[512][1024], uint32_t *pixels)
+{
     if (!bfm_bedroom_field_set_focal(field->field, camera->focal)) return 0;
     bfm_bedroom_field_viewpoint(field->field, camera->eye, camera->target, 1, 1);
     BfmBedroomBody body = {
         .pose = pose->pose, .pose_bytes = 256, .heading = root->yaw, .pitch = pose->pitch,
         .face_word = pose->face_word, .shadow_visible = root->shadow_visible,
-        .visible_parts = bfm_village_field_visible(pose, flags), .blade_tick = field_age,
+        .visible_parts = visible_parts, .blade_tick = field_age,
+        .lumina_scale_q12 = pose->lumina_scale_q12,
         .green_blade = (flags[129 / 8] >> (129 % 8)) & 1u
     };
     for (unsigned axis = 0; axis < 3; ++axis) {
@@ -93,6 +113,6 @@ int bfm_village_field_prepare(BfmVillageField *field, const BfmVillageCamera *ca
         body.lumina_guard = field->guard;
         body.lumina_blade = field->blade;
     }
-    return bfm_bedroom_figure_prepare(field->hero, bfm_bedroom_field_view(field->field),
-                                       &body, tiles, pixels);
+    return bfm_bedroom_figure_prepare_axes(field->hero, bfm_bedroom_field_view(field->field),
+                                           &body, body_scale_q12, animation_q12, tiles, pixels);
 }

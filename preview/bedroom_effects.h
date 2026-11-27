@@ -9,7 +9,24 @@ enum { BFM_FOREST_SWING_SOUND = 0x400, BFM_FOREST_HIT_SOUND = 0x437,
        BFM_FOREST_GUNSHOT_SOUND = 0x476 };
 enum { BFM_VILLAGE_KNOCK_SOUND = 0x516, BFM_WOODS_SHRINK_CAST_SOUND = 0x479,
        BFM_WOODS_SHRINK_SOUND = 0x989, BFM_BODY_LEVEL_SOUND = 0xb2c,
-       BFM_WOODS_KING_STOMP_SOUND = 0x6a8, BFM_WOODS_KING_BITE_SOUND = 0xad3 };
+       BFM_WOODS_KING_STOMP_SOUND = 0x6a8, BFM_WOODS_KING_BITE_SOUND = 0xad3,
+       BFM_WOODS_GUARD_SOUND = 0x43d, BFM_WOODS_HURT_SOUND = 0x451,
+       BFM_WOODS_WATER_ENTRY_SOUND = 0x441, BFM_WOODS_CARRY_THROW_SOUND = 0x5f5 };
+enum { BFM_WOODS_TERRAIN_HIT_FIRST = 0x426, BFM_WOODS_TERRAIN_HIT_LAST = 0x42d,
+       BFM_WOODS_FUSION_FINISH_HIT_SOUND = 0x438,
+       BFM_WOODS_FUSION_FOLLOWUP_SOUND = 0x446, BFM_WOODS_LUMINA_SWING_SOUND = 0x455,
+       BFM_WOODS_PICKUP_SOUND = 0x452, BFM_WOODS_RING_SOUND = 0x522,
+       BFM_WOODS_PINK_BITE_SOUND = 0x524, BFM_WOODS_LENO_BARK_SOUND = 0x525,
+       BFM_WOODS_LENO_YELP_SOUND = 0x526, BFM_WOODS_SPLASH_SOUND = 0x531,
+       BFM_WOODS_SATIATE_RECOVERY_SOUND = 0x5fb, BFM_WOODS_CHARGED_SLASH_SOUND = 0x9da };
+/* The room's ordered sound stream carries native key-off requests above the
+ * sixteen-bit disc selectors. Only the charging tone receives this request. */
+enum { BFM_WOODS_CHARGE_SOUND = 1100, BFM_WOODS_FULL_CHARGE_SOUND = 1101,
+       BFM_WOODS_STOP_CHARGE_SOUND = 0x10000 + BFM_WOODS_CHARGE_SOUND };
+enum { BFM_NIGHTMARE_WAKE_SOUND = 0x7e7, BFM_NIGHTMARE_BED_LANDING_SOUND = 0x434,
+       BFM_NIGHTMARE_FLOOR_LANDING_SOUND = 0x42e };
+/* Prepare the wake cue and the bed and floor contact sounds from SC03 member 3. */
+BfmBedroomEffects *bfm_nightmare_sound_load(const MusashiDiscMedia *disc);
 BfmBedroomEffects *bfm_woods_shrink_sound_load(const MusashiDiscMedia *disc);
 BfmBedroomEffects *bfm_village_knock_sound_load(const MusashiDiscMedia *disc);
 BfmBedroomEffects *bfm_forest_swing_sound_load(const MusashiDiscMedia *disc);
@@ -17,6 +34,7 @@ BfmBedroomEffects *bfm_menu_effects_load(const MusashiDiscMedia *disc);
 BfmBedroomEffects *bfm_bedroom_effects_load(const MusashiDiscMedia *disc, unsigned member, uint32_t room);
 void bfm_bedroom_effects_free(BfmBedroomEffects *effects);
 /* Serialized with the sound callback. All source decoding occurs during load. */
+void bfm_bedroom_effects_stop(BfmBedroomEffects *effects);
 void bfm_bedroom_effects_start(BfmBedroomEffects *effects, unsigned command);
 void bfm_bedroom_effects_mix(BfmBedroomEffects *effects, int16_t *stereo, size_t frames);
 #endif

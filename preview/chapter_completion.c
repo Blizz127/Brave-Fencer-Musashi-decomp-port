@@ -90,6 +90,7 @@ static void finish_write(BfmChapterCompletion *state, BfmInnProfile *copy,
         fail(state, "Could not verify the saved file.");
         return;
     }
+    bfm_gameplay_remember_saved(state->run, &state->files.records[selected]);
     page(state, BFM_CHAPTER_SAVED);
 }
 

@@ -34,6 +34,17 @@ int bfm_forest_strike_effects_queue(BfmForestStrikeEffects *effects, const BfmFo
     return 1;
 }
 
+int bfm_forest_strike_effects_queue_impact(BfmForestStrikeEffects *effects, const BfmForestImpactArt *art,
+                                          const int16_t contact[3], const int16_t normal[3],
+                                          const int32_t eye[3])
+{
+    BfmForestStrikeEffect *strip = allocate(effects, BFM_STRIKE_STRIP);
+    if (!strip) return 1;
+    if (bfm_forest_impact_start_art(&strip->impact, art, contact, normal, eye)) return 1;
+    strip->kind = BFM_STRIKE_EMPTY;
+    return 0;
+}
+
 int bfm_forest_strike_effects_queue_hurt(BfmForestStrikeEffects *effects, const BfmForestField *field,
                                          const int16_t player[3], uint16_t amount)
 {
@@ -72,9 +83,16 @@ static unsigned step_strip(BfmForestStrikeEffects *effects, BfmForestStrikeEffec
     return bfm_forest_impact_strip_project(impact, camera, card);
 }
 
-unsigned bfm_forest_strike_effects_step(BfmForestStrikeEffects *effects, const int32_t eye[3],
-                                        const BfmForestCamera *camera, BfmGameplayRun *run,
-                                        BfmForestDustCard cards[BFM_FOREST_STRIKE_CARDS])
+int bfm_forest_strike_reserve_room(BfmForestStrikeEffects *effects)
+{
+    BfmForestStrikeEffect *slot = allocate(effects, BFM_STRIKE_ROOM);
+    return slot ? (int)(slot - effects->slots) : -1;
+}
+
+unsigned bfm_forest_strike_step_shared(BfmForestStrikeEffects *effects, const int32_t eye[3],
+                                       const BfmForestCamera *camera, BfmGameplayRun *run,
+                                       BfmForestDustCard cards[BFM_FOREST_STRIKE_CARDS],
+                                       BfmFieldStrikeVisit visit, void *context)
 {
     unsigned count = 0;
     /* A child allocated below this cursor starts on the following update.
@@ -108,10 +126,20 @@ unsigned bfm_forest_strike_effects_step(BfmForestStrikeEffects *effects, const i
             count += bfm_forest_damage_digits_project(&slot->number, camera, cards + count);
             if (bfm_forest_damage_digits_last(&slot->number)) slot->kind = BFM_STRIKE_EMPTY;
             break;
+        case BFM_STRIKE_ROOM:
+            if (visit) count += visit(context, i, run, cards + count);
+            break;
         case BFM_STRIKE_EMPTY:
             break;
         }
         slot->fresh = 0;
     }
     return count;
+}
+
+unsigned bfm_forest_strike_effects_step(BfmForestStrikeEffects *effects, const int32_t eye[3],
+                                        const BfmForestCamera *camera, BfmGameplayRun *run,
+                                        BfmForestDustCard cards[BFM_FOREST_STRIKE_CARDS])
+{
+    return bfm_forest_strike_step_shared(effects, eye, camera, run, cards, NULL, NULL);
 }

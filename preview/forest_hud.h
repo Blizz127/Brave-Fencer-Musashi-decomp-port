@@ -25,6 +25,9 @@ void bfm_forest_hud_free(BfmForestHud *hud);
 /* The doorway actor requests display when it releases ordinary control.
  * Advance once on that 30 Hz update and once per subsequent update. */
 void bfm_forest_hud_show(BfmForestHud *hud);
+/* Supply active Bincho Fields and their shared proximity step before the HUD
+ * tick. An inactive field holds the pulse phase and displays neutral rims. */
+void bfm_forest_hud_detector(BfmForestHud *hud, int active, unsigned step);
 void bfm_forest_hud_tick(BfmForestHud *hud);
 /* Supply current speed charge and a 0..128 absorption meter, or -1
  * when the player has no tether. Both actions use the same HUD well. */

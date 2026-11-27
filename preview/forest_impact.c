@@ -14,11 +14,9 @@ static int64_t down(int64_t value, unsigned bits)
 /* This strike uses the two single-update sprite sequences in the mounted
  * room. Bind the complete sequence so an invalid late cell cannot escape the
  * atlas page after the effect has begun. */
-static int animation(BfmForestImpactAnimation *out, const BfmForestField *field,
-                     uint32_t sprite, uint32_t sequence, unsigned count)
+static int animation(BfmForestImpactAnimation *out, const uint8_t *d,
+                     const uint8_t *cells, unsigned count)
 {
-    const uint8_t *d = bfm_forest_room_bytes(field, sprite, 12);
-    const uint8_t *cells = bfm_forest_room_bytes(field, sequence, count * 8);
     if (!d || !cells || !d[2] || !d[3]) return 0;
     for (unsigned i = 0; i < count; ++i) {
         const uint8_t *c = cells + 8 * i;
@@ -155,26 +153,44 @@ static int impact_strip_project(const int16_t orientation[3][3], const int32_t o
     return card->bucket < 4096;
 }
 
-int bfm_forest_impact_start(BfmForestImpact *impact, const BfmForestField *field,
-                            const int16_t contact[3], const int16_t normal[3],
-                            const int32_t eye[3])
+int bfm_forest_impact_art_load(BfmForestImpactArt *art, const uint8_t *program,
+                               size_t bytes, unsigned tilt_index)
 {
-    if (!impact || !field || !contact || !normal || !eye ||
+    if (!art || !program || bytes < BFM_FOREST_IMPACT_PROGRAM_BYTES || tilt_index >= 18) return 0;
+    BfmForestImpactArt bound = {.tilt = s16le(program + 2 * tilt_index)};
+    if (!animation(&bound.burst, program + 0x64, program + 0x24, 8) ||
+        !animation(&bound.strip, program + 0xa0, program + 0x70, 6)) return 0;
+    *art = bound;
+    return 1;
+}
+
+int bfm_forest_impact_start_art(BfmForestImpact *impact, const BfmForestImpactArt *art,
+                                const int16_t contact[3], const int16_t normal[3],
+                                const int32_t eye[3])
+{
+    if (!impact || !art || !art->strip.count || !contact || !normal || !eye ||
         (!normal[0] && !normal[1] && !normal[2])) return 0;
-    BfmForestImpact fresh = {0};
-    const uint8_t *tilt = bfm_forest_room_bytes(field, UINT32_C(0x80189b48), 2);
-    if (!tilt || !animation(&fresh.burst, field, UINT32_C(0x80189bac), UINT32_C(0x80189b6c), 8) ||
-        !animation(&fresh.strip, field, UINT32_C(0x80189be8), UINT32_C(0x80189bb8), 6))
-        return 0;
+    BfmForestImpact fresh = {.burst = art->burst, .strip = art->strip};
     int pitch, yaw;
     bfm_forest_impact_angles(normal, &pitch, &yaw);
     bfm_forest_actor_pitch_yaw((unsigned)pitch, (unsigned)yaw, contact, &fresh.face);
     for (unsigned i = 0; i < 3; ++i)
         fresh.origin[i] = contact[i] + down(-2 * fresh.face.rotation[i][1] - 20 * fresh.face.rotation[i][2], 12);
     toward_eye(fresh.origin, eye, fresh.burst_origin);
-    impact_strip_setup(fresh.strip_rotation, pitch, yaw, s16le(tilt), eye, fresh.origin);
+    impact_strip_setup(fresh.strip_rotation, pitch, yaw, art->tilt, eye, fresh.origin);
     *impact = fresh;
     return 1;
+}
+
+int bfm_forest_impact_start(BfmForestImpact *impact, const BfmForestField *field,
+                            const int16_t contact[3], const int16_t normal[3],
+                            const int32_t eye[3])
+{
+    BfmForestImpactArt art;
+    const uint8_t *program = bfm_forest_room_bytes(field, UINT32_C(0x80189b48),
+                                                    BFM_FOREST_IMPACT_PROGRAM_BYTES);
+    return bfm_forest_impact_art_load(&art, program, BFM_FOREST_IMPACT_PROGRAM_BYTES, 0) &&
+           bfm_forest_impact_start_art(impact, &art, contact, normal, eye);
 }
 
 void bfm_forest_impact_advance(BfmForestImpact *impact)

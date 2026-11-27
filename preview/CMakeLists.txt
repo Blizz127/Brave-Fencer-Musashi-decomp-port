@@ -37,14 +37,35 @@ add_executable(musashi_native_boot
     village_clock.c
     village_talk_camera.c
     village_cable.c
+    village_rotor.c
+    village_rotor_mesh.c
     southern_woods.c
     woods_water.c
     woods_sign_model.c
+    woods_lardwick_field.c
+    woods_resident_glow_art.c
     woods_award_effect.c
     woods_blade_sparks.c
     woods_capture_light.c
     woods_flight_glow.c
     woods_caster.c
+    woods_caster_ring.c
+    woods_caster_loot.c
+    woods_caster_melee.c
+    woods_charged_targets.c
+    woods_charged_hit.c
+    woods_charged_fx.c
+    woods_caster_burst.c
+    woods_player_hit.c
+    woods_revive.c
+    woods_slope.c
+    woods_mini_smoke.c
+    woods_satiate_effect.c
+    woods_satiate_actor.c
+    woods_leno_actor.c
+    woods_leno.c
+    woods_carry.c
+    village_leno_delivery.c
     woods_king.c
     woods_king_art.c
     woods_king_reward.c
@@ -54,6 +75,8 @@ add_executable(musashi_native_boot
     woods_jump_pose.c
     woods_fusion.c
     woods_fusion_art.c
+    woods_foot_dust.c
+    woods_charge_core.c
     woods_shrink_message.c
     woods_shrink_cast.c
     woods_shrink_motion.c
@@ -67,6 +90,8 @@ add_executable(musashi_native_boot
     village_impact_sound.c
     village_portrait.c
     village_lower.c
+    village_chimney.c
+    village_sunrays.c
     village_lighting.c
     village_ground.c
     village_mayor_camera.c
@@ -233,6 +258,13 @@ add_executable(musashi_native_boot
     steam_knight_field.c
     steam_knight_roof_cells.c
     retry_screen.c
+    woods_retry.c
+    nightmare_departure.c
+    nightmare_field.c
+    nightmare_room.c
+    nightmare_transition.c
+    nightmare_stride.c
+    nightmare_wake.c
     forest_walk.c
     forest_gateway_transition.c
     forest_lift.c

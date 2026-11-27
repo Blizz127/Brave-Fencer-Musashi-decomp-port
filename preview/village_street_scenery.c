@@ -17,6 +17,15 @@ typedef struct {
     int depth, with_offset;
 } StreetFace;
 
+typedef struct {
+    MusashiForestPlayerMesh *mesh;
+    int16_t center[3];
+    unsigned heading, ticks;
+    enum { WAITING, GAINING_SPEED, COASTING, SLOWING } phase;
+    uint32_t angle_q16;
+    int speed_q16, acceleration_q16;
+} WeatherVane;
+
 struct BfmVillageStreetScenery {
     unsigned count, visible, next;
     int16_t roots[TREE_LIMIT][3];
@@ -25,6 +34,7 @@ struct BfmVillageStreetScenery {
     BfmForestRasterVertex texture[CORNERS];
     MusashiForestPlayerMesh *roof, *bell;
     int16_t hanger[3];
+    WeatherVane vane;
     unsigned tick, progress;
     int ambient[3], daylight[3][3];
     StreetFace faces[TREE_LIMIT + ROOF_FACES + BELL_FACES];
@@ -78,15 +88,21 @@ static int read_street(BfmVillageStreetScenery *scenery, const uint8_t *scene,
      * roof is in field coordinates. The bell has a separate hanger and swing. */
     if (roof) {
         const uint8_t *hanger = scene_at(scene, bytes, UINT32_C(0x80191948), 6);
+        const uint8_t *vane = scene_at(scene, bytes, UINT32_C(0x80191958), 8);
         const uint8_t *daylight = scene_at(scene, bytes, UINT32_C(0x8018de3c) + 9, 9);
-        if (!hanger || !daylight) return 0;
+        if (!hanger || !vane || !daylight) return 0;
+        scenery->vane.heading = u16le(vane + 6);
         for (unsigned k = 0; k < 3; ++k) {
+            scenery->vane.center[k] = s16le(vane + 2*k);
             scenery->hanger[k] = s16le(hanger + 2*k);
             scenery->ambient[k] = s16le(descriptor + 2*k) & ~15;
             for (unsigned i = 0; i < 3; ++i)
                 scenery->daylight[i][k] = daylight[3*i+k]*4096/255;
         }
         unsigned count;
+        scenery->vane.mesh = musashi_forest_player_mesh_from_table(scene, bytes, scene_origin,
+                                                                  UINT32_C(0x801bee78), &count);
+        if (!scenery->vane.mesh || count != 1) return 0;
         scenery->bell = musashi_forest_player_mesh_from_table(scene, bytes, scene_origin,
                                                               UINT32_C(0x801be978), &count);
         const MusashiForestPlayerPart *bell = musashi_forest_player_mesh_part(scenery->bell, 0);
@@ -148,6 +164,7 @@ BfmVillageStreetScenery *bfm_village_street_scenery_load(const uint8_t *scene,
 void bfm_village_street_scenery_free(BfmVillageStreetScenery *scenery)
 {
     if (scenery) {
+        musashi_forest_player_mesh_free(scenery->vane.mesh);
         musashi_forest_player_mesh_free(scenery->roof);
         musashi_forest_player_mesh_free(scenery->bell);
     }
@@ -176,6 +193,53 @@ void bfm_village_street_scenery_step(BfmVillageStreetScenery *scenery,
         scenery->tick = scene_tick;
         scenery->progress = progress;
     }
+}
+
+void bfm_village_street_vane_step(BfmVillageStreetScenery *scenery, BfmGameplayRun *run)
+{
+    WeatherVane *vane = &scenery->vane;
+    if (!vane->mesh || !run) return;
+    if (vane->phase != WAITING) {
+        if (vane->phase != COASTING) vane->speed_q16 += vane->acceleration_q16;
+        /* The high half of the accumulated angle drives the model's yaw. */
+        vane->angle_q16 += (uint32_t)vane->speed_q16;
+        vane->heading = vane->angle_q16 >> 16;
+    }
+    if (vane->ticks && --vane->ticks) return;
+    switch (vane->phase) {
+    case WAITING:
+        vane->acceleration_q16 = 30720 + (bfm_gameplay_random(run) & 16383);
+        if (!(bfm_gameplay_random(run) & 1)) vane->acceleration_q16 = -vane->acceleration_q16;
+        vane->speed_q16 = 0;
+        vane->ticks = 64;
+        vane->phase = GAINING_SPEED;
+        break;
+    case GAINING_SPEED:
+        vane->ticks = 64 + (bfm_gameplay_random(run) & 63);
+        vane->phase = COASTING;
+        break;
+    case COASTING:
+        vane->acceleration_q16 = -vane->acceleration_q16;
+        vane->ticks = 64;
+        vane->phase = SLOWING;
+        break;
+    case SLOWING:
+        vane->ticks = 64 + (bfm_gameplay_random(run) & 255);
+        vane->phase = WAITING;
+        break;
+    }
+}
+
+int bfm_village_street_vane_add(const BfmVillageStreetScenery *scenery, BfmBedroomFigure *figure,
+                               const BfmBedroomView *view)
+{
+    const WeatherVane *vane = &scenery->vane;
+    if (!vane->mesh) return 1;
+    static const BfmForestPose pose = {.local = {{.rotation = {{4096,0,0},{0,4096,0},{0,0,4096}}}}};
+    BfmForestTransform root;
+    bfm_forest_actor_root(vane->heading, vane->center, &root);
+    const BfmForestActor actor = {.root = &root, .mesh = vane->mesh, .pose = &pose, .visible_parts = 1};
+    return bfm_bedroom_figure_add_actor(figure, view, &actor, NULL, NULL, 0);
 }
 
 static void rotated(const BfmForestTransform *rotation, const MusashiForestPlayerVector *v,

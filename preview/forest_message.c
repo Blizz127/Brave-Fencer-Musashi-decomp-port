@@ -15,12 +15,15 @@ struct BfmForestMessage {
     size_t size, cursor;
     enum MessagePhase phase;
     unsigned row, column, ink;
-    unsigned timer, delay, glyph_interval;
+    unsigned timer, delay, glyph_interval, close_delay;
     int speaker_name, voiced_page, rapid, voice_interrupted, sync_on_open;
     int notice, last_shortcut, voice_script;
     unsigned choice_count;
     const uint8_t *program, *insertion, *resume;
     size_t insertion_bytes, resume_bytes;
+    uint8_t *saved_flags;
+    unsigned active_flag;
+    int asserted_active_flag;
 };
 
 static BfmForestMessage *open_message(const uint8_t *program, size_t length, int copy)
@@ -38,6 +41,7 @@ static BfmForestMessage *open_message(const uint8_t *program, size_t length, int
         message->program = program;
         message->size = length;
         message->frame.focused = 1;
+        message->frame.text_columns = 36;
         if (length >= 4 && program[0] == 0x16 && program[1] == 2 && program[2] == 1 && !program[3]) {
             message->frame.style = 1;
             message->frame.border_step = 1;
@@ -58,6 +62,23 @@ BfmForestMessage *bfm_field_message_borrow(const uint8_t *program, size_t length
     return open_message(program, length, 0);
 }
 
+BfmForestMessage *bfm_field_message_borrow_notice(const uint8_t *program, size_t length,
+                                                uint8_t flags[64], unsigned active_flag)
+{
+    if (!flags || active_flag >= 64u * 8u) return NULL;
+    BfmForestMessage *message = bfm_field_message_borrow(program, length);
+    if (message) {
+        message->saved_flags = flags;
+        message->active_flag = active_flag;
+    }
+    return message;
+}
+
+int bfm_field_message_keeps_control(const BfmForestMessage *message)
+{
+    return message && message->saved_flags != NULL;
+}
+
 int bfm_field_message_insert_text(BfmForestMessage *message, const uint8_t *text, size_t bytes)
 {
     if (!message || !text || !bytes || message->insertion || message->resume) return 0;
@@ -76,6 +97,10 @@ BfmForestMessage *bfm_forest_message_open(const uint8_t *program, size_t length)
 
 void bfm_forest_message_free(BfmForestMessage *message)
 {
+    if (message && message->asserted_active_flag) {
+        unsigned flag = message->active_flag;
+        message->saved_flags[flag / 8] &= (uint8_t)~(1u << (flag % 8));
+    }
     free(message);
 }
 
@@ -120,24 +145,43 @@ static int print_update(BfmForestMessage *m)
             m->ink = arg[0];
             ++m->cursor;
             break;
-        case 0x02: /* Open dialogue border */
-            if (left < 2 || !set_style(m, arg[0] == 10 || arg[0] == 14 ? arg[0] - 8u : arg[0]) || arg[1] > 3 ||
-                (arg[0] == 1 ? arg[1] > 1 : !arg[1])) return 0;
+        case 0x02: { /* Open dialogue border */
+            if (left < 2) return 0;
+            unsigned layout = arg[0];
+            unsigned style = layout;
+            if (layout == 0xa6 || layout == 10 || layout == 14) style = layout & 7u;
+            if (!set_style(m, style) || arg[1] > 3 ||
+                (layout == 1 ? arg[1] > 1 : !arg[1])) return 0;
+            f->text_columns = layout == 0xa6 ? 28 : 36;
             /* Rectangular notices and signs have no portrait. */
             f->portrait = arg[0] == 1 ? 0 : arg[1];
             m->cursor += 2;
             f->border_step = 2;
             m->phase = OPENING;
             return 1;
+        }
         case 0x03: /* The closing pass keeps the cursor on this command. */
             if (left < 1) return 0;
+            /* Leno's voiced lines leave one field between the last text and
+             * the closing border. If reveal already interrupted the speaker,
+             * the field skips this command and reads the following byte. */
+            int short_voice_close = m->voice_script && arg[0] == 1;
+            if (short_voice_close && m->voice_interrupted) {
+                ++m->cursor;
+                break;
+            }
             /* An unvoiced portrait reaction can end on a timed hold. */
             int timed_close = arg[0] && (m->notice || (!m->voice_script && arg[0] == 30));
-            if (arg[0] && !timed_close && !(arg[0] == 10 && m->voice_script)) return 0;
+            if (arg[0] && !timed_close && !short_voice_close &&
+                !(arg[0] == 10 && m->voice_script)) return 0;
             if (timed_close) {
                 m->timer = arg[0];
                 m->phase = NOTICE_HOLD;
                 return 1;
+            }
+            if (short_voice_close) {
+                m->close_delay = arg[0];
+                m->rapid = 0;
             }
             --m->cursor;
             f->wait_for_confirm = m->voice_interrupted;
@@ -154,7 +198,7 @@ static int print_update(BfmForestMessage *m)
             if (!m->voiced_page) {
                 f->inline_prompt = 1;
                 f->prompt_row = m->row;
-                f->prompt_column = m->column < 36 ? m->column : 35;
+                f->prompt_column = m->column < f->text_columns ? m->column : f->text_columns - 1;
                 f->wait_for_confirm = 1;
                 m->phase = WAIT_CONFIRM;
                 return 1;
@@ -208,15 +252,25 @@ static int print_update(BfmForestMessage *m)
             m->cursor = 0;
             m->insertion = NULL;
             break;
-        case 0x10: {
+        case 0x10: /* Set saved flag */
+        case 0x11: { /* Clear saved flag */
             if (left < 2) return 0;
-            unsigned event = arg[0] | ((unsigned)arg[1] << 8);
-            if (event < 0x125 || event > 0x129) return 0;
-            f->actor_flags |= 1u << (event - 0x125);
-            if (event == 0x125)
-                f->events |= BFM_FOREST_FIRST_GESTURE;
-            else if (event == 0x126)
-                f->events |= BFM_FOREST_SECOND_GESTURE;
+            unsigned flag = arg[0] | ((unsigned)arg[1] << 8);
+            int actor_event = op == 0x10 && flag >= 0x125 && flag <= 0x129;
+            if (m->saved_flags) {
+                if (flag >= 64u * 8u) return 0;
+                uint8_t mask = (uint8_t)(1u << (flag % 8));
+                if (op == 0x10) m->saved_flags[flag / 8] |= mask;
+                else m->saved_flags[flag / 8] &= (uint8_t)~mask;
+                if (flag == m->active_flag) m->asserted_active_flag = op == 0x10;
+            } else if (!actor_event) return 0;
+            if (actor_event) {
+                f->actor_flags |= 1u << (flag - 0x125);
+                if (flag == 0x125)
+                    f->events |= BFM_FOREST_FIRST_GESTURE;
+                else if (flag == 0x126)
+                    f->events |= BFM_FOREST_SECOND_GESTURE;
+            }
             m->cursor += 2;
             break;
         }
@@ -253,7 +307,7 @@ static int print_update(BfmForestMessage *m)
             }
             break;
         default:
-            if (op < 0x20 || (op > 0x7e && (op < 0x90 || op > 0x95)) || m->column >= 36)
+            if (op < 0x20 || (op > 0x7e && (op < 0x90 || op > 0x95)) || m->column >= f->text_columns)
                 return 0;
             f->cells[m->row][m->column].glyph = (uint8_t)op;
             f->cells[m->row][m->column++].ink = (uint8_t)m->ink;
@@ -288,9 +342,14 @@ static int build_choice(BfmForestMessage *m)
     for (unsigned glyphs = 0; glyphs < 36 && m->cursor < m->size;) {
         unsigned ch = m->program[m->cursor++];
         if (ch >= 0x20 && ch <= 0x7e) {
-            if (m->column == 36) return 0;
+            if (m->column == m->frame.text_columns) return 0;
             m->frame.cells[m->row][m->column++] = (BfmForestMessageCell){(uint8_t)ch, (uint8_t)m->ink};
             ++glyphs;
+        } else if (ch == 0x01) {
+            if (m->cursor == m->size) return 0;
+            unsigned ink = m->program[m->cursor++];
+            if (ink < 1 || ink > 5) return 0;
+            m->ink = ink;
         } else if (ch == 0x0a && m->row + 1 < m->frame.choice_row + m->choice_count) {
             ++m->row;
             m->column = 0;
@@ -405,6 +464,11 @@ const BfmForestMessageFrame *bfm_field_message_tick(BfmForestMessage *m,
         /* The border begins shrinking on the dismissal update. */
         /* fall through */
     case CLOSING:
+        if (m->close_delay) {
+            --m->close_delay;
+            reveal(m, reveal_edge);
+            if (!m->rapid) break;
+        }
         f->text_visible = 0;
         if (!f->border_step) {
             f->focused = 0;

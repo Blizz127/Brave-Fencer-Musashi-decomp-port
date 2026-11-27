@@ -14,13 +14,15 @@ typedef struct BfmWoodsFlightGlow {
     BfmWoodsCaptureLight capture;
     int pulse, threshold, delta, evolution, visible_evolution;
     unsigned meter, attached_ticks;
-    int alive, gripped, draw_blade;
+    int alive, gripped, draw_blade, raised;
+    BfmForestTransform raised_blade;
 } BfmWoodsFlightGlow;
 
 /* Contours borrow the current mounted woods scene for the room lifetime. */
 int bfm_woods_flight_glow_load(BfmWoodsFlightGlow *art, const uint8_t *scene, size_t size);
 void bfm_woods_flight_glow_tick(BfmWoodsFlightGlow *art, const BfmFusionFlight *flight,
-    unsigned meter, const int32_t eye[3], BfmTetherRandom random, void *context);
+    unsigned meter, const BfmForestTransform *award_owner, unsigned field_tick,
+    const int32_t eye[3], BfmTetherRandom random, void *context);
 size_t bfm_woods_flight_glow_project(const BfmWoodsFlightGlow *art, const BfmFusionFlight *flight,
     const BfmForestCamera *camera, const int32_t eye[3], BfmForestDustCard *out, size_t capacity);
 
