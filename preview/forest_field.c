@@ -91,7 +91,7 @@ typedef struct {
     BfmForestActor fusion_actor;
     BfmForestTransform fusion_root;
     BfmForestCamera camera;
-    BfmForestDustCard cards[3 + BFM_FOREST_STRIKE_CARDS + BFM_FOREST_SWEEP_CARDS +
+    BfmForestDustCard cards[1 + BFM_FOREST_NOTICE_CARDS + BFM_FOREST_STRIKE_CARDS + BFM_FOREST_SWEEP_CARDS +
                             BFM_FOREST_WATER_EFFECT_CARDS];
     unsigned count;
     BfmForestDustCard skill_cards[BFM_TETHER_CARDS + BFM_FOREST_MUZZLE_CARDS +
@@ -985,6 +985,10 @@ int bfm_forest_submit_guard_and_impacts_with_run(BfmForestField *field,
     for (unsigned i = 0; i < FOREST_MELEE_GUARDS; ++i) {
         if (bfm_forest_marker_project(bfm_forest_shore_marker(guards[i]), camera,
                                       &frame->cards[frame->count])) ++frame->count;
+    }
+    for (unsigned i = 0; i < BFM_FOREST_SHORE_FIGURES; ++i) {
+        if (bfm_forest_marker_project(bfm_forest_shore_figure_marker(field->shore_figures, i),
+                                      camera, &frame->cards[frame->count])) ++frame->count;
     }
     frame->count += bfm_forest_strike_effects_step(&field->strikes, camera_eye, camera, run,
                                                   frame->cards + frame->count);

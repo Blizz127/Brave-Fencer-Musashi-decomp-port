@@ -17,7 +17,8 @@ enum { BFM_FOREST_DUST_CELLS = 10, BFM_FOREST_FOOT_DUST_CARDS = 9,
        /* Five entrance sprites plus at most 19 overlapping 30-update births. */
        BFM_FOREST_DRIFT_CARDS = 24, BFM_FOREST_HALO_CARDS = 28,
        BFM_FOREST_FALL_SLOTS = 128, BFM_FOREST_BANK_FLASH_CARDS = 24,
-       BFM_FOREST_EFFECT_CARDS = BFM_FOREST_DUST_CARDS + 2 + BFM_FOREST_STRIKE_CARDS +
+       BFM_FOREST_NOTICE_CARDS = 6, /* Two melee guards and four shore plants. */
+       BFM_FOREST_EFFECT_CARDS = BFM_FOREST_DUST_CARDS + BFM_FOREST_NOTICE_CARDS + BFM_FOREST_STRIKE_CARDS +
                                  BFM_FOREST_SWEEP_CARDS + BFM_FOREST_DRIFT_CARDS +
                                  BFM_FOREST_HALO_CARDS + BFM_FOREST_FALL_SLOTS +
                                  BFM_FOREST_BANK_FLASH_CARDS };

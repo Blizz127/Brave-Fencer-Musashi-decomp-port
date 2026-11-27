@@ -18,6 +18,7 @@ typedef struct {
     BfmForestTransform root, base_root, attachment_root;
     BfmForestPose pose;
     BfmForestShoreBehavior behavior;
+    BfmForestMarker marker;
     BfmForestShoreResponse response;
     int32_t q16[3];
     BfmForestShoreThrow flight;
@@ -144,6 +145,7 @@ void bfm_forest_shore_figures_free(BfmForestShoreFigures *figures)
 static void start_figure(BfmForestShoreFigures *figures, ShoreFigure *f)
 {
     bfm_forest_shore_behavior_begin(&f->behavior);
+    f->marker = (BfmForestMarker){0};
     bfm_forest_shore_response_init(&f->response, (int16_t)figures->initial_health,
                                    figures->initial_flags);
     for (unsigned axis = 0; axis < 3; ++axis) {
@@ -326,6 +328,7 @@ void bfm_forest_shore_figures_tick_aim(BfmForestShoreFigures *figures, const int
         ShoreFigure *f = &figures->placed[i];
         uint32_t clip = 0;
         unsigned key = 0;
+        unsigned event = 0;
         int release = f->carry == SHORE_RELEASING;
         if (!f->behavior.state) {
             int dz = player[2] - f->placement[2];
@@ -333,7 +336,11 @@ void bfm_forest_shore_figures_tick_aim(BfmForestShoreFigures *figures, const int
             if (distance <= 704 || distance >= 768) continue;
             start_figure(figures, f);
         } else if (f->carry != SHORE_UNHELD) {
-            if (!carry_tick(figures, f)) continue;
+            if (!carry_tick(figures, f)) {
+                /* The child keeps its own clock if a throw cannot move this update. */
+                bfm_forest_marker_advance(&f->marker, f->at);
+                continue;
+            }
             clip = f->clip;
             key = f->key;
         } else {
@@ -343,7 +350,7 @@ void bfm_forest_shore_figures_tick_aim(BfmForestShoreFigures *figures, const int
                 continue;
             }
             if (step == BFM_SHORE_RESPONSE_NORMAL) {
-                unsigned event = bfm_forest_shore_behavior_tick(&f->behavior, f->at, player, aim, targetable);
+                event = bfm_forest_shore_behavior_tick(&f->behavior, f->at, player, aim, targetable);
                 if ((event & BFM_SHORE_FIGURE_ATTACK_CONTACT) && targetable) {
                     BfmForestTransform body = {.translation = {player[0], player[1], player[2]}};
                     if (bfm_forest_mouth_hits_player(figures->field, &f->root, &body)) {
@@ -364,6 +371,10 @@ void bfm_forest_shore_figures_tick_aim(BfmForestShoreFigures *figures, const int
                 key = f->response.key;
             }
         }
+        if (event & BFM_SHORE_FIGURE_NOTICE)
+            bfm_forest_marker_start(&f->marker, figures->field, f->at, -150);
+        else
+            bfm_forest_marker_advance(&f->marker, f->at);
         if (!clip) {
             clip = bfm_forest_shore_behavior_clip(&f->behavior);
             key = f->behavior.tick;
@@ -398,6 +409,14 @@ int bfm_forest_shore_figures_bite(const BfmForestShoreFigures *figures, int16_t 
     if (!figures || !yaw || !figures->bite_landed) return 0;
     *yaw = figures->bite_yaw;
     return 1;
+}
+
+const BfmForestMarker *bfm_forest_shore_figure_marker(const BfmForestShoreFigures *figures,
+                                                     unsigned placement)
+{
+    if (!figures || placement >= BFM_FOREST_SHORE_FIGURES) return NULL;
+    const ShoreFigure *f = &figures->placed[placement];
+    return f->behavior.state && f->marker.reaction.scale ? &f->marker : NULL;
 }
 
 void bfm_forest_shore_figures_tick(BfmForestShoreFigures *figures, const int16_t player[3])

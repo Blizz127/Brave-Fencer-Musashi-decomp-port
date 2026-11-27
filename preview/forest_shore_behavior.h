@@ -8,11 +8,13 @@
 typedef struct {
     uint16_t state, tick, timer, outside_ticks;
     int16_t yaw;
+    uint8_t noticed;
 } BfmForestShoreBehavior;
 
 enum {
     BFM_SHORE_FIGURE_RETIRE = 1,
-    BFM_SHORE_FIGURE_ATTACK_CONTACT = 2
+    BFM_SHORE_FIGURE_ATTACK_CONTACT = 2,
+    BFM_SHORE_FIGURE_NOTICE = 4
 };
 
 /* A new placement starts facing its recorded neutral orientation. */

@@ -78,6 +78,10 @@ unsigned bfm_forest_shore_behavior_tick(BfmForestShoreBehavior *behavior,
         if (distance <= 192 * 192) {
             behavior->state = TURNING;
             behavior->tick = 0;
+            if (!behavior->noticed) {
+                behavior->noticed = 1;
+                return BFM_SHORE_FIGURE_NOTICE;
+            }
             return 0;
         }
         ++behavior->outside_ticks;
