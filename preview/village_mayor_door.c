@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "village_mayor_door.h"
+#include "bakery_door.h"
 #include "forest_pose.h"
 #include "../pc_port/forest_player_bytes.h"
 #include "forest_raster.h"
@@ -191,13 +192,14 @@ void bfm_village_mayor_door_draw_to(BfmVillageMayorDoor *door, int depth)
 }
 
 struct BfmVillageShopDoors {
-    BfmVillageMayorDoor *inn, *toy_open, *toy_closed, *toy;
+    BfmVillageMayorDoor *inn, *bakery, *toy_open, *toy_closed, *toy;
 };
 
 void bfm_village_shop_doors_free(BfmVillageShopDoors *doors)
 {
     if (!doors) return;
     bfm_village_mayor_door_free(doors->inn);
+    bfm_village_mayor_door_free(doors->bakery);
     bfm_village_mayor_door_free(doors->toy_open);
     bfm_village_mayor_door_free(doors->toy_closed);
     free(doors);
@@ -207,10 +209,11 @@ BfmVillageShopDoors *bfm_village_shop_doors_load(const uint8_t *scene, size_t by
 {
     BfmVillageShopDoors *doors = calloc(1,sizeof *doors);
     if (!doors) return NULL;
+    doors->bakery = load_leaf(scene,bytes,room,8,0);
     doors->inn = load_leaf(scene,bytes,room,10,0);
     doors->toy_open = load_leaf(scene,bytes,room,13,0);
     doors->toy_closed = load_leaf(scene,bytes,room,13,1);
-    if (!doors->inn || !doors->toy_open || !doors->toy_closed) {
+    if (!doors->bakery || !doors->inn || !doors->toy_open || !doors->toy_closed) {
         bfm_village_shop_doors_free(doors);
         return NULL;
     }
@@ -227,6 +230,8 @@ void bfm_village_shop_doors_prepare(BfmVillageShopDoors *doors, const BfmBedroom
     int open = state->progress[0x42] != 2 && minute >= 12 * 60 && minute < 20 * 60 &&
                !(story >= 100 && story < 130) && !(story >= 950 && story < 1000);
     doors->toy = open ? doors->toy_open : doors->toy_closed;
+    bfm_village_mayor_door_prepare(doors->bakery,view,tiles,pixels,
+                                  bfm_bakery_door_is_open(state) ? -1536 : 0);
     bfm_village_mayor_door_prepare(doors->inn,view,tiles,pixels,-1536);
     bfm_village_mayor_door_prepare(doors->toy,view,tiles,pixels,open ? -1536 : 0);
 }
@@ -235,13 +240,16 @@ int bfm_village_shop_doors_next_depth(const BfmVillageShopDoors *doors)
 {
     int inn = bfm_village_mayor_door_next_depth(doors->inn);
     int toys = bfm_village_mayor_door_next_depth(doors->toy);
-    return inn > toys ? inn : toys;
+    int bakery = bfm_village_mayor_door_next_depth(doors->bakery);
+    int next = inn > toys ? inn : toys;
+    return next > bakery ? next : bakery;
 }
 
 void bfm_village_shop_doors_draw_to(BfmVillageShopDoors *doors, int depth)
 {
     int next;
     while ((next = bfm_village_shop_doors_next_depth(doors)) != INT_MIN && next >= depth) {
+        bfm_village_mayor_door_draw_to(doors->bakery,next);
         bfm_village_mayor_door_draw_to(doors->inn,next);
         bfm_village_mayor_door_draw_to(doors->toy,next);
     }

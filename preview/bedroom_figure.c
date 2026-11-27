@@ -275,9 +275,11 @@ static void include_pixel(BfmBedroomFigure *figure, int x, int y)
     if (y > figure->y_max) figure->y_max = y;
 }
 
+typedef enum { DEPTH_AVERAGE, DEPTH_NEAR, DEPTH_FAR_FT4 } PartDepth;
+
 static void collect_part(BfmBedroomFigure *figure, const BfmBedroomView *camera,
                          const Transform *world, const MusashiForestPlayerPart *part,
-                         int near_priority)
+                         PartDepth depth)
 {
     int light[3][3];
     for (unsigned a = 0; a < 3; ++a)
@@ -290,7 +292,7 @@ static void collect_part(BfmBedroomFigure *figure, const BfmBedroomView *camera,
     for (size_t f = 0; f < part->face_count; ++f) {
         const MusashiForestPlayerFace *face = &part->faces[f];
         FigureFace *out = &figure->faces[figure->count];
-        int near = INT_MAX, sum = 0;
+        int near = INT_MAX, far = 0, sum = 0;
         unsigned corner = 0;
         for (; corner < face->corners; ++corner) {
             const MusashiForestPlayerVector *point = &part->vertices[face->vertex[corner]];
@@ -298,9 +300,10 @@ static void collect_part(BfmBedroomFigure *figure, const BfmBedroomView *camera,
             int screen[3];
             if (!bfm_bedroom_project(camera, xyz, screen)) break;
             if (screen[2] <= camera->focal/2 &&
-                (corner < 3 || near_priority || (face->mode != 0x38 && face->mode != 0x3c)))
+                (corner < 3 || depth == DEPTH_NEAR || (face->mode != 0x38 && face->mode != 0x3c)))
                 break;
             if (screen[2] < near) near = screen[2];
+            if (screen[2] > far) far = screen[2];
             sum += screen[2];
             out->v[corner] = (BfmForestRasterVertex){.x=screen[0],.y=screen[1],
                                                     .u=face->u[corner],.v=face->v[corner]};
@@ -326,7 +329,9 @@ static void collect_part(BfmBedroomFigure *figure, const BfmBedroomView *camera,
             .page=face->tpage, .clut=face->clut, .count=face->corners,
             .textured=!!(face->mode & 4), .translucent=!!(face->mode & 2)
         };
-        out->depth = near_priority ? near/4-1 : (sum*(face->corners == 3 ? 341 : 256))/4096;
+        out->depth = (sum*(face->corners == 3 ? 341 : 256))/4096;
+        if (depth == DEPTH_NEAR) out->depth = near/4-1;
+        if (depth == DEPTH_FAR_FT4 && face->mode == 0x2c) out->depth = far/4;
         out->order = figure->count++;
     }
 }
@@ -594,7 +599,8 @@ int bfm_bedroom_figure_prepare_axes(BfmBedroomFigure *figure, const BfmBedroomVi
         BfmBedroomView camera = {.focal=view->focal};
         memcpy(camera.axes, posed.r, sizeof(camera.axes));
         memcpy(camera.translation, posed.t, sizeof(camera.translation));
-        collect_part(figure,&camera,&world,musashi_forest_player_mesh_part(figure->mesh,i),i < 2);
+        collect_part(figure,&camera,&world,musashi_forest_player_mesh_part(figure->mesh,i),
+                     i < 2 ? DEPTH_NEAR : DEPTH_AVERAGE);
     }
     if (!mini && body->blade) collect_blade(figure, view, body, &root, &eye, model_scale, 0);
     if (!mini && body->lumina_guard && body->lumina_blade)
@@ -649,7 +655,7 @@ int bfm_bedroom_figure_add_fusion(BfmBedroomFigure *figure, const BfmBedroomView
         BfmBedroomView camera = {.focal = view->focal};
         memcpy(camera.axes, posed.r, sizeof camera.axes);
         memcpy(camera.translation, posed.t, sizeof camera.translation);
-        collect_part(figure, &camera, &world, part, 0);
+        collect_part(figure, &camera, &world, part, DEPTH_AVERAGE);
     }
     for (size_t i = 0; i < count; ++i) {
         const BfmForestDustCard *card = &cards[i];
@@ -781,7 +787,7 @@ static void collect_actor_shadow(BfmBedroomFigure *figure, const BfmBedroomView 
 static int add_actor(BfmBedroomFigure *figure, const BfmBedroomView *view,
                      const BfmForestActor *actor, const BfmBedroomRoot *ground,
                      const uint8_t shadow[12], unsigned shadow_size,
-                     const BfmBedroomLight lights[3], unsigned blend)
+                     const BfmBedroomLight lights[3], unsigned blend, PartDepth depth)
 {
     if (!figure || !view || !actor || !actor->mesh || !actor->pose || !actor->root ||
         figure->next || !figure->surface.pixels || view->focal <= 0 || view->focal > UINT16_MAX)
@@ -827,7 +833,7 @@ static int add_actor(BfmBedroomFigure *figure, const BfmBedroomView *view,
         BfmBedroomView camera = {.focal = view->focal};
         memcpy(camera.axes, posed.r, sizeof camera.axes);
         memcpy(camera.translation, posed.t, sizeof camera.translation);
-        collect_part(figure, &camera, &world, musashi_forest_player_mesh_part(actor->mesh, i), 0);
+        collect_part(figure, &camera, &world, musashi_forest_player_mesh_part(actor->mesh, i), depth);
     }
     if (lights) {
         memcpy(figure->direction, direction, sizeof direction);
@@ -846,13 +852,19 @@ int bfm_bedroom_figure_add_actor(BfmBedroomFigure *figure, const BfmBedroomView 
                      const BfmForestActor *actor, const BfmBedroomRoot *ground,
                      const uint8_t shadow[12], unsigned shadow_size)
 {
-    return add_actor(figure, view, actor, ground, shadow, shadow_size, NULL, 0);
+    return add_actor(figure, view, actor, ground, shadow, shadow_size, NULL, 0, DEPTH_AVERAGE);
+}
+
+int bfm_bedroom_figure_add_far_ft4_actor(BfmBedroomFigure *figure, const BfmBedroomView *view,
+                     const BfmForestActor *actor)
+{
+    return add_actor(figure, view, actor, NULL, NULL, 0, NULL, 0, DEPTH_FAR_FT4);
 }
 
 int bfm_bedroom_figure_add_lit_translucent(BfmBedroomFigure *figure, const BfmBedroomView *view,
                      const BfmForestActor *actor, const BfmBedroomLight lights[3], unsigned blend)
 {
-    return lights && blend <= 3 && add_actor(figure, view, actor, NULL, NULL, 0, lights, blend);
+    return lights && blend <= 3 && add_actor(figure, view, actor, NULL, NULL, 0, lights, blend, DEPTH_AVERAGE);
 }
 
 int bfm_bedroom_figure_add_morph(BfmBedroomFigure *figure, const BfmBedroomView *view,
@@ -880,7 +892,7 @@ int bfm_bedroom_figure_add_morph(BfmBedroomFigure *figure, const BfmBedroomView 
     BfmBedroomView camera = {.focal = view->focal};
     memcpy(camera.axes, posed.r, sizeof camera.axes);
     memcpy(camera.translation, posed.t, sizeof camera.translation);
-    collect_part(figure, &camera, &world, part, 0);
+    collect_part(figure, &camera, &world, part, DEPTH_AVERAGE);
     qsort(figure->faces, figure->count, sizeof(*figure->faces), back_to_front);
     return 1;
 }
@@ -936,7 +948,7 @@ int bfm_bedroom_visitor_add_scaled(const BfmBedroomVisitor *visitor, BfmBedroomF
         BfmBedroomView camera = {.focal=view->focal};
         memcpy(camera.axes,posed.r,sizeof(camera.axes));
         memcpy(camera.translation,posed.t,sizeof(camera.translation));
-        collect_part(figure,&camera,&world,musashi_forest_player_mesh_part(visitor->model[index],i),0);
+        collect_part(figure,&camera,&world,musashi_forest_player_mesh_part(visitor->model[index],i),DEPTH_AVERAGE);
     }
     qsort(figure->faces,figure->count,sizeof(*figure->faces),back_to_front);
     return 1;

@@ -35,6 +35,13 @@ void bfm_forest_hud_gauges(BfmForestHud *hud, unsigned charge, int absorption);
 /* Southern woods select assimilation as soon as the first Square contributes.
  * A surviving partial tether continues to supply its meter until the catch. */
 void bfm_woods_hud_gauges(BfmForestHud *hud, unsigned charge, int absorption);
+/* Supply the selected village stance and its raw 0..128 charge once per field
+ * update. The status record selects the badge; the well drains after release. */
+void bfm_village_hud_rest(BfmForestHud *hud, int selected, unsigned charge, int show_fatigue);
+/* Once per submitted lower-village update, request the palette for the blade
+ * now visible in the well. Upload *palette_equipment before drawing when
+ * this returns one. Pass -1 on leaving the street to reset the visual state. */
+int bfm_village_hud_step_blade(BfmForestHud *hud, int equipment, unsigned *palette_equipment);
 /* Sample HP and BP after the forest simulation update. The bar and its
  * digits share the value submitted two updates before the displayed frame. */
 void bfm_forest_hud_submit_points(BfmForestHud *hud, const BfmForestStatus *status);

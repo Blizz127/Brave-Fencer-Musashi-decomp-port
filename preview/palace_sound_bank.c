@@ -84,12 +84,18 @@ static BfmPalaceBank *read_score_bank(const MusashiDiscMedia *disc, const char *
         (!strcmp(archive, "SC03.CD") && member == 68)) {
         if (middle < 12 || last <= middle || last > bytes - 8) return NULL;
         final_track = 4 + last;
-    } else if (!strcmp(archive, "SC03.CD") && member == 0) {
+    } else if ((!strcmp(archive, "SC02.CD") && (member == 23 || member == 34)) ||
+               (!strcmp(archive, "SC03.CD") && member == 0) ||
+               (!strcmp(archive, "SC04.CD") && member == 13)) {
         if (middle < 12 || middle > bytes - 8 || last) return NULL;
         final_track = 4 + middle;
     } else {
-        int single = member == 78 || (!strcmp(archive, "SC03.CD") && (member == 4 || member == 67)) ||
-                     (!strcmp(archive, "SC02.CD") && member == 25);
+        int sc03_single = !strcmp(archive, "SC03.CD") &&
+                          (member == 4 || member == 9 || (member >= 37 && member <= 39) ||
+                           member == 50 || member == 67);
+        int single = member == 78 || sc03_single ||
+                     (!strcmp(archive, "SC02.CD") && member == 25) ||
+                     (!strcmp(archive, "SC06.CD") && member == 38);
         if (!single || middle || last) return NULL;
     }
     uint8_t signature[4];
@@ -151,7 +157,8 @@ BfmPalaceBank *bfm_archive_sound_bank_load(const MusashiDiscMedia *disc, const c
             /* Resident effects, equipped abilities and the summit follow-up use paired
              * PAC2 headers and extended sample bodies. */
             int extended = type == 0x103 &&
-                ((!strcmp(archive, "MAIN.CD") && (member == 2 || member == 15 || member == 18 || member == 19)) ||
+                ((!strcmp(archive, "MAIN.CD") && (member == 2 || member == 15 || member == 18 ||
+                                                  member == 19 || member == 20)) ||
                  (!strcmp(archive, "SC02.CD") && member == 2));
             if ((type != 3 && !extended) || key != header_key)
                 return NULL;

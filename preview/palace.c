@@ -9,7 +9,8 @@
 #include <string.h>
 
 enum { SCREEN_W = 320, TOP = 10, BOTTOM = 230, SECTOR = 2048 };
-enum { MAX_VERTICES = 4096, MAX_FACES = 4096, MAX_SCENE = BFM_FIELD_SCENE_CAPACITY };
+/* Field meshes reference vertices by 16-bit byte offsets into eight-byte records. */
+enum { MAX_VERTICES = UINT16_MAX / 8 + 1, MAX_FACES = 4096, MAX_SCENE = BFM_FIELD_SCENE_CAPACITY };
 
 typedef struct { int x, y, z; } Point;
 typedef struct { uint16_t u, v; } Texel;

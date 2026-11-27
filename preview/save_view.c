@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "save_menu.h"
+#include "bakery_menu_art.h"
 #include "inn_menu.h"
 #include "chapter_completion_view.h"
 #include "inn_greeting.h"
@@ -37,6 +38,7 @@ typedef struct {
     const BfmSaveArt *art;
     uint32_t (*pixels)[320];
     unsigned over_field;
+    const uint16_t *palette;
 } Canvas;
 
 static uint32_t rgb(unsigned r, unsigned g, unsigned b)
@@ -53,7 +55,7 @@ static void blit(Canvas *c, int page, int x, int y, int w, int h,
         for (int i = 0; i < w; ++i) {
             unsigned tx = (unsigned)(u + i * uw / w);
             unsigned index = (src[tx / 4] >> ((tx % 4) * 4)) & 15u;
-            unsigned texel = c->art->palette[index];
+            unsigned texel = c->palette[index];
             if (texel && (unsigned)(x + i) < 320 && (unsigned)(y + j) < 240)
                 c->pixels[y + j][x + i] = rgb((texel & 31u) * light / 128,
                                                ((texel >> 5) & 31u) * light / 128,
@@ -89,6 +91,10 @@ static void text(Canvas *c, int x, int y, const char *s, unsigned light)
     }
 }
 
+static const int dither[4][4] = {
+    {-4, 0,-3, 1}, {2,-2, 3,-1}, {-3, 1,-4, 0}, {3,-1, 2,-2}
+};
+
 static unsigned quantize(int value, int adjustment, int dim)
 {
     int level = ((value >> dim) + adjustment) / 8;
@@ -101,9 +107,6 @@ enum PanelBand { BODY, HEADING, INN_HEADING };
 
 static void shade(Canvas *c, int x, int y, int w, int h, enum PanelBand band, int dim)
 {
-    static const int dither[4][4] = {
-        {-4, 0,-3, 1}, {2,-2, 3,-1}, {-3, 1,-4, 0}, {3,-1, 2,-2}
-    };
     for (int j = 0; j < h; ++j) {
         for (int i = 0; i < w; ++i) {
             int d = dither[(y+j) % 4][(x+i) % 4];
@@ -187,7 +190,7 @@ static void file_cursor(Canvas *c, unsigned selected, unsigned fields)
 void bfm_save_menu_draw(const BfmSaveArt *art, const BfmSaveMenu *menu, unsigned fields,
                         uint32_t pixels[240][320])
 {
-    Canvas c = {art, pixels, 0};
+    Canvas c = {art, pixels, 0, art->palette};
     for (int y = 0; y < 240; ++y)
         for (int x = 0; x < 320; ++x) pixels[y][x] = 0xff000000u;
     panel(&c, 8, 12, 304, 38, 29);
@@ -283,6 +286,76 @@ static void inn_room_list(Canvas *c, const BfmInnMenu *menu, int active)
     blit(c, GLYPHS, 163, 108 + 13*(int)menu->room, 8, 8, 48, 72, 8, 8, light);
 }
 
+static void shop_label(Canvas *c, int x, int y, const BfmShopLabel *label, unsigned light)
+{
+    for (unsigned i = label->count; i > 0; --i) {
+        unsigned uv = label->uv[i-1];
+        blit(c, GLYPHS, x + 7*(int)(i-1), y, 8, 8, uv & 255u, uv >> 8, 8, 8, light);
+    }
+}
+
+static void shop_fill(Canvas *c, const BfmShopFill *fill, int active)
+{
+    BfmShopRect r = fill->rect;
+    int area = r.w*r.h;
+    for (int y = 0; y < r.h; ++y) {
+        for (int x = 0; x < r.w; ++x) {
+            uint32_t *pixel = &c->pixels[r.y+y][r.x+x];
+            int d = dither[(r.y+y)%4][(r.x+x)%4];
+            unsigned color[3];
+            for (unsigned channel = 0; channel < 3; ++channel) {
+                int across = channel == 2 ? 40 : 0;
+                int delta = (int)fill->bottom[channel] - fill->top[channel];
+                int level = (fill->top[channel]*area + (delta+across)*y*r.w -
+                             across*x*r.h + area/2)/area;
+                if (!active) {
+                    unsigned behind = (*pixel >> (19-8*channel)) & 31u;
+                    level = (int)behind * 4 + level/2;
+                }
+                color[channel] = quantize(level, d, 0);
+            }
+            *pixel = rgb(color[0], color[1], color[2]);
+        }
+    }
+}
+
+void bfm_save_art_shop_list(const BfmSaveArt *art, uint32_t pixels[240][320],
+                            const BfmShopListLayout *box, BfmBakeryPane pane, const BfmBakeryMenuView *view,
+                            unsigned cursor, const BfmShopLabel *names,
+                            const unsigned *prices, unsigned count)
+{
+    Canvas c = {art, pixels, 1, art->palette};
+    int active = pane == view->active;
+    unsigned light = active ? 128 : 88;
+    shop_fill(&c, &box->fills[1], active);
+    if (active) shop_fill(&c, &box->fills[0], 1);
+    for (unsigned i = 0; i < 8; ++i) {
+        const BfmShopBorder *edge = &box->borders[i];
+        BfmShopRect r = edge->rect;
+        blit(&c, GLYPHS, r.x, r.y, r.w, r.h, (int)edge->u, (int)edge->v,
+             r.w > 8 ? 7 : 8, r.h > 8 ? 7 : 8, light);
+    }
+    shop_label(&c, box->title_x, box->title_y, &box->title, light);
+    for (unsigned i = 0; i < count; ++i) {
+        int x = box->row_x[i], y = box->row_y[i];
+        shop_label(&c, x + (pane == BFM_BAKERY_SERVICES ? 4 : 0), y, &names[i], light);
+        if (prices) {
+            char amount[16];
+            snprintf(amount, sizeof amount, "$%u", prices[i]);
+            text(&c, x + 102 - 7*(int)strlen(amount), y, amount, light);
+        }
+    }
+    blit(&c, GLYPHS, box->row_x[cursor]-8, box->row_y[cursor], 8, 8, 48, 72, 8, 8, light);
+    if (active && pane == BFM_BAKERY_GOODS && (view->age & 8u)) {
+        int x = box->fills[0].rect.x + box->fills[0].rect.w - 12;
+        if (view->first_good)
+            blit(&c, GLYPHS, x, box->row_y[0]-2, 8, 8, 120, 48, 8, 8, light);
+        if (view->goods_count-view->first_good > BFM_BAKERY_VISIBLE_ROWS)
+            blit(&c, GLYPHS, x, box->row_y[BFM_BAKERY_VISIBLE_ROWS-1]+1,
+                 8, 8, 120, 56, 8, 8, light);
+    }
+}
+
 static void inn_room_fade(uint32_t pixels[240][320], unsigned age)
 {
     /* Ages are 30 Hz room updates. The picture loses levels from each
@@ -315,7 +388,7 @@ static void save_picker_heading(Canvas *c, int selecting)
 void bfm_inn_menu_draw(const BfmInnMenu *menu, const BfmSaveArt *art,
                        unsigned fields, uint32_t pixels[240][320])
 {
-    Canvas c = {art, pixels, 1};
+    Canvas c = {art, pixels, 1, menu->field_palette ? menu->field_palette : art->palette};
     if (bfm_inn_menu_dialogue(menu) != BFM_INN_HIDE_DIALOGUE) {
         int services = menu->page == BFM_INN_SERVICE || menu->page == BFM_INN_SERVICE_ERROR;
         inn_service_list(&c, menu->service, services);
@@ -330,15 +403,23 @@ void bfm_inn_menu_draw(const BfmInnMenu *menu, const BfmSaveArt *art,
     }
     panel(&c, 8, 12, 304, 38, 29);
     for (unsigned i = 0; i < 4; ++i) draw_row(&c, &menu->card, i);
-    save_picker_heading(&c, menu->page == BFM_INN_FILES || menu->page == BFM_INN_FILE_ERROR);
+    if (menu->overwriting && (menu->page == BFM_INN_CONFIRM || menu->page == BFM_INN_WRITING ||
+                               menu->page == BFM_INN_SAVED)) {
+        label(&c, 100, 18, 108, 180, 113, 12, 128);
+        label(&c, 94, 31, 126, 24, 125, 12, 128);
+    } else {
+        save_picker_heading(&c, menu->page == BFM_INN_FILES || menu->page == BFM_INN_FILE_ERROR);
+    }
     switch (menu->page) {
     case BFM_INN_WRITING:
     case BFM_INN_SAVED:
         panel(&c, 32, 118, 256, 38, 29);
-        if (menu->page == BFM_INN_SAVED)
+        if (menu->page == BFM_INN_SAVED) {
             label(&c, 124, 131, 72, 204, 65, 12, 128);
-        else
-            label(&c, 121, 131, 0, 204, 71, 12, 128);
+        } else {
+            label(&c, 124, 124, 0, 204, 71, 12, 128);
+            label(&c, 40, 137, 0, 36, 239, 12, 128);
+        }
         break;
     case BFM_INN_FILE_ERROR:
         panel(&c, 24, 116, 272, 38, 29);
@@ -365,7 +446,7 @@ int bfm_chapter_completion_draw(const BfmChapterCompletion *state, const BfmSave
         return bfm_chapter_card_draw(title, elapsed, 1, &pixels[0][0]) >= 0;
     }
     if (!art) return 0;
-    Canvas c = {art, pixels, 0};
+    Canvas c = {art, pixels, 0, art->palette};
     for (unsigned y = 0; y < 240; ++y)
         for (unsigned x = 0; x < 320; ++x) pixels[y][x] = 0xff000000u;
     panel(&c, 8, 12, 304, 38, 29);

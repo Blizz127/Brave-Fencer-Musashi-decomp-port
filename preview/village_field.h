@@ -14,6 +14,8 @@ typedef struct {
 } BfmVillageField;
 
 /* The expanded SC03 village member stays mounted while the field is active. */
+int bfm_village_field_load_room(BfmVillageField *field, const MusashiDiscMedia *disc,
+                                const uint8_t *scene, size_t bytes, uint32_t room, uint32_t face_table);
 int bfm_village_field_load(BfmVillageField *field, const MusashiDiscMedia *disc,
                            const uint8_t *scene, size_t size, uint32_t room);
 /* Street and mayor's porch, mounted from SC03 member 1. */
@@ -21,6 +23,8 @@ int bfm_village_field_load_lower(BfmVillageField *field, const MusashiDiscMedia 
                                  const uint8_t *scene, size_t size, uint32_t room);
 int bfm_village_field_load_woods(BfmVillageField *field, const MusashiDiscMedia *disc,
                                  const uint8_t *scene, size_t size);
+int bfm_village_field_load_bank(BfmVillageField *field, const MusashiDiscMedia *disc,
+                                const uint8_t *scene, size_t size);
 void bfm_village_field_clear(BfmVillageField *field);
 /* Effective body parts for this pose and current equipment. */
 uint32_t bfm_village_field_visible(const BfmBedroomPose *pose, const uint8_t flags[64]);

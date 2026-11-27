@@ -5,30 +5,6 @@
 
 enum { SHORE_PARTS = 24 };
 
-static int full_pose(const uint8_t *frame, BfmForestPose *out)
-{
-    /* Full records store signed XYZ and three Euler angles. Express the
-     * angles in the forest renderer's compact form to use precisely the
-     * same fixed-point rotation; retain the full signed translations. */
-    uint8_t angles[8 * SHORE_PARTS] = {0};
-    for (unsigned i = 0; i < SHORE_PARTS; ++i) {
-        const uint8_t *joint = frame + 12 * i;
-        uint8_t *packed = angles + 8 * i;
-        uint16_t y = u16le(joint + 8), z = u16le(joint + 10);
-        packed[0] = (uint8_t)(((z >> 4) & 0xf0) | ((y >> 8) & 15));
-        packed[1] = (uint8_t)y;
-        packed[2] = (uint8_t)z;
-        packed[6] = joint[6];
-        packed[7] = joint[7];
-    }
-    if (!bfm_forest_actor_pose_decode(angles, sizeof angles, SHORE_PARTS, out))
-        return 0;
-    for (unsigned i = 0; i < SHORE_PARTS; ++i)
-        for (unsigned axis = 0; axis < 3; ++axis)
-            out->local[i].translation[axis] = s16le(frame + 12 * i + 2 * axis);
-    return 1;
-}
-
 /* The mounted model has eight lists between its pose storage and the next
  * mesh. Each key's original encoding selects full or compact transforms. */
 static const struct { uint32_t start; unsigned keys; } shore_clips[] = {
@@ -56,7 +32,7 @@ int bfm_forest_shore_clip_pose(const BfmForestField *field, uint32_t clip_addres
     if (!frame) return 0;
     if (encoded & compact)
         return bfm_forest_actor_pose_decode(frame, length, SHORE_PARTS, out);
-    return full_pose(frame, out);
+    return bfm_forest_actor_pose_decode_full(frame,12*SHORE_PARTS,SHORE_PARTS,out);
 }
 
 int bfm_forest_shore_pose(const BfmForestField *field, unsigned state,

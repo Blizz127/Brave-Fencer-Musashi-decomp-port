@@ -295,6 +295,11 @@ const BfmBedroomRoot *bfm_bedroom_travel_root(const BfmBedroomTravel *t)
     return t ? &t->root : NULL;
 }
 
+const int64_t *bfm_bedroom_travel_position(const BfmBedroomTravel *t)
+{
+    return t ? t->position : NULL;
+}
+
 static void begin(BfmBedroomTravel *t, int action)
 {
     t->root.busy = 1;

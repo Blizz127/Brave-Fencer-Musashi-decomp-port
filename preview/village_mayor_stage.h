@@ -13,7 +13,7 @@ typedef struct BfmVillageMayorStage BfmVillageMayorStage;
 BfmVillageMayorStage *bfm_village_mayor_stage_open(const uint8_t *scene, size_t bytes,
                         uint32_t room, const uint8_t *mayor, size_t mayor_bytes, uint32_t shadow);
 void bfm_village_mayor_stage_free(BfmVillageMayorStage *stage);
-int bfm_village_mayor_stage_begin(BfmVillageMayorStage *stage, const BfmSaveRecord *state,
+int bfm_village_mayor_stage_begin(BfmVillageMayorStage *stage, BfmSaveRecord *state,
                    const BfmBedroomRoot *player, const BfmVillageCamera *camera, int square_edge);
 /* Once per field logic tick after updating the lower-village camera. */
 int bfm_village_mayor_stage_step(BfmVillageMayorStage *stage, BfmVillageCamera *normal);

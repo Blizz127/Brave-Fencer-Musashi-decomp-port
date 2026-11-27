@@ -27,6 +27,10 @@ void bfm_bedroom_message_art_draw(const BfmForestMessageArt *art, const BfmFores
 /* The active room command selects the side and positions the tail in screen space. */
 void bfm_bedroom_message_art_draw_side(const BfmForestMessageArt *art, const BfmForestMessageFrame *frame,
                                        int speaker_x, int portrait_on_right, uint32_t pixels[240][320]);
+/* Draw a staged speaker's signed tail offset and side against the mounted
+ * field's bubble rim. Returns zero if the placement table is unavailable. */
+int bfm_forest_message_art_draw_placed(const BfmForestMessageArt *art, const BfmForestMessageFrame *frame,
+                                       int16_t offset, int on_right, uint32_t pixels[240][320]);
 int bfm_library_question_draw(const BfmForestMessageArt *art, const uint8_t *box, const uint8_t *portrait,
                               const uint16_t tiles[512][1024], const uint8_t *text, size_t bytes,
                               unsigned update, uint32_t pixels[240][320]);

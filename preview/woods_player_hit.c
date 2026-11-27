@@ -13,15 +13,23 @@ struct BfmWoodsPlayerHit {
     uint16_t damage;
     uint8_t palette;
     unsigned blink, recoil;
-    int airborne, guard_closed;
+    int airborne, guard_closed, in_water;
     int16_t local_axis[2];
 };
+
+enum { HIT_PROTECTION_FIELDS = 32 };
 
 BfmWoodsPlayerHit *bfm_woods_player_hit_open(const MusashiDiscMedia *disc,
                                   const uint8_t *scene, size_t bytes)
 {
     const size_t hurt_palette = UINT32_C(0x8018a975) - UINT32_C(0x80128158);
-    if (!disc || !scene || hurt_palette >= bytes) return NULL;
+    if (!scene || hurt_palette >= bytes) return NULL;
+    return bfm_woods_player_hit_open_palette(disc,scene[hurt_palette]);
+}
+
+BfmWoodsPlayerHit *bfm_woods_player_hit_open_palette(const MusashiDiscMedia *disc, uint8_t palette)
+{
+    if (!disc) return NULL;
     BfmWoodsPlayerHit *hit = calloc(1, sizeof *hit);
     if (!hit) return NULL;
     if (!bfm_forest_hurt_load(disc, &hit->clip)) {
@@ -29,13 +37,62 @@ BfmWoodsPlayerHit *bfm_woods_player_hit_open(const MusashiDiscMedia *disc,
         return NULL;
     }
     hit->disc = disc;
-    hit->palette = scene[hurt_palette];
+    hit->palette = palette;
     return hit;
 }
 
 void bfm_woods_player_hit_free(BfmWoodsPlayerHit *hit)
 {
     free(hit);
+}
+
+void bfm_woods_player_hit_blink(BfmWoodsPlayerHit *hit, unsigned fields)
+{
+    hit->blink = fields;
+}
+
+static void hurt_number(const BfmWoodsPlayerHit *hit, BfmGameplayRun *run,
+                        BfmForestDamageDigits *digits, const int16_t foot[3], uint16_t damage)
+{
+    /* Neither value creates a digit actor or consumes its scatter RNG. */
+    if (!damage || damage == 1000) return;
+    bfm_forest_damage_digits_start_data(digits, &hit->palette, foot, damage);
+    digits->hurt = 1;
+    bfm_forest_damage_digits_scatter(digits, bfm_gameplay_random(run));
+}
+
+int bfm_woods_player_hit_can_check_defeat(const BfmGameplayRun *run,
+                                         const BfmWoodsPlayerHitInput *input)
+{
+    return run && run->has_player && input && bfm_forest_status_values(&run->player).hp == 0 &&
+           !(input->player_flags & 0x10u) && input->player_action != 26 && input->player_action != 30 &&
+           (!input->protected_action || (input->protected_action & UINT32_C(0x08000000)));
+}
+
+int bfm_woods_player_hit_water_entry(BfmWoodsPlayerHit *hit, BfmGameplayRun *run,
+                                     const int16_t foot[3], uint32_t player_flags,
+                                     BfmForestDamageDigits *digits)
+{
+    if (!hit || !run || !foot || !digits) return 0;
+    if (hit->in_water) return 1;
+    uint16_t damage;
+    if (!bfm_forest_hit_damage(hit->disc, &run->player, player_flags, 16, &damage)) return 0;
+    hurt_number(hit, run, digits, foot, damage);
+    hit->damage = damage;
+    hit->in_water = 1;
+    hit->hurt.active = hit->blink = hit->recoil = 0;
+    hit->guard_closed = 0;
+    return 1;
+}
+
+BfmWoodsWaterLanding bfm_woods_player_hit_water_return(BfmWoodsPlayerHit *hit, BfmGameplayRun *run)
+{
+    if (!hit || !run || !hit->in_water) return BFM_WOODS_WATER_NO_LANDING;
+    bfm_forest_status_debit(&run->player, hit->damage);
+    hit->in_water = 0;
+    hit->blink = HIT_PROTECTION_FIELDS;
+    return bfm_forest_status_values(&run->player).hp <= 0 ?
+        BFM_WOODS_WATER_ZERO_HP : BFM_WOODS_WATER_SURVIVED;
 }
 
 static int faces_attack(unsigned player, unsigned attacker)
@@ -105,7 +162,7 @@ static void finish_hurt(BfmWoodsPlayerHit *hit, BfmGameplayRun *run, uint32_t pl
         damage = bfm_forest_status_values(&run->player).max_hp;
     bfm_forest_status_debit(&run->player, damage);
     hit->hurt.active = 0;
-    hit->blink = 32;
+    hit->blink = HIT_PROTECTION_FIELDS;
     frame->movement_locked = 1;
     frame->pose = 0;
     frame->zero_hp = bfm_forest_status_values(&run->player).hp <= 0;
@@ -135,7 +192,7 @@ int bfm_woods_player_hit_step(BfmWoodsPlayerHit *hit, BfmGameplayRun *run,
         input->player_action != 26 && input->player_action != 30)
         bfm_woods_ring_mini_step(&run->player);
     frame->miniature = bfm_woods_ring_mini_active(&run->player);
-    int ignore_hit = hit->blink != 0 || hit->guard_closed;
+    int ignore_hit = (hit->blink && !(input->hit_flags & 0x8000u)) || hit->guard_closed || hit->in_water;
     hit->guard_closed = 0;
     if (hit->blink) frame->hide_body = (--hit->blink & 1u) != 0;
     bfm_forest_damage_digits_advance(&hit->digits);
@@ -159,14 +216,12 @@ int bfm_woods_player_hit_step(BfmWoodsPlayerHit *hit, BfmGameplayRun *run,
             if (!bfm_forest_hurt_begin(&hit->hurt, root->yaw, input->attacker_yaw)) return 0;
             hit->damage = damage;
             hit->airborne = input->airborne;
+            /* This field has already sampled the previous blink parity. */
+            hit->blink = 0;
             frame->hurt_started = 1;
             frame->release_carry = input->carrying;
             frame->sound = 1105;
-            if (damage) {
-                bfm_forest_damage_digits_start_data(&hit->digits, &hit->palette, root->xyz, damage);
-                hit->digits.hurt = 1;
-                bfm_forest_damage_digits_scatter(&hit->digits, bfm_gameplay_random(run));
-            }
+            hurt_number(hit, run, &hit->digits, root->xyz, damage);
             if ((input->hit_flags & 0x1000) && !frame->miniature) {
                 bfm_woods_ring_mini_apply(&run->player);
                 frame->applied_mini = 1;

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT */
-#include "woods_fusion.h"
+#include "field_fusion.h"
 #include "bedroom_figure.h"
 #include "woods_caster.h"
 #include "woods_flight_glow.h"
@@ -17,14 +17,15 @@ enum { SATIATE = 3, SHRINK = 13, SECTOR = 2048 };
 enum WoodsAward { NO_AWARD, HOLD_AWARD, READ_AWARD, RELEASE_AWARD };
 
 typedef struct {
-    unsigned gain, partial_bp;
+    unsigned id, gain, partial_bp, section_kinds;
     uint32_t duration, message;
     size_t offset, size;
 } Ability;
 
 struct BfmWoodsFusion {
     const MusashiDiscMedia *disc;
-    Ability shrink, satiate;
+    Ability abilities[2];
+    size_t ability_count;
     const Ability *loaded_ability;
     size_t loaded, section_end;
     unsigned seen_sections;
@@ -45,14 +46,15 @@ struct BfmWoodsFusion {
 };
 
 /* Each recipient selects a distinct resident resource row for its award. */
-static int mount_ability(Ability *ability, const uint8_t *scene, unsigned id,
+static int mount_ability(Ability *ability, const uint8_t *scene,
+                         const BfmFieldFusionCatalog *catalog, const BfmFieldFusionAbility *source,
                          const ForestPlayerArchive *player, const uint8_t *directory, size_t total)
 {
     const uint32_t base = UINT32_C(0x80128158);
-    unsigned resource = id == SATIATE ? 7 : 4;
+    unsigned id = source->id;
     uint8_t row[8];
-    if (!forest_player_archive_read(player, UINT32_C(0x800d3764) + resource * 8, row, sizeof row) ||
-        u32le(row + 4) != (id == SATIATE ? 30u : 14u)) return 0;
+    if (!forest_player_archive_read(player, UINT32_C(0x800d3764) + source->resource_row * 8, row, sizeof row) ||
+        u32le(row + 4) != source->resource_tag) return 0;
     uint32_t member = u32le(row), count = u32le(directory);
     if (member >= count || count > (SECTOR - 8) / 8) return 0;
     const uint8_t *entry = directory + 8 + 8 * member;
@@ -60,16 +62,20 @@ static int mount_ability(Ability *ability, const uint8_t *scene, unsigned id,
     if (!sector || sector > total / SECTOR || !size || size % SECTOR) return 0;
     ability->offset = (size_t)sector * SECTOR;
     ability->size = size;
-    ability->gain = scene[UINT32_C(0x8018a58c) - base + id];
-    ability->partial_bp = scene[UINT32_C(0x8018a5ac) - base + id];
-    ability->duration = u32le(scene + (UINT32_C(0x8018a510) - base) + 4 * id);
-    ability->message = u32le(scene + (UINT32_C(0x8018a208) - base) + 4 * id);
+    ability->id = id;
+    ability->section_kinds = source->section_kinds;
+    ability->gain = scene[catalog->gain - base + id];
+    ability->partial_bp = scene[catalog->partial_bp - base + id];
+    ability->duration = u32le(scene + (catalog->duration - base) + 4 * id);
+    ability->message = u32le(scene + (catalog->message - base) + 4 * id);
     return size <= total - ability->offset && ability->gain && ability->partial_bp && ability->message;
 }
 
 static const Ability *ability_for(const BfmWoodsFusion *s, unsigned id)
 {
-    return id == SHRINK ? &s->shrink : id == SATIATE ? &s->satiate : NULL;
+    for (size_t i = 0; i < s->ability_count; ++i)
+        if (s->abilities[i].id == id) return &s->abilities[i];
+    return NULL;
 }
 
 /* Tick the actual mounted transfer. It can finish immediately on a cache
@@ -99,20 +105,29 @@ static int read_package(BfmWoodsFusion *s)
         s->loaded += SECTOR;
         if (s->loaded < ability->size) return 0;
     }
-    return s->loaded == s->section_end && s->seen_sections == 0x10fu ? 1 : -1;
+    return s->loaded == s->section_end && s->seen_sections == ability->section_kinds ? 1 : -1;
 }
 
-/* SC03/29 uses the resident player's casting clips, while the actor profile
- * and its assimilation catalogue belong to the current room overlay. */
-BfmWoodsFusion *bfm_woods_fusion_open(const MusashiDiscMedia *disc, const uint8_t *scene,
-                                     size_t bytes)
+static int scene_range(uint32_t address, size_t length, size_t bytes)
 {
-    const uint32_t base = UINT32_C(0x80128158), room = UINT32_C(0x8018ea38);
-    const size_t pink_reward = UINT32_C(0x801c9278) + 44 - base;
-    if (!disc || !scene || bytes < pink_reward + 2 ||
-        u32le(scene + (UINT32_C(0x801877c4) - base)) != room ||
-        u16le(scene + (UINT32_C(0x801c473c) - base) + 44) != SHRINK ||
-        u16le(scene + pink_reward) != SATIATE) return NULL;
+    const uint32_t origin = UINT32_C(0x80128158);
+    return address >= origin && address-origin <= bytes && length <= bytes-(address-origin);
+}
+
+BfmWoodsFusion *bfm_field_fusion_open(const MusashiDiscMedia *disc, const uint8_t *scene,
+    size_t bytes, const BfmFieldFusionCatalog *catalog, const BfmFieldFusionAbility *abilities,
+    size_t count)
+{
+    const uint32_t base = UINT32_C(0x80128158);
+    if (!disc || !scene || !catalog || !abilities || !count || count > 2 ||
+        !scene_range(catalog->room, 0x8c, bytes) || !scene_range(catalog->credit_palette, 1, bytes)) return NULL;
+    for (size_t i = 0; i < count; ++i) {
+        unsigned id = abilities[i].id;
+        if (!id || id >= 32 || !scene_range(catalog->gain, id+1, bytes) ||
+            !scene_range(catalog->partial_bp, id+1, bytes) ||
+            !scene_range(catalog->duration, 4*(id+1), bytes) ||
+            !scene_range(catalog->message, 4*(id+1), bytes)) return NULL;
+    }
     ForestPlayerArchive player;
     uint8_t directory[SECTOR];
     size_t total;
@@ -122,19 +137,41 @@ BfmWoodsFusion *bfm_woods_fusion_open(const MusashiDiscMedia *disc, const uint8_
     BfmWoodsFusion *fusion = calloc(1, sizeof *fusion);
     if (!fusion) return NULL;
     fusion->disc = disc;
-    fusion->satiate_rule = scene[UINT32_C(0x8018a4f0) - base + SATIATE];
-    fusion->credit_palette = scene[UINT32_C(0x8018a974) - base + 4];
-    uint32_t table = u32le(scene + (room - base) + 0x4c);
-    fusion->surface = bfm_forest_motion_surface_open(scene, bytes, room);
-    if (!(fusion->satiate_rule & 0x80u) || !fusion->surface ||
-        !mount_ability(&fusion->shrink, scene, SHRINK, &player, directory, total) ||
-        !mount_ability(&fusion->satiate, scene, SATIATE, &player, directory, total) ||
-        !bfm_woods_flight_glow_load(&fusion->glow, scene, bytes) ||
-        !bfm_forest_cast_load(&fusion->cast, disc, table) ||
-        !(fusion->model = bfm_fusion_model_open(disc))) {
+    fusion->ability_count = count;
+    fusion->credit_palette = scene[catalog->credit_palette - base];
+    uint32_t table = u32le(scene + (catalog->room - base) + 0x4c);
+    fusion->surface = bfm_forest_motion_surface_open(scene, bytes, catalog->room);
+    if (!fusion->surface || !bfm_field_flight_glow_load(&fusion->glow, scene, bytes, catalog->glow_edge) ||
+        !bfm_forest_cast_load(&fusion->cast, disc, table) || !(fusion->model = bfm_fusion_model_open(disc))) {
         bfm_woods_fusion_free(fusion);
         return NULL;
     }
+    for (size_t i = 0; i < count; ++i) {
+        if (!mount_ability(&fusion->abilities[i], scene, catalog, &abilities[i], &player, directory, total)) {
+            bfm_woods_fusion_free(fusion);
+            return NULL;
+        }
+    }
+    return fusion;
+}
+
+BfmWoodsFusion *bfm_woods_fusion_open(const MusashiDiscMedia *disc, const uint8_t *scene,
+                                     size_t bytes)
+{
+    const uint32_t base = UINT32_C(0x80128158);
+    static const BfmFieldFusionCatalog catalog = {
+        .room=0x8018ea38, .gain=0x8018a58c, .partial_bp=0x8018a5ac, .duration=0x8018a510,
+        .message=0x8018a208, .credit_palette=0x8018a978, .glow_edge=0x8018a700
+    };
+    static const BfmFieldFusionAbility abilities[] = {{SHRINK,4,14,0x10f}, {SATIATE,7,30,0x10f}};
+    const size_t pink_reward = UINT32_C(0x801c9278) + 44 - base;
+    if (!scene || bytes < pink_reward + 2 || u32le(scene + (UINT32_C(0x801877c4) - base)) != catalog.room ||
+        u16le(scene + (UINT32_C(0x801c473c) - base) + 44) != SHRINK ||
+        u16le(scene + pink_reward) != SATIATE) return NULL;
+    unsigned rule = scene[UINT32_C(0x8018a4f0)-base+SATIATE];
+    if (!(rule & 0x80u)) return NULL;
+    BfmWoodsFusion *fusion = bfm_field_fusion_open(disc, scene, bytes, &catalog, abilities, 2);
+    if (fusion) fusion->satiate_rule = rule;
     return fusion;
 }
 
@@ -147,7 +184,7 @@ void bfm_woods_fusion_free(BfmWoodsFusion *fusion)
 }
 
 typedef struct {
-    BfmWoodsCaster *casters;
+    const BfmFieldFusionTargets *targets;
     const BfmForestField *surface;
     int struck;
 } WoodsContact;
@@ -162,8 +199,8 @@ static int blocked(const WoodsContact *room, const int16_t from[3], const int16_
 static int contact_blade(void *context, const int16_t from[3], const int16_t to[3])
 {
     WoodsContact *room = context;
-    int16_t point[3], center[3];
-    int actor = bfm_woods_caster_contact(room->casters, from, to, point, center);
+    int16_t point[3];
+    int actor = room->targets->contact(room->targets->actors, from, to, point);
     if (actor > 0 && !blocked(room, from, point)) {
         room->struck = actor;
         return 1;
@@ -171,71 +208,70 @@ static int contact_blade(void *context, const int16_t from[3], const int16_t to[
     return blocked(room, from, to) ? -1 : 0;
 }
 
-static int aim_blade(const BfmFusionFlight *flight, const BfmWoodsCaster *casters,
+static int aim_blade(const BfmFusionFlight *flight, const BfmFieldFusionTargets *targets,
                      int16_t aim[3])
 {
     unsigned nearest_angle = 512;
-    /* The west recipient precedes the two purple placements in the room. */
-    const int order[BFM_WOODS_FUSION_TARGETS] = {BFM_WOODS_SATIATE_TARGET, 1, 2};
-    for (unsigned i = 0; i < BFM_WOODS_FUSION_TARGETS; ++i) {
-        int target = order[i];
-        int16_t center[3];
-        if (!bfm_woods_caster_target(casters, target, center)) continue;
+    for (size_t i = 0; i < targets->count; ++i) {
+        BfmFusionRecipient target;
+        if (!targets->read(targets->actors, targets->order[i], &target)) continue;
+        const int16_t *center = target.center;
         int x = flight->model.translation[0] - center[0];
         int z = flight->model.translation[2] - center[2];
         unsigned gap = (bfm_forest_shore_bearing(x, z) - flight->yaw) & 4095u;
         if (gap >= 2048) gap = 4095 - gap;
         if (gap < nearest_angle) {
             nearest_angle = gap;
-            memcpy(aim, center, sizeof center);
+            memcpy(aim, center, sizeof target.center);
         }
     }
     return nearest_angle < 512;
 }
 
-static int step_flight(BfmWoodsFusion *s, BfmWoodsCaster *casters, const int16_t hero[3],
+static int step_flight(BfmWoodsFusion *s, const BfmFieldFusionTargets *targets, const int16_t hero[3],
                        unsigned tick, int square)
 {
-    WoodsContact contact = {.casters = casters, .surface = s->surface};
+    WoodsContact contact = {.targets = targets, .surface = s->surface};
     BfmFusionFlightPhase before = s->flight.phase;
     int16_t aim[3];
-    int aimed = before == BFM_FUSION_OUTBOUND && aim_blade(&s->flight, casters, aim);
+    int aimed = before == BFM_FUSION_OUTBOUND && aim_blade(&s->flight, targets, aim);
     if (bfm_fusion_flight_tick(&s->flight, hero, aimed ? aim : NULL, contact_blade, &contact)
         != BFM_FUSION_ATTACHED) return 1;
 
     if (before != BFM_FUSION_ATTACHED) {
-        int16_t root[3];
-        unsigned id = bfm_woods_caster_ability(casters, contact.struck);
-        const Ability *ability = ability_for(s, id);
-        if (!ability || !bfm_woods_caster_root(casters, contact.struck, root) ||
-            !bfm_woods_caster_latch(casters, contact.struck)) {
+        BfmFusionRecipient candidate;
+        const Ability *ability = targets->read(targets->actors, contact.struck, &candidate) ?
+                                 ability_for(s, candidate.ability) : NULL;
+        if (!ability || !targets->react(targets->actors, contact.struck, BFM_FUSION_LATCH, 0)) {
             bfm_fusion_release_tether(&s->flight);
             return 1;
         }
         s->partial_bp = ability->partial_bp;
         s->tether = (BfmForestTether){.phase = BFM_TETHER_ATTACHED,
-            .target.slot = (unsigned)contact.struck, .ability = id, .gain = ability->gain,
+            .target = {.slot=(unsigned)contact.struck, .generation=candidate.generation},
+            .ability = ability->id, .gain = ability->gain,
             .duration = ability->duration, .award_message = ability->message};
         int16_t blade[3];
         for (unsigned i = 0; i < 3; ++i) blade[i] = (int16_t)s->flight.model.translation[i];
-        bfm_forest_tether_trails_begin(&s->trails, root, blade);
+        bfm_forest_tether_trails_begin(&s->trails, candidate.root, blade);
         return 1;
     }
 
     int target = (int)s->tether.target.slot;
-    int16_t center[3];
-    int present = bfm_woods_caster_target(casters, target, center);
+    BfmFusionRecipient candidate;
+    int present = targets->read(targets->actors, target, &candidate);
+    present = present && candidate.generation == s->tether.target.generation;
     BfmForestTetherPhase phase = bfm_forest_tether_tick(&s->tether,
         present ? &s->tether.target : NULL, tick, square, 0);
-    if (present) bfm_woods_caster_meter(casters, target, s->tether.meter);
+    if (present) targets->react(targets->actors, target, BFM_FUSION_METER, s->tether.meter);
     if (phase == BFM_TETHER_ATTACHED) return 1;
     if (phase == BFM_TETHER_EARNED) {
-        if (!bfm_woods_caster_absorb(casters, target)) return 0;
+        if (!targets->react(targets->actors, target, BFM_FUSION_ABSORB, 0)) return 0;
     } else if (present) {
         /* A timed-out tether still carries the particular recipient's BP
          * return. Losing that actor earlier leaves the returning blade empty. */
         s->partial_return = phase == BFM_TETHER_LOST && s->tether.ticks >= 128;
-        bfm_woods_caster_release(casters, target);
+        targets->react(targets->actors, target, BFM_FUSION_RELEASE, 0);
     }
     bfm_fusion_release_tether(&s->flight);
     return 1;
@@ -356,11 +392,12 @@ void bfm_woods_fusion_sample_charge(BfmGameplayRun *run, int guard_ready, int sh
     }
 }
 
-int bfm_woods_fusion_step(BfmWoodsFusion *s, BfmWoodsCaster *casters, BfmGameplayRun *run,
+int bfm_field_fusion_step(BfmWoodsFusion *s, const BfmFieldFusionTargets *targets, BfmGameplayRun *run,
                           BfmForestStatus *status, const BfmBedroomRoot *root, unsigned field_tick,
                           const BfmWoodsFusionInput *input, BfmWoodsFusionFrame *frame)
 {
-    if (!s || !casters || !run || !status || !root || !input || !frame) return 0;
+    if (!s || !targets || !targets->actors || !targets->order || !targets->read ||
+        !targets->contact || !targets->react || !run || !status || !root || !input || !frame) return 0;
     *frame = (BfmWoodsFusionFrame){.visible = input->visible, .tether_gauge = -1,
                                    .flight = &s->flight, .trails = &s->trails};
     int available = input->controllable && s->award == NO_AWARD;
@@ -389,7 +426,7 @@ int bfm_woods_fusion_step(BfmWoodsFusion *s, BfmWoodsCaster *casters, BfmGamepla
         BfmForestTransform model;
         bfm_forest_actor_root(root->yaw, root->xyz, &model);
         if (!bfm_fusion_launch(&s->flight, &model, angles, tilt)) return 0;
-    } else if (blade_away(s) && !step_flight(s, casters, root->xyz, field_tick, square)) {
+    } else if (blade_away(s) && !step_flight(s, targets, root->xyz, field_tick, square)) {
         return 0;
     }
     bfm_forest_damage_digits_advance(&s->bp_digits);
@@ -435,12 +472,47 @@ int bfm_woods_fusion_step(BfmWoodsFusion *s, BfmWoodsCaster *casters, BfmGamepla
             s->tether.meter, frame->blade ? blade : NULL, root->xyz, trail_random, run);
     }
     if (input->eye) {
-        int16_t struck[3];
+        BfmFusionRecipient struck;
         const int16_t *target = NULL;
         if (s->flight.phase == BFM_FUSION_ATTACHED &&
-            bfm_woods_caster_root(casters, (int)s->tether.target.slot, struck)) target = struck;
+            targets->read(targets->actors, (int)s->tether.target.slot, &struck)) target = struck.root;
         int absorbed = attached && s->tether.phase == BFM_TETHER_EARNED;
         bfm_woods_capture_light_tick(&s->glow.capture, target, absorbed, input->eye, trail_random, run);
     }
     return 1;
+}
+
+static int caster_read(const void *actors, int id, BfmFusionRecipient *target)
+{
+    target->ability = bfm_woods_caster_ability(actors, id);
+    target->generation = 0;
+    return bfm_woods_caster_target(actors, id, target->center) &&
+           bfm_woods_caster_root(actors, id, target->root);
+}
+
+static int caster_contact(const void *actors, const int16_t from[3], const int16_t to[3], int16_t hit[3])
+{
+    int16_t center[3];
+    return bfm_woods_caster_contact(actors, from, to, hit, center);
+}
+
+static int caster_react(void *actors, int id, BfmFusionRecipientEvent event, unsigned meter)
+{
+    switch (event) {
+    case BFM_FUSION_LATCH: return bfm_woods_caster_latch(actors, id);
+    case BFM_FUSION_METER: bfm_woods_caster_meter(actors, id, meter); return 1;
+    case BFM_FUSION_RELEASE: bfm_woods_caster_release(actors, id); return 1;
+    case BFM_FUSION_ABSORB: return bfm_woods_caster_absorb(actors, id);
+    }
+    return 0;
+}
+
+int bfm_woods_fusion_step(BfmWoodsFusion *s, BfmWoodsCaster *casters, BfmGameplayRun *run,
+                          BfmForestStatus *status, const BfmBedroomRoot *root, unsigned field_tick,
+                          const BfmWoodsFusionInput *input, BfmWoodsFusionFrame *frame)
+{
+    static const int order[] = {BFM_WOODS_SATIATE_TARGET, 1, 2};
+    const BfmFieldFusionTargets targets = {casters, order, sizeof order / sizeof order[0],
+                                            caster_read, caster_contact, caster_react};
+    return bfm_field_fusion_step(s, &targets, run, status, root, field_tick, input, frame);
 }

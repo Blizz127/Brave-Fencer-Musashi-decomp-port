@@ -8,10 +8,10 @@ void bfm_village_field_clear(BfmVillageField *field)
     *field = (BfmVillageField){0};
 }
 
-/* The two SC03 members place the same face, shadow and equipped-weapon
+/* The SC03 outdoor members place the same face, shadow and equipped-weapon
  * resources at different addresses. Offsets below are relative to the
  * first face texture coordinate table in each member. */
-static int load_field(BfmVillageField *field, const MusashiDiscMedia *disc,
+int bfm_village_field_load_room(BfmVillageField *field, const MusashiDiscMedia *disc,
                       const uint8_t *scene, size_t size, uint32_t room,
                       uint32_t face_table)
 {
@@ -34,19 +34,25 @@ static int load_field(BfmVillageField *field, const MusashiDiscMedia *disc,
 int bfm_village_field_load(BfmVillageField *field, const MusashiDiscMedia *disc,
                            const uint8_t *scene, size_t size, uint32_t room)
 {
-    return load_field(field, disc, scene, size, room, 0x80187328u);
+    return bfm_village_field_load_room(field, disc, scene, size, room, 0x80187328u);
 }
 
 int bfm_village_field_load_lower(BfmVillageField *field, const MusashiDiscMedia *disc,
                                  const uint8_t *scene, size_t size, uint32_t room)
 {
-    return load_field(field, disc, scene, size, room, 0x8018f338u);
+    return bfm_village_field_load_room(field, disc, scene, size, room, 0x8018f338u);
 }
 
 int bfm_village_field_load_woods(BfmVillageField *field, const MusashiDiscMedia *disc,
                                  const uint8_t *scene, size_t size)
 {
-    return load_field(field, disc, scene, size, 0x8018ea38u, 0x8018963cu);
+    return bfm_village_field_load_room(field, disc, scene, size, 0x8018ea38u, 0x8018963cu);
+}
+
+int bfm_village_field_load_bank(BfmVillageField *field, const MusashiDiscMedia *disc,
+                                const uint8_t *scene, size_t size)
+{
+    return bfm_village_field_load_room(field, disc, scene, size, UINT32_C(0x801910e4), UINT32_C(0x8018e40c));
 }
 
 uint32_t bfm_village_field_visible(const BfmBedroomPose *pose, const uint8_t flags[64])

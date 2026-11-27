@@ -47,16 +47,24 @@ BfmForestMessage *bfm_woods_retry_window(const MusashiDiscMedia *disc, BfmWoodsR
     return bfm_field_message_open(program, window[page].bytes);
 }
 
-int bfm_woods_retry_destination(const MusashiDiscMedia *disc, const BfmGameplayRun *run,
-                                BfmWoodsRetryPage page, const uint8_t *woods_scene,
-                                size_t scene_bytes, BfmBedroomEntry *out)
+int bfm_woods_retry_field_destination(const MusashiDiscMedia *disc, const BfmGameplayRun *run,
+                                     BfmWoodsRetryPage page, const uint8_t *scene, size_t bytes,
+                                     size_t saved_destination_offset, BfmBedroomEntry *out)
 {
     BfmCheckpointKind kind;
     if (page == BFM_WOODS_RESTORE_BOX) kind = BFM_CHECKPOINT_MEMORY_BOX;
     else if (page == BFM_WOODS_RESTORE_SAVED) kind = BFM_CHECKPOINT_SAVED_DATA;
     else return 0;
     BfmSaveRecord restored;
-    if (!out || !bfm_gameplay_woods_recovery(run, kind, woods_scene, scene_bytes, &restored))
+    if (!out || !bfm_gameplay_field_recovery(run, kind, scene, bytes, saved_destination_offset, &restored))
         return 0;
     return bfm_woods_restart_entry(disc, &restored, out);
+}
+
+int bfm_woods_retry_destination(const MusashiDiscMedia *disc, const BfmGameplayRun *run,
+                                BfmWoodsRetryPage page, const uint8_t *woods_scene,
+                                size_t scene_bytes, BfmBedroomEntry *out)
+{
+    return bfm_woods_retry_field_destination(disc, run, page, woods_scene, scene_bytes,
+                                            BFM_CLEFT_RECOVERY_OFFSET, out);
 }

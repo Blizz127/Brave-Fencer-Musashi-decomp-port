@@ -22,8 +22,8 @@ typedef struct {
 int bfm_woods_award_effect_step(BfmWoodsAwardEffect *effect, const MusashiDiscMedia *disc,
                                const uint8_t *scene, size_t bytes, uint16_t tiles[512][1024],
                                int release_award);
-/* Pass the earned Satiate (3) or Shrink (13) on the release pose key.
- * A zero advances the current picture and its echoes by one field. */
+/* At the release pose key, pass Hop (12) with SC03 member 6, or Satiate (3)
+ * or Shrink (13) with member 29. A zero advances the picture by one field. */
 int bfm_woods_award_effect_step_ability(BfmWoodsAwardEffect *effect, const MusashiDiscMedia *disc,
                                        const uint8_t *scene, size_t bytes, uint16_t tiles[512][1024],
                                        unsigned released_ability);

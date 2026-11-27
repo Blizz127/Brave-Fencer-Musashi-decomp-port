@@ -87,6 +87,14 @@ void bfm_village_camera_begin(BfmVillageCamera *camera, const int16_t xyz[3])
     bfm_village_camera_step(camera, xyz, 0);
 }
 
+static int move_quarter(int current, int goal)
+{
+    int distance = goal - current;
+    int step = distance / 4;
+    if (!step && distance) step = distance > 0 ? 1 : -1;
+    return current + step;
+}
+
 void bfm_village_camera_lower(BfmVillageCamera *camera, const int16_t xyz[3],
                               int entering)
 {
@@ -96,12 +104,26 @@ void bfm_village_camera_lower(BfmVillageCamera *camera, const int16_t xyz[3],
         camera->target[1] = xyz[1];
     }
 
-    int rise = xyz[1] - camera->target[1];
-    int step = rise / 4;
-    if (!step && rise)
-        step = rise > 0 ? 1 : -1;
     camera->target[0] = xyz[0];
-    camera->target[1] += step;
+    camera->target[1] = move_quarter(camera->target[1], xyz[1]);
+    camera->target[2] = xyz[2];
+    orbit(camera, 568);
+}
+
+/* Both farm entrances look diagonally across the bank from the same bearing. */
+void bfm_village_camera_bank(BfmVillageCamera *camera, int *radius_goal, const int16_t xyz[3],
+                             int entering, int shoulder_pressed)
+{
+    if (entering) {
+        *camera = (BfmVillageCamera){.focal = 500, .radius = 1200, .yaw = 1536};
+        *radius_goal = 1200;
+        camera->target[1] = xyz[1];
+    } else if (shoulder_pressed) {
+        *radius_goal = *radius_goal == 1200 ? 900 : 1200;
+    }
+    camera->radius = move_quarter(camera->radius, *radius_goal);
+    camera->target[0] = xyz[0];
+    camera->target[1] = move_quarter(camera->target[1], xyz[1]);
     camera->target[2] = xyz[2];
     orbit(camera, 568);
 }

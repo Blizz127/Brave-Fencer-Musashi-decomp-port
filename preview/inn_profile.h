@@ -12,6 +12,11 @@ const BfmSaveRecord *bfm_inn_profile_menu(BfmInnProfile *profile, BfmSaveMenu *m
 const char *bfm_inn_profile_save(BfmInnProfile *profile, unsigned file, const BfmSaveRecord *record,
                                  const MusashiDiscMedia *disc);
 
+/* Save to the file the player confirmed in the displayed Hotelo picker.
+ * An occupied row must still match the snapshot shown for confirmation. */
+const char *bfm_inn_profile_save_selected(BfmInnProfile *profile, const BfmSaveMenu *picker,
+                                          const BfmSaveRecord *record, const MusashiDiscMedia *disc);
+
 const char *bfm_chapter_profile_save(BfmInnProfile *profile, unsigned file,
                                      const BfmSaveRecord *record, const MusashiDiscMedia *disc);
 

@@ -65,12 +65,12 @@ static int palettes(const BfmVillageDaylight *light, uint16_t tiles[512][1024], 
 }
 
 static int begin_daylight(BfmVillageDaylight *light, const uint8_t *scene, size_t bytes,
-                          uint32_t room, uint32_t color_table, unsigned phase,
+                          uint32_t room, uint32_t color_table, unsigned mode, unsigned phase,
                           uint16_t tiles[512][1024])
 {
     if (!light || !scene || !tiles || phase >= 5) return 0;
     const uint8_t *descriptor = mounted(scene, bytes, room, 0xa8);
-    if (!descriptor || u32le(descriptor + 0xa4) != 1) return 0;
+    if (!descriptor || u32le(descriptor + 0xa4) != mode) return 0;
     BfmVillageDaylight next = {.scene = scene, .phase = phase,
         .lamps = {{{0,30,0},{0}}, {{0,7,20},{0}}, {{0,-18,0},{0}}}};
     next.entry_colors = mounted(scene, bytes, color_table, 60);
@@ -106,14 +106,28 @@ static int begin_daylight(BfmVillageDaylight *light, const uint8_t *scene, size_
 int bfm_village_daylight_begin(BfmVillageDaylight *light, const uint8_t *scene, size_t bytes,
                                uint32_t room, unsigned phase, uint16_t tiles[512][1024])
 {
-    return begin_daylight(light, scene, bytes, room, UINT32_C(0x80185d3c), phase, tiles);
+    return begin_daylight(light, scene, bytes, room, UINT32_C(0x80185d3c), 1, phase, tiles);
 }
 
 int bfm_woods_daylight_begin(BfmVillageDaylight *light, const uint8_t *scene, size_t bytes,
                              unsigned phase, uint16_t tiles[512][1024])
 {
     return begin_daylight(light, scene, bytes, UINT32_C(0x8018ea38), UINT32_C(0x80188050),
-                          phase, tiles);
+                          1, phase, tiles);
+}
+
+int bfm_forest_bank_daylight_begin(BfmVillageDaylight *light, const uint8_t *scene, size_t bytes,
+                                   unsigned phase, uint16_t tiles[512][1024])
+{
+    return begin_daylight(light, scene, bytes, UINT32_C(0x801910e4), UINT32_C(0x8018ce20),
+                          3, phase, tiles);
+}
+
+int bfm_forest_maze_daylight_begin(BfmVillageDaylight *light, const uint8_t *scene, size_t bytes,
+                                   unsigned phase, uint16_t tiles[512][1024])
+{
+    return begin_daylight(light, scene, bytes, UINT32_C(0x8018c890), UINT32_C(0x80187c18),
+                          1, phase, tiles);
 }
 
 void bfm_village_daylight_step(BfmVillageDaylight *light, unsigned phase, uint16_t tiles[512][1024])

@@ -35,7 +35,7 @@ static BfmSqvResult locate(const MusashiDiscMedia *disc, const char *archive, un
     if (!musashi_disc_media_read_root_range(disc, archive, 0, directory, sizeof(directory),
                                            &root_size)) return BFM_SQV_DISC_ERROR;
     uint32_t count = little32(directory);
-    if (count <= member || count > (root_size - 8) / 8) return BFM_SQV_INVALID;
+    if (root_size < sizeof(directory) || count <= member || count > (root_size - 8) / 8) return BFM_SQV_INVALID;
     if (!read_score(disc, archive, 8 + (size_t)member * 8, entry, sizeof(entry))) return BFM_SQV_DISC_ERROR;
     uint32_t sector = little32(entry);
     size_t member_bytes = little32(entry + 4);
@@ -135,11 +135,11 @@ static BfmSqvResult meta_event(Cursor *in, BfmSqvEvent *event)
     return BFM_SQV_OK;
 }
 
-static BfmSqvResult channel_event(Cursor *in, unsigned status, unsigned member, BfmSqvEvent *event)
+static BfmSqvResult channel_event(Cursor *in, unsigned status, int allows_wheel, BfmSqvEvent *event)
 {
     unsigned command = status >> 4;
     if (command != 8 && command != 9 && command != 11 && command != 12 &&
-        !((member == FOREST_MEMBER || member == 75 || member == 0) && command == 14))
+        !(allows_wheel && command == 14))
         return BFM_SQV_UNSUPPORTED;
     if (in->next == in->end || *in->next >= 128) return BFM_SQV_INVALID;
     event->channel = (uint8_t)(status & 15);
@@ -161,7 +161,7 @@ static BfmSqvResult channel_event(Cursor *in, unsigned status, unsigned member, 
     return BFM_SQV_OK;
 }
 
-static BfmSqvResult parse(const uint8_t *data, size_t bytes, unsigned member, BfmSqvEvent *events,
+static BfmSqvResult parse(const uint8_t *data, size_t bytes, int allows_wheel, BfmSqvEvent *events,
                           size_t *count, uint32_t *duration)
 {
     Cursor in = {data, data + bytes};
@@ -183,7 +183,7 @@ static BfmSqvResult parse(const uint8_t *data, size_t bytes, unsigned member, Bf
             result = meta_event(&in, &event);
         } else {
             running = status;
-            result = channel_event(&in, status, member, &event);
+            result = channel_event(&in, status, allows_wheel, &event);
         }
         if (result != BFM_SQV_OK) return result;
         if (events) events[index] = event;
@@ -204,13 +204,18 @@ BfmSqvResult bfm_sqv_archive_track_load(const MusashiDiscMedia *disc, const char
     *out = (BfmSqvTrack){0};
     if (!disc) return BFM_SQV_INVALID;
     if (!archive) return BFM_SQV_INVALID;
-    int sc01 = !strcmp(archive, "SC01.CD"), sc03 = !strcmp(archive, "SC03.CD");
-    int single = (sc01 && member == FOREST_MEMBER) || (sc03 && (member == 4 || member == 67)) ||
-                 (!strcmp(archive, "SC02.CD") && member == 25);
+    int sc01 = !strcmp(archive, "SC01.CD"), sc02 = !strcmp(archive, "SC02.CD");
+    int sc03 = !strcmp(archive, "SC03.CD");
+    int twinpeak = sc03 && (member == 50 || (member >= 37 && member <= 39));
+    int allows_wheel = twinpeak || member == FOREST_MEMBER || member == 75 || member == 34 || member == 0;
+    int single = twinpeak || (sc01 && member == FOREST_MEMBER) || (sc03 && (member == 4 || member == 9 || member == 67)) ||
+                 (sc02 && member == 25) ||
+                 (!strcmp(archive, "SC06.CD") && member == 38);
     int triple = (sc01 && (member == PALACE_MEMBER || member == 75)) || (sc03 && member == 68);
-    int village = sc03 && member == 0;
-    if (!single && !village && !triple) return BFM_SQV_UNSUPPORTED;
-    unsigned tracks = single ? 1 : village ? 2 : MAX_TRACKS;
+    int two_tracks = (sc02 && (member == 23 || member == 34)) ||
+                     (sc03 && member == 0) || (!strcmp(archive, "SC04.CD") && member == 13);
+    if (!single && !two_tracks && !triple) return BFM_SQV_UNSUPPORTED;
+    unsigned tracks = single ? 1 : two_tracks ? 2 : MAX_TRACKS;
     if (track >= tracks) return BFM_SQV_INVALID;
     TrackRange range;
     BfmSqvResult result = locate(disc, archive, member, track, tracks, &range);
@@ -224,12 +229,12 @@ BfmSqvResult bfm_sqv_archive_track_load(const MusashiDiscMedia *disc, const char
     } else {
         /* Count and validate the immutable stream before allocating its
          * event list. Both passes stop at the same first end-of-track. */
-        result = parse(data, range.bytes, member, NULL, &score.event_count, &score.duration_ticks);
+        result = parse(data, range.bytes, allows_wheel, NULL, &score.event_count, &score.duration_ticks);
         if (result == BFM_SQV_OK) {
             if (score.event_count <= SIZE_MAX / sizeof(*score.events))
                 score.events = malloc(score.event_count * sizeof(*score.events));
             if (!score.events) result = BFM_SQV_NO_MEMORY;
-            else result = parse(data, range.bytes, member, score.events, &score.event_count, &score.duration_ticks);
+            else result = parse(data, range.bytes, allows_wheel, score.events, &score.event_count, &score.duration_ticks);
         }
     }
     free(data);

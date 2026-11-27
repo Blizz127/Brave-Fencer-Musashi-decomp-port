@@ -17,6 +17,9 @@
 int bfm_woods_fusion_art_pose(const uint8_t *main, size_t main_bytes, uint32_t pose,
                               uint32_t visible, int blade_away, BfmBedroomPose *body);
 
+/* Convert the current field projection for world-space actor effects. */
+int bfm_woods_effect_camera(const BfmBedroomView *view, BfmForestCamera *camera);
+
 /* After preparing the player and caster, append the flight owner's current
  * sword and ribbons, including ribbons still returning after a catch. The
  * optional BP digits belong to an incomplete absorption's actual refund. */

@@ -1,9 +1,11 @@
 /* SPDX-License-Identifier: MIT */
 #include "village_ground.h"
+#include "forest_bank_thorns.h"
 
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
 enum { CELL, DISTANCE, NORMAL, LIST, TRIANGLE, QUAD, TABLE_COUNT };
 enum { GENTLE_CLEARANCE = 6144, EDGE_CLEARANCE = 12032 };
@@ -27,6 +29,7 @@ struct BfmVillageGround {
     Slice tables[TABLE_COUNT];
     int origin_x, origin_z, width, depth;
     unsigned exit_material, passage_wall;
+    int forest_thresholds, recheck_bank_floor;
 };
 
 static unsigned read16(const uint8_t *p)
@@ -62,8 +65,16 @@ BfmVillageGround *bfm_village_ground_open(const uint8_t *scene, size_t bytes, ui
         end = offset;
     }
     if (room == UINT32_C(0x8018c794)) view.exit_material = 0x106;
-    if (room == UINT32_C(0x80192b18)) view.exit_material = 0x105;
-    if (room == UINT32_C(0x8018ea38)) view.passage_wall = 0x203;
+    view.recheck_bank_floor = room == UINT32_C(0x8018ea38);
+    if (room == UINT32_C(0x80192b18)) {
+        view.exit_material = 0x105;
+        /* Both approaches to the forest have a level threshold and a
+         * vertical wall carrying the same material. */
+        view.forest_thresholds = 1;
+    }
+    if (room == UINT32_C(0x8018ea38) || room == UINT32_C(0x801910e4) ||
+        room == UINT32_C(0x801961e8) || room == UINT32_C(0x8018c890))
+        view.passage_wall = 0x203;
     view.origin_x = read16(grid);
     view.origin_z = read16(grid + 2);
     view.width = read16(grid + 4);
@@ -165,7 +176,7 @@ static int project(const Plane *plane, int end[3])
 
 /* Later faces in the actor sweep see the corrected endpoint. */
 static int floors(const BfmVillageGround *g, const int start[3], int end[3],
-                  Face *support)
+                  Face *support, int bank_events)
 {
     Slice list;
     if (!cell(g, start, &list)) return -1;
@@ -173,8 +184,10 @@ static int floors(const BfmVillageGround *g, const int start[3], int end[3],
     for (size_t i = 0; i < list.bytes; i += 2) {
         Face face;
         if (!read_face(g, read16(list.data + i), &face)) return -1;
+        int threshold = g->forest_thresholds && (face.material == 0x109 || face.material == 0x10a);
+        int thorn = bank_events && (uint8_t)face.material == BFM_FOREST_BANK_THORN_REASON;
         if (face.planes[0].normal[1] >= -1024 ||
-            ((face.material & 0x300) && face.material != g->exit_material) ||
+            ((face.material & 0x300) && face.material != g->exit_material && !threshold && !thorn) ||
             !crosses(&face, start, end)) continue;
         *support = face;
         if (!project(face.planes, end)) return -1;
@@ -183,7 +196,8 @@ static int floors(const BfmVillageGround *g, const int start[3], int end[3],
     return found;
 }
 
-static int slide(const BfmVillageGround *g, const int start[3], int end[3], uint16_t *wall)
+static int slide(const BfmVillageGround *g, const int start[3], int end[3], uint16_t *wall,
+                 int *wall_hit)
 {
     Slice origin;
     if (!cell(g, start, &origin)) return 0;
@@ -196,14 +210,17 @@ static int slide(const BfmVillageGround *g, const int start[3], int end[3], uint
             for (size_t i = 0; i < cells[c].bytes; i += 2) {
                 Face face;
                 if (!read_face(g, read16(cells[c].data + i), &face)) return 0;
-                if (face.planes[0].normal[1] || !crosses(&face, start, end)) continue;
-                /* The marked Cleft exit reports its crossing while allowing
+                /* Cleft bank walls can lean slightly away from vertical. */
+                int bank_wall = g->recheck_bank_floor && face.material == 0x100;
+                if ((face.planes[0].normal[1] && !bank_wall) || !crosses(&face, start, end)) continue;
+                /* The marked forest exits report a crossing while allowing
                  * the regular stride to reach the far side of the plane. */
                 if (g->passage_wall && face.material == g->passage_wall) {
                     passage = 1;
                     continue;
                 }
                 if (!project(face.planes, end)) return 0;
+                *wall_hit = 1;
                 if (face.material & 31u) *wall = (uint16_t)face.material;
                 adjusted = 1;
                 break;
@@ -217,26 +234,51 @@ static int slide(const BfmVillageGround *g, const int start[3], int end[3], uint
     return 0;
 }
 
+static void extend_foot_probe(int start[3], int end[3])
+{
+    int dx = end[0] - start[0], dz = end[2] - start[2];
+    int span = (int)hypot(dx, dz);
+    if (span < 3) span = 4;
+    else if (span < 5) ++span;
+    start[1] -= 4;
+    end[1] += span + 1;
+}
+
 static BfmVillageGroundResult sweep(const BfmVillageGround *g, const int16_t from[3],
-                                    int16_t to[3], BfmForestContact *floor, int airborne, uint16_t *wall)
+                                    int16_t to[3], BfmForestContact *floor, int airborne,
+                                    uint16_t *wall, int *wall_hit, uint16_t *reason)
 {
     if (!g || !from || !to || !floor) return BFM_VILLAGE_GROUND_BLOCKED;
     int start[3] = {from[0], from[1], from[2]}, end[3] = {to[0], to[1], to[2]};
-    if (!airborne) {
-        int dx = end[0] - start[0], dz = end[2] - start[2];
-        int span = (int)hypot(dx, dz);
-        if (span < 3) span = 4;
-        else if (span < 5) ++span;
-        start[1] -= 4;
-        end[1] += span + 1;
-    }
-    Face support;
-    int hit = floors(g, start, end, &support);
+    if (!airborne) extend_foot_probe(start, end);
+    const int probe_end_y = end[1];
+    Face support = {0};
+    int hit = floors(g, start, end, &support, reason != NULL);
     if (hit < 0) return BFM_VILLAGE_GROUND_BLOCKED;
     if (!hit && !airborne) end[1] = to[1];
     uint16_t touched = 0;
-    if (!slide(g, start, end, &touched)) return BFM_VILLAGE_GROUND_BLOCKED;
+    int projected_wall = 0;
+    if (!slide(g, start, end, &touched, &projected_wall)) return BFM_VILLAGE_GROUND_BLOCKED;
+    /* At the Cleft Woods bank, sliding along a wall can move the end of a
+     * missed foot sweep over the bank or riverbed. Test the corrected stride
+     * before advancing the player below that surface. */
+    if (g->recheck_bank_floor && projected_wall && !hit) {
+        int probe[3] = {end[0], probe_end_y, end[2]};
+        int found = floors(g, start, probe, &support, 0);
+        if (found < 0) return BFM_VILLAGE_GROUND_BLOCKED;
+        if (found && probe[0] == end[0] && probe[2] == end[2]) {
+            hit = 1;
+            end[1] = probe[1];
+        }
+    }
+    if (reason) {
+        /* The floor sweep completes before the wall pass. Only a new marked
+         * contact replaces the pending surface event. */
+        if (hit) bfm_forest_bank_latch_material(reason, support.material);
+        bfm_forest_bank_latch_material(reason, touched);
+    }
     if (wall) *wall = touched;
+    if (wall_hit) *wall_hit = projected_wall;
     for (int k = 0; k < 3; ++k) to[k] = (int16_t)end[k];
     if (!hit) return BFM_VILLAGE_GROUND_AIR;
     const int *n = support.planes[0].normal;
@@ -244,25 +286,101 @@ static BfmVillageGroundResult sweep(const BfmVillageGround *g, const int16_t fro
         .normal = {(int16_t)n[0], (int16_t)n[1], (int16_t)n[2]},
         .flags = (uint16_t)support.material,
         .slope = n[1] < -3019 ? 0x2000 : n[1] < -1400 ? 0x4000 : 0x8000};
+    if (wall_hit && floor->slope == 0x8000) *wall_hit = 1;
     return BFM_VILLAGE_GROUND_FOOTING;
 }
 
 BfmVillageGroundResult bfm_village_ground_step(const BfmVillageGround *g, const int16_t from[3],
                                               int16_t to[3], BfmForestContact *floor)
 {
-    return sweep(g, from, to, floor, 0, NULL);
+    return sweep(g, from, to, floor, 0, NULL, NULL, NULL);
 }
 
 BfmVillageGroundResult bfm_village_ground_wall_step(const BfmVillageGround *g,
     const int16_t from[3], int16_t to[3], BfmForestContact *floor, uint16_t *wall)
 {
-    return sweep(g, from, to, floor, 0, wall);
+    return sweep(g, from, to, floor, 0, wall, NULL, NULL);
 }
 
 BfmVillageGroundResult bfm_village_ground_air(const BfmVillageGround *g, const int16_t from[3],
                                              int16_t to[3], BfmForestContact *floor)
 {
-    return sweep(g, from, to, floor, 1, NULL);
+    return sweep(g, from, to, floor, 1, NULL, NULL, NULL);
+}
+
+BfmVillageGroundResult bfm_village_ground_air_contact(const BfmVillageGround *g,
+    const int16_t from[3], int16_t to[3], BfmForestContact *floor, int *wall_hit)
+{
+    return sweep(g, from, to, floor, 1, NULL, wall_hit, NULL);
+}
+
+BfmVillageGroundResult bfm_village_ground_bank_step(const BfmVillageGround *g,
+    const int16_t from[3], int16_t to[3], int airborne, BfmForestContact *floor,
+    uint16_t *wall, uint16_t *reason)
+{
+    if (!reason) return BFM_VILLAGE_GROUND_BLOCKED;
+    return sweep(g, from, to, floor, airborne, wall, NULL, reason);
+}
+
+unsigned bfm_village_ground_support_probe(const BfmVillageGround *g, unsigned mode,
+    const int16_t from[3], int16_t to[3], uint16_t *material)
+{
+    if (!g || !from || !to || !material || mode > 2) return 0;
+    int start[3] = {from[0], from[1], from[2]};
+    int end[3] = {to[0], to[1], to[2]};
+    int single = mode == 2 || (!mode && !memcmp(from, to, 3 * sizeof(*to)));
+    if (!mode) extend_foot_probe(start, end);
+    if (mode == 2) {
+        memcpy(end, start, sizeof end);
+        end[1] += 6;
+    }
+    *material = 0;
+    Slice list;
+    if (!cell(g, start, &list)) return 0;
+    unsigned gentle = 0, steep = 0;
+    for (unsigned pass = 0; pass < 6; ++pass) {
+        int corrected = 0;
+        for (size_t i = 0; i < list.bytes; i += 2) {
+            Face face;
+            if (!read_face(g, read16(list.data + i), &face)) return 0;
+            if (!crosses(&face, start, end)) continue;
+            if (face.material & 0x200) {
+                /* A marked passage reports its surface without supporting or
+                 * projecting the foot. Remaining faces may still supply ground. */
+                *material = (uint16_t)face.material;
+                continue;
+            }
+            if (!project(face.planes, end)) return 0;
+            int ny = face.planes[0].normal[1];
+            if (ny < -3019) {
+                gentle = 0x2000;
+                *material = (uint16_t)face.material;
+            } else {
+                steep = ny < -1400 ? 0x4000 : 0x8000;
+                if ((uint8_t)face.material) *material = (uint16_t)face.material;
+            }
+            corrected = 1;
+            break;
+        }
+        if (!corrected || single) break;
+        if (pass == 5) {
+            memcpy(end, start, sizeof end);
+            gentle = 0x2000;
+            steep = 0;
+        }
+    }
+    if (gentle || steep)
+        for (int k = 0; k < 3; ++k) to[k] = (int16_t)end[k];
+    return gentle | steep;
+}
+
+int bfm_village_ground_clear_floor(const BfmVillageGround *g, const int16_t from[3],
+                                   int16_t to[3], int vertical_probe, BfmForestContact *floor)
+{
+    uint16_t material;
+    int wall_hit;
+    return sweep(g, from, to, floor, vertical_probe, &material, &wall_hit, NULL) == BFM_VILLAGE_GROUND_FOOTING &&
+           !wall_hit && !material && floor->slope == 0x2000;
 }
 
 /* The blade stops just short of the contact along its direction of travel.

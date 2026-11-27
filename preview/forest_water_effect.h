@@ -37,6 +37,10 @@ typedef struct {
 int bfm_forest_water_effect_load(BfmForestWaterEffect *effect,
                                 const struct BfmForestField *field);
 
+/* The column and ring use two adjacent 12-byte mounted sprite records. */
+int bfm_forest_water_effect_load_cells(BfmForestWaterEffect *effect,
+                                      const uint8_t *cells, size_t bytes);
+
 /* Emit at first water contact. The first projection uses the birth state.
  * Each subsequent simulation update advances the effect once. */
 int bfm_forest_water_effect_begin(BfmForestWaterEffect *effect,

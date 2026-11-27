@@ -6,7 +6,7 @@
 
 typedef struct BfmWoodsKing BfmWoodsKing;
 typedef struct {
-    unsigned sound, bite_power, body_points;
+    unsigned sound, bite_power, bite_yaw, body_points;
     int body_reward;
 } BfmWoodsKingEvent;
 
@@ -16,9 +16,11 @@ void bfm_woods_king_free(BfmWoodsKing *king);
 int bfm_woods_king_add(const BfmWoodsKing *king, BfmBedroomFigure *figure,
                        const BfmBedroomView *view);
 
-/* Update the actor before field movement. A geometrically connected bite
- * supplies power to the player's ordinary defense and hurt handling. */
-int bfm_woods_king_step(BfmWoodsKing *king, const int16_t previous_player[3],
+/* Resolve size, prior hits and rewards before the field's body probes.
+ * After movement, use the corrected player position for targeting. */
+int bfm_woods_king_prepare(BfmWoodsKing *king, uint8_t flags[64], BfmWoodsKingEvent *event);
+void bfm_woods_king_target(BfmWoodsKing *king, const int16_t player[3], BfmWoodsKingEvent *event);
+int bfm_woods_king_step(BfmWoodsKing *king, const int16_t player[3],
                         uint8_t flags[64], BfmWoodsKingEvent *event);
 /* Room movement makes two collision passes. field_tick selects the common
  * alternating inside-push offset; both passes use the same update counter. */

@@ -43,6 +43,8 @@ unsigned bfm_woods_charged_wave_damage(const BfmWoodsChargedHit *hit, BfmGamepla
 /* Each player weapon strength calculation replaces the two credit bytes.
  * A wave can hit after a new attack has replaced them. Keep a field-local
  * copy and apply it to each recipient that actually processes weapon EXP. */
+BfmWoodsWeaponCredit bfm_woods_weapon_credit(const BfmGameplayRun *run,
+                                           unsigned fusion, unsigned lumina);
 int bfm_woods_weapon_credit_read(const uint8_t *scene, size_t bytes, unsigned event,
     const BfmGameplayRun *run, BfmWoodsWeaponCredit *credit);
 int bfm_woods_weapon_credit_apply(const BfmWeaponRank ranks[30], BfmGameplayRun *run,

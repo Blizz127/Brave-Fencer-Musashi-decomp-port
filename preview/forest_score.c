@@ -10,7 +10,8 @@
 #include <string.h>
 
 enum { VOICES = 24, SAMPLES = 256, CHANNELS = 16, DEVICE_RATE = 44100 };
-enum ScoreFamily { OTHER_SCORE, LIBRARY_SCORE, VILLAGE_SCORE };
+enum { FULL_VOLUME = 16384, DUCK_STEP = 546, SOUND_FIELD_SAMPLES = DEVICE_RATE / 60 };
+enum ScoreFamily { OTHER_SCORE, LIBRARY_SCORE, VILLAGE_SCORE, MAZE_SCORE, BANK_SCORE, WOODS_SCORE, TWINPEAK_SCORE };
 
 typedef struct {
     const BfmDecodedSpuSample *sample;
@@ -39,6 +40,7 @@ struct BfmForestScore {
     size_t count, event, frames, remaining, phrase;
     unsigned rate, gain, fade_level, fade_phase;
     unsigned fade_step;
+    unsigned duck_requests, duck_level, duck_target, duck_phase;
     int previous[2], until_output, failed;
 };
 
@@ -52,9 +54,20 @@ static unsigned table_word(const uint8_t *p)
     return (unsigned)p[0] | (unsigned)p[1] << 8;
 }
 
+static int uses_fine_tuning(enum ScoreFamily family)
+{
+    return family == VILLAGE_SCORE || family == MAZE_SCORE || family == BANK_SCORE;
+}
+
+/* The Cleft score uses the resident semitone table for its centered tones. */
+static int uses_pitch_tables(enum ScoreFamily family)
+{
+    return family == WOODS_SCORE || family == TWINPEAK_SCORE || uses_fine_tuning(family);
+}
+
 static unsigned note_pitch(const Orchestra *o, const Note *note, unsigned wheel)
 {
-    if (o->family == VILLAGE_SCORE) {
+    if (uses_pitch_tables(o->family)) {
         /* The sequence player combines the mounted semitone and fractional
          * pitch tables. A tone's fine offset is in 1/256-semitone units. */
         int displacement = ((int)wheel - 64) * 4 * (int)note->bend_range[wheel > 64];
@@ -108,7 +121,7 @@ static int start_note(Orchestra *o, const BfmSqvEvent *e)
         const BfmPalaceTone *tone = &tones[t];
         if (tone->bank_gain != 127 || tone->program_gain != 127 || tone->tone_gain != 127 ||
             tone->bank_pan != 64 ||
-            (tone->tuning != 0 && o->family != VILLAGE_SCORE)) return 0;
+            (tone->tuning != 0 && !uses_fine_tuning(o->family))) return 0;
         const BfmDecodedSpuSample *s = instrument(o, tone->sample);
         if (!s) return 0;
         unsigned slot = 0;
@@ -136,7 +149,7 @@ static int initial_parameter(const BfmSqvEvent *e, enum ScoreFamily family)
 {
     return e->tick == 0 && e->channel == 0 &&
         (((e->number == 98 || e->number == 99) && e->value == 16) ||
-         (e->number == 6 && (e->value == 55 || (family == VILLAGE_SCORE && e->value == 45))));
+         (e->number == 6 && (e->value == 55 || ((family == VILLAGE_SCORE || family == TWINPEAK_SCORE) && e->value == 45))));
 }
 
 /* The paired controller marks the beginning of the forest phrase on its first traversal. */
@@ -190,7 +203,7 @@ static int event(Orchestra *o, const BfmSqvEvent *e)
     return 0;
 }
 
-static void mix_frame(Orchestra *o, int left_right[2])
+static void mix_frame(Orchestra *o, int left_right[2], unsigned duck_level)
 {
     int64_t left = 0, right = 0;
     for (unsigned i = 0; i < VOICES; ++i) {
@@ -215,13 +228,17 @@ static void mix_frame(Orchestra *o, int left_right[2])
         }
     }
     int64_t channels[2] = {left / (16384LL * 32767), right / (16384LL * 32767)};
-    for (unsigned c = 0; c < 2; ++c)
+    for (unsigned c = 0; c < 2; ++c) {
+        if (duck_level != FULL_VOLUME) channels[c] = channels[c] * duck_level / FULL_VOLUME;
         left_right[c] = limit_sample(channels[c]);
+    }
 }
 
 static int known_wheel(const Orchestra *o, unsigned channel, unsigned program, unsigned wheel)
 {
     if (wheel == 64) return 1;
+    if (o->family == TWINPEAK_SCORE) return channel <= 1 && wheel < 64;
+    if (o->family == BANK_SCORE) return channel == 1 && (program == 3 || program == 10);
     if (o->family == VILLAGE_SCORE) return channel == 5 && program == 0 && wheel >= 22 && wheel < 64;
     if (o->family == LIBRARY_SCORE) return channel == 0 && program == 0 && wheel >= 43 && wheel < 64;
     if (channel == 1 && program == 2) return wheel == 67;
@@ -267,6 +284,25 @@ static int prepare_schedule(BfmForestScore *score, int nightmare)
                                 e->number == 99 && e->value == 30 && score->phrase && score->phrase < i;
             int repeat = return_marker && i + 2 == track->event_count &&
                          e[1].kind == BFM_SQV_END && e[1].tick == e->tick;
+            if (score->orchestra.family == BANK_SCORE) {
+                /* Both bank arrangements return before the final center-wheel
+                 * reset. The loop head also centers it before the next note. */
+                if (!return_marker || i + 3 != track->event_count ||
+                    e[1].kind != BFM_SQV_PITCH_BEND || e[1].channel != 1 ||
+                    e[1].number != 64 || e[1].tick != e->tick ||
+                    e[2].kind != BFM_SQV_END || e[2].tick != e->tick) return 0;
+                repeat = 1;
+            }
+            if (score->orchestra.family == TWINPEAK_SCORE && !repeat && e->kind != BFM_SQV_END)
+                return 0;
+            if (score->orchestra.family == WOODS_SCORE && !repeat) {
+                /* The Cleft return jumps before the same-tick pan and end;
+                 * sounding voices and channel settings carry into the next pass. */
+                if (!return_marker || track->event_count - i != 3 ||
+                    e[1].kind != BFM_SQV_PAN || e[1].tick != e->tick || e[2].kind != BFM_SQV_END ||
+                    e[2].tick != e->tick) return 0;
+                repeat = 1;
+            }
             if (nightmare) {
                 /* The nightmare phrase returns before the last instrument's
                  * key-off and end event. Both follow the marker by two ticks. */
@@ -334,7 +370,17 @@ static int dispatch_events(BfmForestScore *score)
 static int next_device_sample(BfmForestScore *score, int stereo[2])
 {
     if (!dispatch_events(score)) return 0;
-    mix_frame(&score->orchestra, stereo);
+    mix_frame(&score->orchestra, stereo, score->duck_level);
+    if (++score->duck_phase == SOUND_FIELD_SAMPLES) {
+        score->duck_phase = 0;
+        if (score->duck_level < score->duck_target) {
+            unsigned distance = score->duck_target - score->duck_level;
+            score->duck_level += distance < DUCK_STEP ? distance : DUCK_STEP;
+        } else {
+            unsigned distance = score->duck_level - score->duck_target;
+            score->duck_level -= distance < DUCK_STEP ? distance : DUCK_STEP;
+        }
+    }
     score->clock += score->divisor;
     return 1;
 }
@@ -356,6 +402,8 @@ void bfm_forest_score_rewind(BfmForestScore *score)
     score->fade_step = 0;
     score->fade_phase = 0;
     score->fade_level = 0x4000;
+    score->duck_level = score->duck_target = FULL_VOLUME;
+    score->duck_requests = score->duck_phase = 0;
     score->failed = 0;
 }
 
@@ -416,17 +464,24 @@ static int validate_voice_capacity(BfmForestScore *score)
     return 1;
 }
 
-static BfmForestScore *load_score(const MusashiDiscMedia *disc, unsigned rate, const char *archive,
-                                  unsigned member, unsigned track, unsigned gain)
+BfmForestScore *bfm_archive_score_load(const MusashiDiscMedia *disc, unsigned rate,
+                                       const char *archive, unsigned member, unsigned track,
+                                       unsigned gain)
 {
-    if (!disc || (rate != DEVICE_RATE && rate != 37800)) return NULL;
+    if (!disc || !archive || gain > 127 || (rate != DEVICE_RATE && rate != 37800)) return NULL;
     BfmForestScore *score = calloc(1, sizeof(*score));
     if (!score) return NULL;
     score->rate = rate;
     score->gain = gain;
     if (!strcmp(archive, "SC01.CD") && member == 75 && track == 0) score->orchestra.family = LIBRARY_SCORE;
-    if (!strcmp(archive, "SC03.CD") && member == 0) {
-        score->orchestra.family = VILLAGE_SCORE;
+    if (!strcmp(archive, "SC03.CD") && (member == 50 || (member >= 37 && member <= 39)))
+        score->orchestra.family = TWINPEAK_SCORE;
+    if (!strcmp(archive, "SC03.CD") && member == 0) score->orchestra.family = VILLAGE_SCORE;
+    if ((!strcmp(archive, "SC03.CD") && member == 9) ||
+        (!strcmp(archive, "SC04.CD") && member == 13)) score->orchestra.family = MAZE_SCORE;
+    if (!strcmp(archive, "SC02.CD") && member == 34) score->orchestra.family = BANK_SCORE;
+    if (!strcmp(archive, "SC02.CD") && member == 23) score->orchestra.family = WOODS_SCORE;
+    if (uses_pitch_tables(score->orchestra.family)) {
         if (!bfm_bedroom_resident_data(disc, UINT32_C(0x8006ab30), score->orchestra.pitch_tables,
                                        sizeof(score->orchestra.pitch_tables))) goto fail;
     }
@@ -456,7 +511,7 @@ fail:
 BfmForestScore *bfm_forest_score_load(const MusashiDiscMedia *disc, unsigned rate)
 {
     /* The registered forest dry levels include the command row gain of 90. */
-    return load_score(disc, rate, "SC01.CD", 78, 0, 90);
+    return bfm_archive_score_load(disc, rate, "SC01.CD", 78, 0, 90);
 }
 
 BfmForestScore *bfm_defeat_score_load(const MusashiDiscMedia *disc, unsigned rate)
@@ -472,21 +527,27 @@ BfmForestScore *bfm_defeat_score_load(const MusashiDiscMedia *disc, unsigned rat
     if (!bfm_bedroom_resident_data(disc, UINT32_C(0x80068b5c) + 16 * row,
                                    command, sizeof command) || table_word(command) != 4 ||
         table_word(command + 6) != 0 || table_word(command + 2) > 127) return NULL;
-    return load_score(disc, rate, "SC02.CD", 25, 0, table_word(command + 2));
+    return bfm_archive_score_load(disc, rate, "SC02.CD", 25, 0, table_word(command + 2));
 }
 
 BfmForestScore *bfm_castle_score_load(const MusashiDiscMedia *disc, unsigned rate,
                                     unsigned member, unsigned track, unsigned volume)
 {
     if (volume > 127) return NULL;
-    return load_score(disc, rate, "SC03.CD", member, track, volume);
+    return bfm_archive_score_load(disc, rate, "SC03.CD", member, track, volume);
 }
 
 BfmForestScore *bfm_library_score_load(const MusashiDiscMedia *disc, unsigned rate,
                                       unsigned track, unsigned volume)
 {
     if (volume > 127 || track != 0) return NULL;
-    return load_score(disc, rate, "SC01.CD", 75, track, volume);
+    return bfm_archive_score_load(disc, rate, "SC01.CD", 75, track, volume);
+}
+
+BfmForestScore *bfm_woods_score_load(const MusashiDiscMedia *disc, unsigned rate, unsigned volume)
+{
+    if (volume > 127) return NULL;
+    return bfm_archive_score_load(disc, rate, "SC02.CD", 23, 0, volume);
 }
 
 void bfm_castle_score_fade(BfmForestScore *score)
@@ -497,6 +558,21 @@ void bfm_castle_score_fade(BfmForestScore *score)
 void bfm_forest_score_fade_for_defeat(BfmForestScore *score)
 {
     if (score) score->fade_step = 0x88;
+}
+
+void bfm_forest_score_duck(BfmForestScore *score, BfmScoreDuck reason, int active)
+{
+    if (!score || (reason != BFM_SCORE_DUCK_DIALOGUE && reason != BFM_SCORE_DUCK_DEEP)) return;
+    if (active) {
+        if (!score->duck_requests) {
+            score->duck_level = FULL_VOLUME;
+            score->duck_target = reason == BFM_SCORE_DUCK_DIALOGUE ? 0x2fff : FULL_VOLUME / 2;
+        }
+        score->duck_requests |= (unsigned)reason;
+    } else {
+        score->duck_requests &= ~(unsigned)reason;
+        if (!score->duck_requests) score->duck_target = FULL_VOLUME;
+    }
 }
 
 size_t bfm_forest_score_mix(BfmForestScore *score, int16_t *stereo, size_t frames)

@@ -149,10 +149,11 @@ static int print_update(BfmForestMessage *m)
             if (left < 2) return 0;
             unsigned layout = arg[0];
             unsigned style = layout;
-            if (layout == 0xa6 || layout == 10 || layout == 14) style = layout & 7u;
-            if (!set_style(m, style) || arg[1] > 3 ||
+            if (layout == 0xa6 || layout == 0xc2 || layout == 10 || layout == 14)
+                style = layout & 7u;
+            if (!set_style(m, style) || arg[1] > 4 ||
                 (layout == 1 ? arg[1] > 1 : !arg[1])) return 0;
-            f->text_columns = layout == 0xa6 ? 28 : 36;
+            f->text_columns = 36 - 8 * ((layout >> 5) & 3u);
             /* Rectangular notices and signs have no portrait. */
             f->portrait = arg[0] == 1 ? 0 : arg[1];
             m->cursor += 2;
@@ -162,24 +163,24 @@ static int print_update(BfmForestMessage *m)
         }
         case 0x03: /* The closing pass keeps the cursor on this command. */
             if (left < 1) return 0;
-            /* Leno's voiced lines leave one field between the last text and
-             * the closing border. If reveal already interrupted the speaker,
-             * the field skips this command and reads the following byte. */
-            int short_voice_close = m->voice_script && arg[0] == 1;
-            if (short_voice_close && m->voice_interrupted) {
+            /* Leno and Jon leave different delays before the closing border.
+             * An interrupted voice skips the delay and the close command,
+             * so the following byte still determines how the page ends. */
+            int delayed_voice_close = m->voice_script &&
+                (arg[0] == 1 || arg[0] == 10 || arg[0] == 20 || arg[0] == 30);
+            if (delayed_voice_close && m->voice_interrupted) {
                 ++m->cursor;
                 break;
             }
             /* An unvoiced portrait reaction can end on a timed hold. */
             int timed_close = arg[0] && (m->notice || (!m->voice_script && arg[0] == 30));
-            if (arg[0] && !timed_close && !short_voice_close &&
-                !(arg[0] == 10 && m->voice_script)) return 0;
+            if (arg[0] && !timed_close && !delayed_voice_close) return 0;
             if (timed_close) {
                 m->timer = arg[0];
                 m->phase = NOTICE_HOLD;
                 return 1;
             }
-            if (short_voice_close) {
+            if (delayed_voice_close) {
                 m->close_delay = arg[0];
                 m->rapid = 0;
             }
@@ -468,6 +469,7 @@ const BfmForestMessageFrame *bfm_field_message_tick(BfmForestMessage *m,
             --m->close_delay;
             reveal(m, reveal_edge);
             if (!m->rapid) break;
+            m->close_delay = 0;
         }
         f->text_visible = 0;
         if (!f->border_step) {

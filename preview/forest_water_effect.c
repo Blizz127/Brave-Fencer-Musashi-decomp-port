@@ -15,12 +15,10 @@ static int floor_div(int64_t value, int64_t divisor)
     return (int)(value / divisor - (value % divisor < 0));
 }
 
-static int load_sprite(BfmForestWaterSprite *sprite, const BfmForestField *field,
-                       uint32_t address, unsigned x, unsigned y, unsigned depth,
+static int load_sprite(BfmForestWaterSprite *sprite, const uint8_t *cell,
+                       unsigned x, unsigned y, unsigned depth,
                        uint16_t clut)
 {
-    const uint8_t *cell = bfm_forest_room_bytes(field, address, 12);
-    if (!cell) return 0;
     unsigned width = cell[2], height = cell[3];
     unsigned u = (x % 64) * (4u >> depth), v = y % 256;
     int left = s16le(cell + 8), top = s16le(cell + 10);
@@ -35,15 +33,23 @@ static int load_sprite(BfmForestWaterSprite *sprite, const BfmForestField *field
     return 1;
 }
 
-int bfm_forest_water_effect_load(BfmForestWaterEffect *effect, const BfmForestField *field)
+int bfm_forest_water_effect_load_cells(BfmForestWaterEffect *effect,
+                                      const uint8_t *cells, size_t bytes)
 {
     BfmForestWaterEffect loaded = {0};
-    if (!effect || !field ||
-        !load_sprite(&loaded.column, field, UINT32_C(0x8018a508), 576, 384, 1, 0x7f50) ||
-        !load_sprite(&loaded.ring, field, UINT32_C(0x8018a514), 584, 384, 0, 0x4616))
+    if (!effect || !cells || bytes < 24 ||
+        !load_sprite(&loaded.column, cells, 576, 384, 1, 0x7f50) ||
+        !load_sprite(&loaded.ring, cells + 12, 584, 384, 0, 0x4616))
         return 0;
     *effect = loaded;
     return 1;
+}
+
+int bfm_forest_water_effect_load(BfmForestWaterEffect *effect, const BfmForestField *field)
+{
+    if (!field) return 0;
+    return bfm_forest_water_effect_load_cells(effect,
+        bfm_forest_room_bytes(field, UINT32_C(0x8018a508), 24), 24);
 }
 
 /* Normalize all three components before applying the short horizontal

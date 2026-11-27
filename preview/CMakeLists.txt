@@ -6,6 +6,7 @@ add_executable(musashi_native_boot
     player.c
     gameplay_run.c
     chapter_completion.c
+    chapter_restart.c
     desktop_voice.c
     palace_effects.c
     palace_score.c
@@ -35,12 +36,61 @@ add_executable(musashi_native_boot
     village_arrival_motion.c
     village_camera.c
     village_clock.c
+    field_rest.c
     village_talk_camera.c
     village_cable.c
     village_rotor.c
     village_rotor_mesh.c
+    forest_maze.c
+    forest_maze_actors.c
+    forest_maze_dog.c
+    forest_maze_drift.c
+    forest_maze_gate.c
+    forest_maze_motion.c
+    forest_maze_view.c
+    forest_maze_wipe.c
+    forest_bank.c
+    forest_maze_guide_start.c
+    forest_bank_hop.c
+    forest_bank_hop_pose.c
+    forest_bank_hop_ring.c
+    forest_bank_thorns.c
+    forest_bank_thorn_hurt.c
+    forest_bank_fusion.c
+    forest_bank_hopper.c
     southern_woods.c
+    woods_box_return.c
+    woods_box_visit.c
+    woods_rootrick_actor.c
+    woods_rootrick_art.c
+    woods_rootrick_blocking.c
+    woods_rootrick_challenge.c
+    woods_rootrick_encounter.c
+    woods_rootrick_hero.c
+    woods_rootrick_impact.c
+    woods_rootrick_ledge_art.c
+    woods_rootrick_obstacles.c
+    woods_rootrick_wall.c
+    woods_rootrick_wall_effects.c
+    woods_rootrick_boulder.c
+    woods_rootrick_finale_actor.c
+    woods_rootrick_finale_player.c
+    woods_rootrick_summit.c
+    woods_rootrick_notice.c
+    woods_rootrick_race.c
+    woods_rootrick_stage.c
+    woods_rootrick_trigger.c
+    woods_box_view.c
+    woods_box_water.c
+    woods_3026_box_hit.c
+    woods_3026_box_art.c
+    woods_pole_climb.c
+    woods_pole_pickup.c
+    woods_pole_pickup_art.c
+    woods_pole_pose.c
+    woods_pole_view.c
     woods_water.c
+    woods_water_effect.c
     woods_sign_model.c
     woods_lardwick_field.c
     woods_resident_glow_art.c
@@ -84,14 +134,28 @@ add_executable(musashi_native_boot
     woods_shrink_light.c
     woods_shrink_ribbon.c
     village_field.c
+    village_field_defeat.c
     village_gate.c
     village_greeting.c
     village_impact.c
     village_impact_sound.c
     village_portrait.c
     village_lower.c
+    bakery_door.c
+    bakery_field.c
+    bakery_room_art.c
+    bakery_speech.c
+    bakery_purchase.c
+    bakery_service.c
+    bakery_menu_art.c
     village_chimney.c
     village_sunrays.c
+    village_jon_actor.c
+    village_well.c
+    village_jon_stage.c
+    village_jon_dialogue.c
+    village_jon_portrait.c
+    village_stocks_prop.c
     village_lighting.c
     village_ground.c
     village_mayor_camera.c

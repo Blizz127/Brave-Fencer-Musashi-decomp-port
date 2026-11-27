@@ -16,7 +16,7 @@ struct BfmWoodsKing {
     BfmBedroomRoot root;
     BfmForestGuardBox player_box, body;
     BfmForestTransform world;
-    int16_t bite[BITE_RAYS][2][3];
+    int16_t local_bite[BITE_RAYS][2][3];
     enum Mode mode;
     BfmWoodsKingPose pose;
     unsigned age, next_sample, remaining, shrink_ticks, flat_ticks, width, height;
@@ -72,14 +72,10 @@ static int load_bite(BfmWoodsKing *king, const uint8_t *scene, size_t bytes)
         if (king->player_box.low[k] > king->player_box.high[k] ||
             king->body.low[k] > king->body.high[k]) return 0;
     }
-    for (unsigned i = 0; i < BITE_RAYS; ++i) {
-        for (unsigned j = 0; j < 2; ++j) {
-            int16_t local[3];
+    for (unsigned i = 0; i < BITE_RAYS; ++i)
+        for (unsigned j = 0; j < 2; ++j)
             for (unsigned k = 0; k < 3; ++k)
-                local[k] = s16le(rays+16*i+8*j+2*k);
-            bfm_forest_lift_world(&king->world, local, king->bite[i][j]);
-        }
-    }
+                king->local_bite[i][j][k] = s16le(rays+16*i+8*j+2*k);
     return 1;
 }
 
@@ -136,21 +132,29 @@ static int scaled(int value, int q12)
     return (int)(n/4096 - (n%4096 < 0));
 }
 
+static void completed_basis(const BfmWoodsKing *king, BfmForestTransform *basis)
+{
+    *basis = king->world;
+    for (unsigned col = 0; col < 3; ++col) {
+        unsigned size = col == 1 ? king->completed_height : king->completed_width;
+        for (unsigned row = 0; row < 3; ++row)
+            basis->rotation[row][col] = (int16_t)scaled(king->world.rotation[row][col], (int)size);
+    }
+}
+
 /* The original body tag rescales the box about its root. Motion probes
  * use the completed model basis, removing its scale with the current
  * reciprocal. Keep the rounding of both matrix operations at size changes. */
 static void body_shape(const BfmWoodsKing *king, BfmForestGuardBox *box, BfmForestTransform *basis)
 {
-    *basis = king->world;
+    completed_basis(king, basis);
     for (unsigned col = 0; col < 3; ++col) {
         unsigned current = col == 1 ? king->height : king->width;
-        unsigned completed = col == 1 ? king->completed_height : king->completed_width;
         int reciprocal = (1 << 24)/(int)current;
         box->low[col] = (int16_t)scaled(king->body.low[col], (int)current);
         box->high[col] = (int16_t)scaled(king->body.high[col], (int)current);
         for (unsigned row = 0; row < 3; ++row)
-            basis->rotation[row][col] = (int16_t)scaled(
-                scaled(king->world.rotation[row][col], (int)completed), reciprocal);
+            basis->rotation[row][col] = (int16_t)scaled(basis->rotation[row][col], reciprocal);
     }
 }
 
@@ -228,12 +232,17 @@ int bfm_woods_king_charged_wave(BfmWoodsKing *king, const int16_t spine[3], int1
 
 static int bite_connects(const BfmWoodsKing *king, const int16_t player[3])
 {
-    BfmForestTransform body;
+    BfmForestTransform body, jaw;
     bfm_forest_actor_root(0, player, &body);
-    int16_t center[3];
-    for (unsigned i = 0; i < BITE_RAYS; ++i)
-        if (bfm_forest_guard_contact(&king->player_box,&body,king->bite[i][0],king->bite[i][1],
-                                     center)) return 1;
+    /* A bite can become eligible on the field Shrink expires, before the
+     * King's visible root has completed its return to full size. */
+    completed_basis(king, &jaw);
+    for (unsigned i = 0; i < BITE_RAYS; ++i) {
+        int16_t start[3], end[3], center[3];
+        bfm_forest_lift_world(&jaw, king->local_bite[i][0], start);
+        bfm_forest_lift_world(&jaw, king->local_bite[i][1], end);
+        if (bfm_forest_guard_contact(&king->player_box, &body, start, end, center)) return 1;
+    }
     return 0;
 }
 
@@ -275,7 +284,10 @@ static void advance_pose(BfmWoodsKing *king, const int16_t player[3], BfmWoodsKi
         if (king->remaining == 12) event->sound = 2771;
         if (king->remaining <= 10 && !king->attempted && !king->shrink_ticks) {
             king->attempted = 1;
-            if (bite_connects(king,player)) event->bite_power = 33;
+            if (bite_connects(king,player)) {
+                event->bite_power = 33;
+                event->bite_yaw = king->root.yaw;
+            }
         }
         if (!--king->remaining) {
             if (range > 28672) {
@@ -296,10 +308,9 @@ static void advance_pose(BfmWoodsKing *king, const int16_t player[3], BfmWoodsKi
     }
 }
 
-int bfm_woods_king_step(BfmWoodsKing *king, const int16_t previous_player[3],
-                        uint8_t flags[64], BfmWoodsKingEvent *event)
+int bfm_woods_king_prepare(BfmWoodsKing *king, uint8_t flags[64], BfmWoodsKingEvent *event)
 {
-    if (!king || !previous_player || !flags || !event) return 0;
+    if (!king || !flags || !event) return 0;
     *event = (BfmWoodsKingEvent){0};
     if (king->retired) return 1;
     king->completed_width = king->width;
@@ -325,9 +336,21 @@ int bfm_woods_king_step(BfmWoodsKing *king, const int16_t previous_player[3],
             event->body_reward = 1;
             event->body_points = king->body_points;
         }
-        return 1;
     }
-    advance_pose(king, previous_player, event);
+    return 1;
+}
+
+void bfm_woods_king_target(BfmWoodsKing *king, const int16_t player[3], BfmWoodsKingEvent *event)
+{
+    if (king && player && event && !king->retired && !king->flat_ticks)
+        advance_pose(king, player, event);
+}
+
+int bfm_woods_king_step(BfmWoodsKing *king, const int16_t player[3],
+                        uint8_t flags[64], BfmWoodsKingEvent *event)
+{
+    if (!player || !bfm_woods_king_prepare(king, flags, event)) return 0;
+    bfm_woods_king_target(king, player, event);
     return 1;
 }
 

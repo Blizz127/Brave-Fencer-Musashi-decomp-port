@@ -98,10 +98,11 @@ static int decode_faces(const SourcePart *part, MusashiForestPlayerFace *out, in
         }
         int vertex_inks = !!(p[2] & 4);
         unsigned prefix = (textured || vertex_inks) ? n : 1;
-        /* Raw textured scene triangles and quads carry one RGB word after
-         * their UVs, followed by packed vertex indices with no normal. */
-        int raw_textured = scene_materials && (mode == 0x25 || mode == 0x2d) && p[2] == 1;
-        unsigned input = raw_textured ? n+3 : prefix + (gouraud ? n : (n+2)/2);
+        /* Unlit textured packets place their colors between the UVs and
+         * packed vertex indices. Gouraud packets color each corner. */
+        int raw_textured = scene_materials && (mode & ~0x18u) == 0x25 && p[2] == 1;
+        unsigned color_words = gouraud ? n : 1;
+        unsigned input = raw_textured ? n+color_words+2 : prefix + (gouraud ? n : (n+2)/2);
         unsigned output = 1 + n + (textured ? n : 0) + (gouraud || vertex_inks ? n-1 : 0);
         size_t length = (size_t)(input+1)*4;
         unsigned allowed_bits = scene_materials ? 0x1e : 0x1c;
@@ -115,6 +116,11 @@ static int decode_faces(const SourcePart *part, MusashiForestPlayerFace *out, in
         face.mode = (uint8_t)(vertex_inks ? mode | 16u : mode);
         face.corners = (uint8_t)n;
         const uint8_t *body = p+4, *indices = body+4*prefix;
+        const uint8_t *inks = vertex_inks ? body : NULL;
+        if (raw_textured) {
+            if (gouraud) inks = indices;
+            indices += 4*color_words;
+        }
         if (textured) {
             memset(face.rgb, 128, sizeof(face.rgb));
             face.clut = u16le(body+2);
@@ -127,8 +133,8 @@ static int decode_faces(const SourcePart *part, MusashiForestPlayerFace *out, in
                 face.u[k] = body[k*4];
                 face.v[k] = body[k*4+1];
             }
-            memcpy(face.corner_rgb[k], vertex_inks ? body + 4*k : face.rgb, 3);
-            face.vertex[k] = raw_textured ? u16le(indices + 4 + 2*k) :
+            memcpy(face.corner_rgb[k], inks ? inks + 4*k : face.rgb, 3);
+            face.vertex[k] = raw_textured ? u16le(indices + 2*k) :
                 u16le(indices + (gouraud ? 4*k+2 : 2+2*k));
             face.normal[k] = raw_textured ? 0 : u16le(indices + (gouraud ? 4*k : 0));
             if (face.vertex[k] >= part->vertex_count || face.normal[k] >= part->normal_count)

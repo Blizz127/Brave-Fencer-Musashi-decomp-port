@@ -54,9 +54,29 @@ typedef struct {
 
 /* Reads the room's incoming-damage palette and the common player hurt keys
  * from the mounted US game. */
+BfmWoodsPlayerHit *bfm_woods_player_hit_open_palette(const MusashiDiscMedia *disc, uint8_t palette);
 BfmWoodsPlayerHit *bfm_woods_player_hit_open(const MusashiDiscMedia *disc,
                                   const uint8_t *scene, size_t bytes);
 void bfm_woods_player_hit_free(BfmWoodsPlayerHit *hit);
+/* Poll on an enabled field update. Scripted control can allow an injury
+ * before it allows the zero-HP inventory/defeat check. The room passes its
+ * separately latched item restriction to bfm_woods_revive_prepare. */
+int bfm_woods_player_hit_can_check_defeat(const BfmGameplayRun *run,
+                                         const BfmWoodsPlayerHitInput *input);
+/* Recovery from an environmental hit uses the ordinary field immunity clock. */
+void bfm_woods_player_hit_blink(BfmWoodsPlayerHit *hit, unsigned fields);
+
+/* On the first sinking update, show the damage at the original contact point.
+ * The room advances these digits separately from any preceding enemy hit. */
+int bfm_woods_player_hit_water_entry(BfmWoodsPlayerHit *hit, BfmGameplayRun *run,
+                                     const int16_t foot[3], uint32_t player_flags,
+                                     BfmForestDamageDigits *digits);
+typedef enum {
+    BFM_WOODS_WATER_NO_LANDING, BFM_WOODS_WATER_SURVIVED, BFM_WOODS_WATER_ZERO_HP
+} BfmWoodsWaterLanding;
+/* Settle the saved damage once on the dry bank and start shared hit protection.
+ * The room owns the zero-HP item check and any ensuing transfer. */
+BfmWoodsWaterLanding bfm_woods_player_hit_water_return(BfmWoodsPlayerHit *hit, BfmGameplayRun *run);
 /* Step once before dispatching new player input. Hold ordinary movement on
  * locked frames. A zero-HP edge hands off to the field's real item/defeat
  * dispatcher, which owns any recovery, saved-data choice or transfer. */

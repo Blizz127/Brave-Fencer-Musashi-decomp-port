@@ -84,6 +84,27 @@ int bfm_forest_actor_pose_decode(const uint8_t *bytes, size_t size, unsigned par
     return 1;
 }
 
+int bfm_forest_actor_pose_decode_full(const uint8_t *frame, size_t bytes, unsigned count,
+                                     BfmForestPose *pose)
+{
+    if (!frame || !pose || !count || count > MUSASHI_FOREST_PLAYER_PARTS || count > bytes/12)
+        return 0;
+    *pose = (BfmForestPose){0};
+    for (unsigned i = 0; i < count; ++i) {
+        const uint8_t *joint = frame + 12*i;
+        const unsigned y = joint[8] | (unsigned)joint[9] << 8;
+        const unsigned z = joint[10] | (unsigned)joint[11] << 8;
+        const uint8_t angles[8] = {
+            (uint8_t)(((z >> 4) & 0xf0) | ((y >> 8) & 15)), (uint8_t)y, (uint8_t)z,
+            0, 0, 0, joint[6], joint[7]
+        };
+        local_rotation(angles,pose->local[i].rotation);
+        for (unsigned k = 0; k < 3; ++k)
+            pose->local[i].translation[k] = (int16_t)(joint[2*k] | (unsigned)joint[2*k+1] << 8);
+    }
+    return 1;
+}
+
 static int turn_root(int16_t r[3][3])
 {
     for (unsigned col = 0; col < 3; ++col) {

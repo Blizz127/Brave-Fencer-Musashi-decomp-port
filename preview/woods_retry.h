@@ -25,6 +25,9 @@ BfmForestMessage *bfm_woods_retry_window(const MusashiDiscMedia *disc, BfmWoodsR
 
 /* Verify the restored destination and its mounted member together. The field
  * takes ownership only after the receiving scene has opened successfully. */
+int bfm_woods_retry_field_destination(const MusashiDiscMedia *disc, const BfmGameplayRun *run,
+                                     BfmWoodsRetryPage page, const uint8_t *scene, size_t bytes,
+                                     size_t saved_destination_offset, BfmBedroomEntry *out);
 int bfm_woods_retry_destination(const MusashiDiscMedia *disc, const BfmGameplayRun *run,
                                 BfmWoodsRetryPage page, const uint8_t *woods_scene,
                                 size_t scene_bytes, BfmBedroomEntry *out);

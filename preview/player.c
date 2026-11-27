@@ -7,6 +7,7 @@
 #include "title_flow.h"
 #include "save_menu.h"
 #include "chapter_completion_view.h"
+#include "chapter_restart.h"
 #include "inn_profile.h"
 #include "inn_menu.h"
 #include "inn_field.h"
@@ -22,7 +23,7 @@
 enum { TITLE_W = 640, TITLE_H = 480, OPENING_W = 320, OPENING_H = 240 };
 /* On the US disc, the first visible loading sprite spans at least 115 fields. */
 enum { LOADING_VISIBLE_FIELDS = 115, CARD_READ_VISIBLE_FIELDS = 90 };
-enum { PAD_START = 1u << 3, PAD_UP = 1u << 4, PAD_RIGHT = 1u << 5, PAD_DOWN = 1u << 6,
+enum { PAD_SELECT = 1u, PAD_START = 1u << 3, PAD_UP = 1u << 4, PAD_RIGHT = 1u << 5, PAD_DOWN = 1u << 6,
        PAD_LEFT = 1u << 7, PAD_L2 = 1u << 8, PAD_R2 = 1u << 9, PAD_TRIANGLE = 1u << 12,
        PAD_CIRCLE = BFM_FOREST_CIRCLE, PAD_CROSS = BFM_FOREST_CROSS, PAD_SQUARE = BFM_FOREST_SQUARE };
 
@@ -56,6 +57,7 @@ typedef struct Player {
     BfmInnMenu inn_menu;
     unsigned inn_age;
     int inn_service;
+    int chapter_restart_failed;
     BfmSaveMenu saves;
     BfmSaveArt *save_art;
     BfmChapterCompletion chapter;
@@ -81,10 +83,12 @@ static const char usage[] =
     "Enter/Start: start. Space/Cross: confirm or skip the opening. Arrows: select. "
     "D-pad, arrows or left stick: move in Giant Forest. A/Square: swing Fusion on the ground. "
     "Right Shift/R1: charge Fusion. Z/Circle: fire earned Gunshot. Q/L2 and E/R2: rotate the camera in Lower Grillin'. "
-    "T/Triangle: back from files. Escape: quit.\n";
+    "In Lower Grillin' Village, Tab/Select switches to the crescent. Hold Right Shift/R1 until full, "
+    "then release to sleep. Space/Cross wakes Musashi. T/Triangle: back from files. Escape: quit.\n";
 
 static uint16_t button_mask(unsigned int button) {
     switch (button) {
+    case SDL_CONTROLLER_BUTTON_BACK: return PAD_SELECT;
     case SDL_CONTROLLER_BUTTON_START: return PAD_START;
     case SDL_CONTROLLER_BUTTON_A: return PAD_CROSS;
     case SDL_CONTROLLER_BUTTON_B: return PAD_CIRCLE;
@@ -125,6 +129,7 @@ static void update_input(Player *p, int keyboard_event) {
     if (p->keys[SDL_SCANCODE_Q]) current |= PAD_L2;
     if (p->keys[SDL_SCANCODE_E]) current |= PAD_R2;
     if (p->keys[SDL_SCANCODE_RSHIFT]) current |= BFM_FOREST_R1;
+    if (p->keys[SDL_SCANCODE_TAB]) current |= PAD_SELECT;
     if (p->keys[SDL_SCANCODE_RETURN] || p->keys[SDL_SCANCODE_KP_ENTER]) current |= PAD_START;
     if (p->keys[SDL_SCANCODE_SPACE] || p->keys[SDL_SCANCODE_X]) current |= PAD_CROSS;
     if (p->keys[SDL_SCANCODE_Z] || p->keys[SDL_SCANCODE_BACKSPACE]) current |= PAD_CIRCLE;
@@ -238,6 +243,7 @@ static const char *bedroom_caption(uint16_t room)
     case 0x1011: return "Brave Fencer Musashi - Upper Grillin' Village";
     case 0x1010: return "Brave Fencer Musashi - Lower Grillin' Village";
     case 0x2017: return "Brave Fencer Musashi - Hotelo's inn";
+    case 0x3014: return "Brave Fencer Musashi - Forest bank";
     case 0x3025: return "Brave Fencer Musashi - Southern woods";
     case 0x3012: return "Brave Fencer Musashi - Recovery room";
     default: return "Brave Fencer Musashi - Gameplay";
@@ -381,7 +387,9 @@ static int bedroom_frame(Player *p) {
         SDL_SetWindowTitle(p->window, bedroom_caption(room));
         p->display_room = room;
     }
-    if (bfm_bedroom_endpoint(p->bedroom))
+    if (p->chapter_restart_failed)
+        status_line(p, "Could not load the castle bedroom. Press Start to retry.");
+    else if (bfm_bedroom_endpoint(p->bedroom))
         status_line(p, bfm_bedroom_end_message(p->bedroom));
     return 1;
 }
@@ -407,6 +415,7 @@ static int keeper_service(Player *p, unsigned pressed, int previously_open)
         read_keeper_card(p);
         bfm_inn_menu_begin(&p->inn_menu, p->save_copy ? &p->saves : NULL);
         BfmInnField *inn = bfm_bedroom_inn_counter(p->bedroom);
+        p->inn_menu.field_palette = bfm_inn_field_menu_palette(inn);
         for (unsigned i = 0; i < 6; ++i)
             p->inn_menu.prices[i] = bfm_inn_room_price(inn, i);
         p->inn_service = 1;
@@ -421,14 +430,19 @@ static int keeper_service(Player *p, unsigned pressed, int previously_open)
              * even when the new request targets its now-occupied slot. */
             p->inn_menu.card = p->saves;
             p->inn_menu.card.selected = file - 1;
-            if (p->saves.selected == file - 1) {
+            if (p->saves.selected == file - 1 || p->inn_menu.overwriting) {
                 p->inn_menu.page = BFM_INN_FILE_ERROR;
-                p->inn_menu.notice = "Earlier save verified. File occupied.";
+                p->inn_menu.notice = "Earlier save verified. Select a file.";
                 return 1;
             }
         }
         const char *error = p->save_copy ? p->saves.issue : NULL;
-        if (!error) error = bfm_inn_profile_save(p->save_copy, file, record, p->disc);
+        if (!error) {
+            if (p->inn_menu.overwriting)
+                error = bfm_inn_profile_save_selected(p->save_copy, &p->inn_menu.card, record, p->disc);
+            else
+                error = bfm_inn_profile_save(p->save_copy, file, record, p->disc);
+        }
         if (!error) bfm_inn_profile_menu(p->save_copy, &p->saves);
         bfm_inn_menu_complete(&p->inn_menu, error ? NULL : &p->saves, error);
         if (p->inn_menu.page == BFM_INN_SAVED)
@@ -699,7 +713,18 @@ static int play(Player *p, char *error, size_t size) {
             } else if (p->forest) {
                 p->forest_pressed |= p->pressed;
             } else if (p->flow.phase == BFM_TITLE_BEDROOM) {
-                if (bfm_bedroom_endpoint(p->bedroom) && (p->pressed & (PAD_TRIANGLE | PAD_START | PAD_CROSS))) {
+                if (bfm_bedroom_retry_destination(p->bedroom) == BFM_WOODS_RESTART_CHAPTER) {
+                    if (!p->chapter_restart_failed || (p->pressed & PAD_START)) {
+                        BfmBedroom *castle = bfm_chapter_restart_open(p->disc, &p->gameplay);
+                        p->chapter_restart_failed = castle == NULL;
+                        if (castle) {
+                            bfm_desktop_voice_stop(p->voice);
+                            bfm_bedroom_free(p->bedroom);
+                            p->bedroom = castle;
+                        }
+                        room_advanced = 1;
+                    }
+                } else if (bfm_bedroom_endpoint(p->bedroom) && (p->pressed & (PAD_TRIANGLE | PAD_START | PAD_CROSS))) {
                     bfm_desktop_voice_stop(p->voice);
                     bfm_bedroom_free(p->bedroom);
                     p->bedroom = NULL;
@@ -722,9 +747,12 @@ static int play(Player *p, char *error, size_t size) {
                         int y = field_axis(p->keys[SDL_SCANCODE_UP] || (p->digital & PAD_UP),
                                            p->keys[SDL_SCANCODE_DOWN] || (p->digital & PAD_DOWN), p->axis_y);
                         BfmFieldInput field = {.x=x, .y=y, .square_pressed=scene_input & PAD_SQUARE,
+                                               .pressed_directions=scene_input & (PAD_UP|PAD_DOWN|PAD_LEFT|PAD_RIGHT),
                                                .shoulder_held=!service && (p->held & BFM_FOREST_R1),
+                                               .select_pressed=scene_input & PAD_SELECT,
                                                .camera_turn=service ? 0 :
                                                    !!(p->held & PAD_R2) - !!(p->held & PAD_L2),
+                                               .camera_pressed=scene_input & (PAD_L2 | PAD_R2),
                                                .circle_pressed=scene_input & PAD_CIRCLE,
                                                .triangle_pressed=scene_input & PAD_TRIANGLE,
                                                .cross_pressed=scene_input & PAD_CROSS,
@@ -743,6 +771,7 @@ static int play(Player *p, char *error, size_t size) {
                         if (bfm_bedroom_take_effect_release(p->bedroom))
                             bfm_desktop_voice_release_room_effects(p->voice);
                         bfm_desktop_voice_room_score(p->voice, bfm_bedroom_score(p->bedroom));
+                        bfm_desktop_voice_room_score_command(p->voice, bfm_bedroom_take_score_command(p->bedroom));
                         BfmRetryAudioEvent retry_audio = bfm_bedroom_retry_audio(p->bedroom);
                         BfmDefeatScoreEvent score_command = BFM_DEFEAT_SCORE_START;
                         const char *score_action = NULL;
@@ -764,7 +793,7 @@ static int play(Player *p, char *error, size_t size) {
                         if (score_action) {
                             int accepted = bfm_desktop_voice_defeat_score(p->voice, p->disc, score_command);
                             if (!bfm_bedroom_retry_score_result(p->bedroom, retry_audio, accepted)) {
-                                snprintf(error, size, "Could not %s in Cleft Woods.", score_action);
+                                snprintf(error, size, "Could not %s during the retry.", score_action);
                                 return 2;
                             }
                         }

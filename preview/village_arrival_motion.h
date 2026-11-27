@@ -3,8 +3,14 @@
 #define BFM_VILLAGE_ARRIVAL_MOTION_H
 
 #include "bedroom_motion.h"
+#include "forest_maze_gate.h"
 #include "bedroom_travel.h"
 #include "forest_dust.h"
+#include "forest_bank_hop.h"
+#include "forest_bank_thorn_hurt.h"
+#include "forest_bank_hop_pose.h"
+#include "field_input.h"
+#include "field_rest.h"
 
 typedef struct BfmVillageMotion BfmVillageMotion;
 
@@ -17,7 +23,9 @@ typedef enum {
 
 enum {
     BFM_VILLAGE_HIT = 1u, BFM_VILLAGE_CAMERA = 2u, BFM_VILLAGE_OPEN_MESSAGE = 4u,
-    BFM_VILLAGE_SHOW_HUD = 8u, BFM_VILLAGE_RELEASE = 16u, BFM_VILLAGE_TRANSFER = 32u
+    BFM_VILLAGE_SHOW_HUD = 8u, BFM_VILLAGE_RELEASE = 16u, BFM_VILLAGE_TRANSFER = 32u,
+    BFM_VILLAGE_WELL_SOUND_EVENT = 64u, BFM_VILLAGE_WATER_RETURN = 128u,
+    BFM_VILLAGE_WATER_SPLASH = 256u, BFM_VILLAGE_WATER_HIT = 512u
 };
 
 typedef struct {
@@ -29,6 +37,8 @@ typedef struct {
     unsigned movement; /* Cable updates since mounting, retained through impact. */
     uint16_t destination, wall_contact;
     uint8_t entrance;
+    /* The logical root still drives the camera while its submerged body is hidden. */
+    unsigned water_hidden;
 } BfmVillagePlayer;
 
 /* Borrow the unpacked SC03/2 room and the resident MAIN/10 type-0x101 payload. */
@@ -37,8 +47,22 @@ BfmVillageMotion *bfm_village_motion_open(const uint8_t *scene, size_t scene_byt
 /* The marked floor queues a descriptor. The destination restores integer XYZ
  * and heading captured before the final movement pass in the departing field. */
 const uint8_t *bfm_village_motion_transfer(const BfmVillageMotion *motion);
+/* Publish a blocking room actor's corrected endpoint without advancing the pose again. */
+int bfm_village_motion_maze_contact(BfmVillageMotion *motion, const int16_t endpoint[3]);
+const BfmForestMazeGate *bfm_village_motion_maze_gate(const BfmVillageMotion *motion);
+/* Bank entrance 2 returns from the maze. Entrances 0 and 1 lead in from town. */
+BfmVillageMotion *bfm_village_motion_bank(const uint8_t *scene, size_t bytes,
+                                          const uint8_t *main, size_t main_bytes,
+                                          unsigned entrance, unsigned story);
 BfmVillageMotion *bfm_village_motion_woods(const uint8_t *scene, size_t bytes,
                                            const uint8_t *main, size_t main_bytes);
+/* Open Cleft's mountain-side entrance or the adjoining mountain field. A
+ * recorded box destination resumes at its own marker without an entry walk. */
+BfmVillageMotion *bfm_village_motion_box_field(const uint8_t *scene, size_t bytes,
+    const uint8_t *main, size_t main_bytes, const uint8_t destination[36]);
+/* True during the free-running tail of an ordinary room entrance walk. */
+int bfm_village_motion_ingress_clock_running(const BfmVillageMotion *motion);
+int bfm_village_motion_woods_departing(const BfmVillageMotion *motion);
 /* Bind the mounted exit trigger for the current woods story visit. */
 int bfm_village_motion_trail_gate(BfmVillageMotion *motion, unsigned story);
 struct BfmVillageGround;
@@ -48,18 +72,76 @@ BfmVillageMotion *bfm_village_motion_arrive(const BfmVillageMotion *departed, co
 BfmVillageMotion *bfm_village_motion_resume(const uint8_t *scene, size_t bytes,
                                             uint32_t room_address,
                                             const uint8_t *main, size_t main_bytes);
+/* Shop exits use the receiving street's mounted anchor and heading. */
+BfmVillageMotion *bfm_village_motion_return_to_street(const uint8_t *scene, size_t bytes,
+                                    uint32_t room_address, const uint8_t *main, size_t main_bytes,
+                                    unsigned entrance);
 /* Submit one scripted root and advance the player model once, then use place
  * on release to resume ordinary movement from the script endpoint. */
 int bfm_village_motion_porch(BfmVillageMotion *motion, const BfmBedroomRoot *root, int knock);
+/* Issue DRAW_WATER, RECEIVE or LOWER once at the corresponding scene edge.
+ * NONE continues the gesture or follows the root's locomotion edge. DRAW_WATER
+ * and LOWER pulse pose.finished at completion. RECEIVE holds until dismissal. */
+int bfm_village_motion_well(BfmVillageMotion *motion, const BfmBedroomRoot *root,
+                            BfmBedroomAction action);
 int bfm_village_motion_staged(BfmVillageMotion *motion, const BfmBedroomRoot *root);
+struct BfmRootrickHero;
+struct BfmRootrickHeroObstacle;
+/* Bind to the root from the last staged challenge field, then publish Musashi
+ * from his own wall controller using the same mounted motion, pose and shadow. */
+int bfm_village_motion_rootrick_begin(BfmVillageMotion *motion, struct BfmRootrickHero *hero,
+                                      const int64_t staged_position[3]);
+int bfm_village_motion_rootrick_step(BfmVillageMotion *motion, struct BfmRootrickHero *hero,
+    const struct BfmRootrickHeroObstacle *before, const struct BfmRootrickHeroObstacle *after,
+    BfmFieldInput input, int camera_yaw,
+    unsigned field_tick, int can_climb, int32_t *player_y_q16);
+int bfm_village_motion_staged_action(BfmVillageMotion *motion, const BfmBedroomRoot *root,
+                                    BfmBedroomAction action);
+/* Transfer the complete live coordinate to and from a scripted field mover.
+ * Updating position also republishes the whole root and its shadow. */
+int bfm_village_motion_position_q16(const BfmVillageMotion *motion, int32_t xyz[3]);
+int bfm_village_motion_staged_position(BfmVillageMotion *motion, const int32_t xyz[3]);
+/* Submit a mounted external key and its face/weapon state at the grounded
+ * scripted position. pose addresses the first joint, after the packet header. */
+int bfm_village_motion_staged_model(BfmVillageMotion *motion, const BfmBedroomRoot *root,
+    uint32_t pose, unsigned face_slot, int show_fusion, int show_lumina);
 int bfm_village_motion_place(BfmVillageMotion *motion, const BfmBedroomRoot *root);
 const BfmVillagePlayer *bfm_village_motion_player(const BfmVillageMotion *motion);
 /* Once per gameplay update. Pad axes are -127..127, right and down positive.
  * Camera yaw is target minus eye in X/Z, with +Z at zero. */
 int bfm_village_motion_step(BfmVillageMotion *motion, int stick_x, int stick_y, int camera_yaw);
+/* Called instead of the ordinary step while Hop owns the controlled bank
+ * player. Returns 1 for a consumed field, 0 for ordinary control, -1 on error.
+ * Each takeoff and terrain rebound emits one launch event. */
+int bfm_village_motion_bank_hop(BfmVillageMotion *motion, BfmForestBankHop *hop,
+                                BfmForestBankHopPose *poses, BfmForestStatus *player,
+                                BfmFieldInput field, int camera_yaw, uint32_t actor_flags,
+                                int *takeoff);
+uint16_t *bfm_village_motion_bank_pending(BfmVillageMotion *motion);
+/* Sample ordinary safe footing before the previous field's material is received.
+ * A thorn owns the actual Q16 foot and body through the recovery update. */
+int bfm_village_motion_bank_thorn(BfmVillageMotion *motion, BfmForestBankThornHurt *hurt,
+                                  BfmGameplayRun *run, BfmForestBankThornInput input,
+                                  BfmForestBankThornFrame *frame);
 struct BfmGameplayRun;
 int bfm_village_motion_step_field(BfmVillageMotion *motion, int stick_x, int stick_y,
                                   int camera_yaw, struct BfmGameplayRun *run);
+/* After contact at the reciprocal woods passage, follow its mounted facing
+ * and scripted pad until the room transition replaces the departing field. */
+int bfm_village_motion_woods_departure_step(BfmVillageMotion *motion, int camera_yaw,
+                                           struct BfmGameplayRun *run);
+/* Mount Twinpeak's body programs when opening its playable field. Consume
+ * a fresh Cross and the held pad independently on ordinary field updates. */
+int bfm_village_motion_box_controls(BfmVillageMotion *motion, const MusashiDiscMedia *disc);
+/* The attached type-220 actor's one-based row, or zero during free movement. */
+/* The active jumping or falling action, including the summit race handoff. */
+int bfm_village_motion_box_air_action(const BfmVillageMotion *motion);
+/* Set by the ordinary supported standing action on this field. */
+int bfm_village_motion_box_reported_stand(const BfmVillageMotion *motion);
+unsigned bfm_village_motion_box_pole(const BfmVillageMotion *motion);
+int bfm_village_motion_box_step(BfmVillageMotion *motion, int stick_x, int stick_y,
+                                int camera_yaw, int cross_pressed, int cross_held,
+                                struct BfmGameplayRun *run);
 struct BfmWoodsLilies;
 int bfm_village_motion_step_woods(BfmVillageMotion *motion, int stick_x, int stick_y,
                                  int camera_yaw, int cross_pressed, int cross_held,
@@ -93,7 +175,8 @@ typedef struct {
 
 /* Replace step_woods for one reaction field. A hurt holds the player's
  * root. Guard recoil supplies a signed world X/Z displacement in Q16.
- * Platforms advance once; solid actors use the resulting foot segment.
+ * The bank supplies no lily platforms. In Cleft Woods they advance once.
+ * Solid actors use the resulting foot segment.
  * Slope and material describe the swept floor. An ordinary wall alone
  * changes neither support edge. */
 int bfm_village_motion_woods_reaction(BfmVillageMotion *motion, struct BfmWoodsLilies *lilies,
@@ -110,10 +193,21 @@ int bfm_village_motion_combat_face(BfmVillageMotion *motion, unsigned slot);
 int bfm_village_motion_woods_recover(BfmVillageMotion *motion, int resume_fall);
 /* Recheck actor and stationary terrain support at the current feet after a
  * stocked recovery. The normal field step still consumes its neutral pad. */
+/* Recheck terrain and select the ordinary falling, sliding or standing action. */
+int bfm_village_motion_woods_finish_hurt(BfmVillageMotion *motion, int tired);
 int bfm_village_motion_woods_revive(BfmVillageMotion *motion, int tired);
 void bfm_village_motion_woods_condition(BfmVillageMotion *motion, int tired);
 int bfm_village_motion_woods_sliding(const BfmVillageMotion *motion);
 int bfm_village_motion_grounded(const BfmVillageMotion *motion);
+/* Replace one ordinary field update while charging, lying down or waking.
+ * The actor stays at the field root. A completed drop or wake returns 2,
+ * a continuing phase returns 1 and an invalid update returns 0. */
+int bfm_village_motion_field_rest(BfmVillageMotion *motion, BfmFieldRestPose phase,
+                                  unsigned tick);
+
+/* The room sets this from its active Water Scroll and story/control state
+ * before moving. A previously accepted plunge continues to its shore. */
+void bfm_village_motion_water_bypass(BfmVillageMotion *motion, int bypass);
 /* Read after the ordinary woods step, using the world field that ran it. */
 BfmForestDustEmission bfm_village_motion_foot_dust(const BfmVillageMotion *motion,
                                                    unsigned actor_tick);
@@ -138,5 +232,21 @@ int bfm_village_motion_face(const BfmVillageMotion *motion, uint16_t tiles[512][
 int bfm_village_motion_lower_orb(const BfmVillageMotion *motion, unsigned orb,
                                 uint16_t tiles[512][1024]);
 void bfm_village_motion_free(BfmVillageMotion *motion);
+
+/* Somnolent Forest's south clearing, entered from the bank. Both south
+ * arrivals run their mounted entry before accepting walking and Cross. */
+BfmVillageMotion *bfm_village_motion_maze(const uint8_t *scene, size_t bytes,
+    const uint8_t *main, size_t main_bytes, unsigned entrance, const MusashiDiscMedia *disc);
+int bfm_village_motion_step_maze_field(BfmVillageMotion *motion, int x, int y, int camera_yaw,
+                                       int cross_pressed, int cross_held, struct BfmGameplayRun *run);
+
+/* Advance the outgoing bank/clearing hero until the field operator changes
+ * rooms. The queued real door and the original point of contact are retained. */
+int bfm_village_motion_maze_departing(BfmVillageMotion *motion);
+
+/* The maze entrance terminator resumes an equipped passive in place,
+ * after this field has already stepped the ordinary body and face. */
+int bfm_village_motion_maze_resume_hop(BfmVillageMotion *motion, BfmForestBankHop *hop,
+                                       BfmForestBankHopPose *poses);
 
 #endif

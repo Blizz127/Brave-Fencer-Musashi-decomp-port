@@ -18,6 +18,8 @@ int bfm_inn_field_service(const BfmInnField *inn);
 int bfm_inn_field_draw(BfmInnField *inn, int show_dialogue, uint32_t pixels[240][320]);
 const BfmForestMessageFrame *bfm_inn_field_window(const BfmInnField *inn);
 void bfm_inn_field_voice_status(BfmInnField *inn, unsigned status);
+/* Borrowed while Hotelo and its shared texture allocation remain open. */
+const uint16_t *bfm_inn_field_menu_palette(const BfmInnField *inn);
 unsigned bfm_inn_room_price(const BfmInnField *inn, unsigned room);
 int bfm_inn_pay_room201(BfmInnField *inn);
 void bfm_inn_finish_room201(BfmInnField *inn);

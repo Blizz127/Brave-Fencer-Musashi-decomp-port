@@ -23,7 +23,7 @@ enum {
     CLEFT_SWINGS = 9,
     CLEFT_ACTORS = CLEFT_SWINGS + sizeof woods_swings / sizeof *woods_swings,
     CLEFT_PICKUP = CLEFT_ACTORS + sizeof woods_actor_sounds / sizeof *woods_actor_sounds,
-    CLEFT_RECOVERY, CLEFT_CHARGE, CLEFT_FULL_CHARGE, CLEFT_CLIPS
+    CLEFT_RECOVERY, CLEFT_CHARGE, CLEFT_FULL_CHARGE, CLEFT_HOP, CLEFT_CLIPS
 };
 typedef struct {
     const MusashiDiscMedia *disc;
@@ -39,6 +39,8 @@ typedef struct {
     uint8_t control[20];
     unsigned delay, gain, center, pitch, field, sample_in_field, gate, gate_samples;
     int key, tuning, modulated, slide, done;
+    int sequence_base;
+    unsigned sequence_gain, sequence_start, fade_start, fade_step;
     unsigned slide_hold, slide_step[2];
     int slide_goal[2];
     size_t phase;
@@ -83,11 +85,11 @@ static int read_data(const Sources *s, uint32_t address, uint8_t *out, size_t co
 
 /* Area-directed sounds first select a column for the loaded room bank.
  * Common button sounds already point to a resident effect table. */
-static int description(const Sources *s, unsigned command, uint32_t *address, unsigned *resolved)
+static int select_command(const Sources *s, unsigned command, uint8_t entry[4], unsigned *resolved)
 {
-    uint8_t entry[4], pointer[4], value[2];
+    uint8_t value[2];
     const uint8_t *header = NULL;
-    if (!read_data(s, 0x8006451cu+4*command, entry, sizeof entry)) return 0;
+    if (!read_data(s, 0x8006451cu+4*command, entry, 4)) return 0;
     if (s->data || entry[0] == 6 || entry[1]) {
         /* Each area sound payload ends with its 28-byte selector directory. */
         if (!s->data || s->bytes < 28) return 0;
@@ -104,14 +106,22 @@ static int description(const Sources *s, unsigned command, uint32_t *address, un
         command = half(value);
         if (!read_data(s, 0x8006451cu+4*command, entry, 4)) return 0;
     }
+    if (entry[1] && entry[1] != s->group) return 0;
+    if (resolved) *resolved = command;
+    return 1;
+}
+
+static int description(const Sources *s, unsigned command, uint32_t *address, unsigned *resolved)
+{
+    uint8_t entry[4], pointer[4];
+    if (!select_command(s, command, entry, resolved)) return 0;
     /* Direct common menu effects preserve their high service-mode flag
      * in the resident slot. The lower six bits select the instrument
      * descriptor and run the same envelope. */
-    if ((entry[0] != 1 && entry[0] != 0x41) || (entry[1] && entry[1] != s->group)) return 0;
-    uint32_t tables = entry[1] ? word(header+20) : 0x80068304u;
+    if (entry[0] != 1 && entry[0] != 0x41) return 0;
+    uint32_t tables = entry[1] ? word(s->data+s->bytes-8) : 0x80068304u;
     if (!read_data(s, tables+4*entry[2], pointer, 4)) return 0;
     *address = word(pointer)+20u*entry[3];
-    if (resolved) *resolved = command;
     return 1;
 }
 
@@ -168,6 +178,14 @@ static int layer_open(const Sources *s, const uint8_t d[20], Layer *l)
                 if (l->slide_goal[i] < 0 || l->slide_goal[i] >= 127*256) return 0;
             }
             l->gate = half(points+8);
+        } else if (control == 1) {
+            /* Two successive pitch targets, with a separate glide on release. */
+            if (!read_data(s, command, l->control, 16) ||
+                half(l->control+4) >= 127*256 || half(l->control+8) >= 127*256 ||
+                half(l->control+10) >= 127*256) return 0;
+            l->modulated = l->key != (int)half(l->control+4);
+            l->gate = half(l->control+14);
+            if (!l->gate && l->sample.loop_start < l->sample.frames) return 0;
         } else if (control == 2) {
             /* A fixed-pitch gate is just two halfwords, independent of the
              * adjacent controls in the resident effect table. */
@@ -188,10 +206,50 @@ static int approach(int value, int target, int step)
     return value-target < step ? target : value-step;
 }
 
+/* Three sequence-level gain controls are applied to each active voice.
+ * A fade command drives the first control on the sequence's field clock. */
+static unsigned sequence_level(const Layer *voice, unsigned field)
+{
+    unsigned elapsed = field > voice->fade_start ? field - voice->fade_start : 0;
+    unsigned fade = voice->fade_step * elapsed;
+    unsigned level = fade < 16383 ? 16383 - fade : 0;
+    unsigned gain = voice->sequence_gain * level >> 14;
+    gain = gain * 16383u >> 14;
+    return gain * 16383u >> 14;
+}
+
 static void sound_field(const uint8_t table[256], Layer *l)
 {
     const uint8_t *c = l->control;
     unsigned t = ++l->field;
+    if (l->fade_step) l->gain = sequence_level(l, l->sequence_start + t);
+    if (half(c) == 1) {
+        if (l->gate && t == l->gate) bfm_spu_envelope_release(&l->envelope);
+        if (l->envelope.stage == BFM_SPU_ENVELOPE_RELEASE) {
+            l->key = approach(l->key, (int)half(c+10), (int)half(c+12));
+        } else if (l->modulated == 1) {
+            l->key = approach(l->key, (int)half(c+4), (int)half(c+2));
+            if (l->key == (int)half(c+4)) l->modulated = 2;
+        } else if (l->modulated == 2) {
+            l->key = approach(l->key, (int)half(c+8), (int)half(c+6));
+        }
+        l->pitch = pitch(table, l);
+        return;
+    }
+    if (half(c) == 10) {
+        /* Two pitch targets precede key-off. All three targets are offsets
+         * from the original note, including the release bend. */
+        if (t > half(c+2)) {
+            unsigned stage = t > half(c+16) ? 2 : l->modulated - 1;
+            static const unsigned targets[] = {6, 10, 12};
+            static const unsigned steps[] = {4, 8, 14};
+            int goal = l->sequence_base + (int16_t)half(c+targets[stage]);
+            l->key = approach(l->key, goal, (int)half(c+steps[stage]));
+            if (stage == 0 && l->key == goal) l->modulated = 2;
+            l->pitch = pitch(table, l);
+        }
+        return;
+    }
     if (l->slide) {
         int releasing = l->gate && t > l->gate;
         if (releasing || t > l->slide_hold) {
@@ -208,6 +266,12 @@ static void sound_field(const uint8_t table[256], Layer *l)
         if (l->key == c[7]*256) l->modulated = 2;
     } else l->key = approach(l->key,c[11]*256,(int)half(c+8));
     l->pitch = pitch(table,l);
+}
+
+/* Field counts in resident note sequences use the NTSC sound service. */
+static unsigned field_sample(unsigned field)
+{
+    return (unsigned)((uint64_t)field*SPU_RATE*1001u/60000u);
 }
 
 static int next_sample(const uint8_t table[256], Layer *l)
@@ -227,11 +291,15 @@ static int next_sample(const uint8_t table[256], Layer *l)
     }
     if (!level && l->envelope.stage == BFM_SPU_ENVELOPE_RELEASE) l->done = 1;
     if (l->gate_samples && !--l->gate_samples) bfm_spu_envelope_release(&l->envelope);
-    if (++l->sample_in_field == SPU_RATE/60) {
+    int output = (int)((int64_t)v*level*l->gain / (32767*16384));
+    unsigned field = l->field + (l->fade_step ? l->sequence_start : 0);
+    unsigned period = half(l->control) == 1 || half(l->control) == 10 || l->fade_step
+        ? field_sample(field+1)-field_sample(field) : SPU_RATE/60;
+    if (++l->sample_in_field == period) {
         l->sample_in_field = 0;
         sound_field(table,l);
     }
-    return (int)((int64_t)v*level*l->gain / (32767*16384));
+    return output;
 }
 
 static int16_t limited(int value)
@@ -286,12 +354,6 @@ static int render_layers(const Sources *s, Layer layers[], unsigned count,
     return 1;
 }
 
-/* Field counts in the resident note sequence use the NTSC sound service. */
-static unsigned field_sample(unsigned field)
-{
-    return (unsigned)((uint64_t)field*SPU_RATE*1001u/60000u);
-}
-
 static int prepare(const Sources *s, unsigned command, Clip *clip)
 {
     uint32_t address;
@@ -338,18 +400,20 @@ static int prepare_sequence(const Sources *s, unsigned command, Clip *clip)
 {
     enum { MAX_NOTES = 32 };
     uint8_t entry[4], track[12];
-    if (!read_data(s, 0x8006451cu+4*command, entry, sizeof entry) ||
-        (entry[0] & 0x7f) != 5 || entry[1] || entry[2] ||
-        !read_data(s, 0x80068a54u+12*entry[3], track, sizeof track) || track[8] != 0x10)
+    if (!select_command(s, command, entry, NULL) || (entry[0] & 0x7f) != 5 || entry[2]) return 0;
+    uint32_t tracks = entry[1] ? word(s->data+s->bytes-4) : 0x80068a54u;
+    if (!read_data(s, tracks+12*entry[3], track, sizeof track) || track[8] != 0x10)
         return 0;
     uint32_t cursor = word(track), repeat_start = 0;
     unsigned repeats = 0, count = 0, field = 0, attenuation = 0;
+    unsigned fade_start = 0, fade_step = 0;
+    int transpose = 0;
     Layer timbre = {0}, notes[MAX_NOTES];
-    unsigned instrument = 0;
+    unsigned instrument = 0, bank = 0;
     int result = 0;
     for (unsigned steps=0; steps<128; ++steps) {
         uint8_t note[20];
-        if (cursor >= effect_base || !read_data(s,cursor,note,4)) break;
+        if ((!entry[1] && cursor >= effect_base) || !read_data(s,cursor,note,4)) break;
         unsigned op = note[3];
         if (op == 0x87) {
             if (count && !repeats && !note[0] && !note[1] && !note[2])
@@ -363,13 +427,27 @@ static int prepare_sequence(const Sources *s, unsigned command, Clip *clip)
             repeat_start = cursor;
             continue;
         }
+        if (op == 0x84) {
+            /* The maze's second phrase fades toward silence. Earlier notes
+             * can still be ringing when the next field first lowers gain. */
+            if (note[0] || fade_step || !half(note+1)) break;
+            fade_step = half(note+1);
+            fade_start = field;
+            for (unsigned i = 0; i < count; ++i) {
+                notes[i].fade_start = fade_start;
+                notes[i].fade_step = fade_step;
+            }
+            cursor += 4;
+            continue;
+        }
         if (op == 0x85) {
-            /* This phrase repeats at the same pitch with a softer echo. */
-            if (!repeats || note[0] || note[1] >= 128 || note[2]) break;
+            if (!repeats || note[1] >= 128 || note[2]) break;
             if (--repeats) {
+                transpose += (note[0] < 128 ? (int)note[0] : (int)note[0]-256) * 16;
                 attenuation += note[1];
                 cursor = repeat_start;
             } else {
+                transpose = 0;
                 attenuation = 0;
                 cursor += 4;
             }
@@ -380,30 +458,44 @@ static int prepare_sequence(const Sources *s, unsigned command, Clip *clip)
         if (count == MAX_NOTES || !read_data(s,cursor,note,bytes) ||
             note[2] >= 128 || note[2] < attenuation) break;
         if (op == 0x80) {
-            /* Both supported phrases keep one common-bank instrument.
-             * The pickup repeats its definition and changes voice priority. */
-            if (note[8] > 1 || note[10] || note[11] || word(note+16)) break;
+            /* A phrase may redefine its voice priority without changing
+             * instrument. The village well uses its mounted area bank. */
+            if (note[8] > 1 || note[11]) break;
             if (timbre.sample.pcm) {
-                if (note[9] != instrument) break;
+                if (note[9] != instrument || note[10] != bank) break;
             } else {
+                bank = note[10];
                 instrument = note[9];
-                if (!instrument_open(s,0,instrument,&timbre)) break;
+                if (!instrument_open(s,bank,instrument,&timbre)) break;
             }
         }
         if (!timbre.sample.pcm) break;
         Layer *voice = &notes[count++];
         *voice = timbre;
-        voice->key = (int)half(note);
+        voice->key = (int)half(note) + transpose;
         voice->pitch = pitch(s->pitch,voice);
         unsigned gate = half(note+4), interval = half(note+6);
+        if (op == 0x80 && word(note+16)) {
+            if (!read_data(s,word(note+16),voice->control,sizeof voice->control) ||
+                half(voice->control) != 10 || !half(voice->control+16)) break;
+            gate = half(voice->control+16);
+            voice->sequence_base = voice->key;
+            voice->modulated = 1;
+        }
         if (!voice->pitch || (!gate && voice->sample.loop_start < voice->sample.frames) ||
             gate > 480-field || interval > 480-field) break;
         voice->delay = field_sample(field);
         voice->gate_samples = field_sample(field+gate)-voice->delay;
-        unsigned gain = half(s->volume+2*(note[2]-attenuation))*127u >> 7;
-        /* The sequence's three volume controls start at full scale. */
-        for (unsigned i=0; i<3; ++i) gain = gain*16383u >> 14;
-        voice->gain = gain;
+        voice->sequence_gain = half(s->volume+2*(note[2]-attenuation))*127u >> 7;
+        voice->sequence_start = field;
+        voice->fade_start = fade_start;
+        voice->fade_step = fade_step;
+        voice->gain = sequence_level(voice,field);
+        if (!interval) {
+            /* The final note can end scheduling directly and ring out. */
+            result = render_layers(s,notes,count,command,clip);
+            break;
+        }
         field += interval;
         cursor += bytes;
     }
@@ -418,7 +510,7 @@ static int load_tables(Sources *s)
 }
 
 static BfmBedroomEffects *town_effects_load(const MusashiDiscMedia *disc, unsigned member,
-                                           const unsigned commands[], size_t count)
+                                           const unsigned commands[], size_t count, int with_common)
 {
     Sources sources = {.disc = disc};
     uint8_t *data = bfm_archive_effect_data(disc, "SC03.CD", member, &sources.bytes);
@@ -435,16 +527,21 @@ static BfmBedroomEffects *town_effects_load(const MusashiDiscMedia *disc, unsign
         sources.group = half(directory);
         sources.key = half(directory + 4);
         sources.scene = bfm_archive_sound_bank_load(disc, "SC03.CD", member);
-        if (sources.scene && load_tables(&sources)) {
+        if (with_common) sources.common = bfm_archive_sound_bank_load(disc, "MAIN.CD", 2);
+        if (sources.scene && (!with_common || sources.common) && load_tables(&sources)) {
             effects = calloc(1, sizeof *effects);
             for (size_t i = 0; effects && i < count; ++i) {
-                if (!prepare(&sources, commands[i], &effects->clips[i])) {
+                int prepared = commands[i] == BFM_VILLAGE_WELL_SOUND
+                    ? prepare_sequence(&sources, commands[i], &effects->clips[i])
+                    : prepare(&sources, commands[i], &effects->clips[i]);
+                if (!prepared) {
                     bfm_bedroom_effects_free(effects);
                     effects = NULL;
                 }
             }
         }
     }
+    bfm_palace_sound_bank_free(sources.common);
     bfm_palace_sound_bank_free(sources.scene);
     free(data);
     return effects;
@@ -452,8 +549,113 @@ static BfmBedroomEffects *town_effects_load(const MusashiDiscMedia *disc, unsign
 
 BfmBedroomEffects *bfm_village_knock_sound_load(const MusashiDiscMedia *disc)
 {
-    const unsigned commands[] = { BFM_VILLAGE_KNOCK_SOUND };
-    return town_effects_load(disc, 2, commands, sizeof commands / sizeof *commands);
+    const unsigned commands[] = { BFM_VILLAGE_KNOCK_SOUND, BFM_VILLAGE_WELL_SOUND };
+    return town_effects_load(disc, 2, commands, sizeof commands / sizeof *commands, 0);
+}
+
+BfmBedroomEffects *bfm_woods_box_sound_load(const MusashiDiscMedia *disc)
+{
+    enum { BOX_MEMBER = 11, BOX_RESOURCE = 146 };
+    ForestPlayerArchive player;
+    uint8_t row[4];
+    if (!forest_player_archive_open(disc, &player) ||
+        !forest_player_archive_read(&player, UINT32_C(0x800d3544), row, sizeof row)) return NULL;
+    uint32_t room = word(row);
+    if ((room & 4095u) != BOX_RESOURCE) return NULL;
+
+    /* Mount the effects for Twinpeak. Terrain and climbing contacts use its
+     * selector column; Rootrick's landing names an instrument in this area. */
+    static const unsigned contacts[] = {
+        BFM_WOODS_WATER_ENTRY_SOUND,
+        BFM_ROOTRICK_IMPACT_SOUND, BFM_WALL_CLIMB_FIRST_SOUND, BFM_WALL_CLIMB_SECOND_SOUND,
+        BFM_ROOTRICK_STUMBLE_LANDING_SOUND, BFM_WOODS_HURT_SOUND, BFM_WOODS_LUMINA_SWING_SOUND
+    };
+    Sources s = {.disc = disc, .group = (room >> 12) & 15u, .key = room >> 16};
+    uint8_t *area = bfm_archive_effect_data(disc, "SC02.CD", BOX_MEMBER, &s.bytes);
+    s.data = area;
+    s.scene = bfm_archive_sound_bank_load(disc, "SC02.CD", BOX_MEMBER);
+    s.common = bfm_archive_sound_bank_load(disc, "MAIN.CD", 2);
+    BfmBedroomEffects *effects = NULL;
+    if (area && s.scene && s.common && load_tables(&s))
+        effects = calloc(1, sizeof *effects);
+    const size_t count = sizeof contacts / sizeof *contacts;
+    int prepared = effects && prepare(&s, BFM_WOODS_BOX_OPEN_SOUND, &effects->clips[0]) &&
+                   prepare(&s, BFM_WOODS_BOX_CLOSE_SOUND, &effects->clips[1]) &&
+                   prepare_sequence(&s, BFM_WOODS_BOX_ACCEPT_SOUND, &effects->clips[2]);
+    for (size_t i = 0; prepared && i < count; ++i)
+        prepared = prepare(&s, contacts[i], &effects->clips[3+i]);
+    if (effects && (!prepared ||
+        !prepare_sequence(&s, BFM_WOODS_PICKUP_SOUND, &effects->clips[3+count]))) {
+        bfm_bedroom_effects_free(effects);
+        effects = NULL;
+    }
+    bfm_palace_sound_bank_free(s.common);
+    bfm_palace_sound_bank_free(s.scene);
+    free(area);
+    return effects;
+}
+
+static int prepare_bank_field(Sources *s, const ForestPlayerArchive *player, BfmBedroomEffects *effects)
+{
+    /* The bank's defense sound uses the active field VAB. The hurt and
+     * award use common instruments. Hop sounds through its equipment bank. */
+    s->common = bfm_archive_sound_bank_load(s->disc, "MAIN.CD", 2);
+    if (!s->common || !prepare(s, BFM_WOODS_GUARD_SOUND, &effects->clips[0]) ||
+        !prepare(s, BFM_WOODS_HURT_SOUND, &effects->clips[1]) ||
+        !prepare(s, BFM_WOODS_SHRINK_SOUND, &effects->clips[2])) return 0;
+    uint8_t skill[8];
+    if (!forest_player_archive_read(player, UINT32_C(0x800d3794), skill, sizeof skill)) return 0;
+    bfm_palace_sound_bank_free(s->scene);
+    s->scene = bfm_archive_sound_bank_load(s->disc, "MAIN.CD", word(skill));
+    s->key = word(skill+4);
+    effects->replace_matching = 1;
+    return s->scene && prepare(s, BFM_WOODS_HOP_SOUND, &effects->clips[3]);
+}
+
+static BfmBedroomEffects *forest_field_effects(const MusashiDiscMedia *disc, unsigned room,
+                                              unsigned member)
+{
+    /* The resident room descriptor supplies the area selector and VAB key.
+     * The archive member supplies its remap directory, programs and samples. */
+    ForestPlayerArchive player;
+    uint8_t field[4];
+    if (!forest_player_archive_open(disc, &player) ||
+        !forest_player_archive_read(&player, UINT32_C(0x800d34ac) + 4*(room & 4095u),
+                                    field, sizeof field)) return NULL;
+    Sources s = {.disc = disc, .group = half(field) >> 12, .key = half(field+2)};
+    uint8_t *area = bfm_archive_effect_data(disc, "SC03.CD", member, &s.bytes);
+    s.data = area;
+    s.scene = bfm_archive_sound_bank_load(disc, "SC03.CD", member);
+    BfmBedroomEffects *effects = NULL;
+    if (area && s.scene && load_tables(&s)) effects = calloc(1, sizeof *effects);
+    if (effects) {
+        int valid;
+        if (room == 0x3014) {
+            valid = prepare_bank_field(&s, &player, effects);
+        } else {
+            valid = prepare(&s, BFM_WOODS_LENO_BARK_SOUND, &effects->clips[0]) &&
+                    prepare(&s, BFM_MAZE_GUIDE_SNIFF_SOUND, &effects->clips[1]) &&
+                    prepare_sequence(&s, BFM_MAZE_GUIDE_ABSENT_SOUND, &effects->clips[2]);
+        }
+        if (!valid) {
+            bfm_bedroom_effects_free(effects);
+            effects = NULL;
+        }
+    }
+    bfm_palace_sound_bank_free(s.common);
+    bfm_palace_sound_bank_free(s.scene);
+    free(area);
+    return effects;
+}
+
+BfmBedroomEffects *bfm_forest_bank_effects_load(const MusashiDiscMedia *disc)
+{
+    return forest_field_effects(disc, 0x3014, 6);
+}
+
+BfmBedroomEffects *bfm_maze_guide_effects_load(const MusashiDiscMedia *disc)
+{
+    return forest_field_effects(disc, 0x301b, 7);
 }
 
 BfmBedroomEffects *bfm_nightmare_sound_load(const MusashiDiscMedia *disc)
@@ -461,7 +663,18 @@ BfmBedroomEffects *bfm_nightmare_sound_load(const MusashiDiscMedia *disc)
     const unsigned commands[] = {
         BFM_NIGHTMARE_WAKE_SOUND, BFM_NIGHTMARE_BED_LANDING_SOUND, BFM_NIGHTMARE_FLOOR_LANDING_SOUND
     };
-    return town_effects_load(disc, 3, commands, sizeof commands / sizeof *commands);
+    return town_effects_load(disc, 3, commands, sizeof commands / sizeof *commands, 0);
+}
+
+BfmBedroomEffects *bfm_bakery_effects_load(const MusashiDiscMedia *disc)
+{
+    /* The menu uses the common instruments. Completing a trade uses the
+     * effects bank already mounted for the lower village. The insufficient
+     * funds request's argument 3 carries no volume, pan or pitch override. */
+    const unsigned commands[] = {1518, 1114, 1135, 1139, 1140, 1119, 1138};
+    BfmBedroomEffects *effects = town_effects_load(disc, 1, commands, sizeof commands / sizeof *commands, 1);
+    if (effects) effects->replace_matching = 1;
+    return effects;
 }
 
 BfmBedroomEffects *bfm_forest_swing_sound_load(const MusashiDiscMedia *disc)
@@ -590,13 +803,19 @@ BfmBedroomEffects *bfm_woods_shrink_sound_load(const MusashiDiscMedia *disc)
     enum { CLEFT_WOODS = 29 };
     uint8_t *area = bfm_archive_effect_data(disc, "SC03.CD", CLEFT_WOODS, &s.bytes);
     int has_player_bank = forest_player_archive_open(disc, &player);
-    if (has_player_bank &&
-        forest_player_archive_read(&player, UINT32_C(0x800d379c), row, sizeof row)) {
-        s.key = word(row+4);
-        s.scene = bfm_archive_sound_bank_load(disc, "MAIN.CD", word(row));
-        if (s.scene) prepare(&s, BFM_WOODS_SATIATE_RECOVERY_SOUND, &effects->clips[CLEFT_RECOVERY]);
-        bfm_palace_sound_bank_free(s.scene);
-        s.scene = NULL;
+    if (has_player_bank) {
+        static const struct { uint32_t row; unsigned command, slot; } skills[] = {
+            { UINT32_C(0x800d3794), BFM_WOODS_HOP_SOUND, CLEFT_HOP },
+            { UINT32_C(0x800d379c), BFM_WOODS_SATIATE_RECOVERY_SOUND, CLEFT_RECOVERY }
+        };
+        for (unsigned i = 0; i < sizeof skills / sizeof *skills; ++i) {
+            if (!forest_player_archive_read(&player, skills[i].row, row, sizeof row)) continue;
+            s.key = word(row + 4);
+            s.scene = bfm_archive_sound_bank_load(disc, "MAIN.CD", word(row));
+            if (s.scene) prepare(&s, skills[i].command, &effects->clips[skills[i].slot]);
+            bfm_palace_sound_bank_free(s.scene);
+            s.scene = NULL;
+        }
     }
     if (has_player_bank &&
         forest_player_archive_read(&player, UINT32_C(0x800d3784), row, sizeof row)) {

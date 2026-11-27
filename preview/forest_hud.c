@@ -7,8 +7,8 @@
 enum { SCENE_BASE = 0x128158, FOREST_PANELS = 0x18a1dc - SCENE_BASE,
        BEDROOM_PANELS = 0x185a70 - SCENE_BASE, STEAM_KNIGHT_PANELS = 0x193fa0 - SCENE_BASE,
        ABILITY_NAMES = 0x60,
-       VITALITY_ROWS = 0xdc, DIAL_ROWS = 0xf0, WEEKDAY_COLORS = 0x124,
-       ABILITY_COUNT = 31, MAX_NAME = 24 };
+       VITALITY_ROWS = 0xdc, DIAL_ROWS = 0xf0, BLADE_SHUTTER_ROWS = 0xfc, WEEKDAY_COLORS = 0x124,
+       BLADE_SHUTTER_FRAMES = 11, ABILITY_COUNT = 31, MAX_NAME = 24 };
 enum { EXE_HEADER = 2048, ALPHABET = EXE_HEADER + 0x636d8 - 0x10000,
        PUNCTUATION = EXE_HEADER + 0x63818 - 0x10000 };
 typedef struct {
@@ -22,17 +22,20 @@ typedef struct {
 typedef struct {
     int16_t hp, bp;
 } DisplayPoints;
-typedef enum { MENU_GAUGE, FIELD_GAUGE, WOODS_GAUGE } GaugeMode;
+typedef enum { MENU_GAUGE, FIELD_GAUGE, WOODS_GAUGE, REST_GAUGE } GaugeMode;
 struct BfmForestHud {
     const uint16_t (*tiles)[1024];
     Sprite panel[5];
     Label ability[ABILITY_COUNT];
     uint8_t vitality[20], dial[20], weekday[7];
     uint16_t orb[7], digit[10];
+    uint8_t shutter_rows[BLADE_SHUTTER_FRAMES];
+    uint8_t blade_known, blade_target, blade_displayed, blade_frame;
     unsigned inset, remaining, hiding, modal;
     uint8_t detector_active, detector_step, detector_phase, rim_boost, rebuild_rims;
     GaugeMode gauge_mode;
     unsigned fill, green, charge_color;
+    int rest_fatigue;
     DisplayPoints points[3];
     int points_ready;
 };
@@ -113,6 +116,7 @@ static BfmForestHud *load_hud(const MusashiDiscMedia *disc, const uint8_t *scene
         hud->orb[i] = (uint16_t)le16(records + 80 + i*2);
     memcpy(hud->vitality, records+VITALITY_ROWS, sizeof(hud->vitality));
     memcpy(hud->dial, records+DIAL_ROWS, sizeof(hud->dial));
+    memcpy(hud->shutter_rows, records+BLADE_SHUTTER_ROWS, sizeof(hud->shutter_rows));
     memcpy(hud->weekday, records+WEEKDAY_COLORS, sizeof(hud->weekday));
     if (read_labels(hud, disc, scene, bytes, records+ABILITY_NAMES)) return hud;
 fail:
@@ -300,7 +304,7 @@ static void field_gauges(BfmForestHud *hud, unsigned charge, int absorption, Gau
     if (!hud->fill && absorption < 0) hud->green = 0;
     unsigned flash = mode == WOODS_GAUGE ? hud->fill : charge;
     if (flash == 128 && !hud->green) hud->charge_color = hud->charge_color % 3 + 1;
-    else if (mode == FIELD_GAUGE) hud->charge_color = 0;
+    else if (mode != WOODS_GAUGE) hud->charge_color = 0;
 }
 
 void bfm_forest_hud_gauges(BfmForestHud *hud, unsigned charge, int absorption)
@@ -313,15 +317,70 @@ void bfm_woods_hud_gauges(BfmForestHud *hud, unsigned charge, int absorption)
     field_gauges(hud,charge,absorption,WOODS_GAUGE);
 }
 
+void bfm_village_hud_rest(BfmForestHud *hud, int selected, unsigned charge, int show_fatigue)
+{
+    if (!hud) return;
+    int was_selected = hud->gauge_mode == REST_GAUGE;
+    if (was_selected != (selected != 0)) {
+        hud->fill = hud->green = hud->charge_color = 0;
+        hud->gauge_mode = selected ? REST_GAUGE : MENU_GAUGE;
+    }
+    if (selected) field_gauges(hud, charge, -1, REST_GAUGE);
+    hud->rest_fatigue = show_fatigue;
+}
+
+int bfm_village_hud_step_blade(BfmForestHud *hud, int equipment, unsigned *palette_equipment)
+{
+    if (!hud) return 0;
+    if (equipment < 0) {
+        hud->blade_known = 0;
+        return 0;
+    }
+    if (!palette_equipment || equipment > UINT8_MAX) return 0;
+    if (!hud->blade_known) {
+        hud->blade_known = 1;
+        hud->blade_target = hud->blade_displayed = (uint8_t)equipment;
+        hud->blade_frame = BLADE_SHUTTER_FRAMES;
+        *palette_equipment = (unsigned)equipment;
+        return 1;
+    }
+    /* Each submitted field keeps its own shutter pose. A second selection
+     * waits until the current closing and reopening sequence has finished. */
+    if (hud->blade_frame < BLADE_SHUTTER_FRAMES) {
+        ++hud->blade_frame;
+        if (!hud->blade_target && hud->blade_frame > 5)
+            hud->blade_frame = BLADE_SHUTTER_FRAMES;
+    }
+    if (hud->blade_frame == BLADE_SHUTTER_FRAMES && hud->blade_target != equipment) {
+        hud->blade_frame = hud->blade_target ? 0 : 5;
+        hud->blade_target = (uint8_t)equipment;
+        return 0;
+    }
+    /* The new icon and its palette go in together behind the closed rim.
+     * An unequipped blade stays covered and needs no palette upload. */
+    if (hud->blade_frame >= 4 && hud->blade_displayed != hud->blade_target) {
+        hud->blade_displayed = hud->blade_target;
+        if (hud->blade_displayed) {
+            *palette_equipment = hud->blade_displayed;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void ornaments(Canvas *c, const BfmForestStatusValues *v, int inset)
 {
     Sprite s[5];
     memcpy(s, c->hud->panel, sizeof(s));
-    s[0].uv = (s[0].uv & 255) | (v->orb ? 0u : 160u << 8);
-    if (v->orb & 0x80)
+    unsigned orb = c->hud->blade_known ? c->hud->blade_displayed : v->orb;
+    unsigned rim = orb ? 0 : 160;
+    if (c->hud->blade_known && c->hud->blade_frame < BLADE_SHUTTER_FRAMES)
+        rim = c->hud->shutter_rows[c->hud->blade_frame];
+    s[0].uv = (s[0].uv & 255) | rim << 8;
+    if (orb & 0x80)
         s[1].uv = c->hud->orb[6];
-    else if (v->orb < 8)
-        s[1].uv = c->hud->orb[v->orb ? v->orb-1 : 0];
+    else if (orb < 8)
+        s[1].uv = c->hud->orb[orb ? orb-1 : 0];
     if (v->face_gauge && v->face_gauge/16 < sizeof(c->hud->dial))
         s[3].uv = (s[3].uv & 255) | (unsigned)c->hud->dial[v->face_gauge/16] << 8;
     else if (!v->face_gauge)
@@ -435,4 +494,6 @@ void bfm_forest_hud_draw(const BfmForestHud *hud, const BfmForestStatus *status,
             x += uv < 0x0861 ? 7 : 8;
         }
     }
+    if (hud->gauge_mode == REST_GAUGE && hud->rest_fatigue)
+        bfm_inn_hud_draw_fatigue(hud, status, pixels);
 }

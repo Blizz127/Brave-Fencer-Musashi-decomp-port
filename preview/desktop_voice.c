@@ -459,6 +459,15 @@ void bfm_desktop_voice_room_score(DesktopVoice *v, BfmForestScore *score)
     if (v->device && score) SDL_PauseAudioDevice(v->device, 0);
 }
 
+void bfm_desktop_voice_room_score_command(DesktopVoice *v, unsigned command)
+{
+    if (!v || (command != 18 && command != 19)) return;
+    if (v->device) SDL_LockAudioDevice(v->device);
+    if (v->room_score)
+        bfm_forest_score_duck(v->room_score, BFM_SCORE_DUCK_DIALOGUE, command == 18);
+    if (v->device) SDL_UnlockAudioDevice(v->device);
+}
+
 void bfm_desktop_voice_forest_score(DesktopVoice *v, const MusashiDiscMedia *disc, Uint64 start)
 {
     if (!v || !disc || v->forest_score_requested) return;

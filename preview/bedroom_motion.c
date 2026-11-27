@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "bedroom_motion.h"
+#include "field_rest_pose.h"
 #include "woods_slope.h"
 #include "gameplay_run.h"
 #include <stdlib.h>
@@ -104,12 +105,18 @@ static int advance(BfmBedroomMotion *m, Channel *channel, int body)
         case 4: /* Body resource declaration. */
             if (!body || !next_word(m, channel, &operand) || !data(m, operand, 4)) return 0;
             break;
-        case 7: /* Contact marker in the player's door-knock gesture. */
-            if (!body || m->activity != KNOCKING) return 0;
-            m->frame.knock_contact = 1;
+        case 6: /* Jump to a word in this body program and present its key now. */
+            if (!body || !next_word(m, channel, &operand) || operand > 255) return 0;
+            channel->cursor = operand;
             break;
-        case 8: /* Running foot contact. The pose follows in the same update. */
+        case 7: /* A body event precedes the next pose in the same update. */
             if (!body) return 0;
+            if (m->activity == KNOCKING) m->frame.knock_contact = 1;
+            break;
+        case 8:
+        case 9:
+            if (!body) return 0;
+            m->frame.body_contact = command;
             break;
         case 15: /* Select a facial texture animation with this body action. */
             if (!body || !next_word(m, channel, &operand) || operand > 255 ||
@@ -174,6 +181,18 @@ int bfm_bedroom_motion_direct(BfmBedroomMotion *motion, uint32_t program)
     return 1;
 }
 
+int bfm_bedroom_motion_direct_slot(BfmBedroomMotion *motion, unsigned slot)
+{
+    uint32_t program;
+    return motion && slot < 40 && word(motion, motion->body_bank + 4 * slot, &program) &&
+           bfm_bedroom_motion_direct(motion, program);
+}
+
+int bfm_bedroom_motion_looped(const BfmBedroomMotion *motion)
+{
+    return motion && motion->body.boundary == STREAM_LOOP;
+}
+
 BfmBodyMarker bfm_bedroom_motion_marker(const BfmBedroomMotion *motion)
 {
     if (motion && motion->body.boundary == STREAM_HOLD) return BFM_BODY_HOLD;
@@ -212,16 +231,23 @@ BfmBedroomMotion *bfm_bedroom_motion_open(const uint8_t *scene, size_t scene_byt
     return m;
 }
 
+static int start_lying_down(BfmBedroomMotion *m)
+{
+    if (!pair(m, 38, 30)) return 0;
+    m->pitch = 4073;
+    m->angular_speed = 0;
+    return 1;
+}
+
 static int update(BfmBedroomMotion *m, BfmBedroomAction action, int field_standing)
 {
     int update_body = 1;
     m->frame.knock_contact = 0;
+    m->frame.body_contact = 0;
     m->frame.finished = 0;
     switch (action) {
     case BFM_BEDROOM_LIE:
-        if (!pair(m, 38, 30)) return 0;
-        m->pitch = 4073;
-        m->angular_speed = 0;
+        if (!start_lying_down(m)) return 0;
         m->activity = TILTING;
         break;
     case BFM_BEDROOM_NIGHTMARE_SLEEP:
@@ -302,11 +328,16 @@ static int update(BfmBedroomMotion *m, BfmBedroomAction action, int field_standi
         break;
     case BFM_BEDROOM_FAREWELL:
     case BFM_BEDROOM_NEGATIVE_REPLY:
-        start(&m->body, action == BFM_BEDROOM_FAREWELL ? 0x800d59ecu : 0x800d599cu);
+    case BFM_BEDROOM_DRAW_WATER: {
+        uint32_t program = 0x800d5934u;
+        if (action == BFM_BEDROOM_FAREWELL) program = 0x800d59ecu;
+        if (action == BFM_BEDROOM_NEGATIVE_REPLY) program = 0x800d599cu;
+        start(&m->body, program);
         if (!advance(m, &m->body, 1)) return 0;
         m->frame.draw_current = 1;
         m->activity = COLLECTING;
         break;
+    }
     case BFM_BEDROOM_SHOW_FUSION:
         start(&m->body, 0x801ca6ecu);
         if (!advance(m, &m->body, 1)) return 0;
@@ -380,6 +411,48 @@ int bfm_bedroom_motion_reenter_stance(BfmBedroomMotion *m, int tired)
     return 1;
 }
 
+int bfm_bedroom_motion_field_rest(BfmBedroomMotion *motion, BfmFieldRestPose phase,
+                                  unsigned tick, BfmBedroomPose *frame)
+{
+    if (!motion || !frame) return 0;
+    BfmBedroomMotion next = *motion;
+    BfmBedroomAction action = BFM_BEDROOM_NONE;
+    switch (phase) {
+    case BFM_FIELD_REST_CHARGE:
+        /* The standing stretch and its held continuation are the same mounted
+         * body and face programs that the room uses for a yawn. */
+        if (!tick) action = BFM_BEDROOM_YAWN;
+        break;
+    case BFM_FIELD_REST_DROP:
+        if (!tick) {
+            if (!start_lying_down(&next)) return 0;
+            /* The field initializer submits the first pose at the initial
+             * pitch. Angular acceleration begins on the following update. */
+            next.activity = QUIET;
+        }
+        break;
+    case BFM_FIELD_REST_ASLEEP:
+        /* The end of the drop already selected the looping sleeping pose. */
+        break;
+    case BFM_FIELD_REST_WAKE:
+        if (!bfm_bedroom_motion_reenter_stance(&next, -1)) return 0;
+        action = BFM_BEDROOM_UPRIGHT;
+        next.frame.draw_current = 0;
+        break;
+    default:
+        return 0;
+    }
+    if (!update(&next, action, 0)) return 0;
+    if (phase == BFM_FIELD_REST_DROP && !tick) next.activity = TILTING;
+    next.rest_phase = RESTING;
+    next.rest_cycles = 0;
+    *motion = next;
+    *frame = next.frame;
+    if (phase == BFM_FIELD_REST_WAKE ||
+        (phase == BFM_FIELD_REST_DROP && frame->finished)) return 2;
+    return 1;
+}
+
 int bfm_bedroom_motion_ability_pose(BfmBedroomMotion *m, unsigned face_slot, int finished,
                                     BfmBedroomPose *frame)
 {
@@ -396,6 +469,12 @@ int bfm_bedroom_motion_ability_pose(BfmBedroomMotion *m, unsigned face_slot, int
     return 1;
 }
 
+void bfm_bedroom_motion_publish_upright(BfmBedroomMotion *m, BfmBedroomPose *frame)
+{
+    m->pitch = m->frame.pitch = 0;
+    *frame = m->frame;
+}
+
 int bfm_bedroom_motion_reenter_fall(BfmBedroomMotion *m, int moving)
 {
     if (!m || !pair(m, moving ? 15 : 13, 34)) return 0;
@@ -403,10 +482,36 @@ int bfm_bedroom_motion_reenter_fall(BfmBedroomMotion *m, int moving)
     return 1;
 }
 
+void bfm_bedroom_motion_descend(BfmBedroomMotion *m)
+{
+    /* Both ordinary falling programs hold near the apex, then play their
+     * descent. Other body programs have independent hold/release conditions. */
+    if (bfm_bedroom_motion_marker(m) == BFM_BODY_HOLD &&
+        (m->body.program == UINT32_C(0x800d4a9c) || m->body.program == UINT32_C(0x800d4b48)))
+        bfm_bedroom_motion_resume(m);
+}
+
 int bfm_bedroom_motion_reenter_slide(BfmBedroomMotion *m)
 {
     if (!m || !select_body(m, BFM_WOODS_SLOPE_BODY)) return 0;
     m->activity = QUIET;
+    return 1;
+}
+
+int bfm_bedroom_motion_leave_hop(BfmBedroomMotion *m, unsigned support,
+                                 int moving, BfmBedroomPose *frame)
+{
+    if (!m || !frame) return 0;
+    /* The active body belonged to the ability archive. Re-enter even if the
+     * local ordinary channel happened to retain the same old program. */
+    m->body.program = 0;
+    if (!select_slot(m,&m->face,m->face_bank,17)) return 0;
+    if (!support || support == 0x8000) {
+        if (!bfm_bedroom_motion_reenter_fall(m,moving)) return 0;
+    } else if (support & 0x4000) {
+        if (!bfm_bedroom_motion_reenter_slide(m)) return 0;
+    } else if (!bfm_bedroom_motion_reenter_stance(m,-1)) return 0;
+    *frame = m->frame;
     return 1;
 }
 
@@ -556,12 +661,27 @@ int bfm_bedroom_motion_face(const BfmBedroomMotion *m, uint16_t tiles[512][1024]
     return m && tiles && (!m->face_upload || upload(m, m->face_upload, 2, tiles));
 }
 
+int bfm_bedroom_motion_upload_palette(const BfmBedroomMotion *motion, uint32_t descriptor,
+                                      uint16_t tiles[512][1024])
+{
+    return motion && tiles && upload(motion, descriptor, 1, tiles);
+}
+
 int bfm_bedroom_orb_palette(const BfmBedroomMotion *m, uint32_t table, unsigned orb, uint16_t tiles[512][1024])
 {
     uint32_t address;
     if (orb & 0x80) orb = 7;
     return m && tiles && orb <= 7 && word(m, table + 4*orb, &address) &&
            upload(m, address, 1, tiles);
+}
+
+int bfm_grillin_blade_palette(const BfmBedroomMotion *motion, unsigned orb, uint16_t tiles[512][1024])
+{
+    /* The lower village and its bakery share seven ordinary blade palettes.
+     * The special blade has its own resident palette outside the table. */
+    if (orb & 0x80)
+        return bfm_bedroom_motion_upload_palette(motion, UINT32_C(0x800d45d4), tiles);
+    return orb < 7 && bfm_bedroom_orb_palette(motion, UINT32_C(0x80190cd4), orb, tiles);
 }
 
 void bfm_bedroom_motion_free(BfmBedroomMotion *m)

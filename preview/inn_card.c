@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 #include "inn_card.h"
 #include "save_payload.h"
+#include "save_menu.h"
+#include "../pc_port/forest_player_bytes.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -14,6 +16,8 @@ enum {
 
 /* All fields of the on-card live record are byte arrays. */
 typedef char InnRecordSize[sizeof(BfmSaveRecord) == 732 ? 1 : -1];
+
+typedef enum { HOTELO, HOTELO_OVERWRITE, CHAPTER_END } SavePlace;
 
 static const char name[] = "BASLUS-00726MUSASHI";
 
@@ -33,16 +37,18 @@ static void store_sum(uint8_t *result, const uint8_t *bytes, size_t size)
 }
 
 static const char *encode_file(CardImage image, unsigned file, const BfmSaveRecord *record,
-                               unsigned story)
+                               SavePlace place)
 {
     if (!record || file < 1 || file > MUSASHI_SAVE_FILES)
         return "Choose a save file.";
 
     const uint8_t *p = record->progress;
-    if (p[8] != story || p[9] || p[10] || p[11] || !bfm_save_uses_default_room_table(record))
-        return story == 10 ? "This story cannot be saved at the inn." : "Invalid chapter save.";
-    if (story == 2 && (!(record->flags[16] & 1u) ||
-                       !empty_bytes(record->destination, sizeof record->destination)))
+    uint32_t story = u32le(p + 8);
+    int supported_story = place == CHAPTER_END ? story == 2 : bfm_story_returns_to_grillin_inn(story);
+    if (!supported_story || !bfm_save_uses_default_room_table(record))
+        return place == CHAPTER_END ? "Invalid chapter save." : "This story cannot be saved at the inn.";
+    if (place == CHAPTER_END && (!(record->flags[16] & 1u) ||
+                                !empty_bytes(record->destination, sizeof record->destination)))
         return "Invalid chapter destination or sword state.";
     if (!(p[52] || p[53]) || p[6] >= 60 || p[56] >= 60 || p[57] >= 24)
         return "Invalid play time or game clock.";
@@ -59,10 +65,20 @@ static const char *encode_file(CardImage image, unsigned file, const BfmSaveReco
 
     uint8_t *summary = game + SUMMARY_START + (file - 1) * SUMMARY_BYTES;
     uint8_t *payload = game + musashi_save_payload_offset(file);
-    if (!empty_bytes(summary, SUMMARY_BYTES) || !empty_bytes(payload, MUSASHI_PAYLOAD_BYTES))
+    if (place == HOTELO_OVERWRITE) {
+        BfmSaveMenu card;
+        bfm_save_menu_read_image(&card, image.bytes, image.length);
+        if (card.issue || card.rows[file - 1].state != BFM_SAVE_VALID)
+            return "The selected file cannot be overwritten.";
+        /* Each overwritten sector is rebuilt. Old padding is not part of the new save. */
+        memset(game + LAST_SELECTED, 0, SUMMARY_START - LAST_SELECTED);
+        memset(summary, 0, SUMMARY_BYTES);
+        memset(payload, 0, MUSASHI_PAYLOAD_BYTES);
+    } else if (!empty_bytes(summary, SUMMARY_BYTES) || !empty_bytes(payload, MUSASHI_PAYLOAD_BYTES)) {
         return "Choose an empty save file.";
+    }
 
-    /* These two saves use the resident destination for their story. */
+    /* The keeper and chapter-end saves resume at a resident destination. */
     BfmSaveRecord saved = *record;
     memset(saved.destination, 0, sizeof saved.destination);
     memcpy(payload, &saved, sizeof saved);
@@ -79,7 +95,7 @@ static const char *encode_file(CardImage image, unsigned file, const BfmSaveReco
 
 const char *bfm_inn_card_encode(CardImage image, unsigned file, const BfmSaveRecord *record)
 {
-    return encode_file(image, file, record, 10);
+    return encode_file(image, file, record, HOTELO);
 }
 
 /* The mounted US disc supplies the title and three 16x16 four-bit TIMs.
@@ -104,7 +120,7 @@ static int create_game_file(CardImage image, const MusashiDiscMedia *disc)
 
 static const char *save_file(const uint8_t *expected, unsigned file,
                               const BfmSaveRecord *record, BfmInnCardCommit commit,
-                              void *context, const MusashiDiscMedia *disc, unsigned story)
+                              void *context, const MusashiDiscMedia *disc, SavePlace place)
 {
     if (!expected || !commit) return "Select a writable card copy to save.";
     uint8_t *replacement = malloc(CARD_IMAGE_SIZE);
@@ -115,7 +131,7 @@ static const char *save_file(const uint8_t *expected, unsigned file,
     if (card_is_unallocated(image) && !create_game_file(image, disc))
         issue = "Could not create the Musashi game file from your disc.";
     else
-        issue = encode_file(image, file, record, story);
+        issue = encode_file(image, file, record, place);
     if (!issue && !commit(context, 0, expected, replacement))
         issue = "Could not commit this save. Reopen the card and try again.";
     free(replacement);
@@ -126,12 +142,19 @@ const char *bfm_inn_card_save(const uint8_t *expected, unsigned file,
                               const BfmSaveRecord *record, BfmInnCardCommit commit,
                               void *context, const MusashiDiscMedia *disc)
 {
-    return save_file(expected, file, record, commit, context, disc, 10);
+    return save_file(expected, file, record, commit, context, disc, HOTELO);
+}
+
+const char *bfm_inn_card_overwrite(const uint8_t *expected, unsigned file,
+                                   const BfmSaveRecord *record, BfmInnCardCommit commit,
+                                   void *context, const MusashiDiscMedia *disc)
+{
+    return save_file(expected, file, record, commit, context, disc, HOTELO_OVERWRITE);
 }
 
 const char *bfm_chapter_card_save(const uint8_t *expected, unsigned file,
                                  const BfmSaveRecord *record, BfmInnCardCommit commit,
                                  void *context, const MusashiDiscMedia *disc)
 {
-    return save_file(expected, file, record, commit, context, disc, 2);
+    return save_file(expected, file, record, commit, context, disc, CHAPTER_END);
 }

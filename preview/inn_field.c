@@ -205,6 +205,11 @@ int bfm_inn_field_service(const BfmInnField *inn)
     return inn && inn->greeting && !inn->finished && bfm_inn_greeting_service(inn->greeting);
 }
 
+const uint16_t *bfm_inn_field_menu_palette(const BfmInnField *inn)
+{
+    return inn ? &inn->tiles[257][352] : NULL;
+}
+
 unsigned bfm_inn_room_price(const BfmInnField *inn, unsigned room)
 {
     /* The last two rooms are occupied on this early village visit. */

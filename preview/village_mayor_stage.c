@@ -12,6 +12,7 @@ struct BfmVillageMayorStage {
     const uint8_t *scene, *mayor;
     size_t bytes, mayor_bytes;
     uint32_t room;
+    BfmSaveRecord *returned_dog;
     BfmVillageMayorCast *cast;
     BfmVillageMayorDoor *door;
     BfmVillageMayorCamera camera;
@@ -82,19 +83,25 @@ void bfm_village_mayor_stage_free(BfmVillageMayorStage *s)
     free(s);
 }
 
-int bfm_village_mayor_stage_begin(BfmVillageMayorStage *s, const BfmSaveRecord *state,
+int bfm_village_mayor_stage_begin(BfmVillageMayorStage *s, BfmSaveRecord *state,
                    const BfmBedroomRoot *player, const BfmVillageCamera *camera, int square)
 {
     if (!s || !state || !player || !camera || !square || s->phase != PORCH) return 0;
     unsigned minute = u16le(state->progress+0x1a);
+    unsigned story = u32le(state->progress + 8);
+    int returned = story >= 20 && story < 30;
     if (!bfm_village_mayor_door_on_porch(s->door,player->xyz) || minute < 8*60 || minute >= 20*60 ||
-        u32le(state->progress+8) != 10) return 0;
+        (!returned && story != 10)) return 0;
+    /* During these two half hours the Mayor has left his indoor post. */
+    if (returned && ((minute >= 10*60 && minute < 10*60+30) ||
+                     (minute >= 15*60 && minute < 15*60+30))) return 0;
     if (!bfm_village_mayor_camera_begin(&s->camera,s->scene,s->bytes,s->mayor,s->mayor_bytes,camera))
         return 0;
     BfmBedroomTravel *walk = bfm_bedroom_travel_from_root(s->scene,s->bytes,s->room,player);
     if (!walk) return 0;
     bfm_bedroom_travel_free(s->walk);
     s->walk = walk;
+    s->returned_dog = returned ? state : NULL;
     s->shown = *camera;
     s->elapsed = s->release_age = 0;
     s->knock = 0;
@@ -129,6 +136,12 @@ int bfm_village_mayor_stage_step(BfmVillageMayorStage *s, BfmVillageCamera *norm
     s->shown = *normal;
     if (s->phase == PREPARING && s->elapsed == s->first_message) s->phase = TALKING;
     if (leaving && s->release_age++ >= s->camera.release_delay + 25) {
+        if (s->returned_dog) {
+            /* The event advances only after the Mayor has left the porch. */
+            s->returned_dog->flags[0xe0/8] |= 1u << (0xe0%8);
+            s->returned_dog->progress[8] = 30;
+            s->returned_dog = NULL;
+        }
         s->phase = PORCH;
         bfm_village_mayor_cast_step(s->cast,0,0,0,0);
     }

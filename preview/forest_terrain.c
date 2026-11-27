@@ -306,6 +306,11 @@ const uint16_t (*bfm_forest_terrain_tiles(const BfmForestTerrain *terrain))[1024
     return terrain ? terrain->tiles : NULL;
 }
 
+uint16_t (*bfm_forest_terrain_room_tiles(BfmForestTerrain *terrain))[1024]
+{
+    return terrain ? terrain->tiles : NULL;
+}
+
 void bfm_forest_terrain_free(BfmForestTerrain *terrain)
 {
     if (terrain) {
@@ -802,6 +807,37 @@ static size_t collect_cell(BfmForestTerrain *terrain, const TerrainCell *cell,
     return count;
 }
 
+static size_t collect_terrain(BfmForestTerrain *terrain, const BfmForestCamera *camera,
+                              unsigned buffer)
+{
+    size_t count = 0;
+    for (size_t i = 0; i < terrain->mesh.cell_count; ++i) {
+        const TerrainCell *cell = &terrain->mesh.cells[i];
+        if (cell_in_view(cell, camera))
+            count = collect_cell(terrain, cell, camera, buffer, count);
+    }
+    return count;
+}
+
+int bfm_forest_terrain_draw_field(BfmForestTerrain *terrain, const BfmForestCamera *camera,
+    unsigned buffer, uint32_t pixels[240][320], void (*draw_to)(void *, int), void *context)
+{
+    if (!terrain || !camera || !camera->projection || buffer > 1 || !pixels || !draw_to)
+        return 0;
+    const BfmForestRaster surface = {
+        .tiles = (const uint16_t (*)[1024])terrain->tiles, .pixels = pixels, .top = 10, .bottom = 229
+    };
+    size_t count = collect_terrain(terrain, camera, buffer);
+    qsort(terrain->draw, count, sizeof(*terrain->draw), by_depth);
+    for (size_t i = 0; i < count; ++i) {
+        const ProjectedFace *face = &terrain->draw[i];
+        draw_to(context, face->depth);
+        draw_face(&surface, &terrain->mesh.faces[face->ordinal], face->points, buffer);
+    }
+    draw_to(context, INT_MIN);
+    return 1;
+}
+
 int bfm_forest_terrain_draw_entrance(BfmForestTerrain *terrain, const BfmForestCamera *camera,
                                   const MusashiForestPlayerMesh *model, const BfmForestPose *pose,
                                   const BfmForestTransform *root, uint32_t mask, const BfmForestBlade *blade, unsigned buffer,
@@ -859,12 +895,7 @@ int bfm_forest_terrain_draw_entrance_with_effects(BfmForestTerrain *terrain,
         .tiles = (const uint16_t (*)[1024])terrain->tiles, .pixels = pixels,
         .top = model || actor_count ? 10 : 0, .bottom = model || actor_count ? 229 : 239
     };
-    size_t count = 0;
-    for (size_t i = 0; i < terrain->mesh.cell_count; ++i) {
-        const TerrainCell *cell = &terrain->mesh.cells[i];
-        if (cell_in_view(cell, camera))
-            count = collect_cell(terrain, cell, camera, buffer, count);
-    }
+    size_t count = collect_terrain(terrain, camera, buffer);
     if (model && (!pose || !root ||
                   !collect_model(terrain, &terrain->room_light, camera, model, pose, root, mask, FOREST_PLAYER_MODEL, &count)))
         return 0;

@@ -43,6 +43,8 @@ int bfm_forest_terrain_set_lighting(BfmForestTerrain *terrain,
 /* The outdoor pursuit view omits offscreen faces wholly behind its heading. */
 void bfm_forest_terrain_set_forward_culling(BfmForestTerrain *terrain, int enabled);
 const uint16_t (*bfm_forest_terrain_tiles(const BfmForestTerrain *terrain))[1024];
+/* A room's documented palette and face transfers target its own mounted tiles. */
+uint16_t (*bfm_forest_terrain_room_tiles(BfmForestTerrain *terrain))[1024];
 void bfm_forest_terrain_free(BfmForestTerrain *terrain);
 
 /* Draw the room onto the caller's existing ARGB8888 320-by-240 screen.
@@ -50,6 +52,11 @@ void bfm_forest_terrain_free(BfmForestTerrain *terrain);
  * room. The caller composes scene effects and the HUD. */
 int bfm_forest_terrain_draw(BfmForestTerrain *terrain, const BfmForestCamera *camera,
                             uint32_t pixels[240][320]);
+/* Interleave a separately prepared figure queue with the terrain, in the
+ * normal gameplay viewport. draw_to receives descending depth buckets and
+ * INT_MIN once to flush the nearest remaining faces. */
+int bfm_forest_terrain_draw_field(BfmForestTerrain *terrain, const BfmForestCamera *camera,
+    unsigned buffer, uint32_t pixels[240][320], void (*draw_to)(void *, int), void *context);
 int bfm_forest_terrain_draw_player_only(BfmForestTerrain *terrain, const BfmForestCamera *camera,
                                       const MusashiForestPlayerMesh *model, const BfmForestPose *pose,
                                       const BfmForestTransform *root, uint32_t mask,

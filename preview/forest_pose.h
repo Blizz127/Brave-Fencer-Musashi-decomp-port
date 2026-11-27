@@ -54,4 +54,7 @@ void bfm_forest_actor_pitch_yaw(unsigned pitch, unsigned yaw, const int16_t posi
 /* Room actors have one packed local transform per mesh part, in mesh order. */
 int bfm_forest_actor_pose_decode(const uint8_t *bytes, size_t size, unsigned part_count,
                                  BfmForestPose *pose);
+/* Full room poses store signed 16-bit positions and rotations per part. */
+int bfm_forest_actor_pose_decode_full(const uint8_t *frame, size_t bytes, unsigned count,
+                                     BfmForestPose *pose);
 #endif

@@ -13,12 +13,24 @@ int bfm_forest_drift_load(BfmForestDrift *drift, const BfmForestField *field,
     const uint8_t *list = bfm_forest_room_bytes(field, placements, 40);
     const uint8_t *heights = bfm_forest_room_bytes(field, UINT32_C(0x801b1568), 32);
     const uint8_t *sprite = bfm_forest_room_bytes(field, UINT32_C(0x801b1590), 12);
-    if (!drift || !list || u16le(list + 26) != 33 || u16le(list + 28) != 1 ||
-        !heights || !sprite || !sprite[2] || !sprite[3]) return 0;
+    return list && u16le(list + 26) == 33 && u16le(list + 28) == 1 &&
+           bfm_forest_drift_init(drift, heights, sprite, 1);
+}
+
+int bfm_forest_drift_init(BfmForestDrift *drift, const uint8_t heights[32],
+                          const uint8_t sprite[12], unsigned variant)
+{
+    if (!drift || !heights || !sprite || !sprite[2] || !sprite[3] ||
+        (variant != 1 && variant != 2)) return 0;
     unsigned count = 0;
     while (count < 16 && s16le(heights + 2 * count)) ++count;
     if (!count || count == 16) return 0;
-    *drift = (BfmForestDrift){.heights = heights, .height_count = count, .sprite = sprite};
+    memset(drift, 0, sizeof *drift);
+    drift->heights = heights;
+    drift->height_count = count;
+    drift->sprite = sprite;
+    drift->interval = variant == 2 ? 15 : 30;
+    drift->slots = variant == 2 ? BFM_FOREST_MAZE_DRIFT_CARDS : BFM_FOREST_DRIFT_CARDS;
     return 1;
 }
 
@@ -28,7 +40,7 @@ static void emit(BfmForestDrift *drift, BfmGameplayRun *run, int x)
     int16_t y = s16le(drift->heights + 2 * drift->next_height);
     drift->next_height = (drift->next_height + 1) % drift->height_count;
     BfmForestDriftSprite *sprites = drift->frames[drift->current];
-    for (unsigned i = 0; i < BFM_FOREST_DRIFT_CARDS; ++i) {
+    for (unsigned i = 0; i < drift->slots; ++i) {
         if (sprites[i].scale) continue;
         sprites[i] = (BfmForestDriftSprite){x * 65536, y, (uint16_t)scale};
         return;
@@ -39,6 +51,8 @@ void bfm_forest_drift_start(BfmForestDrift *drift, BfmGameplayRun *run)
 {
     if (!run || !drift->sprite || drift->timer) return;
     for (int x = -128; x <= 192; x += 80) emit(drift, run, x);
+    if (drift->interval == 15)
+        for (int x = -88; x <= 232; x += 80) emit(drift, run, x);
     drift->timer = 1;
 }
 
@@ -48,17 +62,17 @@ void bfm_forest_drift_tick(BfmForestDrift *drift, BfmGameplayRun *run)
     unsigned previous = drift->current;
     drift->current = (previous + 1) % 3;
     BfmForestDriftSprite *sprites = drift->frames[drift->current];
-    memcpy(sprites, drift->frames[previous], sizeof drift->frames[previous]);
+    memcpy(sprites, drift->frames[previous], drift->slots * sizeof *sprites);
     /* Entrance births precede the first room effect pass. They acquire
      * their drawables together with the next emitter birth before moving. */
-    for (unsigned i = 0; drift->submitted && i < BFM_FOREST_DRIFT_CARDS; ++i) {
+    for (unsigned i = 0; drift->submitted && i < drift->slots; ++i) {
         if (!sprites[i].scale) continue;
         sprites[i].x -= (sprites[i].scale - 4096) * 32;
         if (sprites[i].x < -272 * 65536) sprites[i].scale = 0;
     }
     if (--drift->timer == 0) {
         emit(drift, run, 272);
-        drift->timer = 30;
+        drift->timer = drift->interval;
     }
     drift->submitted |= 1u << drift->current;
 }
@@ -66,7 +80,7 @@ void bfm_forest_drift_tick(BfmForestDrift *drift, BfmGameplayRun *run)
 unsigned bfm_forest_drift_count(const BfmForestDrift *drift)
 {
     unsigned count = 0;
-    for (unsigned i = 0; i < BFM_FOREST_DRIFT_CARDS; ++i)
+    for (unsigned i = 0; i < drift->slots; ++i)
         if (drift->frames[drift->current][i].scale) ++count;
     return count;
 }
@@ -76,11 +90,11 @@ static int floor_div(int value, int divisor)
     return value / divisor - (value % divisor < 0);
 }
 
-unsigned bfm_forest_drift_project(const BfmForestDrift *drift,
-                                  BfmForestDustCard out[BFM_FOREST_DRIFT_CARDS])
+unsigned bfm_forest_drift_project_cards(const BfmForestDrift *drift,
+                                        BfmForestDustCard *out, unsigned capacity)
 {
     const uint8_t *s = drift->sprite;
-    if (!s || !drift->timer) return 0;
+    if (!out || !s || !drift->timer) return 0;
     /* Screen coordinates bypass the field camera. The display reads the
      * completed draw buffer two field updates after logical submission. */
     unsigned display = (drift->current + 1) % 3;
@@ -88,7 +102,7 @@ unsigned bfm_forest_drift_project(const BfmForestDrift *drift,
     const BfmForestDriftSprite *sprites = drift->frames[display];
     unsigned u = 4 * (u16le(s + 4) % 64), v = u16le(s + 6) % 256;
     unsigned count = 0;
-    for (unsigned i = 0; i < BFM_FOREST_DRIFT_CARDS; ++i) {
+    for (unsigned i = 0; i < drift->slots && count < capacity; ++i) {
         int scale = sprites[i].scale;
         if (!scale) continue;
         int x = 160 + floor_div(sprites[i].x, 65536) + floor_div(s16le(s + 8) * scale, 4096);
@@ -108,4 +122,10 @@ unsigned bfm_forest_drift_project(const BfmForestDrift *drift,
         }
     }
     return count;
+}
+
+unsigned bfm_forest_drift_project(const BfmForestDrift *drift,
+                                  BfmForestDustCard out[BFM_FOREST_DRIFT_CARDS])
+{
+    return bfm_forest_drift_project_cards(drift, out, BFM_FOREST_DRIFT_CARDS);
 }

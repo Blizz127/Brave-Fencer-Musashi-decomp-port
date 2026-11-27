@@ -24,6 +24,8 @@ int bfm_forest_status_load(const MusashiDiscMedia *disc, BfmForestStatus *out);
 /* Read the current values of a successfully initialized status record.
  * The wallet uses stored units. The HUD supplies its trailing zero. */
 BfmForestStatusValues bfm_forest_status_values(const BfmForestStatus *status);
+/* The grounded field stance samples BP, stamina, condition and ability together. */
+int bfm_field_tired_stance(const uint8_t record[152]);
 /* Resolve the ordinary bank rifle hit against the current equipped ability
  * and defense rank. The recipient applies the result when its hurt pose ends. */
 int bfm_forest_hit_damage(const MusashiDiscMedia *disc, const BfmForestStatus *status,

@@ -29,6 +29,9 @@ typedef struct {
  * player payload. Strike endpoints and power come from their mounted data. */
 BfmWoodsCasterMelee *bfm_woods_caster_melee_open(const MusashiDiscMedia *disc,
     const uint8_t *scene, size_t scene_bytes, const uint8_t *main, size_t main_bytes);
+/* Mount Twinpeak's ordinary Fusion and Lumina slots for field-script input. */
+BfmWoodsCasterMelee *bfm_woods_twinpeak_melee_open(const MusashiDiscMedia *disc,
+    const uint8_t *scene, size_t scene_bytes, const uint8_t *main, size_t main_bytes);
 void bfm_woods_caster_melee_free(BfmWoodsCasterMelee *melee);
 /* Supply an ordinary grounded, empty-handed control slot after interactions,
  * carried objects and charged skills have taken input. A nonzero action holds

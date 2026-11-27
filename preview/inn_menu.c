@@ -72,11 +72,13 @@ BfmInnAction bfm_inn_menu_input(BfmInnMenu *menu, uint16_t pressed)
         if (horizontal == LEFT || horizontal == RIGHT) menu->card.selected ^= 1u;
         if (vertical == UP || vertical == DOWN) menu->card.selected ^= 2u;
         if (pressed & CROSS) {
-            if (menu->card.rows[menu->card.selected].state == BFM_SAVE_EMPTY) {
+            BfmSaveState state = menu->card.rows[menu->card.selected].state;
+            if (state == BFM_SAVE_EMPTY || state == BFM_SAVE_VALID) {
+                menu->overwriting = state == BFM_SAVE_VALID;
                 menu->page = BFM_INN_CONFIRM;
             } else {
                 menu->page = BFM_INN_FILE_ERROR;
-                menu->notice = "Choose an empty file.";
+                menu->notice = "This file is damaged.";
             }
         }
         break;

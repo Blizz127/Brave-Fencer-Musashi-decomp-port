@@ -19,10 +19,22 @@ static int16_t signed16(const uint8_t *p)
     return (int16_t)(value > INT16_MAX ? value - 65536 : value);
 }
 
+int bfm_field_tired_stance(const uint8_t record[152])
+{
+    return (record[0x1f] & 0x80) || read16(record + 0x40) <= 10 ||
+           signed16(record + 0x2e) < 16 || record[0x49] == 1;
+}
+
 int bfm_forest_hit_damage(const MusashiDiscMedia *disc, const BfmForestStatus *status,
                           uint32_t player_flags, unsigned power, uint16_t *amount)
 {
     if (!disc || !status || !amount || !power || power > UINT16_MAX) return 0;
+    /* The field reserves exactly 1000 for a hit that bypasses defense and
+     * equipment reductions. Other powers still use the mounted rank table. */
+    if (power == 1000) {
+        *amount = 1000;
+        return 1;
+    }
     uint32_t rank = read32(status->record + 0x74);
     uint8_t defense[2];
     if (rank >= 30 || !bfm_bedroom_resident_data(disc, UINT32_C(0x800638fe) + 16 * rank,

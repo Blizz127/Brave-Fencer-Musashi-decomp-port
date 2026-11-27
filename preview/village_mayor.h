@@ -5,8 +5,8 @@
 #include "forest_message.h"
 
 typedef struct {
-    const uint8_t *module;
-    size_t bytes;
+    const uint8_t *module, *greeting;
+    size_t bytes, greeting_bytes;
     uint32_t cursor;
     unsigned branch, delay, answer, hero, waiting, finished;
 } BfmVillageMayorDialogue;
@@ -14,7 +14,8 @@ typedef struct {
 /* Begin when the door has staged both speakers. Keep the event member mounted
  * until the last field window closes. */
 int bfm_village_mayor_dialogue_begin(BfmVillageMayorDialogue *talk, const uint8_t *module,
-                                     size_t bytes, const BfmSaveRecord *save);
+                                     size_t bytes, const uint8_t *scene, size_t scene_bytes,
+                                     BfmSaveRecord *save);
 int bfm_village_mayor_dialogue_step(BfmVillageMayorDialogue *talk, BfmSaveRecord *save,
                                     BfmForestMessage **opened);
 void bfm_village_mayor_dialogue_close(BfmVillageMayorDialogue *talk, unsigned answer);

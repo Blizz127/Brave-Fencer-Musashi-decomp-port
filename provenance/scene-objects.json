@@ -20,6 +20,12 @@
       "base": 2148696408,
       "sha256": "126605c1871a3f852578793886cb599af05d09e8c2cccf256257bbd414757ed9"
     },
+    "sc02_0011": {
+      "kind": "blob",
+      "file": "extracted/overlays/sc02/0011.pac0.bin",
+      "base": 2148696408,
+      "sha256": "7027a4a6e1aaff260df6fc30c027237cc96d715a1c688102bf05d89511cf42e3"
+    },
     "sc02_0031": {
       "kind": "blob",
       "file": "extracted/overlays/sc02/0031.pac0.bin",
@@ -717,6 +723,32 @@
       "optimization": "-O2"
     },
     {
+      "name": "func_80142414",
+      "region": "sc01_0077",
+      "vram": 2148803604,
+      "size": 64,
+      "source": "src/overlays/sc01_0077/80142414.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently recovered from the owned USA Giant Forest overlay. Allocates an actor notice marker and sets its vertical offset when an effect slot is available.",
+      "source_sha256": "31f611e954665a7f9a372e1260b135715bf5d90b2c27548e2d30c64a5d2217b4",
+      "span_sha256": "9dab4606ac508291ee887be5155a0948d70723ab614547a19c942f3cb4e2bc31"
+    },
+    {
+      "name": "func_80142454",
+      "region": "sc01_0077",
+      "vram": 2148803668,
+      "size": 144,
+      "source": "src/overlays/sc01_0077/80142454.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently recovered from the owned USA Giant Forest overlay. Places a type-19 marker at the player coordinates and attaches it to the player at the requested height if allocation succeeds.",
+      "source_sha256": "0e0074d705581477eec5a80f18ffd93cbe07ab5c84c12ee62427f462b816cdfc",
+      "span_sha256": "581b6c1dc31610e6283dea060c4b3d71b6737f29bfbd87a0008358e7d42229b5"
+    },
+    {
       "name": "func_80144A90",
       "region": "sc01_0077",
       "vram": 2148813456,
@@ -1146,6 +1178,19 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2"
+    },
+    {
+      "name": "func_8018A184",
+      "region": "sc02_0011",
+      "vram": 2149097860,
+      "size": 32,
+      "source": "src/overlays/sc02_0011/8018a184.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the room score selection callback in USA SC02.CD member 0011.",
+      "source_sha256": "0ea3ee504b44444e69e70d91a40f9c869bdc5585780d366c989afdb34b4213b1",
+      "span_sha256": "3757cdc8ca5b6680e4a8a542f04199930cafc2d3ec0bf170af76a280a5e6440b"
     },
     {
       "name": "func_801320D0",
@@ -6122,6 +6167,19 @@
       "span_sha256": "51848222d812e855757e265f6004e7b2da6517867a9ef335fd3f40d3f12b16ef"
     },
     {
+      "name": "func_80159464",
+      "region": "sc03_0006",
+      "vram": 2148897892,
+      "size": 132,
+      "source": "src/overlays/sc03_0006/80159464.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the room-specific defeat actions and checkpoint queries in USA SC03.CD member 0006.",
+      "source_sha256": "8e0c85aa14af540b2d71ba39b4d4485db9e61885135895c6430d7c474788b234",
+      "span_sha256": "8222c12a42768ee407bf52d873e90f23a27367f535ded0bad3a78d66623b5015"
+    },
+    {
       "name": "func_8017C294",
       "region": "sc03_0006",
       "vram": 2149040788,
@@ -6315,6 +6373,19 @@
       "origin": "Independently reconstructed from USA SC03.CD member 0006 and the public integer types.",
       "source_sha256": "36b03d574f114f9f921537a2bc1bbcd74e11a47cd5c7d03da9149f5106bed7a4",
       "span_sha256": "fe9090ccdbb4295cea3cfb4bd91813474ff7b3a0dfef04a57ae4e64ff66097d5"
+    },
+    {
+      "name": "func_80183BC8",
+      "region": "sc03_0006",
+      "vram": 2149071816,
+      "size": 64,
+      "source": "src/overlays/sc03_0006/80183bc8.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA SC03.CD member 0006 Hopper phase table, target-distance query and phase callback.",
+      "source_sha256": "db6270b96721c401efbbae0c6f1c7ec5406f4f64a90f0ca9a18c332d3e4798bd",
+      "span_sha256": "0d151cc6331fc362489d3b988ddb952f1fe48f903a1b7e0536449857ccf23bab"
     },
     {
       "name": "func_8018B9F8",
@@ -7898,7 +7969,7 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2",
-      "origin": "Independently reconstructed from the owned US Giant Forest overlay. Transforms the three movement inputs into a local vector, then commits the result using the actor’s per-axis overrides.",
+      "origin": "Independently reconstructed from the owned US Giant Forest overlay. Transforms the three movement inputs into a local vector, then commits the result using the actor\u2019s per-axis overrides.",
       "source_sha256": "b34ce919623319ccc895cbe39fd4c8e3991b020647a7b7d0fe898f7e2aee52ba",
       "span_sha256": "3a759bccf464ae48f4b29414154e05d26d899cce1743cc29a501b06d0bf8f06f"
     },
@@ -7937,7 +8008,7 @@
       "recovery": "c",
       "extent": "function",
       "optimization": "-O2",
-      "origin": "Existing owner-authored SC02 member 35 C independently rebuilt for US Giant Forest member 77. Increments the actor’s unsigned 16-bit counter and returns the incremented value before truncation.",
+      "origin": "Existing owner-authored SC02 member 35 C independently rebuilt for US Giant Forest member 77. Increments the actor\u2019s unsigned 16-bit counter and returns the incremented value before truncation.",
       "source_sha256": "031d152690f2de4c5f54c14665880e96cfa509f5d2738df52392da6e3733993b",
       "span_sha256": "48f83abea95a08de3b5f669cc42a0963c90a48bfc373780e3722bfe50e47cc8f"
     },
@@ -8137,6 +8208,20 @@
       "span_sha256": "525623c2636df43f2e00ac1eccd4c48cf2c1c6f03fb1e68250007cfcbffe2705"
     },
     {
+      "name": "func_8014C568",
+      "region": "sc01_0077",
+      "vram": 2148844904,
+      "size": 52,
+      "source": "src/overlays/sc01_0077/8014c568.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "no_schedule_insns2": true,
+      "origin": "Independently reconstructed from the owned USA Giant Forest overlay. Computes the horizontal heading from a field point to the whole coordinates of an actor.",
+      "source_sha256": "28866ed5e5139e0d0be471eb3b227f6268a9b28a62365b935d912d6fba69fa63",
+      "span_sha256": "0a1b2ac2a3934a90b0062965a51194697a81ce2da72c21800f33ed9aba0d3635"
+    },
+    {
       "name": "func_8014C6F4",
       "region": "sc01_0077",
       "vram": 2148845300,
@@ -8200,6 +8285,241 @@
       "origin": "Independently reconstructed from the owned USA scene overlay. At rescue entry, restores the prior foot position and its status as the target.",
       "source_sha256": "795f7473e34881d4849fdd10a79b0d5f08ade65695871653ab08c43260d75c54",
       "span_sha256": "b70a855bf592f5c68c075c3fdecac1ec392ae6033def1ac472e8c315d5261862"
+    },
+    {
+      "name": "func_8012A568",
+      "region": "sc02_0011",
+      "vram": 2148705640,
+      "size": 48,
+      "source": "src/overlays/sc02_0011/8012a568.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA Twinpeak Mountain overlay. Prepares the camera state and applies its update callback.",
+      "source_sha256": "054d34be6e98b2679722ac1d3af3fedff44b8f3578f7dcd2891892476efa5d57",
+      "span_sha256": "12f5ecbc5e9af7e5951ed6335fae7c0e177acfb2cd1a05345cbbbfbc2f0c563d"
+    },
+    {
+      "name": "func_801847C8",
+      "region": "sc02_0011",
+      "vram": 2149074888,
+      "size": 40,
+      "source": "src/overlays/sc02_0011/801847c8.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA Twinpeak Mountain overlay. Selects the camera update used for the wall race.",
+      "source_sha256": "4ffc629ad7381404aef51a2f5ef61d31f1d8b7e3522e1035be32100db26b1497",
+      "span_sha256": "697ed666d60fb51f77d0882ba8e4d598333c4b2ad130211835a7f5b380b25260"
+    },
+    {
+      "name": "func_801847F0",
+      "region": "sc02_0011",
+      "vram": 2149074928,
+      "size": 40,
+      "source": "src/overlays/sc02_0011/801847f0.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA Twinpeak Mountain overlay. Restores the normal mountain field camera update after the race.",
+      "source_sha256": "a63bb082d8a30018e0221c47a1d9dcc79ec47d68012e7c84c22fc30d15b89771",
+      "span_sha256": "d27fa657056b1b312678bfbc136f62c2e32e061211d2ee5ec74cbfa8ef5926e7"
+    },
+    {
+      "name": "func_8012A598",
+      "region": "sc02_0011",
+      "vram": 2148705688,
+      "size": 96,
+      "source": "src/overlays/sc02_0011/8012a598.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA Twinpeak Mountain overlay. Saves the active camera state and starts the default transition.",
+      "source_sha256": "977a4cdfa6e3a26b7913bb547aa0fc79c1ddc759ad8012582f12e5007490367a",
+      "span_sha256": "3befcdb3e9cd74f3aba4cc0895b0ddcf532a2da9ba2ffdb4bf3edb4c3f082e3f"
+    },
+    {
+      "name": "func_8012A5F8",
+      "region": "sc02_0011",
+      "vram": 2148705784,
+      "size": 52,
+      "source": "src/overlays/sc02_0011/8012a5f8.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA Twinpeak Mountain overlay. Starts a transition with the requested duration and immediately applies its camera update.",
+      "source_sha256": "f90b3ce78f8bdf4daf006186e9e9b8cee209b9bb5aa050dda916a795682c3752",
+      "span_sha256": "f7b119d1fb481b2151dd3894f45f822fd4ef9209a23000ec9efb3cd1d644d17d"
+    },
+    {
+      "name": "func_8012A62C",
+      "region": "sc02_0011",
+      "vram": 2148705836,
+      "size": 96,
+      "source": "src/overlays/sc02_0011/8012a62c.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA Twinpeak Mountain overlay. Saves the active camera state for a transition with the supplied duration.",
+      "source_sha256": "56b43fd5ab444e09564fcc79ffdbc42d20a8c305aaf49a1f9558601976404dc5",
+      "span_sha256": "55d3909c5bfcfdcf8406c0e42c72437383731194acd911c85f4b5f133ef7966c"
+    },
+    {
+      "name": "func_80184818",
+      "region": "sc02_0011",
+      "vram": 2149074968,
+      "size": 32,
+      "source": "src/overlays/sc02_0011/80184818.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA Twinpeak Mountain overlay. Schedules the summit resolution score.",
+      "source_sha256": "a91313ae7c1566a6b83121822b1fd4624c91b11f303a50d68804f56ba3719488",
+      "span_sha256": "de6aaf08127a99b3f96eefc225b8efa4f5d5c35d1f4b63c8b3113d6775ad1279"
+    },
+    {
+      "name": "func_80184838",
+      "region": "sc02_0011",
+      "vram": 2149075000,
+      "size": 32,
+      "source": "src/overlays/sc02_0011/80184838.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA Twinpeak Mountain overlay. Schedules the alternate mountain score.",
+      "source_sha256": "690cf16223bcffca9578afdf61900867c091b3c636d6b3966413819e3efc114c",
+      "span_sha256": "51b431796743a2ad34d5146ad464a5495f5eac090cf12944e6547b89ad300e5e"
+    },
+    {
+      "name": "func_80184858",
+      "region": "sc02_0011",
+      "vram": 2149075032,
+      "size": 36,
+      "source": "src/overlays/sc02_0011/80184858.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA Twinpeak Mountain overlay. Marks the completed Rootrick event for later room visits.",
+      "source_sha256": "ac9fc4bde6f52d4c51b34e6e14b60bf6367e97dd03c73ac72f0aa3e5aa495aae",
+      "span_sha256": "c19fde194de123e047cd53e136025d3571c81f0faf2e61ba5dfd797c5cb80d91"
+    },
+    {
+      "name": "func_8018490C",
+      "region": "sc02_0011",
+      "vram": 2149075212,
+      "size": 12,
+      "source": "src/overlays/sc02_0011/8018490c.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA Twinpeak Mountain overlay. Stores the selected event stream and race outcome on Rootrick.",
+      "source_sha256": "2922d9c4cf07c335c239a17dfe0e0914e18d728ef01af77f07087c229ef4205e",
+      "span_sha256": "be9fadf9e9d6709e9a8ec44e3e1f2f4567f92f5da1847c5f717ca1521fc5e708"
+    },
+    {
+      "name": "func_80184918",
+      "region": "sc02_0011",
+      "vram": 2149075224,
+      "size": 76,
+      "source": "src/overlays/sc02_0011/80184918.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA Twinpeak Mountain overlay. Starts the pending room score and its thirty-update delay.",
+      "source_sha256": "1652760b4fc483c03233aa4de7cdd53ceb40b9ec077b1574a2687fc7a71e6457",
+      "span_sha256": "d34d139f2cda9fdb5c0906c0a09cd1bda17f083ccb1d96348594a870bf8fc57b"
+    },
+    {
+      "name": "func_80184A28",
+      "region": "sc02_0011",
+      "vram": 2149075496,
+      "size": 12,
+      "source": "src/overlays/sc02_0011/80184a28.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA Twinpeak Mountain overlay. Tests the actor wait timer for completion.",
+      "source_sha256": "de1e30d4661ae311918ef6fdd5714160f50ace2737189dc6d92656733d7032f2",
+      "span_sha256": "95a717604d23c50ab7e58a3f8f2900719b77a9d12819a2569fe94fa73ef8d68b"
+    },
+    {
+      "name": "func_80184A34",
+      "region": "sc02_0011",
+      "vram": 2149075508,
+      "size": 32,
+      "source": "src/overlays/sc02_0011/80184a34.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA Twinpeak Mountain overlay. Normalizes audio readiness for the event interpreter.",
+      "source_sha256": "1ca0d2f82b239e2cdf55768690c745702a54f32da12e3eaf650b922de23ece3d",
+      "span_sha256": "ad23726d44c5a037a1ab547194a24dabbee197fac03af1fee071e08cf5e74f28"
+    },
+    {
+      "name": "func_801802C0",
+      "region": "sc02_0011",
+      "vram": 2149057216,
+      "size": 104,
+      "source": "src/overlays/sc02_0011/801802c0.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA Twinpeak Mountain overlay. Selects the final actor sequence after the presentation delay.",
+      "source_sha256": "a2870291b495a3370ed82f0fc080ff44b71e92b1885bb10848acb6d9bc772ba9",
+      "span_sha256": "8c7385563b3519aa265f6e92dad9681ab3411024606e618ed58df977cb500629"
+    },
+    {
+      "name": "func_80180328",
+      "region": "sc02_0011",
+      "vram": 2149057320,
+      "size": 240,
+      "source": "src/overlays/sc02_0011/80180328.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA Twinpeak Mountain overlay. Awards the selected elemental scroll on the completion signal and advances story progress for Earth.",
+      "source_sha256": "a91ac3d1c5c7fad225deac4f646fac0557723cf4c04e1aded72dfe2f107935c7",
+      "span_sha256": "da86215a586692d3be756131d9c7434b22e402724429d2bd4227cde8755c302d",
+      "rodata_base": 2149490060
+    },
+    {
+      "name": "func_801800C4",
+      "region": "sc02_0011",
+      "vram": 2149056708,
+      "size": 36,
+      "source": "src/overlays/sc02_0011/801800c4.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA Twinpeak Mountain overlay. Arms the opening pose delay.",
+      "source_sha256": "44d174d08e1a35c1463086dfa0b6aa30c54120a9718f3c45a6365bb65a28ace4",
+      "span_sha256": "c55cfc28395140c8fb0b9b29c5dab1541f925bd14a4b544b7c48ccbb6fbce2dc"
+    },
+    {
+      "name": "func_801800E8",
+      "region": "sc02_0011",
+      "vram": 2149056744,
+      "size": 116,
+      "source": "src/overlays/sc02_0011/801800e8.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA Twinpeak Mountain overlay. Starts the first scroll acquisition sequence after the short delay.",
+      "source_sha256": "d9c060a20522cd5f634b65f3642c89c0ef9a208ca9c065e3d40d9010081923b5",
+      "span_sha256": "551dfca3a89da5b27771ffed0b1c18b47806bc62670382dd1ada2e4ecf7c5117"
+    },
+    {
+      "name": "func_80180258",
+      "region": "sc02_0011",
+      "vram": 2149057112,
+      "size": 104,
+      "source": "src/overlays/sc02_0011/80180258.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from the USA Twinpeak Mountain overlay. Releases the completed scroll effect and arms the final presentation delay.",
+      "source_sha256": "f3b52f87b1a88d810279093bb8c4591e6630bca7e6acc4cba6e12d8b8a00c26e",
+      "span_sha256": "436b1b9179fddbdc5a9ab367bbc91f273108f10840200754fc384aa00b7dfd53"
     }
   ]
 }

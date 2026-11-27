@@ -88,7 +88,7 @@ static unsigned gain_weapon(const BfmWeaponRank ranks[30], uint8_t *level_slot,
                         ranks[rank + 1].fusion - ranks[rank].fusion;
 }
 
-static BfmWoodsWeaponCredit weapon_credit(const BfmGameplayRun *run, unsigned fusion,
+BfmWoodsWeaponCredit bfm_woods_weapon_credit(const BfmGameplayRun *run, unsigned fusion,
                                           unsigned lumina)
 {
     if (lumina) {
@@ -109,7 +109,7 @@ int bfm_woods_weapon_credit_read(const uint8_t *scene, size_t bytes, unsigned ev
     if (!scene || !run || !credit || event > UINT16_MAX) return 0;
     size_t offset = UINT32_C(0x80189874) - UINT32_C(0x80128158) + 12 * event;
     if (bytes < offset + 12) return 0;
-    *credit = weapon_credit(run, u16le(scene + offset + 8), u16le(scene + offset + 10));
+    *credit = bfm_woods_weapon_credit(run, u16le(scene + offset + 8), u16le(scene + offset + 10));
     return 1;
 }
 
@@ -132,6 +132,6 @@ int bfm_woods_charged_hit_connected(const BfmWoodsChargedHit *hit,
     const BfmWeaponRank ranks[30], BfmGameplayRun *run, BfmWoodsChargedLevels *levels)
 {
     if (!hit || !run) return 0;
-    BfmWoodsWeaponCredit credit = weapon_credit(run, hit->fusion_exp, hit->lumina_exp);
+    BfmWoodsWeaponCredit credit = bfm_woods_weapon_credit(run, hit->fusion_exp, hit->lumina_exp);
     return bfm_woods_weapon_credit_apply(ranks, run, credit, levels);
 }

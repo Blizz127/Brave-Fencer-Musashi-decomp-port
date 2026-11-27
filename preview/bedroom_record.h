@@ -15,10 +15,37 @@ typedef struct {
     uint8_t timestamps[96];
 } BfmSaveRecord;
 
+/* The bag stores twelve item IDs. Their acquisition days are parallel
+ * little-endian halfwords in the same variable bank. */
+static inline int bfm_save_inventory_space(const BfmSaveRecord *record)
+{
+    if (record) {
+        for (int slot = 0; slot < 12; ++slot)
+            if (!record->variables[47 + slot]) return slot;
+    }
+    return -1;
+}
+
+static inline int bfm_save_add_item(BfmSaveRecord *record, unsigned item)
+{
+    int slot = bfm_save_inventory_space(record);
+    if (slot < 0 || !item || item > 255) return 0;
+    record->variables[47 + slot] = (uint8_t)item;
+    record->variables[20 + 2 * slot] = record->progress[0x34];
+    record->variables[21 + 2 * slot] = record->progress[0x35];
+    return 1;
+}
+
 /* Bits 29..33 select alternate room tables on Continue. */
 static inline int bfm_save_uses_default_room_table(const BfmSaveRecord *record)
 {
     return !(record->flags[3] & 0xe0u) && !(record->flags[4] & 3u);
+}
+
+/* Default Continue uses the Grillin inn entrance throughout this story range. */
+static inline int bfm_story_returns_to_grillin_inn(uint32_t story)
+{
+    return story >= 10 && story < 200;
 }
 
 typedef struct {
@@ -26,8 +53,8 @@ typedef struct {
     unsigned scene_member;
 } BfmBedroomEntry;
 
-/* Resolve the earned castle wake or the story-ten inn exterior against the
- * mounted disc. Unsupported saved destinations remain at the load boundary. */
+/* Resolve the earned castle wake or the early Grillin inn exterior against
+ * the mounted disc. Other saved destinations remain at the load boundary. */
 int bfm_bedroom_entry(const MusashiDiscMedia *disc, const BfmSaveRecord *record,
                       BfmBedroomEntry *out);
 int bfm_castle_room_entry(const MusashiDiscMedia *disc, const uint8_t *transfer,

@@ -20,6 +20,8 @@ typedef struct BfmWoodsFlightGlow {
 
 /* Contours borrow the current mounted woods scene for the room lifetime. */
 int bfm_woods_flight_glow_load(BfmWoodsFlightGlow *art, const uint8_t *scene, size_t size);
+int bfm_field_flight_glow_load(BfmWoodsFlightGlow *art, const uint8_t *scene, size_t bytes,
+                               uint32_t edge_address);
 void bfm_woods_flight_glow_tick(BfmWoodsFlightGlow *art, const BfmFusionFlight *flight,
     unsigned meter, const BfmForestTransform *award_owner, unsigned field_tick,
     const int32_t eye[3], BfmTetherRandom random, void *context);

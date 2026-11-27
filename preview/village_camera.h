@@ -31,6 +31,10 @@ void bfm_village_camera_lower(BfmVillageCamera *camera, const int16_t xyz[3],
 void bfm_village_camera_turn(BfmVillageCamera *camera, BfmVillageCameraTurn *turn,
                              int direction);
 
+/* At the forest bank either shoulder toggles distance while the bearing stays fixed. */
+void bfm_village_camera_bank(BfmVillageCamera *camera, int *radius_goal, const int16_t xyz[3],
+                             int entering, int shoulder_pressed);
+
 /* Step the trail camera after movement. The zone uses the player's Z even
  * while the camera target is still catching up. */
 void bfm_village_camera_woods_orbit(BfmVillageCamera *camera, int bearing,

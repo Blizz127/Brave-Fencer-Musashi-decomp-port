@@ -5,25 +5,32 @@
 
 enum { FIGURE_CHAPTER = 0x2e, FIRST_FIGURE = 0x63 };
 
-int bfm_gameplay_new_player(BfmGameplayRun *run, const MusashiDiscMedia *disc)
+int bfm_gameplay_seed_figures(BfmGameplayBanks *banks, const MusashiDiscMedia *disc)
 {
     enum { OFFER_COUNT = 6, ROW_SIZE = 8 };
     const uint32_t first_offer = UINT32_C(0x8010f46c) + ROW_SIZE;
     ForestPlayerArchive archive;
     uint8_t offers[OFFER_COUNT * ROW_SIZE];
-    BfmForestStatus player;
-    if (!run || !bfm_forest_status_load(disc, &player) || !forest_player_archive_open(disc, &archive) ||
+    if (!banks || !forest_player_archive_open(disc, &archive) ||
         !forest_player_archive_read(&archive, first_offer, offers, sizeof offers)) return 0;
 
-    BfmGameplayBanks fresh = {0};
-    fresh.variables[0x2c] = fresh.variables[0x2d] = 7;
-    fresh.variables[FIGURE_CHAPTER] = 1;
-    memset(fresh.variables + 0x3b, 3, 5);
+    banks->variables[FIGURE_CHAPTER] = 1;
+    memset(banks->variables + 0x3b, 3, 5);
     for (unsigned i = 0; i < OFFER_COUNT; ++i) {
         const uint8_t *offer = offers + ROW_SIZE * i;
-        memcpy(fresh.figure_prices + 2 * i, offer, 2);
-        fresh.variables[FIRST_FIGURE + i] = offer[2] | 0x80u;
+        memcpy(banks->figure_prices + 2 * i, offer, 2);
+        banks->variables[FIRST_FIGURE + i] = offer[2] | 0x80u;
     }
+    return 1;
+}
+
+int bfm_gameplay_new_player(BfmGameplayRun *run, const MusashiDiscMedia *disc)
+{
+    BfmForestStatus player;
+    BfmGameplayBanks fresh = {0};
+    if (!run || !bfm_forest_status_load(disc, &player) || !bfm_gameplay_seed_figures(&fresh, disc))
+        return 0;
+    fresh.variables[0x2c] = fresh.variables[0x2d] = 7;
     run->player = player;
     run->banks = fresh;
     run->has_player = 1;
@@ -58,8 +65,9 @@ int bfm_gameplay_has_checkpoint(const BfmGameplayRun *run, BfmCheckpointKind kin
     return 0;
 }
 
-int bfm_gameplay_woods_recovery(const BfmGameplayRun *run, BfmCheckpointKind kind,
-                                const uint8_t *scene, size_t scene_bytes, BfmSaveRecord *out)
+int bfm_gameplay_field_recovery(const BfmGameplayRun *run, BfmCheckpointKind kind,
+                                const uint8_t *scene, size_t scene_bytes,
+                                size_t saved_destination_offset, BfmSaveRecord *out)
 {
     if (!out || !bfm_gameplay_has_checkpoint(run, kind)) return 0;
     BfmSaveRecord restored;
@@ -75,18 +83,24 @@ int bfm_gameplay_woods_recovery(const BfmGameplayRun *run, BfmCheckpointKind kin
         for (unsigned i = 0; i < 4; ++i)
             restored.progress[0x14 + i] = (uint8_t)(half >> (8 * i));
     } else {
-        enum { RECOVERY_ROOM = 0x80189d6c - 0x80128158 };
         restored = run->saved_data.state;
         const uint8_t *story = restored.progress + 8;
         if (story[0] < 10 || story[0] >= 200 || story[1] || story[2] || story[3] ||
-            !scene || scene_bytes < RECOVERY_ROOM + sizeof restored.destination) return 0;
-        const uint8_t *destination = scene + RECOVERY_ROOM;
+            !scene || saved_destination_offset > scene_bytes ||
+            scene_bytes - saved_destination_offset < sizeof restored.destination) return 0;
+        const uint8_t *destination = scene + saved_destination_offset;
         if (destination[0] != 0x12 || destination[1] != 0x30 ||
             destination[2] != 0 || destination[3] != 0) return 0;
         memcpy(restored.destination, destination, sizeof restored.destination);
     }
     *out = restored;
     return 1;
+}
+
+int bfm_gameplay_woods_recovery(const BfmGameplayRun *run, BfmCheckpointKind kind,
+                                const uint8_t *scene, size_t scene_bytes, BfmSaveRecord *out)
+{
+    return bfm_gameplay_field_recovery(run, kind, scene, scene_bytes, BFM_CLEFT_RECOVERY_OFFSET, out);
 }
 
 int bfm_gameplay_advance_figures(BfmGameplayRun *run)

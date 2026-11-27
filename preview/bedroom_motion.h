@@ -29,7 +29,8 @@ typedef enum {
     BFM_BEDROOM_SHOW_FUSION,
     BFM_BEDROOM_COLLECT, BFM_BEDROOM_RECEIVE, BFM_BEDROOM_LOWER, BFM_BEDROOM_FAREWELL, BFM_BEDROOM_NEGATIVE_REPLY,
     BFM_BEDROOM_CABLE, BFM_BEDROOM_KNOCK,
-    BFM_BEDROOM_NIGHTMARE_SLEEP, BFM_BEDROOM_NIGHTMARE_HOLD
+    BFM_BEDROOM_NIGHTMARE_SLEEP, BFM_BEDROOM_NIGHTMARE_HOLD,
+    BFM_BEDROOM_DRAW_WATER
 } BfmBedroomAction;
 
 typedef struct {
@@ -43,6 +44,7 @@ typedef struct {
     unsigned knock_contact; /* One update when the knocking hand strikes the door. */
     unsigned hide_fusion; /* The detached sword is submitted as a separate actor. */
     int16_t lumina_scale_q12; /* Zero uses the ordinary drawn Lumina mesh size. */
+    unsigned body_contact; /* Mounted event 8 or 9, or zero on a field without contact. */
 } BfmBedroomPose;
 
 /* The expanded room member and MAIN/10 type-0x101 payload (after its header)
@@ -54,6 +56,9 @@ typedef enum { BFM_BODY_PLAYING, BFM_BODY_HOLD, BFM_BODY_END } BfmBodyMarker;
  * pass. A new selection consumes its first key immediately. Repeating the
  * current selection keeps its clock, pose and any outstanding hold. */
 int bfm_bedroom_motion_direct(BfmBedroomMotion *motion, uint32_t program);
+int bfm_bedroom_motion_direct_slot(BfmBedroomMotion *motion, unsigned slot);
+/* A looping program can display a key and signal its wrap in the same field. */
+int bfm_bedroom_motion_looped(const BfmBedroomMotion *motion);
 BfmBodyMarker bfm_bedroom_motion_marker(const BfmBedroomMotion *motion);
 /* Release a hold at the program's current interval. The next animation
  * pass advances the restored clock. A terminal marker cannot resume. */
@@ -66,6 +71,13 @@ int bfm_bedroom_motion_reenter_stance(BfmBedroomMotion *motion, int tired);
 int bfm_bedroom_motion_ability_pose(BfmBedroomMotion *motion, unsigned face_slot, int finished,
                                     BfmBedroomPose *frame);
 int bfm_bedroom_motion_reenter_fall(BfmBedroomMotion *motion, int moving);
+/* Release an external body after the ordinary face's tick. Select the new
+ * body's first packet now and leave its facial selection for the next field. */
+int bfm_bedroom_motion_leave_hop(BfmBedroomMotion *motion, unsigned support,
+                                 int moving, BfmBedroomPose *frame);
+/* After a falling field's animation pass, release the ordinary fall hold
+ * when the vertical velocity reaches zero or points down. */
+void bfm_bedroom_motion_descend(BfmBedroomMotion *motion);
 int bfm_bedroom_motion_reenter_slide(BfmBedroomMotion *motion);
 void bfm_bedroom_motion_stance_condition(BfmBedroomMotion *motion, int tired);
 int bfm_bedroom_motion_step(BfmBedroomMotion *motion, BfmBedroomAction action,
@@ -84,6 +96,12 @@ int bfm_bedroom_motion_external_face(BfmBedroomMotion *motion, unsigned slot,
                                      int already_stepped, BfmBedroomPose *frame);
 int bfm_bedroom_motion_face(const BfmBedroomMotion *motion, uint16_t tiles[512][1024]);
 int bfm_bedroom_orb_palette(const BfmBedroomMotion *motion, uint32_t table, unsigned orb, uint16_t tiles[512][1024]);
+int bfm_grillin_blade_palette(const BfmBedroomMotion *motion, unsigned orb, uint16_t tiles[512][1024]);
+int bfm_bedroom_motion_upload_palette(const BfmBedroomMotion *motion, uint32_t descriptor,
+                                      uint16_t tiles[512][1024]);
+/* Publish a newly selected recovery pose with level pitch. Its first key is
+ * already decoded, so publishing it consumes no additional animation time. */
+void bfm_bedroom_motion_publish_upright(BfmBedroomMotion *motion, BfmBedroomPose *frame);
 void bfm_bedroom_motion_free(BfmBedroomMotion *motion);
 
 #endif

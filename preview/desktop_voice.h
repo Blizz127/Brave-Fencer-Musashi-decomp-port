@@ -57,6 +57,7 @@ struct BfmForestScore;
 void bfm_desktop_voice_room_skip(DesktopVoice *voice);
 void bfm_desktop_voice_release_room_effects(DesktopVoice *v);
 void bfm_desktop_voice_room_score(DesktopVoice *voice, struct BfmForestScore *score);
+void bfm_desktop_voice_room_score_command(DesktopVoice *voice, unsigned command);
 struct ForestVoice;
 /* Supply the clocked field transport to SDL. Giant Forest provides its NTSC
  * field so complete lines can drain on a slow device. Zero selects immediate

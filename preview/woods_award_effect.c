@@ -8,10 +8,13 @@ enum { INACTIVE, CONTRACTING, HOLDING, BRIGHTENING, FADING };
 
 typedef struct {
     unsigned member, palette_sector, palette_command, picture_sector;
+    size_t shape; /* Offset of the effect quad in this mounted field. */
 } AwardPicture;
 
-static const AwardPicture satiate = {18, 4, 0x838, 0};
-static const AwardPicture shrink = {19, 3, 0x1358, 19};
+enum { CLEFT_QUAD = 0x8018a444 - 0x80128158, BANK_QUAD = 0x8018f214 - 0x80128158 };
+static const AwardPicture satiate = {18, 4, 0x838, 0, CLEFT_QUAD};
+static const AwardPicture hop = {20, 4, 0x48c, 0, BANK_QUAD};
+static const AwardPicture shrink = {19, 3, 0x1358, 19, CLEFT_QUAD};
 
 /* The three vertically adjacent 32-word tiles are in a separate upload from
  * the skill's equipment art. Validate the entire upload before touching VRAM. */
@@ -74,9 +77,8 @@ static int upload_picture(const MusashiDiscMedia *disc, const AwardPicture *pict
 /* The room supplies local screen corners and absolute UVs. Its effect turns
  * the landscape-format mounted artwork a quarter turn onto this portrait. */
 static int load_shape(BfmWoodsAwardEffect *effect, const uint8_t *scene, size_t size,
-                      unsigned *word_x, unsigned *row_y)
+                      size_t offset, unsigned *word_x, unsigned *row_y)
 {
-    const size_t offset = UINT32_C(0x8018a444) - UINT32_C(0x80128158);
     if (!scene || size < offset + 48) return 0;
     const uint8_t *corners = scene + offset, *uv = corners + 32;
     unsigned x = u16le(uv), y = u16le(uv + 2);
@@ -130,12 +132,13 @@ int bfm_woods_award_effect_step_ability(BfmWoodsAwardEffect *effect, const Musas
         const AwardPicture *picture;
         switch (released_ability) {
         case 3: picture = &satiate; break;
+        case 12: picture = &hop; break;
         case 13: picture = &shrink; break;
         default: return 0;
         }
         BfmWoodsAwardEffect fresh = {.phase = CONTRACTING, .scale = 4*UNIT};
         unsigned x, y;
-        if (effect->phase || !load_shape(&fresh, scene, bytes, &x, &y) ||
+        if (effect->phase || !load_shape(&fresh, scene, bytes, picture->shape, &x, &y) ||
             !upload_picture(disc, picture, x, y, tiles, &fresh.picture.material.clut)) return 0;
         *effect = fresh;
         return 1;

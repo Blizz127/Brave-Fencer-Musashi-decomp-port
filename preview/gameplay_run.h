@@ -34,6 +34,9 @@ typedef struct BfmGameplayRun {
 
 /* Initialize the first palace room from mounted New Game and figure data. */
 int bfm_gameplay_new_player(BfmGameplayRun *run, const MusashiDiscMedia *disc);
+/* Initialize the first six shop offers from the player's disc. Other prices
+ * and variables belong to the caller's current game. */
+int bfm_gameplay_seed_figures(BfmGameplayBanks *banks, const MusashiDiscMedia *disc);
 /* The final Steam Knight cutscene advances the figure chapter before departure. */
 int bfm_gameplay_advance_figures(BfmGameplayRun *run);
 
@@ -47,6 +50,10 @@ int bfm_gameplay_has_checkpoint(const BfmGameplayRun *run, BfmCheckpointKind kin
 /* Prepare the restored state before handing it to a receiving room. The
  * saved-data destination comes from the restored story on the mounted disc.
  * Failure leaves the current run and the caller's output untouched. */
+enum { BFM_CLEFT_RECOVERY_OFFSET = 0x80189d6c - 0x80128158 };
+int bfm_gameplay_field_recovery(const BfmGameplayRun *run, BfmCheckpointKind kind,
+                                const uint8_t *scene, size_t scene_bytes,
+                                size_t saved_destination_offset, BfmSaveRecord *out);
 int bfm_gameplay_woods_recovery(const BfmGameplayRun *run, BfmCheckpointKind kind,
                                 const uint8_t *scene, size_t scene_bytes, BfmSaveRecord *out);
 

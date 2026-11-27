@@ -101,15 +101,16 @@ int bfm_bedroom_entry(const MusashiDiscMedia *disc, const BfmSaveRecord *record,
     size_t start, length, total;
     uint8_t room[36], group_counts[8], scene_row[8];
     /* Flags 29 through 33 select five additional room setup tables. */
-    if (!bfm_save_uses_default_room_table(record)) return 0;
+    if (!disc || !record || !out || !bfm_save_uses_default_room_table(record)) return 0;
     uint32_t story = word(record->progress + 8);
-    if (story != 2 && story != 10) return 0;
-    size_t offset = story == 10 ? INN_DESTINATION : EARLY_DESTINATION;
+    int inn = bfm_story_returns_to_grillin_inn(story);
+    if (story != 2 && !inn) return 0;
+    size_t offset = inn ? INN_DESTINATION : EARLY_DESTINATION;
     if (!payload(disc, "MAIN.CD", 12, 0x101, &start, &length) ||
         length < offset + sizeof room ||
         !musashi_disc_media_read_root_range(disc, "MAIN.CD", start + offset,
                                              room, sizeof room, &total)) return 0;
-    if (story == 10) {
+    if (inn) {
         if (memcmp(record->destination, (uint8_t[36]){0}, sizeof record->destination) ||
             word(room) != 0x000a1010u) return 0;
         out->state = *record;
@@ -161,8 +162,12 @@ static int supported_field_member(const MusashiDiscMedia *disc, uint32_t target,
     case 0x3002: member = 8; resource = 57; group = 1; break;
     case 0x43000: member = 4; resource = 53; group = 1; break;
     case 0x3004: member = 74; resource = 123; group = 1; break;
+    case 0x00041010: case 0x00051010: case 0x00061010:
     case 0x000a1010: case 0x02011010: member = 1; resource = 179; group = 3; break;
-    case 0x02003025: member = 29; resource = 207; group = 3; break;
+    case 0x02003014: case 0x02013014: case 0x23014: member = 6; resource = 184; group = 3; break;
+    case 0x301b: case 0x21301b: member = 7; resource = 185; group = 3; break;
+    case 0x00013026: case 0x00ff3026: member = 11; resource = 146; group = 2; break;
+    case 0x00033025: case 0x02003025: member = 29; resource = 207; group = 3; break;
     case 0x51011: case 0x02011011: case 0x00021011: member = 2; resource = 180; group = 3; break;
     default: return 0;
     }

@@ -173,6 +173,28 @@ const char *bfm_inn_profile_save(BfmInnProfile *profile, unsigned file, const Bf
     return save_record(profile, file, record, disc, bfm_inn_card_save);
 }
 
+const char *bfm_inn_profile_save_selected(BfmInnProfile *profile, const BfmSaveMenu *picker,
+                                          const BfmSaveRecord *record, const MusashiDiscMedia *disc)
+{
+    if (!profile || !picker || picker->issue || picker->page != BFM_SAVE_PICK || picker->selected >= 4)
+        return "Reopen the save picker.";
+    unsigned slot = picker->selected;
+    if (picker->rows[slot].state == BFM_SAVE_EMPTY)
+        return bfm_inn_profile_save(profile, slot + 1, record, disc);
+    if (picker->rows[slot].state != BFM_SAVE_VALID || pending_state(profile) != CARD_PRIOR_IMAGE)
+        return "Reopen the save picker.";
+
+    BfmSaveMenu current;
+    bfm_save_menu_read_image(&current, profile->image, sizeof profile->image);
+    if (current.issue || memcmp(current.records, picker->records, sizeof current.records))
+        return "The card changed. Reopen the save picker.";
+    for (unsigned i = 0; i < 4; ++i) {
+        if (current.rows[i].state != picker->rows[i].state)
+            return "The card changed. Reopen the save picker.";
+    }
+    return bfm_inn_card_overwrite(profile->image, slot + 1, record, checked_commit, profile, disc);
+}
+
 const char *bfm_chapter_profile_save(BfmInnProfile *profile, unsigned file,
                                      const BfmSaveRecord *record, const MusashiDiscMedia *disc)
 {

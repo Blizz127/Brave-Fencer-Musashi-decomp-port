@@ -7,15 +7,24 @@ typedef struct BfmForestScore BfmForestScore;
 
 /* Prepare the mounted track and instruments on the game thread at 37800 or
  * 44100 Hz. The original disc may close after this call returns. */
+BfmForestScore *bfm_archive_score_load(const MusashiDiscMedia *disc, unsigned rate,
+                                       const char *archive, unsigned member, unsigned track,
+                                       unsigned gain);
 BfmForestScore *bfm_forest_score_load(const MusashiDiscMedia *disc, unsigned rate);
 BfmForestScore *bfm_defeat_score_load(const MusashiDiscMedia *disc, unsigned rate);
 BfmForestScore *bfm_castle_score_load(const MusashiDiscMedia *disc, unsigned rate,
                                     unsigned member, unsigned track, unsigned volume);
 BfmForestScore *bfm_library_score_load(const MusashiDiscMedia *disc, unsigned rate,
                                       unsigned track, unsigned volume);
+BfmForestScore *bfm_woods_score_load(const MusashiDiscMedia *disc, unsigned rate, unsigned volume);
 /* Room command 1/1 fades the running sequence on the sound-field clock. */
 void bfm_castle_score_fade(BfmForestScore *score);
 void bfm_forest_score_fade_for_defeat(BfmForestScore *score);
+typedef enum { BFM_SCORE_DUCK_DIALOGUE = 1, BFM_SCORE_DUCK_DEEP = 2 } BfmScoreDuck;
+/* Apply a sequence-volume request at the default speed. The first active
+ * request sets the level. Releasing the last one restores full volume.
+ * Serialize with mix and rewind on the audio device. */
+void bfm_forest_score_duck(BfmForestScore *score, BfmScoreDuck reason, int active);
 void bfm_forest_score_rewind(BfmForestScore *score);
 /* Add available stereo frames with saturation, retaining note and device
  * phase across calls and the mounted phrase return. Mixing allocates no

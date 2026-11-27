@@ -65,6 +65,10 @@ int bfm_bedroom_figure_add_fusion(BfmBedroomFigure *figure, const BfmBedroomView
 int bfm_bedroom_figure_add_actor(BfmBedroomFigure *figure, const BfmBedroomView *view,
                      const BfmForestActor *actor, const BfmBedroomRoot *ground,
                      const uint8_t shadow[12], unsigned shadow_size);
+/* Class-5 field models with the far-depth flag queue each lit, flat textured
+ * quad at its farthest vertex. The untextured faces keep their average depth. */
+int bfm_bedroom_figure_add_far_ft4_actor(BfmBedroomFigure *figure, const BfmBedroomView *view,
+                     const BfmForestActor *actor);
 /* These models supply their own three directional lights and force the same
  * translucency equation on every face. The room ambient still applies. */
 int bfm_bedroom_figure_add_lit_translucent(BfmBedroomFigure *figure, const BfmBedroomView *view,

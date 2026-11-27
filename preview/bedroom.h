@@ -9,6 +9,9 @@
 
 typedef struct BfmBedroom BfmBedroom;
 BfmBedroom *bfm_bedroom_open(const MusashiDiscMedia *disc, const BfmSaveRecord *record);
+/* The defeat branch supplies a MAIN player transfer for the same castle
+ * wake. Preserve its room callbacks independently of a save's Continue row. */
+BfmBedroom *bfm_bedroom_open_restart(const MusashiDiscMedia *disc, const BfmSaveRecord *record);
 /* Enter the new chapter on the existing run, including the wake script's
  * resource changes. The retained chapter save remains at its pre-wake state. */
 BfmBedroom *bfm_bedroom_open_chapter(const MusashiDiscMedia *disc, const BfmSaveRecord *record,
@@ -42,7 +45,7 @@ int bfm_bedroom_draw(BfmBedroom *room, uint32_t pixels[240][320]);
 uint16_t bfm_bedroom_display_room(const BfmBedroom *room);
 typedef enum {
     BFM_ROOM_SCENE_BANK, BFM_ROOM_WOODS_BANK, BFM_ROOM_KNOCK_BANK, BFM_ROOM_RECOVERY_BANK,
-    BFM_ROOM_BANK_COUNT
+    BFM_ROOM_BAKERY_BANK, BFM_ROOM_BOX_BANK, BFM_ROOM_GUIDE_BANK, BFM_ROOM_BANK_COUNT
 } BfmRoomSoundBank;
 typedef struct BfmBedroomSound {
     struct BfmBedroomEffects *effects;
@@ -55,6 +58,7 @@ size_t bfm_bedroom_take_effects(BfmBedroom *room, const BfmBedroomSound **events
 /* Peek at the last request, including after the desktop has consumed it. */
 struct BfmBedroomEffects *bfm_bedroom_effect(const BfmBedroom *room, unsigned *command);
 int bfm_bedroom_take_effect_release(BfmBedroom *room);
+unsigned bfm_bedroom_take_score_command(BfmBedroom *room);
 struct BfmForestScore *bfm_bedroom_score(const BfmBedroom *room);
 /* A score command belongs to the just-completed field update. */
 BfmRetryAudioEvent bfm_bedroom_retry_audio(BfmBedroom *room);

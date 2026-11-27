@@ -46,10 +46,11 @@ static BfmSaveRow read_row(const uint8_t *summary, const uint8_t *payload)
     row.minute = fields[56];
     if (row.day == 0 || row.hour >= 24 || row.minute >= 60 || row.minutes >= 60)
         return row;
-    /* This card lineage has original menu badges for these two story states. */
-    unsigned story = little16(fields + 8);
-    if (!little16(fields + 10))
-        row.chapter = story == 2 ? 1u : story == 10 ? 2u : 0u;
+    /* The first two ordinary chapter badges cover the castle and early
+     * Grillin story ranges. Special file badges use different artwork. */
+    int story = (int16_t)little16(fields + 8);
+    if (!fields[0x4e] && story < 200)
+        row.chapter = story < 10 ? 1u : 2u;
     row.hp = little16(fields + 60);
     row.max_hp = little16(fields + 58);
     row.bp = little16(fields + 64);

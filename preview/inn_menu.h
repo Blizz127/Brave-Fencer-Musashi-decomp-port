@@ -17,7 +17,8 @@ typedef struct {
     BfmInnPage page;
     unsigned service, room, rest_age, prices[6];
     const char *notice;
-    int writable;
+    const uint16_t *field_palette; /* Borrowed from the open counter room. */
+    int writable, overwriting;
 } BfmInnMenu;
 
 /* Begin after Hotelo's hospitality dialogue. Supply a parsed snapshot only for

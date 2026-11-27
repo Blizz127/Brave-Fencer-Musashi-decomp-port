@@ -34,6 +34,8 @@ struct BfmWoodsCasterMelee {
     BfmWoodsChargedWeapon weapon;
     const uint8_t *scene;
     size_t scene_bytes;
+    uint32_t power_table;
+    int charged_available;
     unsigned action, variant, key, active_updates;
     int alternate, connected;
 };
@@ -90,15 +92,15 @@ static int load_clip(StrikeClip *clip, const uint8_t *main, size_t bytes,
 }
 
 static int load_move(Strike *strike, const uint8_t *scene, size_t bytes,
-                     unsigned move, int lumina)
+                     uint32_t move_table, uint32_t power_table, unsigned move, int lumina)
 {
     const uint32_t base = UINT32_C(0x80128158);
-    const uint8_t *row = mounted(scene, bytes, base, UINT32_C(0x801896d0) + move * 20, 20);
+    const uint8_t *row = mounted(scene, bytes, base, move_table + move * 20, 20);
     if (!row || u32le(row + 4) != (unsigned)lumina || u16le(row + 18) != (lumina ? 2 : 1))
         return 0;
     unsigned event = u32le(row);
     if (!event || event > UINT16_MAX) return 0;
-    const uint8_t *power = mounted(scene, bytes, base, UINT32_C(0x80189874) + event * 12, 12);
+    const uint8_t *power = mounted(scene, bytes, base, power_table + event * 12, 12);
     if (!power) return 0;
     unsigned flags = u16le(power);
     if ((flags & 0x7000) != 0x4000) return 0;
@@ -108,8 +110,9 @@ static int load_move(Strike *strike, const uint8_t *scene, size_t bytes,
     return 1;
 }
 
-BfmWoodsCasterMelee *bfm_woods_caster_melee_open(const MusashiDiscMedia *disc,
-    const uint8_t *scene, size_t scene_bytes, const uint8_t *main, size_t main_bytes)
+static BfmWoodsCasterMelee *ordinary_melee(const MusashiDiscMedia *disc,
+    const uint8_t *scene, size_t scene_bytes, const uint8_t *main, size_t main_bytes,
+    uint32_t move_table, uint32_t power_table)
 {
     static const uint32_t script[CHARGED] = {
         UINT32_C(0x800d4c94), UINT32_C(0x800d4ce4), UINT32_C(0x800d4d38), UINT32_C(0x800d4f14)
@@ -119,7 +122,31 @@ BfmWoodsCasterMelee *bfm_woods_caster_melee_open(const MusashiDiscMedia *disc,
     for (unsigned i = 0; i < CHARGED; ++i)
         if (!load_clip(&s->clips[i], main, main_bytes, script[i], i == LUMINA)) goto fail;
     for (unsigned i = 0; i < 6; ++i)
-        if (!load_move(&s->moves[i], scene, scene_bytes, i < 4 ? i : i + 6, i >= 4)) goto fail;
+        if (!load_move(&s->moves[i], scene, scene_bytes, move_table, power_table,
+                       i < 4 ? i : i + 6, i >= 4)) goto fail;
+    if (!bfm_weapon_ranks_load(disc, s->weapon.ranks)) goto fail;
+    s->scene = scene;
+    s->scene_bytes = scene_bytes;
+    s->power_table = power_table;
+    return s;
+fail:
+    free(s);
+    return NULL;
+}
+
+BfmWoodsCasterMelee *bfm_woods_twinpeak_melee_open(const MusashiDiscMedia *disc,
+    const uint8_t *scene, size_t scene_bytes, const uint8_t *main, size_t main_bytes)
+{
+    return ordinary_melee(disc, scene, scene_bytes, main, main_bytes,
+                          UINT32_C(0x80192bf0), UINT32_C(0x80192d94));
+}
+
+BfmWoodsCasterMelee *bfm_woods_caster_melee_open(const MusashiDiscMedia *disc,
+    const uint8_t *scene, size_t scene_bytes, const uint8_t *main, size_t main_bytes)
+{
+    BfmWoodsCasterMelee *s = ordinary_melee(disc, scene, scene_bytes, main, main_bytes,
+                                            UINT32_C(0x801896d0), UINT32_C(0x80189874));
+    if (!s) return NULL;
     /* The room's body bank names the equipped sword cut at slot 23. */
     const uint32_t resident = UINT32_C(0x800cedf8);
     const uint8_t *bank = mounted(scene, scene_bytes, UINT32_C(0x80128158),
@@ -127,10 +154,8 @@ BfmWoodsCasterMelee *bfm_woods_caster_melee_open(const MusashiDiscMedia *disc,
     if (!bank) goto fail;
     const uint8_t *slots = mounted(main, main_bytes, resident, u32le(bank), 24 * 4);
     if (!slots || !load_clip(&s->clips[CHARGED], main, main_bytes, u32le(slots + 23 * 4), 1) ||
-        !bfm_woods_charged_hit_load(scene, scene_bytes, &s->weapon.hit) ||
-        !bfm_weapon_ranks_load(disc, s->weapon.ranks)) goto fail;
-    s->scene = scene;
-    s->scene_bytes = scene_bytes;
+        !bfm_woods_charged_hit_load(scene, scene_bytes, &s->weapon.hit)) goto fail;
+    s->charged_available = 1;
     return s;
 fail:
     free(s);
@@ -184,6 +209,7 @@ int bfm_woods_caster_melee_step(BfmWoodsCasterMelee *s, BfmGameplayRun *run,
     }
     if (!s->action) {
         if (input->charged_counter) {
+            if (!s->charged_available) return 0;
             if (input->cut_support_changed) return 1;
             s->action = frame->action = 19;
             s->key = 0;
@@ -255,8 +281,10 @@ int bfm_woods_caster_melee_step(BfmWoodsCasterMelee *s, BfmGameplayRun *run,
                                                          frame->from, frame->to);
         }
     }
-    if (!bfm_woods_weapon_credit_read(s->scene, s->scene_bytes, frame->event, run,
-                                    &s->weapon.credit)) return 0;
+    const uint8_t *power = mounted(s->scene, s->scene_bytes, UINT32_C(0x80128158),
+                                   s->power_table + 12 * frame->event, 12);
+    if (!power) return 0;
+    s->weapon.credit = bfm_woods_weapon_credit(run, u16le(power+8), u16le(power+10));
     if (s->key >= 2) {
         const StrikeKey *draw = &clip->keys[s->key - 2];
         frame->pose = draw->pose;

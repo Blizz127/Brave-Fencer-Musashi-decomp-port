@@ -9,17 +9,23 @@ static int down(int value, int divider)
     return value / divider - (value % divider < 0);
 }
 
+int bfm_field_flight_glow_load(BfmWoodsFlightGlow *art, const uint8_t *scene, size_t size,
+                               uint32_t edge_address)
+{
+    const uint32_t origin = UINT32_C(0x80128158);
+    if (!art || !scene || edge_address < origin) return 0;
+    size_t edge = edge_address - origin;
+    if (edge > size || size - edge < 74) return 0;
+    const uint8_t *first = scene + edge, *round = first + 20, *ring = round + 20;
+    if (memcmp(first, first + 16, 2) || memcmp(round, round + 16, 2) ||
+        memcmp(ring, ring + 32, 2)) return 0;
+    *art = (BfmWoodsFlightGlow){.edge=first, .round=round, .attached_ring=ring};
+    return 1;
+}
+
 int bfm_woods_flight_glow_load(BfmWoodsFlightGlow *art, const uint8_t *scene, size_t size)
 {
-    const size_t origin = UINT32_C(0x80128158);
-    const size_t edge = UINT32_C(0x8018a700) - origin;
-    const size_t round = UINT32_C(0x8018a714) - origin;
-    const size_t ring = UINT32_C(0x8018a728) - origin;
-    if (!art || !scene || size < ring + 34 || memcmp(scene+edge, scene+edge+16, 2) ||
-        memcmp(scene+round, scene+round+16, 2) || memcmp(scene+ring, scene+ring+32, 2))
-        return 0;
-    *art = (BfmWoodsFlightGlow){.edge=scene+edge, .round=scene+round, .attached_ring=scene+ring};
-    return 1;
+    return bfm_field_flight_glow_load(art, scene, size, UINT32_C(0x8018a700));
 }
 
 static void pulse(BfmWoodsFlightGlow *art, int step, BfmTetherRandom random, void *context)

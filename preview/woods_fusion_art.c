@@ -21,9 +21,9 @@ int bfm_woods_fusion_art_pose(const uint8_t *main, size_t main_bytes, uint32_t p
     return 1;
 }
 
-static int effect_camera(const BfmBedroomView *view, BfmForestCamera *camera)
+int bfm_woods_effect_camera(const BfmBedroomView *view, BfmForestCamera *camera)
 {
-    if (view->focal <= 0 || view->focal > UINT16_MAX) return 0;
+    if (!view || !camera || view->focal <= 0 || view->focal > UINT16_MAX) return 0;
     camera->projection = (uint16_t)view->focal;
     for (unsigned i = 0; i < 3; ++i) {
         for (unsigned j = 0; j < 3; ++j) {
@@ -44,7 +44,7 @@ int bfm_woods_fusion_art_append(BfmBedroomFigure *figure, const BfmBedroomView *
     if ((!trails || !trails->enabled) && (!bp_digits || !bp_digits->amount))
         return !blade || bfm_bedroom_figure_add_fusion(figure, view, blade, NULL, 0);
     BfmForestCamera camera;
-    if (!effect_camera(view, &camera)) return 0;
+    if (!bfm_woods_effect_camera(view, &camera)) return 0;
     BfmForestDustCard cards[BFM_TETHER_CARDS + BFM_FOREST_DAMAGE_DIGIT_CARDS];
     size_t count = bfm_forest_tether_trails_project(trails, &camera, cards, BFM_TETHER_CARDS);
     count += bfm_forest_damage_digits_project(bp_digits, &camera, cards + count);
@@ -56,7 +56,7 @@ int bfm_woods_fusion_art_cut(BfmBedroomFigure *figure, const BfmBedroomView *vie
 {
     if (!figure || !view || !effects) return 0;
     BfmForestCamera camera;
-    if (!effect_camera(view, &camera)) return 0;
+    if (!bfm_woods_effect_camera(view, &camera)) return 0;
     BfmForestDustCard cards[BFM_WOODS_CHARGED_CARDS];
     size_t count = bfm_woods_charged_fx_project(effects, &camera, cards);
     return !count || bfm_bedroom_figure_add_fusion(figure, view, NULL, cards, count);
@@ -68,7 +68,7 @@ int bfm_woods_fusion_art_lights(BfmBedroomFigure *figure, const BfmBedroomView *
     if (!figure || !view || !frame) return 0;
     if (!frame->glow) return 1;
     BfmForestCamera camera;
-    if (!effect_camera(view, &camera)) return 0;
+    if (!bfm_woods_effect_camera(view, &camera)) return 0;
     BfmForestDustCard cards[BFM_WOODS_HALO_CARDS + BFM_WOODS_BLADE_SPARK_CARDS +
                             BFM_WOODS_CAPTURE_LIGHT_CARDS];
     size_t count = bfm_woods_flight_glow_project(frame->glow, frame->flight, &camera, view->eye,
@@ -88,7 +88,7 @@ int bfm_woods_charge_art_append(BfmBedroomFigure *figure, const BfmBedroomView *
 {
     if (!figure || !view || !effects || !foot || !art) return 0;
     BfmForestCamera camera;
-    if (!effect_camera(view, &camera)) return 0;
+    if (!bfm_woods_effect_camera(view, &camera)) return 0;
     BfmForestDustCard cards[BFM_STEAM_CHARGE_SLOTS];
     unsigned lines = bfm_steam_charge_project(effects, &camera, cards, BFM_STEAM_CHARGE_SLOTS);
     unsigned dust = bfm_woods_foot_dust_project(foot, effects, &camera,
@@ -196,7 +196,7 @@ int bfm_woods_charged_impact_step(BfmWoodsChargedImpact *impact, BfmGameplayRun 
                                  const BfmBedroomView *view)
 {
     BfmForestCamera camera;
-    if (!impact || !run || !view || !effect_camera(view, &camera)) return 0;
+    if (!impact || !run || !view || !bfm_woods_effect_camera(view, &camera)) return 0;
     TerrainSparkView field = {impact, view};
     impact->count = bfm_forest_strike_step_shared(&impact->pool, view->eye, &camera, run,
                                                  impact->cards, terrain_spark_step, &field);
