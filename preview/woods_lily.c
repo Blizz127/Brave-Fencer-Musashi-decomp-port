@@ -145,17 +145,19 @@ unsigned bfm_woods_lilies_support(const BfmWoodsLilies *lilies, unsigned rider,
 {
     for (unsigned i = 0; i < PADS; ++i) {
         const Lily *pad = &lilies->pads[i];
-        int surface = pad->position[1] + lilies->low[1] - 2;
+        int top = pad->position[1] + lilies->low[1];
         if (rider == i+1) {
             if (!within(lilies,pad,to[0],to[2])) continue;
         } else {
             int dy = to[1]-from[1];
-            if (dy <= 0 || from[1] > surface || to[1] < surface) continue;
-            int x = from[0] + (int)((int64_t)(to[0]-from[0])*(surface-from[1])/dy);
-            int z = from[2] + (int)((int64_t)(to[2]-from[2])*(surface-from[1])/dy);
+            /* Sweep to the mounted box top. The standing clearance applies
+             * only after the descending segment actually reaches the face. */
+            if (dy <= 0 || from[1] >= top || to[1] < top) continue;
+            int x = from[0] + (int)((int64_t)(to[0]-from[0])*(top-from[1])/dy);
+            int z = from[2] + (int)((int64_t)(to[2]-from[2])*(top-from[1])/dy);
             if (!within(lilies,pad,x,z)) continue;
         }
-        to[1] = (int16_t)surface;
+        to[1] = (int16_t)(top - 2);
         return i+1;
     }
     return 0;
