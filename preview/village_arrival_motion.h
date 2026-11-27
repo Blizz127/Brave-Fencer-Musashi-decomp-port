@@ -52,6 +52,11 @@ const BfmVillagePlayer *bfm_village_motion_player(const BfmVillageMotion *motion
 /* Once per gameplay update. Pad axes are -127..127, right and down positive.
  * Camera yaw is target minus eye in X/Z, with +Z at zero. */
 int bfm_village_motion_step(BfmVillageMotion *motion, int stick_x, int stick_y, int camera_yaw);
+struct BfmWoodsLilies;
+int bfm_village_motion_step_woods(BfmVillageMotion *motion, int stick_x, int stick_y,
+                                 int camera_yaw, int cross_pressed, int cross_held,
+                                 int actors_running, struct BfmWoodsLilies *lilies);
+int bfm_village_motion_grounded(const BfmVillageMotion *motion);
 struct BfmVillageResidents;
 /* Resolve contact against the actor transform from the previous field update. */
 int bfm_village_motion_correct_contact(BfmVillageMotion *motion, const int16_t xyz[3]);
