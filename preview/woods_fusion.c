@@ -280,6 +280,7 @@ int bfm_woods_fusion_step(BfmWoodsFusion *s, BfmWoodsCaster *casters, BfmGamepla
     int square = available && input->square_edge;
     int attached = s->flight.phase == BFM_FUSION_ATTACHED;
     if (s->cast.action == BFM_CAST_GROUND) s->cast.visible = input->visible;
+    s->cast.active_stance_gain = bfm_gameplay_story_flag(run, 0x20) ? 6 : 3;
     BfmForestCastEvent cast = bfm_forest_cast_tick(&s->cast, status,
         available && input->shoulder, square, input->moving, blade_away(s));
     if (cast == BFM_CAST_STANCE || cast == BFM_CAST_THROW || cast == BFM_CAST_LAUNCH) {

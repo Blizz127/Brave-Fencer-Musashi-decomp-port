@@ -81,6 +81,11 @@ BfmForestCastEvent bfm_forest_cast_tick(BfmForestCast *cast, BfmForestStatus *st
 {
     if (!cast || !status || !cast->stance.count) return BFM_CAST_GROUND;
     uint8_t *charge = status->record + 0x47;
+    if (cast->active_stance_gain) {
+        unsigned held_charge = cast->action == BFM_CAST_STANCE && r1_held && !blade_away
+                             ? *charge + cast->active_stance_gain : 0;
+        *charge = held_charge < 128 ? (uint8_t)held_charge : 128;
+    }
     if (cast->action == BFM_CAST_THROW) {
         if (++cast->key >= cast->throw_clip.count)
             return cast->action = BFM_CAST_GROUND;
@@ -105,7 +110,8 @@ BfmForestCastEvent bfm_forest_cast_tick(BfmForestCast *cast, BfmForestStatus *st
         cast->moving = !!moving;
         cast->action = BFM_CAST_STANCE;
         /* The first forest visit precedes the faster-charge story upgrade. */
-        *charge = *charge > 125 ? 128 : (uint8_t)(*charge + 3);
+        if (!cast->active_stance_gain)
+            *charge = *charge > 125 ? 128 : (uint8_t)(*charge + 3);
     }
     const BfmForestCastClip *clip = cast->action == BFM_CAST_THROW ? &cast->throw_clip :
                                     cast->moving ? &cast->strafe : &cast->stance;

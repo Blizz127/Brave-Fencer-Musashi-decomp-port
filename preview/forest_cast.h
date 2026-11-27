@@ -20,6 +20,9 @@ typedef struct {
     BfmForestCastClip stance, strafe, throw_clip, award;
     BfmForestCastEvent action;
     unsigned moving, key;
+    /* Rooms with the persistent charge upgrade supply 3 or 6 per active
+     * stance update, before the current input is dispatched. */
+    unsigned active_stance_gain;
     uint32_t pose, visible;
 } BfmForestCast;
 
