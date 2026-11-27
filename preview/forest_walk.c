@@ -1016,7 +1016,7 @@ static int tick_hurt(BfmForestWalk *w, unsigned received, int16_t hit_yaw,
         w->actor.field_a8 = HURT_PROTECTION_UPDATES;
         w->hurt_tail = scripted ? 0 : 3;
         if (bfm_forest_status_values(&w->gameplay->player).hp <= 0) {
-            w->fatal_hit = !w->gateway.active;
+            w->fatal_hit = !w->gateway.active || w->summit_free;
             return 0;
         }
         if (scripted) return 2;
@@ -2388,6 +2388,39 @@ static int update_hall_hero(BfmForestWalk *w)
     return 1;
 }
 
+/* Entrance zero is the ordinary pre-Lumina summit, before either chase
+ * checkpoint is selected. Remount the visit and keep the same gameplay run. */
+static int reenter_summit(BfmForestWalk *w, BfmForestHud *hud)
+{
+    BfmForestWalk next = *w;
+    next.summit = bfm_tower_summit_open(w->disc, &w->summit_transfer.destination);
+    if (!next.summit || !place_on_summit(&next)) {
+        bfm_tower_summit_free(next.summit);
+        return 0;
+    }
+    next.summit_transfer.phase = BFM_SUMMIT_TRANSFER_REVEAL;
+    next.summit_transfer.phase_age = 0;
+    next.summit_free = 0;
+    next.reentry_age = 1;
+    next.hurt = (BfmForestHurt){0};
+    next.hurt_display = (BfmForestHurtDisplay){0};
+    next.displayed_body = (BfmForestBodySample){0};
+    next.hurt_tail = next.pending_damage = next.hide_recovering_body = 0;
+    next.stride_x = next.stride_y = next.stride_jump = 0;
+    next.input_x = next.input_y = next.control_polled = 0;
+    next.jump_pressed = next.jump_held = next.attack_pressed = next.square_held = 0;
+    next.triangle_pressed = next.shoulder_held = 0;
+    next.gun_input = (GunshotInput){0};
+    next.hud = hud;
+    bfm_forest_hud_show(hud);
+    next.retry = NULL;
+    bfm_retry_screen_free(w->retry);
+    bfm_tower_summit_free(w->summit);
+    bfm_forest_hud_free(w->hud);
+    *w = next;
+    return 1;
+}
+
 static int resume_chapter(BfmForestWalk *w)
 {
     if (w->steam_knight) {
@@ -2412,6 +2445,11 @@ static int resume_chapter(BfmForestWalk *w)
     if (!w->summit) return reenter_forest(w);
     BfmForestHud *hud = bfm_forest_open_hud(w->field, w->disc);
     if (!hud) return 0;
+    if (!w->escape.checkpoint && !bfm_gameplay_story_flag(w->gameplay, 0x80)) {
+        if (reenter_summit(w, hud)) return 1;
+        bfm_forest_hud_free(hud);
+        return 0;
+    }
     if (!bfm_tower_summit_resume_escape(w->summit, &w->escape, &w->escape_camera)) {
         bfm_forest_hud_free(hud);
         return 0;
@@ -2490,6 +2528,9 @@ int bfm_forest_walk_tick_controller(BfmForestWalk *w, int x, int y, uint16_t pre
          * normal controller path so live entrance updates accrue playtime. */
         x = y = stick_direction = 0;
         pressed = held = 0;
+    } else if (w && w->reentry_age && !w->escape.checkpoint) {
+        /* The ordinary room transfer now owns the incoming reveal. */
+        w->reentry_age = 0;
     } else if (w && w->reentry_age) {
         /* The summit loader places the hero while black. The chase begins its
          * automatic stride during the incoming wipe, before ordinary control. */
@@ -2533,8 +2574,19 @@ int bfm_forest_walk_tick_controller(BfmForestWalk *w, int x, int y, uint16_t pre
     if (w && result >= 0 && w->fatal_hit) {
         BfmForestField *field = w->summit ? bfm_tower_summit_room(w->summit) : w->field;
         w->hit_sound = w->swing_sound = w->gunshot_fired = 0;
+        int32_t summit_target[3];
+        const int32_t *target = w->target;
+        if (w->summit) {
+            if (w->escape.checkpoint) {
+                target = w->escape_camera.target;
+            } else {
+                BfmTowerSummitLesson *lesson = bfm_tower_summit_active_lesson(w->summit);
+                bfm_tower_summit_camera_target(w->cached, summit_target);
+                target = lesson ? lesson->aim : summit_target;
+            }
+        }
         w->retry = bfm_retry_screen_open(w->disc, field, bfm_forest_walk_room(w),
-                w->gameplay, &w->camera, w->summit ? w->escape_camera.target : w->target,
+                w->gameplay, &w->camera, target,
                 w->cached, w->yaw, w->visible);
         return w->retry ? 1 : -1;
     }
