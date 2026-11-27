@@ -213,7 +213,8 @@ BfmForestShoreUpdate bfm_forest_shore_step(BfmForestShore *shore, const BfmFores
     bfm_forest_actor_root(motion->yaw, motion->position, &shore->root);
     /* The first hit pose draws at the preceding standing height. */
     if (first_hit) shore->root.translation[1] = prior_y;
-    if (run && prior_phase == BFM_SHORE_WALK && motion->phase == BFM_SHORE_TURN) {
+    if (run && motion->phase == BFM_SHORE_TURN &&
+        (prior_phase == BFM_SHORE_WALK || prior_phase == BFM_SHORE_PURSUIT)) {
         /* The guard restarts patrol, then replaces that random interval
          * with the fixed turn duration and draws a fresh notice delay. */
         bfm_gameplay_random(run);
