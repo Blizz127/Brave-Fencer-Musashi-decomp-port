@@ -1173,10 +1173,12 @@ int bfm_bedroom_draw_counter(BfmBedroom *room, int dialogue, uint32_t pixels[240
 {
     if (!room->inn || !bfm_inn_field_draw(room->inn, dialogue, pixels)) return 0;
     if (dialogue) {
+        int services = bfm_inn_field_service(room->inn);
+        if (services) bfm_castle_hud_command(room->hud);
+        else bfm_castle_hud_command_closed(room->hud);
         memcpy(room->status.record, room->entry.state.progress, sizeof room->status.record);
         bfm_forest_hud_draw(room->hud, &room->status, pixels);
-        if (bfm_inn_field_service(room->inn))
-            bfm_inn_hud_draw_fatigue(room->hud, &room->status, pixels);
+        if (services) bfm_inn_hud_draw_fatigue(room->hud, &room->status, pixels);
     }
     bfm_inn_field_shade(room->inn, pixels);
     return 1;
