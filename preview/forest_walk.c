@@ -959,6 +959,8 @@ static int tick_lift(BfmForestWalk *w, int x, int y, int square, BfmForestDustEm
     return select_pose(w, w->lift_data.motion[lift->clip].frames[lift->age], w->walk.visible);
 }
 
+enum { HURT_PROTECTION_UPDATES = 32 };
+
 /* Consume the preceding field update's contact before reading the next pad. */
 static int tick_hurt(BfmForestWalk *w, unsigned received, int16_t hit_yaw,
                      int scripted, BfmForestDustEmission *dust)
@@ -1000,7 +1002,7 @@ static int tick_hurt(BfmForestWalk *w, unsigned received, int16_t hit_yaw,
             debit = bfm_forest_status_values(&w->gameplay->player).max_hp;
         bfm_forest_status_debit(&w->gameplay->player, debit);
         w->pending_damage = 0;
-        w->actor.field_a8 = 32;
+        w->actor.field_a8 = HURT_PROTECTION_UPDATES;
         w->hurt_tail = scripted ? 0 : 3;
         if (bfm_forest_status_values(&w->gameplay->player).hp <= 0) {
             w->fatal_hit = !w->gateway.active;
@@ -1100,11 +1102,15 @@ static int recover_from_creek(BfmForestWalk *w)
         bfm_forest_status_debit(&w->gameplay->player, CREEK_HEALTH_COST);
         if (bfm_forest_status_values(&w->gameplay->player).hp <= 0)
             w->fatal_hit = 1;
+        else
+            w->actor.field_a8 = HURT_PROTECTION_UPDATES;
         return update_pose(w);
     }
     w->actor.kind = w->actor.state = 25;
-    if (w->water_age == 1)
+    if (w->water_age == 1) {
+        w->actor.field_a8 = 0;
         bfm_forest_begin_water_effect(w->field, w->cached, w->eye, w->gameplay);
+    }
     if (w->water_age <= CREEK_SINK_UPDATES) {
         w->actor.position[1] += (4u << 16) + (w->water_age << 14);
         w->cached[1] = (int16_t)(w->actor.position[1] >> 16);
