@@ -23,7 +23,7 @@ int bfm_forest_shore_take_typed_hit(BfmForestShore *shore, uint16_t attacker_yaw
 /* Outside the supported bank, the field can continue independently. */
 typedef enum { BFM_SHORE_INVALID, BFM_SHORE_UPDATED, BFM_SHORE_UNRESOLVED } BfmForestShoreUpdate;
 BfmForestShoreUpdate bfm_forest_shore_step(BfmForestShore *shore, const BfmForestField *field,
-                          const int16_t player[3], BfmGameplayRun *run);
+                          const int16_t player[3], const int16_t target[3], BfmGameplayRun *run);
 /* Active notice on this placed guard, in the same update as its model. */
 const BfmForestTransform *bfm_forest_shore_strike(const BfmForestShore *shore, int16_t *yaw);
 const BfmForestMarker *bfm_forest_shore_marker(const BfmForestShore *shore);

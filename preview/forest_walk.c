@@ -363,6 +363,17 @@ fail:
     bfm_forest_walk_free(w); return NULL;
 }
 
+static int tick_shore_actors(BfmForestWalk *w)
+{
+    ForestPlayerState *player = &w->actor;
+    if (player->kind != 25)
+        memcpy(player->position_15c, w->cached, sizeof player->position_15c);
+    memcpy(player->position_90, player->position_88, sizeof player->position_90);
+    memcpy(player->position_88, w->cached, sizeof player->position_88);
+    return bfm_forest_tick_shore_actor_aim(w->field, w->cached,
+                                          player->position_15c, w->gameplay);
+}
+
 static int start_ambient(BfmForestWalk *w)
 {
     if (w->ambient_status) return w->ambient_status > 0;
@@ -371,7 +382,7 @@ static int start_ambient(BfmForestWalk *w)
     bfm_forest_start_ambient(w->field, w->gameplay);
     bfm_forest_submit_atmosphere(w->field, &w->camera, w->eye);
     w->ambient_status = -1;
-    if (!bfm_forest_tick_shore_actor_with_run(w->field, w->cached, w->gameplay)) return 0;
+    if (!tick_shore_actors(w)) return 0;
     bfm_forest_submit_atmosphere(w->field, &w->camera, w->eye);
     w->ambient_status = 1;
     return 1;
@@ -1108,6 +1119,8 @@ static int recover_from_creek(BfmForestWalk *w)
     }
     w->actor.kind = w->actor.state = 25;
     if (w->water_age == 1) {
+        /* Rescue retains the foot position preceding water contact as the guards' target. */
+        memcpy(w->actor.position_15c, w->actor.position_90, sizeof w->actor.position_15c);
         w->actor.field_a8 = 0;
         bfm_forest_begin_water_effect(w->field, w->cached, w->eye, w->gameplay);
     }
@@ -1391,7 +1404,7 @@ static int tick_player(BfmForestWalk *w, int x, int y, int jump_pressed, int jum
     if (owned) update_root(w);
     ++w->tick;
     if (!bfm_forest_tick_sweep(w->field, w->disc, w->swing_sound, sweep_pose, &previous_root) ||
-        !update_lesson_view(w, before, incoming_yaw) || !bfm_forest_tick_shore_actor_with_run(w->field, w->cached, w->gameplay) ||
+        !update_lesson_view(w, before, incoming_yaw) || !tick_shore_actors(w) ||
         !bfm_forest_submit_guard_and_impacts_with_run(w->field, hits, hit_count, w->eye, &w->camera, w->gameplay))
         return -1;
     if (!update_hurt_display(w, sweep_pose ? sweep_pose : w->frame)) return -1;
@@ -2241,11 +2254,11 @@ static int step_controller(BfmForestWalk *w, int x, int y, uint16_t pressed,
             update_root(w);
             bfm_forest_hud_show(w->hud);
             ++w->tick;
-            return bfm_forest_tick_shore_actor_with_run(w->field, w->cached, w->gameplay) ? 1 : -1;
+            return tick_shore_actors(w) ? 1 : -1;
         }
         int result = tick_message(w, cross_pressed);
         if (result <= 0) return result;
-        return bfm_forest_tick_shore_actor_with_run(w->field, w->cached, w->gameplay) ? result : -1;
+        return tick_shore_actors(w) ? result : -1;
     }
     ++w->tick;
     if(w->tick==1) {++w->elapsed;}
@@ -2270,7 +2283,7 @@ static int step_controller(BfmForestWalk *w, int x, int y, uint16_t pressed,
         w->elapsed=next==w->motion?w->elapsed+1:0;w->motion=next;
     }
     return follow(w) && update_pose(w) &&
-           bfm_forest_tick_shore_actor_with_run(w->field, w->cached, w->gameplay) ? 1 : -1;
+           tick_shore_actors(w) ? 1 : -1;
 }
 
 /* The castle script owns this run and jump. Carry the same actor, equipment

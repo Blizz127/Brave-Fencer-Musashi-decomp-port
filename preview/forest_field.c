@@ -1152,15 +1152,21 @@ int bfm_forest_take_player_hit(BfmForestField *field, int16_t *shot_yaw)
 int bfm_forest_tick_shore_actor_with_run(BfmForestField *field, const int16_t player[3],
                                         BfmGameplayRun *run)
 {
-    if (!field || !player) return 0;
+    return bfm_forest_tick_shore_actor_aim(field, player, player, run);
+}
+
+int bfm_forest_tick_shore_actor_aim(BfmForestField *field, const int16_t player[3],
+                                   const int16_t guard_target[3], BfmGameplayRun *run)
+{
+    if (!field || !player || !guard_target) return 0;
     bfm_forest_drift_tick(&field->drift, run);
     unsigned drift_count = bfm_forest_drift_count(&field->drift);
     bfm_forest_fall_set_other_slots(&field->fall, drift_count, drift_count);
     bfm_forest_fall_tick_emitter(&field->fall, run, player);
     bfm_forest_glows_move(&field->lights, player[2], run);
     bfm_forest_boulders_tick(&field->boulders, player[2]);
-    if (bfm_forest_shore_step(field->bank_patrol, field, player, run) == BFM_SHORE_INVALID ||
-        bfm_forest_shore_step(field->shore, field, player, run) == BFM_SHORE_INVALID)
+    if (bfm_forest_shore_step(field->bank_patrol, field, player, guard_target, run) == BFM_SHORE_INVALID ||
+        bfm_forest_shore_step(field->shore, field, player, guard_target, run) == BFM_SHORE_INVALID)
         return 0;
     bfm_forest_upper_trunks_tick(field->upper_trunks, player[2]);
     bfm_forest_tick_gateway(field, player);

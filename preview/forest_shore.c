@@ -162,9 +162,9 @@ static int step_marker(BfmForestShore *shore, const BfmForestField *field)
 }
 
 BfmForestShoreUpdate bfm_forest_shore_step(BfmForestShore *shore, const BfmForestField *field,
-                          const int16_t player[3], BfmGameplayRun *run)
+                          const int16_t player[3], const int16_t target[3], BfmGameplayRun *run)
 {
-    if (!shore || !field || !player) return BFM_SHORE_INVALID;
+    if (!shore || !field || !player || !target) return BFM_SHORE_INVALID;
     shore->striking = 0;
     if (shore->active && abs((int)player[2] - shore->motion.position[2]) >= 864) {
         shore->active = 0;
@@ -195,7 +195,7 @@ BfmForestShoreUpdate bfm_forest_shore_step(BfmForestShore *shore, const BfmFores
             ((prior_phase == BFM_SHORE_STRIKE && shore->motion.patrol_timer == 7) ||
              (prior_phase == BFM_SHORE_FOLLOW_THROUGH && shore->motion.patrol_timer == 10));
         int updated = first_hit ? bfm_forest_shore_recoil_height(&shore->motion, field) :
-            bfm_forest_shore_tick(&shore->motion, field, player, current_clip(shore)->count, run);
+            bfm_forest_shore_tick(&shore->motion, field, target, current_clip(shore)->count, run);
         shore->recoil_pending = 0;
         if (!updated) {
             /* The known walk covers the far slope and bank. Other footing

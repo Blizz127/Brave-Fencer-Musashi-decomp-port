@@ -105,6 +105,8 @@ int bfm_forest_submit_guard_and_impacts_with_run(BfmForestField *field,
                            const BfmForestCamera *camera, BfmGameplayRun *run);
 int bfm_forest_tick_shore_actor_with_run(BfmForestField *field, const int16_t player[3],
                                         BfmGameplayRun *run);
+int bfm_forest_tick_shore_actor_aim(BfmForestField *field, const int16_t player[3],
+                                   const int16_t guard_target[3], BfmGameplayRun *run);
 /* Advance the room controller and its registered logs before this update's
  * projectiles. A shot updates only the bodies its world-space segment hits. */
 unsigned bfm_forest_field_bridge_step(BfmForestField *field, unsigned room_phase);
