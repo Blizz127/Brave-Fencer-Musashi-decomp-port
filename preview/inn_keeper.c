@@ -22,11 +22,9 @@ static const uint8_t *scene_at(const uint8_t *scene, size_t bytes,
     return scene + (address - origin);
 }
 
-/* The shared street member supplies Hotelo's idle animation. Each key holds
- * a tagged packed pose for one update. The inn supplies his own model. */
-static int read_idle(BfmInnKeeper *keeper, const uint8_t *scene, size_t bytes)
+/* Each key in the mounted keeper idle holds a packed pose for one update. */
+static int read_idle(BfmInnKeeper *keeper, const uint8_t *scene, size_t bytes, uint32_t idle)
 {
-    const uint32_t idle = UINT32_C(0x801c3790);
     for (unsigned i = 0; i <= MAX_IDLE_POSES; ++i) {
         const uint8_t *key = scene_at(scene, bytes, idle + 8 * i, 8);
         if (!key) return 0;
@@ -43,28 +41,39 @@ static int read_idle(BfmInnKeeper *keeper, const uint8_t *scene, size_t bytes)
     return 0;
 }
 
-BfmInnKeeper *bfm_inn_keeper_load(const uint8_t *scene, size_t bytes)
+static BfmInnKeeper *load_keeper(const uint8_t *scene, size_t bytes, uint32_t model,
+                                 uint32_t idle, uint32_t placement, uint32_t shadow)
 {
-    const uint32_t inn = UINT32_C(0x801ef468);
-    const uint32_t model = inn + 0xa224;
-    const uint8_t *place = scene_at(scene, bytes, inn + 0x40cc, 8);
+    const uint8_t *place = scene_at(scene, bytes, placement, 8);
     const uint8_t *table = scene_at(scene, bytes, model, (KEEPER_PARTS + 1) * 4);
     if (!place || !table || !u32le(table + 4 * (KEEPER_PARTS - 1)) ||
         u32le(table + 4 * KEEPER_PARTS)) return NULL;
     BfmInnKeeper *keeper = calloc(1, sizeof(*keeper));
     if (!keeper) return NULL;
-    if (!read_idle(keeper, scene, bytes)) {
+    if (!read_idle(keeper, scene, bytes, idle)) {
         free(keeper);
         return NULL;
     }
     for (unsigned i = 0; i < 3; ++i) keeper->position[i] = s16le(place + 2 * i);
     keeper->yaw = u16le(place + 6) & 4095u;
-    keeper->body = bfm_bedroom_visitor_load(scene, bytes, &model, 1, UINT32_C(0x80190fb0));
+    keeper->body = bfm_bedroom_visitor_load(scene, bytes, &model, 1, shadow);
     if (!keeper->body) {
         free(keeper);
         return NULL;
     }
     return keeper;
+}
+
+BfmInnKeeper *bfm_inn_keeper_load(const uint8_t *scene, size_t bytes)
+{
+    return load_keeper(scene, bytes, 0x801f968c, 0x801c3790, 0x801f3534, 0x80190fb0);
+}
+
+BfmInnKeeper *bfm_vambee_inn_keeper_load(const uint8_t *scene, size_t bytes)
+{
+    /* The outbreak inn supplies the placement. Its resident street member
+     * now holds both the keeper's model and his idle animation. */
+    return load_keeper(scene, bytes, 0x801cea24, 0x801beaf8, 0x801e669c, 0x8018e654);
 }
 
 void bfm_inn_keeper_free(BfmInnKeeper *keeper)

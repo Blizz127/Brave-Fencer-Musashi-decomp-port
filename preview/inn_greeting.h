@@ -16,6 +16,9 @@ enum {
  * live player record remain borrowed until the room releases the conversation. */
 BfmInnGreeting *bfm_inn_greeting_open(const uint8_t *module, size_t bytes,
                                      const uint8_t *resident, size_t resident_bytes, BfmSaveRecord *record);
+/* The inn in the sick village pairs SC03/135 with street member 124. */
+BfmInnGreeting *bfm_inn_greeting_open_illness(const uint8_t *module, size_t bytes,
+    const uint8_t *resident, size_t resident_bytes, BfmSaveRecord *record);
 void bfm_inn_greeting_free(BfmInnGreeting *talk);
 int bfm_inn_greeting_step(BfmInnGreeting *talk, uint16_t pressed, unsigned voice_status);
 const BfmForestMessageFrame *bfm_inn_greeting_frame(const BfmInnGreeting *talk);

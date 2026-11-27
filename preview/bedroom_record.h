@@ -39,7 +39,7 @@ static inline int bfm_save_add_item(BfmSaveRecord *record, unsigned item)
 /* Default Continue uses the Grillin inn entrance throughout this story range. */
 static inline int bfm_story_returns_to_grillin_inn(uint32_t story)
 {
-    return story >= 10 && story < 200;
+    return story >= 10 && story < 600;
 }
 
 typedef struct {
@@ -47,7 +47,7 @@ typedef struct {
     unsigned scene_member;
 } BfmBedroomEntry;
 
-/* Resolve the earned castle wake or the early Grillin inn exterior against
+/* Resolve the earned castle wake or the default Grillin inn exterior against
  * the mounted disc. Other saved destinations remain at the load boundary. */
 int bfm_bedroom_entry(const MusashiDiscMedia *disc, const BfmSaveRecord *record,
                       BfmBedroomEntry *out);

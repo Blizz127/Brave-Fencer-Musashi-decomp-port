@@ -789,6 +789,12 @@ static int mountain_input(BfmVillageMotion *m, int x, int y, int camera,
 
 static const uint8_t *exit_floor(const BfmVillageMotion *m)
 {
+    if (m->room == UINT32_C(0x80190780)) {
+        /* The inn tests the preceding foot sweep on both faces of its threshold. */
+        if ((m->material & 255u) == 14 || (m->player.wall_contact & 255u) == 14)
+            return m->outgoing;
+        return NULL;
+    }
     if ((m->player.wall_contact & 0xffu) == 3) {
         const int16_t *foot = m->player.root.xyz;
         if (m->trail_gate && touches_gate(foot,m->trail_gate)) return m->outgoing;
@@ -2268,6 +2274,28 @@ BfmVillageMotion *bfm_village_motion_resume(const uint8_t *scene, size_t bytes,
                                             uint32_t room_address,
                                             const uint8_t *main, size_t main_bytes)
 {
+    if (room_address == UINT32_C(0x80190780)) {
+        if (!scene || !main) return NULL;
+        BfmVillageMotion *motion = calloc(1, sizeof *motion);
+        if (!motion) return NULL;
+        motion->scene = (Region){scene, bytes, scene_base};
+        motion->resident = (Region){main, main_bytes, main_base};
+        motion->room = room_address;
+        const uint8_t *binding = at(&motion->scene, UINT32_C(0x8018aa0c), 4);
+        const uint8_t *room = at(&motion->scene, room_address, 0xcc);
+        if (binding && read32(binding) == room_address && room && load_field(motion, room) &&
+            set_starting_speed(motion, UINT32_C(0x8018d1c0))) {
+            const uint8_t *inn = room_door(motion, room, 10);
+            if (inn && read32(inn) == UINT32_C(0x06002058)) {
+                motion->player.phase = BFM_VILLAGE_CONTROL;
+                motion->player.controlled = 1;
+                motion->outgoing = inn;
+                if (place_at_door(motion, inn)) return motion;
+            }
+        }
+        bfm_village_motion_free(motion);
+        return NULL;
+    }
     return walking_field(NULL, main, main_bytes, scene, bytes, room_address, 10);
 }
 
@@ -2383,6 +2411,8 @@ int bfm_village_motion_face(const BfmVillageMotion *m, uint16_t tiles[512][1024]
 
 int bfm_village_motion_lower_orb(const BfmVillageMotion *m, unsigned orb, uint16_t tiles[512][1024])
 {
+    if (m && m->room == UINT32_C(0x80190780))
+        return bfm_field_blade_palette(m->ordinary, UINT32_C(0x8018e378), orb, tiles);
     return m && bfm_grillin_blade_palette(m->ordinary, orb, tiles);
 }
 

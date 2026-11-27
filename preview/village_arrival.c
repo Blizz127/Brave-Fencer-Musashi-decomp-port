@@ -5,6 +5,7 @@
 #include "village_field.h"
 #include "village_clock.h"
 #include "village_lower.h"
+#include "village_illness_lower.h"
 #include "village_leno_delivery.h"
 #include "village_earth_return.h"
 #include "village_lighting.h"
@@ -65,6 +66,8 @@ struct BfmVillageArrival {
     size_t main_bytes;
     BfmBedroomEntry *entry;
     BfmVillageLower *lower;
+    BfmVillageIllnessLower *illness_lower;
+    unsigned illness_draw_tick;
     BfmVillageLenoDelivery *delivery;
     BfmVillageEarthReturn *earth_return;
     BfmSouthernWoods *woods;
@@ -150,6 +153,7 @@ void bfm_village_arrival_free(BfmVillageArrival *a)
     bfm_forest_maze_free(a->maze);
     free_bank(a->bank);
     bfm_southern_woods_free(a->woods);
+    bfm_village_illness_lower_free(a->illness_lower);
     bfm_village_lower_free(a->lower);
     clear_upper(a);
     free(a);
@@ -242,8 +246,11 @@ BfmVillageArrival *bfm_village_resume_inn(const MusashiDiscMedia *disc, BfmBedro
 {
     BfmVillageArrival *a = calloc(1, sizeof *a);
     if (!a) return NULL;
-    a->lower = bfm_village_lower_resume(disc, entry, main, bytes, tiles, hud);
-    if (!a->lower) {
+    if (entry && entry->scene_member == 124)
+        a->illness_lower = bfm_village_illness_lower_open(disc, entry, main, bytes, tiles, hud);
+    else
+        a->lower = bfm_village_lower_resume(disc, entry, main, bytes, tiles, hud);
+    if (!a->lower && !a->illness_lower) {
         free(a);
         return NULL;
     }
@@ -314,6 +321,7 @@ uint16_t bfm_village_arrival_room(const BfmVillageArrival *a)
     if (a->maze) return 0x301b;
     if (a->bank) return 0x3014;
     if (a->woods) return 0x3025;
+    if (a->illness_lower) return 0x1052;
     if (a->lower) return 0x1010;
     return a->motion ? 0x1011 : 0;
 }
@@ -325,6 +333,7 @@ const BfmVillagePlayer *bfm_village_arrival_player(const BfmVillageArrival *a)
     if (a->maze) return bfm_village_motion_player(bfm_forest_maze_motion(a->maze));
     if (a->bank) return bfm_village_motion_player(a->bank->motion);
     if (a->woods) return bfm_southern_woods_player(a->woods);
+    if (a->illness_lower) return bfm_village_illness_lower_player(a->illness_lower);
     return a->lower ? bfm_village_lower_player(a->lower) : bfm_village_motion_player(a->motion);
 }
 
@@ -385,12 +394,14 @@ const uint8_t *bfm_village_arrival_castle_transfer(const BfmVillageArrival *a)
 
 const uint8_t *bfm_village_arrival_shop_transfer(const BfmVillageArrival *arrival)
 {
+    if (arrival->illness_lower) return bfm_village_illness_lower_door(arrival->illness_lower);
     return bfm_village_lower_shop_transfer(arrival->lower);
 }
 
 const uint8_t *bfm_village_arrival_inn_transfer(const BfmVillageArrival *arrival)
 {
-    return arrival->lower ? bfm_village_lower_inn_transfer(arrival->lower) : NULL;
+    if (arrival->illness_lower) return bfm_village_illness_lower_door(arrival->illness_lower);
+    return bfm_village_lower_inn_transfer(arrival->lower);
 }
 
 int bfm_village_arrival_maze_crossing(const BfmVillageArrival *a)
@@ -761,9 +772,20 @@ void bfm_village_arrival_lower_register(BfmVillageArrival *a, BfmGameplayRun *ru
     if (a->lower) bfm_village_lower_register_actors(a->lower, run);
 }
 
-void bfm_village_arrival_lower_ambient(BfmVillageArrival *a, BfmGameplayRun *run)
+static int step_illness_street(BfmVillageArrival *a, BfmGameplayRun *run, BfmFieldInput field)
 {
+    if (!bfm_village_illness_lower_step(a->illness_lower, run, field, a->scene_tick)) return 0;
+    /* Actors read the counter before it advances. Retain their sample when
+     * the shop transition presents the same completed page more than once. */
+    a->illness_draw_tick = a->scene_tick++;
+    return 1;
+}
+
+int bfm_village_arrival_lower_ambient(BfmVillageArrival *a, BfmGameplayRun *run)
+{
+    if (a->illness_lower) return step_illness_street(a, run, (BfmFieldInput){0});
     if (a->lower) bfm_village_lower_step_ambient(a->lower, run);
+    return 1;
 }
 
 static int step_earth_return(BfmVillageArrival *a, BfmGameplayRun *run, BfmForestMessage **opened)
@@ -816,6 +838,7 @@ static int step_field(BfmVillageArrival *a, BfmGameplayRun *run,
 {
     int x = field.x, y = field.y, talk_edge = field.square_pressed;
     if (opened) *opened = NULL;
+    if (a->illness_lower) return step_illness_street(a, run, field);
     if (a->crossing) return step_woods_crossing(a, run, field, opened);
     /* The upper field and the lower street share the running world clock. The
      * player is already on the incoming actor list for its 17 fade-in updates. */
@@ -1195,6 +1218,7 @@ int bfm_village_arrival_rest_hud(const BfmVillageArrival *a, BfmForestHud *hud)
 {
     if (a && a->valley) return bfm_hells_valley_hud(a->valley,hud);
     if (a && a->box) return bfm_woods_box_visit_rest_hud(a->box, hud);
+    if (a && a->illness_lower) return bfm_village_illness_lower_rest_hud(a->illness_lower, hud);
     return bfm_village_lower_rest_hud(a ? a->lower : NULL, hud);
 }
 
@@ -1276,6 +1300,8 @@ int bfm_village_arrival_draw_page(BfmVillageArrival *a, const uint8_t flags[64],
         return 1;
     }
     if (a->woods) return bfm_southern_woods_draw(a->woods, flags, window, pixels);
+    if (a->illness_lower)
+        return bfm_village_illness_lower_draw(a->illness_lower, a->illness_draw_tick, flags, draw_page, pixels);
     if (a->lower) return bfm_village_lower_draw(a->lower, a->scene_tick, flags, window, draw_page, pixels);
     const BfmVillagePlayer *p = bfm_village_motion_player(a->motion);
     BfmBedroomPose displayed = p->pose;

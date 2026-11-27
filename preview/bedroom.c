@@ -165,6 +165,9 @@ static void queue_effect(BfmBedroom *room, BfmRoomSoundBank bank, unsigned comma
 
 static unsigned village_score_selector(const BfmBedroom *room)
 {
+    if (half(room->entry.state.destination) == 0x1052 ||
+        half(room->entry.state.destination) == 0x2058)
+        return 0x27;
     unsigned minute = half(room->entry.state.progress + 0x1a);
     return minute >= 420 && minute < 1140 ? 0x0f : 0x10;
 }
@@ -301,7 +304,7 @@ static BfmBedroom *open_entry(const MusashiDiscMedia *disc, const BfmBedroomEntr
     room->entry = *entry;
     room->story_flags = room->entry.state.flags;
     room->run = &room->local_run;
-    if (entry->scene_member == 1) {
+    if (entry->scene_member == 1 || entry->scene_member == 124) {
         room->main = bfm_bedroom_player_data(disc, &room->main_bytes);
         if (!room->main) goto failed;
         room->village = bfm_village_resume_inn(disc, &room->entry, room->main,
@@ -310,6 +313,11 @@ static BfmBedroom *open_entry(const MusashiDiscMedia *disc, const BfmBedroomEntr
         room->voice = bfm_bedroom_voice_load(disc);
         room->current_score = room_score(room, village_score_selector(room));
         if (!room->current_score) goto failed;
+        if (entry->scene_member == 124) {
+            if (!bfm_nightmare_transition_open(disc, &room->recovery_transition)) goto failed;
+            bfm_nightmare_transition_begin_arrival(&room->recovery_transition);
+            room->recovered_exterior = STREET_REVEALING;
+        }
         room->effects = bfm_menu_effects_load(disc);
         if (!room->voice || !room->effects) goto failed;
         memcpy(room->status.record, room->entry.state.progress, sizeof room->status.record);
@@ -1466,7 +1474,7 @@ static int step_bedroom_field(BfmBedroom *room, int confirm_edge, int reveal_edg
         int bakery = half(room->shop_door) == 0x2015;
         unsigned walk = bakery ? BAKERY_WALK : INN_WALK;
         unsigned full_light = bakery ? BAKERY_FULL_LIGHT : INN_FULL_LIGHT;
-        if (tick == 1) bfm_village_arrival_lower_ambient(room->village, room->run);
+        if (tick == 1 && !bfm_village_arrival_lower_ambient(room->village, room->run)) return 0;
         if (tick <= 3) return submit_village_frame(room) ? BFM_BEDROOM_ADVANCED : 0;
         if (tick == SHOP_SELECT) {
             if (!room->inn_voice) room->inn_voice = bfm_inn_voice_load(room->disc);
@@ -1481,6 +1489,10 @@ static int step_bedroom_field(BfmBedroom *room, int confirm_edge, int reveal_edg
             } else {
                 room->inn = bfm_inn_field_open(room->disc, room->shop_door, &room->entry.state, room->tiles);
                 if (!room->inn) return 0;
+                if (bfm_inn_field_room(room->inn) == 0x2058) {
+                    room->current_score = room_score(room, 0x27);
+                    if (!room->current_score) return 0;
+                }
             }
             memcpy(room->entry.state.destination, room->shop_door, sizeof room->entry.state.destination);
         }
@@ -1527,8 +1539,13 @@ static int step_bedroom_field(BfmBedroom *room, int confirm_edge, int reveal_edg
         return result;
     }
     if (room->recovered_exterior == STREET_REVEALING) {
-        BfmNightmareTransitionEvent event = bfm_nightmare_transition_step(&room->recovery_transition, 1, 0, 0);
-        if (event == BFM_NIGHTMARE_REVEAL_COMPLETE) room->recovered_exterior = STREET_REVEALED;
+        /* Field setup for the illness entrance submits one black actor pass
+         * before the first reveal poll. */
+        if (room->village_updates || bfm_village_arrival_room(room->village) != 0x1052) {
+            if (bfm_nightmare_transition_step(&room->recovery_transition, 1, 0, 0) ==
+                BFM_NIGHTMARE_REVEAL_COMPLETE)
+                room->recovered_exterior = STREET_REVEALED;
+        }
         return village_step(room, 0, 0, 0, 0, (BfmFieldInput){0});
     }
     if (room->recovered_exterior == STREET_REVEALED && room->village_updates >= 18)
@@ -1544,7 +1561,7 @@ static int step_bedroom_field(BfmBedroom *room, int confirm_edge, int reveal_edg
             return BFM_BEDROOM_ADVANCED;
         }
         if (room->inn_arrival < 42) {
-            bfm_village_arrival_lower_ambient(room->village, room->run);
+            if (!bfm_village_arrival_lower_ambient(room->village, room->run)) return 0;
             return submit_village_frame(room) ? BFM_BEDROOM_ADVANCED : 0;
         }
         room->inn_arrival = 0;
@@ -1923,7 +1940,7 @@ uint16_t bfm_bedroom_display_room(const BfmBedroom *room)
     if (room->audience) return 0x3003;
     if (room->nightmare) return 0x3012;
     if (room->bakery) return 0x2015;
-    if (room->inn) return 0x2017;
+    if (room->inn) return bfm_inn_field_room(room->inn);
     if (room->village) return bfm_village_arrival_room(room->village);
     if (room->cable) return 0x3004;
     if (room->command_room) return 0x3000;

@@ -38,8 +38,7 @@ struct BfmVillageLower {
     size_t jon_bytes;
     const MusashiDiscMedia *disc;
     uint16_t (*tiles)[1024];
-    const uint8_t *palette_rows, *palette_gains;
-    unsigned palette_count, palette_phase, palette_wait, gain[3];
+    BfmStreetColors colors;
     BfmVillageMotion *motion;
     BfmFieldRest rest;
     BfmVillageField field;
@@ -119,7 +118,6 @@ static int begin_camera(BfmVillageLower *lower, unsigned entrance, const int16_t
     return 1;
 }
 
-static int begin_palette_rows(BfmVillageLower *lower, unsigned phase);
 
 static BfmVillageLower *lower_open(const MusashiDiscMedia *disc, BfmBedroomEntry *entry,
                                    const BfmVillageMotion *departed, const uint8_t *main,
@@ -154,7 +152,8 @@ static BfmVillageLower *lower_open(const MusashiDiscMedia *disc, BfmBedroomEntry
         !bfm_scene_read_tiles(disc, "MAIN.CD", 10, tiles) ||
         !bfm_scene_read_tiles(disc, "SC03.CD", next.scene_member, tiles)) goto fail;
     lower->tiles = tiles;
-    if (!begin_palette_rows(lower, next.state.progress[0x37])) goto fail;
+    if (!bfm_village_street_colors_begin(&lower->colors, lower->scene, lower->scene_bytes,
+                                         room_root, next.state.progress[0x37], tiles)) goto fail;
     bfm_village_mayor_portrait_load(tiles);
     lower->art = bfm_castle_message_art_load(disc, lower->scene, lower->scene_bytes, tiles, 0x65a84);
     if (!lower->art) goto fail;
@@ -189,88 +188,6 @@ BfmVillageLower *bfm_village_lower_resume(const MusashiDiscMedia *disc, BfmBedro
         entry->state.destination[2] != 4 && entry->state.destination[2] != 10))
         return NULL;
     return lower_open(disc, entry, NULL, main, bytes, tiles, hud);
-}
-
-/* The lower street remaps palette rows already in video memory. Its room
- * descriptor supplies direct-color texture rectangles and their destinations. */
-static void draw_palette_rows(BfmVillageLower *lower)
-{
-    for (unsigned i = lower->palette_count; i > 0; --i) {
-        const uint8_t *row = lower->palette_rows + 16 * (i - 1);
-        unsigned page = u16le(row + 4);
-        unsigned sx = 64 * (page & 15) + u16le(row);
-        unsigned sy = 16 * (page & 16) + u16le(row + 2);
-        unsigned dx = u16le(row + 8), dy = u16le(row + 10);
-        unsigned width = u16le(row + 12), height = u16le(row + 14);
-        for (unsigned y = 0; y < height; ++y) {
-            for (unsigned x = 0; x < width; ++x) {
-                unsigned texel = lower->tiles[sy + y][sx + x];
-                if (!texel) continue;
-                unsigned color = texel & 0x8000;
-                for (unsigned c = 0; c < 3; ++c) {
-                    unsigned v = ((texel >> (5*c)) & 31) * lower->gain[c] / 128;
-                    color |= (v > 31 ? 31 : v) << (5*c);
-                }
-                lower->tiles[dy + y][dx + x] = (uint16_t)color;
-            }
-        }
-    }
-}
-
-static int begin_palette_rows(BfmVillageLower *lower, unsigned phase)
-{
-    const uint8_t *room = lower->scene + (room_root - scene_origin);
-    if (phase >= 5 || u32le(room + 0xa4) != 0x11) return 0;
-    const uint8_t *list = scene_pointer(lower, room + 0xa0, 2);
-    if (!list) return 0;
-    unsigned count = u16le(list);
-    if (!count || !scene_pointer(lower, room + 0xa0, 2 + 16 * count)) return 0;
-    lower->palette_count = count;
-    lower->palette_rows = list + 2;
-    for (unsigned i = 0; i < count; ++i) {
-        const uint8_t *r = lower->palette_rows + 16 * i;
-        unsigned u = u16le(r), v = u16le(r + 2), page = u16le(r + 4);
-        unsigned x = u16le(r + 8), y = u16le(r + 10);
-        unsigned width = u16le(r + 12), height = u16le(r + 14);
-        if (((page >> 7) & 3) != 2 || !width || !height ||
-            u + width > 256 || v + height > 256 || 64 * (page & 15) + u + width > 1024 ||
-            x + width > 1024 || y + height > 512) return 0;
-    }
-    lower->palette_gains = lower->scene + (UINT32_C(0x8018dca4) - scene_origin);
-    for (unsigned i = 0; i < 15; ++i)
-        if (u32le(lower->palette_gains + 4 * i) > 255) return 0;
-    lower->palette_phase = phase;
-    for (unsigned c = 0; c < 3; ++c)
-        lower->gain[c] = u32le(lower->palette_gains + 12 * phase + 4 * c);
-    draw_palette_rows(lower);
-    return 1;
-}
-
-static void step_palette_rows(BfmVillageLower *lower, unsigned phase)
-{
-    if (phase >= 5) return;
-    if (phase != lower->palette_phase) {
-        lower->palette_phase = phase;
-        lower->palette_wait = 0;
-    }
-    if (lower->palette_wait) {
-        --lower->palette_wait;
-        return;
-    }
-    const uint8_t *goal = lower->palette_gains + 12 * phase;
-    int changed = 0;
-    for (unsigned c = 0; c < 3; ++c) {
-        unsigned old = lower->gain[c], target = u32le(goal + 4 * c);
-        unsigned next = target;
-        if (old > target && old - target > 4) next = old - 4;
-        if (target > old && target - old > 4) next = old + 4;
-        changed |= next != old;
-        lower->gain[c] = next;
-    }
-    if (changed) {
-        draw_palette_rows(lower);
-        lower->palette_wait = 1;
-    }
 }
 
 const uint8_t *bfm_village_lower_inn_transfer(const BfmVillageLower *lower)
@@ -510,7 +427,7 @@ int bfm_village_lower_step_gameplay(BfmVillageLower *lower, BfmGameplayRun *run,
             if (lower->talk.finished) bfm_village_mayor_stage_finish(lower->stage);
         }
     }
-    step_palette_rows(lower, lower->save->progress[0x37]);
+    bfm_village_street_colors_step(&lower->colors, lower->save->progress[0x37], lower->tiles);
     if (lower->entry_script_updates) --lower->entry_script_updates;
     else if (!active && !(p->events & BFM_VILLAGE_TRANSFER)) {
         if (p->controlled) bfm_field_rest_stamina(lower->save, asleep);

@@ -185,6 +185,7 @@ add_executable(musashi_native_boot
     village_impact_sound.c
     village_portrait.c
     village_lower.c
+    village_illness_lower.c
     bakery_door.c
     bakery_field.c
     bakery_room_art.c

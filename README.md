@@ -22,7 +22,9 @@ Continue reads your own raw 128 KiB memory card. A formatted card with no Musash
 
 To start New Game with a writable memory card, add `--save-copy "/path/to/new-directory"` when you launch the player. The parent directory must already exist. The player formats a new 128 KiB card named `bfm_card0.mcd` inside the new directory. To start with a copy of an existing card, also pass `--card "/path/to/card.mcd"`. The source card remains read-only.
 
-At the Chapter 1 save prompt or Hotelo’s counter in early Grillin’ Village, choose **Save**, select an empty file and confirm. To continue in a new session, pass `--card "/path/to/new-directory/bfm_card0.mcd"`. Add `--save-copy` with another new directory if you want that session to save progress. At Hotelo, **Sleep** offers room 201 for 210 Drans. Eight in-game hours pass. Choose **Save** after waking to record the result in an empty file. Other paid rooms and overwriting occupied files remain unfinished.
+At the Chapter 1 save prompt, choose **Save** and select an empty file. At the inn counter, you can also select an occupied file and confirm the overwrite. During the illness in Grillin’ Village, Continue resumes outside the inn. Walk through the inn doorway and speak to Motelo to reach the counter menu.
+
+To continue in a new session, pass `--card "/path/to/new-directory/bfm_card0.mcd"`. Supply `--save-copy` with a new directory to save again. In early Grillin’ Village, **Sleep** offers room 201 for 210 Drans. Eight in-game hours pass. Choose **Save** after waking to record the result. Other paid rooms remain unfinished.
 
 In daylight, Restaurant’s Macho stands uphill from Musashi’s arrival point. After the greeting, walk up the terrace and turn left toward him. Press A on the keyboard or the left face button on a controller (PlayStation Square or Xbox X) when you are close. Musashi steps forward and turns to face him. Advance the two pages with Space or controller A. When the camera returns to the hillside, you can move again. His answer on a later conversation depends on the current session. The memory card stays read-only.
 

@@ -78,7 +78,7 @@ static const char usage[] =
     "Usage: musashi_native_boot --disc path/to/game.cue [--card path/to/card.mcd] [--save-copy new-directory] [--windowed]\n"
     "Use your own US PlayStation disc image (SLUS-00726). A complete raw BIN or "
     "a CUE with all its BIN tracks alongside is supported.\n"
-    "Continue reads a supplied raw 128 KiB card and supports the early castle bedroom wake.\n"
+    "Continue reads a 128 KiB card and supports the castle wake and Grillin inn saves.\n"
     "--save-copy creates a writable memory card in a new directory. It starts blank unless you supply a read-only --card.\n"
     "Enter/Start: start. Space/Cross: confirm or skip the opening. Arrows: select. "
     "D-pad, arrows or left stick: move in Giant Forest. A/Square: swing Fusion on the ground. "
@@ -242,7 +242,9 @@ static const char *bedroom_caption(uint16_t room)
     case 0x3000: return "Brave Fencer Musashi - Castle courtyard";
     case 0x3004: return "Brave Fencer Musashi - Castle cable station";
     case 0x1011: return "Brave Fencer Musashi - Upper Grillin' Village";
+    case 0x1052:
     case 0x1010: return "Brave Fencer Musashi - Lower Grillin' Village";
+    case 0x2058: return "Brave Fencer Musashi - Hotelo's inn (Motelo)";
     case 0x2017: return "Brave Fencer Musashi - Hotelo's inn";
     case 0x3014: return "Brave Fencer Musashi - Forest bank";
     case 0x3025: return "Brave Fencer Musashi - Southern woods";

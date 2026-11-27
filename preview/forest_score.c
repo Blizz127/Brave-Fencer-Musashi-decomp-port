@@ -11,7 +11,7 @@
 
 enum { VOICES = 24, SAMPLES = 256, CHANNELS = 16, DEVICE_RATE = 44100 };
 enum { FULL_VOLUME = 16384, DUCK_STEP = 546, SOUND_FIELD_SAMPLES = DEVICE_RATE / 60 };
-enum ScoreFamily { OTHER_SCORE, LIBRARY_SCORE, VILLAGE_SCORE, MAZE_SCORE, BANK_SCORE, WOODS_SCORE, TWINPEAK_SCORE, SHRINE_SCORE, JON_RETURN_SCORE,
+enum ScoreFamily { OTHER_SCORE, LIBRARY_SCORE, VILLAGE_SCORE, MAZE_SCORE, BANK_SCORE, WOODS_SCORE, TWINPEAK_SCORE, FINE_PITCH_SCORE, JON_RETURN_SCORE,
                    HELLS_VALLEY_SCORE };
 
 typedef struct {
@@ -57,7 +57,7 @@ static unsigned table_word(const uint8_t *p)
 
 static int uses_fine_tuning(enum ScoreFamily family)
 {
-    return family == VILLAGE_SCORE || family == MAZE_SCORE || family == BANK_SCORE || family == SHRINE_SCORE;
+    return family == VILLAGE_SCORE || family == MAZE_SCORE || family == BANK_SCORE || family == FINE_PITCH_SCORE;
 }
 
 /* The Cleft score uses the resident semitone table for its centered tones. */
@@ -480,7 +480,9 @@ BfmForestScore *bfm_archive_score_load(const MusashiDiscMedia *disc, unsigned ra
         score->orchestra.family = TWINPEAK_SCORE;
     if (!strcmp(archive, "SC03.CD") && member == 0) score->orchestra.family = VILLAGE_SCORE;
     if (!strcmp(archive, "SC03.CD") && member == 43 && track == 0) score->orchestra.family = HELLS_VALLEY_SCORE;
-    if (!strcmp(archive, "SC03.CD") && member == 45) score->orchestra.family = SHRINE_SCORE;
+    /* Both the shrine and the illness-era village use fine offsets from the instrument bank. */
+    if (!strcmp(archive, "SC03.CD") && (member == 45 || (member == 51 && track == 0)))
+        score->orchestra.family = FINE_PITCH_SCORE;
     if (!strcmp(archive, "SC03.CD") && member == 72 && track == 0) score->orchestra.family = JON_RETURN_SCORE;
     if ((!strcmp(archive, "SC03.CD") && member == 9) ||
         (!strcmp(archive, "SC04.CD") && member == 13)) score->orchestra.family = MAZE_SCORE;

@@ -92,7 +92,7 @@ static BfmPalaceBank *read_score_bank(const MusashiDiscMedia *disc, const char *
     } else {
         int sc03_single = !strcmp(archive, "SC03.CD") &&
                           (member == 4 || member == 9 || (member >= 37 && member <= 39) ||
-                           member == 43 || member == 50 || member == 67 || member == 72);
+                           member == 43 || member == 50 || member == 51 || member == 67 || member == 72);
         int single = member == 78 || sc03_single ||
                      (!strcmp(archive, "SC02.CD") && member == 25) ||
                      (!strcmp(archive, "SC06.CD") && member == 38);

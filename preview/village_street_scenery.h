@@ -13,6 +13,8 @@ void bfm_village_street_scenery_free(BfmVillageStreetScenery *scenery);
 /* The running scene update clock drives the church bell's swing. */
 void bfm_village_street_scenery_step(BfmVillageStreetScenery *scenery,
                                      unsigned scene_tick, unsigned progress);
+/* Use the current street daylight colors for the bell's three directional lights. */
+void bfm_village_street_scenery_lights(BfmVillageStreetScenery *scenery, const BfmBedroomLight lights[3]);
 /* The weather vane uses the field's shared RNG once a gust starts or ends. */
 void bfm_village_street_vane_step(BfmVillageStreetScenery *scenery, BfmGameplayRun *run);
 int bfm_village_street_vane_add(const BfmVillageStreetScenery *scenery, BfmBedroomFigure *figure,

@@ -13,11 +13,28 @@
 #include <string.h>
 
 static const uint32_t scene_base = UINT32_C(0x80128158);
-enum { EXIT_TARGET = 0x260, KEEPER_POSITION = 0x40cc, WALK_TARGET = 0x4100, ROOM_OFFSET = 0x4218,
-       ROOM_HP = 0x9969c, ROOM_RATE = 0x996a8,
-       EXIT_FADE = 21, EXIT_MOUNT = 38 };
+enum { EXIT_TARGET = 0x260, EXIT_FADE = 21, EXIT_MOUNT = 38 };
+
+typedef struct {
+    uint16_t room, resident, event;
+    uint32_t outside, face_table;
+    size_t descriptor, keeper, walk, inset, room_hp, room_rate;
+} InnLayout;
+
+/* The event module is appended to the current chapter's resident field. */
+static const InnLayout healthy = {
+    .room = 0x2017, .resident = 1, .event = 76, .outside = 0x000a1010, .face_table = 0x8018f338,
+    .descriptor = 0x4218, .keeper = 0x40cc, .walk = 0x4100, .inset = 0x65a84,
+    .room_hp = 0x9969c, .room_rate = 0x996a8
+};
+static const InnLayout illness = {
+    .room = 0x2058, .resident = 124, .event = 135, .outside = 0x000a1052, .face_table = 0x8018c9dc,
+    .descriptor = 0x502c, .keeper = 0x40b4, .walk = 0x40e8, .inset = 0x63128,
+    .room_hp = 0x94a04, .room_rate = 0x94a10
+};
 
 struct BfmInnField {
+    const InnLayout *layout;
     uint8_t scene[BFM_FIELD_SCENE_CAPACITY];
     const uint8_t *module, *outside;
     size_t scene_size, module_size;
@@ -46,12 +63,13 @@ static const uint8_t *source(const BfmInnField *inn, const uint8_t *slot, size_t
 
 static int mount_inn(BfmInnField *inn, const MusashiDiscMedia *disc)
 {
-    size_t resident = bfm_read_archive_field_scene(disc, "SC03.CD", 1, inn->scene);
-    if (resident < ROOM_RATE + 6 || resident > sizeof inn->scene - 3) return 0;
+    size_t resident = bfm_read_archive_field_scene(disc, "SC03.CD", inn->layout->resident, inn->scene);
+    if (resident < inn->layout->room_rate + 6 || resident > sizeof inn->scene - 3) return 0;
     size_t offset = (resident + 3) & ~(size_t)3;
-    uint8_t *module = bfm_village_event_data(disc, 76, &inn->module_size);
+    uint8_t *module = bfm_village_event_data(disc, inn->layout->event, &inn->module_size);
     if (!module) return 0;
-    int fits = inn->module_size >= ROOM_OFFSET + 0xcc && inn->module_size <= sizeof inn->scene - offset;
+    int fits = inn->module_size >= inn->layout->descriptor + 0xd8 &&
+               inn->module_size <= sizeof inn->scene - offset;
     if (fits) {
         memcpy(inn->scene + offset, module, inn->module_size);
         inn->module = inn->scene + offset;
@@ -77,36 +95,40 @@ void bfm_inn_field_free(BfmInnField *inn)
 BfmInnField *bfm_inn_field_open(const MusashiDiscMedia *disc, const uint8_t *transfer,
                                 BfmSaveRecord *record, uint16_t tiles[512][1024])
 {
-    if (!disc || !transfer || !record || !tiles || u16le(transfer) != 0x2017 || transfer[2])
+    if (!disc || !transfer || !record || !tiles || transfer[2] ||
+        (u16le(transfer) != healthy.room && u32le(transfer) != UINT32_C(0x06002058)))
         return NULL;
     BfmInnField *inn = calloc(1, sizeof *inn);
     if (!inn) return NULL;
+    inn->layout = u16le(transfer) == healthy.room ? &healthy : &illness;
+    const InnLayout *layout = inn->layout;
     if (!mount_inn(inn, disc)) goto fail;
-    const uint8_t *room = inn->module + ROOM_OFFSET;
+    const uint8_t *room = inn->module + layout->descriptor;
     uint32_t address = scene_base + (uint32_t)(room - inn->scene);
     const uint8_t *entries = source(inn, room + 0xc8, 3 * 4);
     if (!entries) goto fail;
     const uint8_t *entry = source(inn, entries, 36);
     const uint8_t *outside = source(inn, entries + 2 * 4, 36);
-    if (!entry || u32le(entry) != 0x2017 || !outside || u32le(outside) != 0xa1010)
+    if (!entry || u32le(entry) != layout->room || !outside || u32le(outside) != layout->outside)
         goto fail;
     inn->outside = outside;
     size_t main_size;
     inn->main = bfm_bedroom_player_data(disc, &main_size);
-    if (!inn->main || !bfm_village_field_load_lower(&inn->field, disc, inn->scene,
-                                                     inn->scene_size, address)) goto fail;
+    if (!inn->main || !bfm_village_field_load_room(&inn->field, disc, inn->scene, inn->scene_size,
+                                                   address, layout->face_table)) goto fail;
     inn->motion = bfm_bedroom_motion_open(inn->scene, inn->scene_size, inn->main, main_size, address);
     inn->travel = bfm_bedroom_travel_open(inn->scene, inn->scene_size, address, 0);
-    inn->keeper = bfm_inn_keeper_load(inn->scene, inn->scene_size);
+    inn->keeper = layout == &illness ? bfm_vambee_inn_keeper_load(inn->scene, inn->scene_size) :
+                                       bfm_inn_keeper_load(inn->scene, inn->scene_size);
     if (!inn->motion || !inn->travel || !inn->keeper ||
         !bfm_bedroom_motion_step(inn->motion, BFM_BEDROOM_REST, &inn->pose)) goto fail;
     if (!bfm_scene_read_tiles(disc, "MAIN.CD", 10, tiles) ||
-        !bfm_scene_read_tiles(disc, "SC03.CD", 1, tiles) ||
-        !bfm_scene_read_tiles(disc, "SC03.CD", 76, tiles) ||
-        !bfm_scene_read_palettes(disc, "SC03.CD", 76, tiles)) goto fail;
-    inn->art = bfm_castle_message_art_load(disc, inn->scene, inn->scene_size, tiles, 0x65a84);
+        !bfm_scene_read_tiles(disc, "SC03.CD", layout->resident, tiles) ||
+        !bfm_scene_read_tiles(disc, "SC03.CD", layout->event, tiles) ||
+        !bfm_scene_read_palettes(disc, "SC03.CD", layout->event, tiles)) goto fail;
+    inn->art = bfm_castle_message_art_load(disc, inn->scene, inn->scene_size, tiles, layout->inset);
     if (!inn->art) goto fail;
-    const uint8_t *walk = inn->module + WALK_TARGET;
+    const uint8_t *walk = inn->module + layout->walk;
     if (u32le(walk - 4) != 3 || !bfm_bedroom_travel_walk(inn->travel, s16le(walk),
                                                         s16le(walk + 2), 0)) goto fail;
     inn->tiles = tiles;
@@ -116,6 +138,11 @@ BfmInnField *bfm_inn_field_open(const MusashiDiscMedia *disc, const uint8_t *tra
 fail:
     bfm_inn_field_free(inn);
     return NULL;
+}
+
+unsigned bfm_inn_field_room(const BfmInnField *inn)
+{
+    return inn ? inn->layout->room : 0;
 }
 
 int bfm_inn_field_step_run(BfmInnField *inn, uint16_t pressed, struct BfmGameplayRun *run)
@@ -136,8 +163,8 @@ int bfm_inn_field_step_run(BfmInnField *inn, uint16_t pressed, struct BfmGamepla
         case BFM_TRAVEL_STAND:
             action = BFM_BEDROOM_REST;
             if (!bfm_inn_greeting_leaving(inn->greeting))
-                bfm_bedroom_travel_face_point(inn->travel, s16le(inn->module + KEEPER_POSITION),
-                                              s16le(inn->module + KEEPER_POSITION + 4));
+                bfm_bedroom_travel_face_point(inn->travel, s16le(inn->module + inn->layout->keeper),
+                                              s16le(inn->module + inn->layout->keeper + 4));
             break;
         case BFM_TRAVEL_FALL: action = BFM_BEDROOM_FALL; break;
         case BFM_TRAVEL_LAND: action = BFM_BEDROOM_LAND; break;
@@ -145,8 +172,13 @@ int bfm_inn_field_step_run(BfmInnField *inn, uint16_t pressed, struct BfmGamepla
         }
     } else if (!inn->greeting) {
         stance = BFM_BEDROOM_STANCE_SCRIPTED;
-        inn->greeting = bfm_inn_greeting_open(inn->module, inn->module_size, inn->scene,
-                                              (size_t)(inn->module - inn->scene), inn->record);
+        size_t resident_bytes = (size_t)(inn->module - inn->scene);
+        if (inn->layout == &illness)
+            inn->greeting = bfm_inn_greeting_open_illness(inn->module, inn->module_size,
+                                                          inn->scene, resident_bytes, inn->record);
+        else
+            inn->greeting = bfm_inn_greeting_open(inn->module, inn->module_size,
+                                                  inn->scene, resident_bytes, inn->record);
         if (!inn->greeting) return 0;
     } else if (!bfm_inn_greeting_leaving(inn->greeting)) {
         stance = BFM_BEDROOM_STANCE_SCRIPTED;
@@ -214,7 +246,7 @@ unsigned bfm_inn_room_price(const BfmInnField *inn, unsigned room)
 {
     /* The last two rooms are occupied on this early village visit. */
     if (!inn || room >= 4) return 0;
-    unsigned rate = inn->scene[ROOM_RATE + room];
+    unsigned rate = inn->scene[inn->layout->room_rate + room];
     return rate > 127 ? 10 * (256 - rate) : 0;
 }
 
@@ -251,7 +283,7 @@ void bfm_inn_finish_room201(BfmInnField *inn)
     if (!inn || !inn->paid) return;
     inn->paid = 0;
     uint8_t *p = inn->record->progress;
-    restore_points(p + 0x3a, u16le(inn->scene + ROOM_HP));
+    restore_points(p + 0x3a, u16le(inn->scene + inn->layout->room_hp));
     restore_points(p + 0x3e, 999);
     /* Both fixed-point stamina reserves reach their rested limit. */
     put_word(p + 0x2c, 160u << 16);

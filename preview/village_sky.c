@@ -79,7 +79,14 @@ int bfm_lower_village_sky_draw(const uint8_t *scene, size_t bytes, unsigned hour
     else if (hour < 19) phase = 2;
     else phase = 3;
     const uint8_t *row = scene + table + phase*12;
-    unsigned r = row[0], g = row[4], b = row[8];
+    const uint8_t gain[3] = {row[0], row[4], row[8]};
+    return bfm_lower_street_sky_draw_gain(gain, pixels);
+}
+
+int bfm_lower_street_sky_draw_gain(const uint8_t gain[3], uint32_t pixels[240][320])
+{
+    if (!gain || !pixels) return 0;
+    unsigned r = gain[0], g = gain[1], b = gain[2];
     if (r > 16 || g > 16 || b > 16) return 0;
 
     /* The outdoor backdrop has four color stops scaled by environmental

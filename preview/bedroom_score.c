@@ -31,6 +31,7 @@ static const struct RoomCue {
 } room_cues[] = {
     {0x18, 0x137, 2, 23, 0}, {0x2b, 0x11d, 2, 23, 1},
     {0x21, 0x120, 3, 43, 0},  /* Four helpers at Hell's Valley. */
+    {0x27, 0x126, 3, 51, 0},  /* Lower Grillin on the illness day. */
     {0x26, 0x125, 3, 50, 0}, {0x1c, 0x118, 3, 37, 0},
     {0x1d, 0x119, 3, 38, 0}, {0x1e, 0x11a, 3, 39, 0},
     {0x2f, 0x130, 3, 45, 0}, {0x30, 0x131, 3, 45, 1},

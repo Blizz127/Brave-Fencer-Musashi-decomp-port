@@ -34,7 +34,7 @@ void bfm_village_arrival_return_from_shop(BfmVillageArrival *outside,
                                          const BfmVillageArrival *street);
 /* Outdoor actors update during the inn exit fade, before player control. */
 void bfm_village_arrival_lower_register(BfmVillageArrival *a, BfmGameplayRun *run);
-void bfm_village_arrival_lower_ambient(BfmVillageArrival *a, BfmGameplayRun *run);
+int bfm_village_arrival_lower_ambient(BfmVillageArrival *a, BfmGameplayRun *run);
 int bfm_village_arrival_step_field(BfmVillageArrival *arrival, BfmGameplayRun *run,
                                    BfmFieldInput field, BfmForestMessage **opened);
 int bfm_village_arrival_award_cue(const BfmVillageArrival *arrival);

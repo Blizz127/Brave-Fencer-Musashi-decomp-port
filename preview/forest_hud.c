@@ -147,6 +147,12 @@ BfmForestHud *bfm_village_hud_load(const MusashiDiscMedia *disc, const uint8_t *
     return load_hud(disc, scene, bytes, 0x68a74, tiles);
 }
 
+BfmForestHud *bfm_village_illness_hud_load(const MusashiDiscMedia *disc, const uint8_t *scene,
+                                          size_t bytes, const uint16_t tiles[512][1024])
+{
+    return load_hud(disc, scene, bytes, 0x66118, tiles);
+}
+
 void bfm_forest_hud_free(BfmForestHud *hud)
 {
     free(hud);

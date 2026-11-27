@@ -10,6 +10,7 @@ typedef struct BfmInnField BfmInnField;
  * owns the save record and the shared texture allocation. */
 BfmInnField *bfm_inn_field_open(const MusashiDiscMedia *disc, const uint8_t *transfer,
                                 BfmSaveRecord *record, uint16_t tiles[512][1024]);
+unsigned bfm_inn_field_room(const BfmInnField *inn);
 void bfm_inn_field_free(BfmInnField *inn);
 int bfm_inn_field_step(BfmInnField *inn, uint16_t pressed);
 struct BfmGameplayRun;

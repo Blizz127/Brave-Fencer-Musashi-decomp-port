@@ -104,16 +104,21 @@ int bfm_bedroom_entry(const MusashiDiscMedia *disc, const BfmSaveRecord *record,
     uint32_t story = word(record->progress + 8);
     int inn = bfm_story_returns_to_grillin_inn(story);
     if (story != 2 && !inn) return 0;
-    size_t offset = inn ? INN_DESTINATION : EARLY_DESTINATION;
+    /* The illness exterior occupies the next complete station record in MAIN. */
+    size_t offset = EARLY_DESTINATION;
+    if (inn)
+        offset = INN_DESTINATION + (story >= 200 ? sizeof room : 0);
     if (!payload(disc, "MAIN.CD", 12, 0x101, &start, &length) ||
         length < offset + sizeof room ||
         !musashi_disc_media_read_root_range(disc, "MAIN.CD", start + offset,
                                              room, sizeof room, &total)) return 0;
     if (inn) {
         if (memcmp(record->destination, (uint8_t[36]){0}, sizeof record->destination) ||
-            word(room) != 0x000a1010u) return 0;
-        out->state = *record;
-        return bfm_castle_room_entry(disc, room, out);
+            word(room) != (story >= 200 ? 0x000a1052u : 0x000a1010u)) return 0;
+        BfmBedroomEntry next = {.state = *record};
+        if (!bfm_castle_room_entry(disc, room, &next)) return 0;
+        *out = next;
+        return 1;
     }
     if (word(room) != 0x3001 ||
         !musashi_disc_media_read_root_range(disc, "MAIN.CD", 0, group_counts, 4, &total) ||
@@ -162,6 +167,7 @@ static int supported_field_member(const MusashiDiscMedia *disc, uint32_t target,
     case 0x04003000: case 0x43000: member = 4; resource = 53; group = 1; break;
     case 0x3003: member = 9; resource = 58; group = 1; break;
     case 0x3004: member = 74; resource = 123; group = 1; break;
+    case 0x000a1052: member = 124; resource = 302; group = 3; break;
     case 0x00031010: case 0x00041010: case 0x00051010: case 0x00061010:
     case 0x000a1010: case 0x02011010: member = 1; resource = 179; group = 3; break;
     case 0x02003014: case 0x02013014: case 0x23014: member = 6; resource = 184; group = 3; break;
