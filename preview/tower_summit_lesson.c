@@ -14,13 +14,6 @@ static int floor_q12(int value)
     return value / 4096 - (value % 4096 < 0);
 }
 
-static void ordinary_aim(const int16_t player[3], int32_t aim[3])
-{
-    aim[0] = player[0] + 80;
-    aim[1] = player[1] - 200;
-    aim[2] = player[2];
-}
-
 int bfm_tower_summit_lesson_begin(BfmTowerSummitLesson *lesson, const BfmForestField *room,
                                   const int16_t player[3], const int32_t eye[3])
 {
@@ -58,7 +51,7 @@ int bfm_tower_summit_lesson_begin(BfmTowerSummitLesson *lesson, const BfmForestF
         fresh.plate_eye[axis] = fresh.plate_aim[axis] + floor_q12(-s16le(shot+10)*arm.rotation[axis][2]);
     }
     memcpy(fresh.eye, eye, sizeof fresh.eye);
-    ordinary_aim(player, fresh.aim);
+    bfm_tower_summit_camera_target(player, fresh.aim);
     *lesson = fresh;
     return 1;
 }
@@ -84,7 +77,7 @@ int bfm_tower_summit_lesson_tick(BfmTowerSummitLesson *lesson, ForestVoice *voic
         BfmForestCamera ordinary;
         int32_t eye[3], aim[3];
         if (!bfm_tower_summit_camera(player, &ordinary, eye)) return BFM_SUMMIT_LESSON_ERROR;
-        ordinary_aim(player, aim);
+        bfm_tower_summit_camera_target(player, aim);
         ease(lesson->eye, eye, 6);
         ease(lesson->aim, aim, 6);
         if (++lesson->wait >= 25) {

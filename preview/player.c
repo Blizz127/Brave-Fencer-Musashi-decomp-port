@@ -450,7 +450,9 @@ static int forest_frame(Player *p)
             bfm_desktop_voice_defeat_score(p->voice, p->disc, BFM_DEFEAT_SCORE_FADE_OUT);
             break;
         case BFM_RETRY_AUDIO_RESTORE_ROOM:
-            if (bfm_forest_walk_room(p->forest) == 0x3008)
+            if (bfm_forest_walk_room(p->forest) == 0x3008 ||
+                (bfm_forest_walk_room(p->forest) == 0x300b &&
+                 !bfm_forest_walk_retry_music_track(p->forest)))
                 bfm_desktop_voice_forest_score(p->voice, p->disc, SDL_GetTicks64());
             else if (bfm_forest_walk_room(p->forest) == 0x300b)
                 bfm_desktop_voice_tower_retry_music(p->voice, p->disc,
