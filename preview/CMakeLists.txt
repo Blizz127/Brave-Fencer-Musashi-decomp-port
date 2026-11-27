@@ -40,6 +40,9 @@ add_executable(musashi_native_boot
     southern_woods.c
     woods_sign_model.c
     woods_award_effect.c
+    woods_blade_sparks.c
+    woods_capture_light.c
+    woods_flight_glow.c
     woods_caster.c
     woods_fusion.c
     woods_fusion_art.c

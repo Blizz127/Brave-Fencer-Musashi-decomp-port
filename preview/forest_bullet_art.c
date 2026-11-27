@@ -36,14 +36,14 @@ static void wave(int angle, int *sine, int *cosine)
     *cosine = root.rotation[0][0];
 }
 
-void bfm_forest_bullet_art_fire(BfmForestBulletArt *art, const int16_t muzzle[3],
-                                const int32_t eye[3])
+int bfm_forest_glow_facing(const int32_t eye[3], const int32_t center[3],
+                           unsigned shift, BfmForestTransform *out)
 {
-    if (!art || !art->loaded || !muzzle || !eye) return;
+    if (!eye || !center || !out || shift > 15) return 0;
     int toward[3] = {0};
     unsigned d2 = 0;
     for (unsigned k = 0; k < 3; ++k) {
-        int64_t coordinate = (int64_t)eye[k] - muzzle[k];
+        int64_t coordinate = (int64_t)eye[k] - center[k];
         if (coordinate < -16383 || coordinate > 16383) {
             toward[0] = toward[2] = 0;
             toward[1] = -4095;
@@ -62,15 +62,25 @@ void bfm_forest_bullet_art_fire(BfmForestBulletArt *art, const int16_t muzzle[3]
     }
     int sine_p, cos_p, sine_y, cos_y;
     int horizontal = (int)hypot(toward[0], toward[2]);
-    wave(-bearing(toward[1], horizontal), &sine_p, &cos_p);
+    int pitch = -bearing(toward[1], horizontal);
+    wave(pitch, &sine_p, &cos_p);
     wave(bearing(toward[0], toward[2]), &sine_y, &cos_y);
-    art->flash = (BfmForestTransform){.rotation = {
+    *out = (BfmForestTransform){.rotation = {
         {cos_y, down(sine_y*sine_p,4096), down(sine_y*cos_p,4096)},
         {0, cos_p, -sine_p},
         {-sine_y, down(cos_y*sine_p,4096), down(cos_y*cos_p,4096)}
     }};
     for (unsigned k = 0; k < 3; ++k)
-        art->flash.translation[k] = muzzle[k] + down(toward[k], 128);
+        out->translation[k] = center[k] + (shift ? down(toward[k], 1 << shift) : 0);
+    return pitch;
+}
+
+void bfm_forest_bullet_art_fire(BfmForestBulletArt *art, const int16_t muzzle[3],
+                                const int32_t eye[3])
+{
+    if (!art || !art->loaded || !muzzle || !eye) return;
+    const int32_t center[3] = {muzzle[0], muzzle[1], muzzle[2]};
+    bfm_forest_glow_facing(eye, center, 7, &art->flash);
     art->brightness = 192;
 }
 
@@ -79,7 +89,7 @@ void bfm_forest_bullet_art_tick(BfmForestBulletArt *art)
     if (art) art->brightness = art->brightness == 192 ? 96 : 0;
 }
 
-size_t bfm_forest_bullet_fan_project(const uint8_t perimeter[BFM_GUNSHOT_PERIMETER_BYTES],
+size_t bfm_forest_glow_fan_project(const uint8_t *perimeter, unsigned quads,
                     const BfmForestTransform *root, int plane_xz, uint32_t rgb,
                     const BfmForestCamera *camera, BfmForestDustCard *cards, size_t capacity)
 {
@@ -87,7 +97,7 @@ size_t bfm_forest_bullet_fan_project(const uint8_t perimeter[BFM_GUNSHOT_PERIMET
     if (!perimeter || !cards || !capacity || !bfm_forest_effect_camera(camera, root, &local))
         return 0;
     size_t count = 0;
-    for (unsigned face = 0; face < BFM_GUNSHOT_FAN_CARDS && count < capacity; ++face) {
+    for (unsigned face = 0; face < quads && count < capacity; ++face) {
         int16_t xyz[4][3] = {{0}};
         for (unsigned point = 0; point < 3; ++point) {
             unsigned index = (2 * face + point) * 2;
@@ -101,6 +111,14 @@ size_t bfm_forest_bullet_fan_project(const uint8_t perimeter[BFM_GUNSHOT_PERIMET
         if (bfm_forest_project_effect_quad(&local, xyz, &card)) cards[count++] = card;
     }
     return count;
+}
+
+size_t bfm_forest_bullet_fan_project(const uint8_t perimeter[BFM_GUNSHOT_PERIMETER_BYTES],
+                    const BfmForestTransform *root, int plane_xz, uint32_t rgb,
+                    const BfmForestCamera *camera, BfmForestDustCard *cards, size_t capacity)
+{
+    return bfm_forest_glow_fan_project(perimeter, BFM_GUNSHOT_FAN_CARDS, root,
+                                       plane_xz, rgb, camera, cards, capacity);
 }
 
 size_t bfm_forest_bullet_art_project(const BfmForestBulletArt *art,

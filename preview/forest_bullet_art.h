@@ -24,6 +24,18 @@ void bfm_forest_bullet_art_tick(BfmForestBulletArt *art);
 size_t bfm_forest_bullet_art_project(const BfmForestBulletArt *art,
                    const BfmForestCamera *camera, BfmForestDustCard *cards, size_t capacity);
 
+/* Construct a spherical billboard toward the field eye. An optional shift
+ * moves its center toward the eye by that fraction of the Q12 direction.
+ * The signed pitch is also used by the attached blade's larger halo. */
+int bfm_forest_glow_facing(const int32_t eye[3], const int32_t center[3],
+                           unsigned shift, BfmForestTransform *out);
+
+/* Two triangles per quad around a shared center. The mounted perimeter
+ * holds 2*quads+1 signed (x,y) or (x,z) pairs, including the closing point. */
+size_t bfm_forest_glow_fan_project(const uint8_t *perimeter, unsigned quads,
+                    const BfmForestTransform *root, int plane_xz, uint32_t rgb,
+                    const BfmForestCamera *camera, BfmForestDustCard *cards, size_t capacity);
+
 /* Both muzzle effects use the mounted signed perimeter and the same fan.
  * The white emission lies in local XZ; the yellow flare lies in local XY. */
 size_t bfm_forest_bullet_fan_project(const uint8_t perimeter[BFM_GUNSHOT_PERIMETER_BYTES],

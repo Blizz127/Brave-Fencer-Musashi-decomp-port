@@ -10,10 +10,12 @@
 
 typedef struct BfmWoodsCaster BfmWoodsCaster;
 typedef struct BfmWoodsFusion BfmWoodsFusion;
+typedef struct BfmWoodsFlightGlow BfmWoodsFlightGlow;
 
 typedef struct {
     int controllable, moving, shoulder, square_edge;
     uint32_t visible; /* The current equipped body parts, including Lumina. */
+    const int32_t *eye; /* Current room eye, used by released particle billboards. */
 } BfmWoodsFusionInput;
 
 typedef struct {
@@ -24,6 +26,7 @@ typedef struct {
     const BfmForestActor *blade;
     const BfmForestTetherTrails *trails;
     const BfmFusionFlight *flight;
+    const BfmWoodsFlightGlow *glow;
 } BfmWoodsFusionFrame;
 
 BfmWoodsFusion *bfm_woods_fusion_open(const MusashiDiscMedia *disc, const uint8_t *scene,

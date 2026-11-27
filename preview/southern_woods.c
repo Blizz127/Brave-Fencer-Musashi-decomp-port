@@ -190,7 +190,7 @@ int bfm_southern_woods_step_field(BfmSouthernWoods *woods, BfmGameplayRun *run,
             .controllable=p->controlled && !woods->award_open,
             .moving=p->root.xyz[0] != previous[0] || p->root.xyz[2] != previous[2],
             .shoulder=field.shoulder_held, .square_edge=field.square_pressed,
-            .visible=bfm_village_field_visible(&p->pose, woods->save->flags)
+            .visible=bfm_village_field_visible(&p->pose, woods->save->flags), .eye=view->eye
         };
         if (!bfm_woods_fusion_step(woods->fusion, woods->caster, run, &run->player, &p->root,
                                    woods->age, &cast, &woods->action)) return 0;
@@ -246,6 +246,7 @@ int bfm_southern_woods_draw(BfmSouthernWoods *woods, const uint8_t flags[64],
     if (!bfm_woods_caster_add(woods->caster, woods->field.hero, view) ||
         !bfm_woods_fusion_art_append(woods->field.hero, view, woods->action.blade,
                                      woods->action.trails, woods->action.bp_digits) ||
+        !bfm_woods_fusion_art_lights(woods->field.hero, view, &woods->action) ||
         !bfm_woods_award_effect_append(&woods->apparition, woods->field.hero, view) ||
         !bfm_woods_sign_model_prepare(woods->sign,view,
                                       woods->tiles,&pixels[0][0])) return 0;

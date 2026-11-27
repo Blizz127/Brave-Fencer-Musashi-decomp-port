@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "woods_fusion.h"
 #include "woods_caster.h"
+#include "woods_flight_glow.h"
 #include "forest_absorption.h"
 #include "forest_cast.h"
 #include "forest_fusion_model.h"
@@ -23,6 +24,7 @@ struct BfmWoodsFusion {
     BfmFusionFlight flight;
     BfmForestTether tether;
     BfmForestTetherTrails trails;
+    BfmWoodsFlightGlow glow;
     BfmForestDamageDigits bp_digits;
     uint8_t credit_palette;
     BfmFusionModel *model;
@@ -99,6 +101,7 @@ BfmWoodsFusion *bfm_woods_fusion_open(const MusashiDiscMedia *disc, const uint8_
     uint32_t table = u32le(scene + (room - base) + 0x4c);
     fusion->surface = bfm_forest_motion_surface_open(scene, bytes, room);
     if (!fusion->gain || !fusion->partial_bp || !fusion->message || !fusion->surface ||
+        !bfm_woods_flight_glow_load(&fusion->glow, scene, bytes) ||
         !locate_package(fusion, disc) || !bfm_forest_cast_load(&fusion->cast, disc, table) ||
         !(fusion->model = bfm_fusion_model_open(disc))) {
         bfm_woods_fusion_free(fusion);
@@ -316,11 +319,24 @@ int bfm_woods_fusion_step(BfmWoodsFusion *s, BfmWoodsCaster *casters, BfmGamepla
         (s->tether.phase == BFM_TETHER_EARNED && frame->blade_away))
         frame->tether_gauge = (int)s->tether.meter;
     frame->blade = bfm_fusion_model_tick(s->model, &s->flight, attached && square);
+    if (input->eye) {
+        bfm_woods_flight_glow_tick(&s->glow, &s->flight, s->tether.meter,
+                                   input->eye, trail_random, run);
+        frame->glow = &s->glow;
+    }
     if (s->trails.enabled && (attached || s->flight.phase != BFM_FUSION_ATTACHED)) {
         int16_t blade[3];
         for (unsigned i = 0; i < 3; ++i) blade[i] = (int16_t)s->flight.model.translation[i];
         bfm_forest_tether_trails_tick(&s->trails, s->flight.phase == BFM_FUSION_ATTACHED,
             s->tether.meter, frame->blade ? blade : NULL, root->xyz, trail_random, run);
+    }
+    if (input->eye) {
+        int16_t struck[3];
+        const int16_t *target = NULL;
+        if (s->flight.phase == BFM_FUSION_ATTACHED &&
+            bfm_woods_caster_root(casters, (int)s->tether.target.slot, struck)) target = struck;
+        int absorbed = attached && s->tether.phase == BFM_TETHER_EARNED;
+        bfm_woods_capture_light_tick(&s->glow.capture, target, absorbed, input->eye, trail_random, run);
     }
     return 1;
 }
