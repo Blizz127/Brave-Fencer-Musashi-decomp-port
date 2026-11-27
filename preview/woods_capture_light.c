@@ -158,6 +158,16 @@ static size_t project_circle(const BfmForestCamera *camera, const int32_t center
     return count;
 }
 
+size_t bfm_woods_radial_light_project(const BfmForestCamera *camera, const int32_t center[3],
+    int radius, int scale, uint32_t color, BfmForestDustCard *out, size_t capacity)
+{
+    if (!camera || !center || !out || !capacity || radius <= 0 || radius > INT16_MAX ||
+        scale <= 0 || (int64_t)radius * scale > INT16_MAX * 4096) return 0;
+    int16_t rim[RIM][2];
+    circle(radius, rim);
+    return project_circle(camera, center, rim, scale, scale, color, out, capacity);
+}
+
 size_t bfm_woods_capture_light_project(const BfmWoodsCaptureLight *light,
     const BfmForestCamera *camera, const int32_t eye[3], BfmForestDustCard *out, size_t capacity)
 {

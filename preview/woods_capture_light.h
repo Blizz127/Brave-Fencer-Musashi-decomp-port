@@ -25,6 +25,11 @@ typedef struct {
 void bfm_woods_capture_light_tick(BfmWoodsCaptureLight *light, const int16_t target_root[3],
     int earned, const int32_t eye[3], BfmTetherRandom random, void *rng_context);
 
+/* A camera-parallel field light has twelve dark perimeter vertices and one
+ * colored center. The display scale applies after rounding the base radius. */
+size_t bfm_woods_radial_light_project(const BfmForestCamera *camera, const int32_t center[3],
+    int radius, int scale, uint32_t color, BfmForestDustCard *out, size_t capacity);
+
 size_t bfm_woods_capture_light_project(const BfmWoodsCaptureLight *light,
     const BfmForestCamera *camera, const int32_t eye[3], BfmForestDustCard *out, size_t capacity);
 
