@@ -806,16 +806,26 @@ int bfm_bedroom_leave_inn(BfmBedroom *room)
 
 static int return_from_inn(BfmBedroom *room, const uint8_t *door)
 {
-    BfmBedroomEntry previous = room->entry;
-    if (!bfm_castle_room_entry(room->disc, door, &room->entry)) return 0;
-    BfmForestHud *hud = NULL;
+    BfmBedroomEntry previous = room->entry, incoming = previous;
+    if (!bfm_castle_room_entry(room->disc, door, &incoming)) return 0;
     BfmForestScore *score = room_score(room, village_score_selector(room));
-    BfmVillageArrival *outside = score ? bfm_village_resume_inn(room->disc, &room->entry,
-                                room->main, room->main_bytes, room->tiles, &hud) : NULL;
+    if (!score) return 0;
+
+    /* Both scenes borrow the same tile allocation. Keep the counter drawable
+     * if the street's textures load but its HUD or field setup fails. */
+    void *inn_tiles = malloc(sizeof room->tiles);
+    if (!inn_tiles) return 0;
+    memcpy(inn_tiles, room->tiles, sizeof room->tiles);
+    room->entry = incoming;
+    BfmForestHud *hud = NULL;
+    BfmVillageArrival *outside = bfm_village_resume_inn(room->disc, &room->entry, room->main,
+                                                       room->main_bytes, room->tiles, &hud);
     if (!outside) {
         room->entry = previous;
-        return 0;
+        memcpy(room->tiles, inn_tiles, sizeof room->tiles);
     }
+    free(inn_tiles);
+    if (!outside) return 0;
     bfm_village_arrival_free(room->village);
     bfm_inn_field_free(room->inn);
     bfm_forest_hud_free(room->hud);
