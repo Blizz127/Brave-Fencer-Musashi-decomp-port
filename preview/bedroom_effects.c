@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "bedroom_effects.h"
+#include "village_mine_wheel_audio.h"
 #include "../pc_port/forest_player_archive.h"
 #include "bedroom_record.h"
 #include "bedroom_score.h"
@@ -85,6 +86,7 @@ typedef struct {
 typedef struct {
     const Clip *clip;
     unsigned command, menu_target, menu_staged;
+    unsigned wheel_slot, wheel_level, wheel_target;
     size_t frame;
     Layer layers[MAX_LAYERS];
     Resampler resampler;
@@ -855,6 +857,8 @@ static int prepare_valley_field(Sources *s, const ForestPlayerArchive *player, B
            prepare(s, BFM_VALLEY_EARTH_RING_SOUND, &effects->clips[3]);
 }
 
+static int prepare_mine_wheel(const Sources *s, Clip *clip);
+
 static BfmBedroomEffects *forest_field_effects(const MusashiDiscMedia *disc, unsigned room,
                                               unsigned member)
 {
@@ -880,7 +884,8 @@ static BfmBedroomEffects *forest_field_effects(const MusashiDiscMedia *disc, uns
         } else if (room == 0x3044) {
             s.common = bfm_archive_sound_bank_load(disc, "MAIN.CD", 2);
             valid = s.common && prepare(&s, BFM_WOODS_HURT_SOUND, &effects->clips[0]) &&
-                    prepare(&s, BFM_WOODS_GUARD_SOUND, &effects->clips[1]);
+                    prepare(&s, BFM_WOODS_GUARD_SOUND, &effects->clips[1]) &&
+                    prepare_mine_wheel(&s, &effects->clips[2]);
             effects->replace_matching = 1;
         } else if (room == 0x3043) {
             valid = prepare(&s, BFM_MINE_POLE_SOUND, &effects->clips[0]);
@@ -1162,6 +1167,8 @@ static void start_voice(Playback *p, const Clip *clip, unsigned command)
     if (clip->tone) memcpy(p->layers, clip->tone->initial, clip->tone->count * sizeof *p->layers);
 }
 
+#include "village_mine_wheel_mixer.inc"
+
 void bfm_bedroom_effects_stop(BfmBedroomEffects *effects)
 {
     if (effects) memset(effects->playing, 0, sizeof effects->playing);
@@ -1170,6 +1177,10 @@ void bfm_bedroom_effects_stop(BfmBedroomEffects *effects)
 void bfm_bedroom_effects_start(BfmBedroomEffects *e, unsigned command)
 {
     if (!e || !command) return;
+    if (command & BFM_MINE_WHEEL_EVENT) {
+        play_mine_wheel(e, command);
+        return;
+    }
     if (command == BFM_ROOM_MENU_DUCK || command == BFM_ROOM_MENU_RESTORE) {
         for (unsigned i = 0; i < VOICES; ++i) {
             Playback *p = &e->playing[i];
@@ -1297,7 +1308,7 @@ static void advance_menu_gain(Playback *p)
 void bfm_bedroom_effects_mix(BfmBedroomEffects *e, int16_t *stereo, size_t frames)
 {
     if (!e || !stereo) return;
-    if (!e->menu_sequences) {
+    if (!e->menu_sequences && e->clips[2].id != BFM_MINE_WHEEL_LOOP) {
         mix_block(e, stereo, frames);
         return;
     }
@@ -1312,7 +1323,10 @@ void bfm_bedroom_effects_mix(BfmBedroomEffects *e, int16_t *stereo, size_t frame
         e->sound_phase += (unsigned)n * FIELD_STEP;
         if (e->sound_phase >= FIELD_PERIOD) {
             e->sound_phase -= FIELD_PERIOD;
-            for (unsigned i = 0; i < VOICES; ++i) advance_menu_gain(&e->playing[i]);
+            for (unsigned i = 0; i < VOICES; ++i) {
+                advance_menu_gain(&e->playing[i]);
+                step_wheel_level(&e->playing[i]);
+            }
         }
     }
 }

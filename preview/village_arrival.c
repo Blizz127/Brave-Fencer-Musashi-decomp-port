@@ -7,6 +7,7 @@
 #include "village_lower.h"
 #include "village_illness_lower.h"
 #include "village_mine_entrance.h"
+#include "village_mine_wheel_audio.h"
 #include "village_leno_delivery.h"
 #include "village_earth_return.h"
 #include "village_lighting.h"
@@ -72,6 +73,7 @@ struct BfmVillageArrival {
     BfmVillageLower *lower;
     BfmVillageIllnessLower *illness_lower, *incoming_illness_lower;
     BfmVillageMineEntrance *mine, *incoming_mine;
+    unsigned wheel_events[BFM_MINE_WHEELS], wheel_event_count;
     int mine_optical_busy;
     BfmNightmareTransitionEvent mine_exit_event;
     unsigned illness_draw_tick;
@@ -835,9 +837,18 @@ BfmNightmareTransitionEvent bfm_village_arrival_mine_exit_event(const BfmVillage
     return a ? a->mine_exit_event : BFM_NIGHTMARE_TRANSITION_NONE;
 }
 
+static void collect_wheel_sound(void *context, unsigned command, unsigned value, unsigned channel)
+{
+    BfmVillageArrival *a = context;
+    unsigned event = bfm_mine_wheel_sound_event(command, value, channel);
+    if (event && a->wheel_event_count < BFM_MINE_WHEELS)
+        a->wheel_events[a->wheel_event_count++] = event;
+}
+
 static int step_mine_actors(BfmVillageArrival *a, BfmGameplayRun *run, BfmFieldInput input, int departure)
 {
     if (a->illness_lower) return step_illness_street(a, run, input);
+    bfm_village_mine_entrance_set_wheel_sound(a->mine, collect_wheel_sound, a);
     int ok = departure ? bfm_village_mine_entrance_step_departure(a->mine, run, a->scene_tick) :
                          bfm_village_mine_entrance_step(a->mine, run, input, a->scene_tick);
     if (ok) ++a->scene_tick;
@@ -1268,6 +1279,7 @@ int bfm_village_arrival_step_field(BfmVillageArrival *a, BfmGameplayRun *run,
      * both actors use the shared random stream in the same field. */
     int advance_upper = !a->lower && !a->woods && !a->bank && !a->box && !a->valley && !a->maze && !a->mine && !a->illness_lower && a->motion &&
         (!a->transfer_tick || a->transfer_tick >= bfm_village_arrival_reveal_tick(a));
+    a->wheel_event_count = 0;
     int result = step_field(a, run, field, opened);
     if (result && advance_upper) {
         bfm_village_rotor_step(&a->rotor, run, u32le(a->record->progress + 8));
@@ -1327,6 +1339,15 @@ unsigned bfm_village_arrival_take_score_command(BfmVillageArrival *a)
 unsigned bfm_village_arrival_take_illness_sounds(BfmVillageArrival *a, unsigned sounds[2])
 {
     return a && a->illness_lower ? bfm_village_illness_lower_take_sounds(a->illness_lower, sounds) : 0;
+}
+
+unsigned bfm_village_arrival_take_wheel_sounds(BfmVillageArrival *a, unsigned events[3])
+{
+    if (!a || !events) return 0;
+    unsigned count = a->wheel_event_count;
+    memcpy(events, a->wheel_events, count * sizeof *events);
+    a->wheel_event_count = 0;
+    return count;
 }
 
 unsigned bfm_village_arrival_take_mine_hit_sound(BfmVillageArrival *a)

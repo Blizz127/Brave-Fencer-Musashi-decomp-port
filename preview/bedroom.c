@@ -1317,9 +1317,13 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
         queue_mounted_effect(room, room->mine_effects, BFM_ROOM_MINE_BANK, BFM_MINE_POLE_SOUND);
     }
     unsigned hit_sound = bfm_village_arrival_take_mine_hit_sound(room->village);
-    if (hit_sound) {
+    unsigned wheel_events[3];
+    unsigned wheel_count = bfm_village_arrival_take_wheel_sounds(room->village, wheel_events);
+    if (hit_sound || wheel_count) {
         if (!room->switchback_effects) room->switchback_effects = bfm_switchback_effects_load(room->disc);
         if (!room->switchback_effects) return 0;
+        for (unsigned i = 0; i < wheel_count; ++i)
+            queue_mounted_effect(room, room->switchback_effects, BFM_ROOM_MINE_BANK, wheel_events[i]);
         queue_mounted_effect(room, room->switchback_effects, BFM_ROOM_MINE_BANK, hit_sound);
     }
     unsigned upper_sound = bfm_village_arrival_take_upper_sound(room->village);
