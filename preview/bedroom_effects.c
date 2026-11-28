@@ -57,6 +57,7 @@ typedef struct {
     int sequence_base;
     unsigned sequence_gain, sequence_start, menu_attenuation;
     unsigned fade_level, fade_start_gain;
+    int fade_waiting_for_keyon;
     int menu_gain_latched;
     const uint16_t *sequence_levels;
     unsigned slide_hold, slide_step[2];
@@ -1279,6 +1280,7 @@ static void fade_lake_effects(BfmBedroomEffects *e)
                 if (note->done || note->fade_level) continue;
                 note->fade_level = 32767;
                 note->fade_start_gain = note->gain;
+                note->fade_waiting_for_keyon = note->delay != 0;
             }
         }
     }
@@ -1304,7 +1306,8 @@ static void advance_lake_fade(Playback *p)
     for (unsigned j = 0; j < p->clip->tone->count; ++j) {
         Layer *note = &p->layers[j];
         /* Each direct note starts fading on the service after its own key-on. */
-        if (!note->fade_level || note->done || note->delay || !note->phase) continue;
+        if (!note->fade_level || note->done || note->delay || !note->phase ||
+            (note->fade_waiting_for_keyon && !note->field)) continue;
         if (note->fade_level <= step) {
             note->fade_level = note->gain = 0;
             bfm_spu_envelope_release(&note->envelope);
