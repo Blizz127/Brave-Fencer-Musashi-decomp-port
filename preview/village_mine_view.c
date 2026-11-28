@@ -19,9 +19,10 @@ struct BfmVillageMineView {
     int pitch, yaw, radius, anchor[3];
 };
 
-static BfmVillageMineView *open_field(const MusashiDiscMedia *disc, const uint8_t *scene,
+BfmVillageMineView *bfm_village_mine_view_open_field(const MusashiDiscMedia *disc, const uint8_t *scene,
     size_t bytes, uint32_t room, uint32_t face_table, unsigned member, uint16_t tiles[512][1024])
 {
+    if (!disc || !scene || !tiles) return NULL;
     BfmVillageMineView *view = calloc(1, sizeof *view);
     if (!view) return NULL;
     if (!bfm_village_field_load_room(&view->field, disc, scene, bytes, room, face_table) ||
@@ -48,7 +49,7 @@ BfmVillageMineView *bfm_village_mine_view_open(const MusashiDiscMedia *disc,
             u16le(zone + 8) >= 4096 || u16le(zone + 10) >= 4096 ||
             !u32le(zone + 12) || u32le(zone + 12) > INT16_MAX) return NULL;
     }
-    BfmVillageMineView *view = open_field(disc, scene, bytes, room, UINT32_C(0x801842d4), 107, tiles);
+    BfmVillageMineView *view = bfm_village_mine_view_open_field(disc, scene, bytes, room, UINT32_C(0x801842d4), 107, tiles);
     if (view) view->zones = scene + zones;
     return view;
 }
@@ -67,7 +68,7 @@ BfmVillageMineView *bfm_village_mine_corridor_view_open(const MusashiDiscMedia *
         const uint8_t *row = scene + paths + 14 * i;
         if (row[0] > 1 || row[1] > 2) return NULL;
     }
-    BfmVillageMineView *view = open_field(disc, scene, bytes, room, UINT32_C(0x80182acc), 108, tiles);
+    BfmVillageMineView *view = bfm_village_mine_view_open_field(disc, scene, bytes, room, UINT32_C(0x80182acc), 108, tiles);
     if (view) {
         view->bearings = scene + paths;
         view->distances = scene + ranges;
@@ -92,6 +93,18 @@ BfmVillageField *bfm_village_mine_view_field(BfmVillageMineView *view)
 const BfmVillageCamera *bfm_village_mine_view_camera(const BfmVillageMineView *view)
 {
     return view ? &view->camera : NULL;
+}
+
+void bfm_village_mine_view_set_camera(BfmVillageMineView *view, const BfmVillageCamera *camera)
+{
+    if (view && camera) view->camera = *camera;
+}
+
+const BfmBedroomView *bfm_village_mine_view_projection(BfmVillageMineView *view)
+{
+    if (!view || !bfm_bedroom_field_set_focal(view->field.field, view->camera.focal)) return NULL;
+    bfm_bedroom_field_viewpoint(view->field.field, view->camera.eye, view->camera.target, 1, 1);
+    return bfm_bedroom_field_view(view->field.field);
 }
 
 int bfm_village_mine_view_pad_yaw(const BfmVillageMineView *view)

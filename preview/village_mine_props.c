@@ -16,7 +16,13 @@ typedef struct {
     size_t length;
 } MineSign;
 
+typedef struct {
+    uint32_t binding, room, kit, programs[SIGNS];
+    unsigned sign_class;
+} MineSignRoom;
+
 struct BfmVillageMineProps {
+    int yields_to_resident;
     MusashiForestPlayerMesh *mesh;
     BfmForestPose pose;
     BfmForestGuardBox box;
@@ -37,11 +43,12 @@ void bfm_village_mine_props_free(BfmVillageMineProps *props)
     }
 }
 
-static int load_sign(MineSign *sign, const uint8_t *row, const uint8_t *scene, size_t bytes)
+static int load_sign(MineSign *sign, const uint8_t *row, const uint8_t *scene, size_t bytes,
+                     uint32_t program)
 {
-    unsigned variant = u16le(row + 8);
-    const uint8_t *script = mounted(scene, bytes, UINT32_C(0x8018611c) + variant * 24, 24);
-    if (!script || u32le(script) != 10 || u32le(script + 8) != 1 || u32le(script + 16) != 2 ||
+    const uint8_t *script = mounted(scene, bytes, program, 24);
+    if (!script || u32le(script) != 10 || u32le(script + 4) || u32le(script + 8) != 1 ||
+        u32le(script + 16) != 2 || u32le(script + 20) ||
         s16le(row + 10) || s16le(row + 14)) return 0;
     uint32_t address = u32le(script + 12);
     const uint8_t *start = mounted(scene, bytes, address, 1);
@@ -55,12 +62,12 @@ static int load_sign(MineSign *sign, const uint8_t *row, const uint8_t *scene, s
     return 1;
 }
 
-BfmVillageMineProps *bfm_village_mine_props_open(const uint8_t *scene, size_t bytes)
+static BfmVillageMineProps *open_props(const uint8_t *scene, size_t bytes, const MineSignRoom *layout)
 {
-    const uint8_t *binding = mounted(scene, bytes, UINT32_C(0x8018245c), 4);
-    if (!binding || u32le(binding) != UINT32_C(0x8018615c)) return NULL;
+    const uint8_t *binding = mounted(scene, bytes, layout->binding, 4);
+    if (!binding || u32le(binding) != layout->room) return NULL;
     const uint8_t *room = mounted(scene, bytes, u32le(binding), 0xbc);
-    const uint8_t *kit = mounted(scene, bytes, UINT32_C(0x801860e8), 12);
+    const uint8_t *kit = mounted(scene, bytes, layout->kit, 12);
     if (!room || !kit || !(u16le(kit + 2) & 0x0800)) return NULL;
     const uint8_t *shape = mounted(scene, bytes, u32le(kit + 8), 16);
     if (!shape || u32le(shape)) return NULL;
@@ -70,6 +77,7 @@ BfmVillageMineProps *bfm_village_mine_props_open(const uint8_t *scene, size_t by
     if (!rows) return NULL;
     BfmVillageMineProps *props = calloc(1, sizeof *props);
     if (!props) return NULL;
+    props->yields_to_resident = layout->sign_class == 834;
     for (unsigned i = 0; i < 3; ++i) {
         props->box.low[i] = s16le(shape + 4 + 4*i);
         props->box.high[i] = s16le(shape + 6 + 4*i);
@@ -79,10 +87,10 @@ BfmVillageMineProps *bfm_village_mine_props_open(const uint8_t *scene, size_t by
         const uint8_t *row = rows + off;
         unsigned kind = u16le(row + 6);
         if (!kind) break;
-        if (kind != 834) continue;
+        if (kind != layout->sign_class) continue;
         unsigned variant = u16le(row + 8);
         if (variant >= SIGNS || props->signs[variant].message ||
-            !load_sign(&props->signs[variant], row, scene, bytes)) goto fail;
+            !load_sign(&props->signs[variant], row, scene, bytes, layout->programs[variant])) goto fail;
     }
     for (unsigned i = 0; i < SIGNS; ++i)
         if (!props->signs[i].message) goto fail;
@@ -96,6 +104,26 @@ BfmVillageMineProps *bfm_village_mine_props_open(const uint8_t *scene, size_t by
 fail:
     bfm_village_mine_props_free(props);
     return NULL;
+}
+
+BfmVillageMineProps *bfm_village_mine_props_open(const uint8_t *scene, size_t bytes)
+{
+    const MineSignRoom gallery = {
+        .binding = 0x8018245cu, .room = 0x8018615cu, .kit = 0x801860e8u,
+        .programs = {0x8018611cu, 0x80186134u}, .sign_class = 834
+    };
+    return open_props(scene, bytes, &gallery);
+}
+
+BfmVillageMineProps *bfm_village_mine_props_open_shaft(const uint8_t *scene, size_t bytes)
+{
+    const uint8_t *programs = mounted(scene, bytes, 0x80181f10u, SIGNS * 4);
+    if (!programs) return NULL;
+    const MineSignRoom shaft = {
+        .binding = 0x8017e300u, .room = 0x80181f28u, .kit = 0x80181eacu,
+        .programs = {u32le(programs), u32le(programs + 4)}, .sign_class = 835
+    };
+    return open_props(scene, bytes, &shaft);
 }
 
 int bfm_village_mine_props_draw(void *context, BfmBedroomFigure *figure, const BfmBedroomView *view)
@@ -136,8 +164,9 @@ BfmForestMessage *bfm_village_mine_props_read(const BfmVillageMineProps *props,
     if (!props || !foot || !square_pressed) return NULL;
     for (unsigned i = 0; i < SIGNS; ++i) {
         const MineSign *sign = &props->signs[i];
-        if (distance_squared(foot, sign->position) > 64 * 64 ||
-            (actor548 && distance_squared(actor548, sign->position) < 64 * 64)) continue;
+        if (distance_squared(foot, sign->position) > 64 * 64) continue;
+        if (props->yields_to_resident && actor548 &&
+            distance_squared(actor548, sign->position) < 64 * 64) continue;
         if (point) memcpy(point, sign->position, sizeof sign->position);
         return bfm_field_message_borrow(sign->message, sign->length);
     }

@@ -9,6 +9,13 @@ typedef struct BfmVillageMineView BfmVillageMineView;
 /* The expanded mine scene and caller's tile pages stay mounted until free. */
 BfmVillageMineView *bfm_village_mine_view_open(const MusashiDiscMedia *disc,
     const uint8_t *scene, size_t bytes, uint16_t tiles[512][1024]);
+/* Mount a validated field descriptor with its scene-specific player textures. */
+BfmVillageMineView *bfm_village_mine_view_open_field(const MusashiDiscMedia *disc,
+    const uint8_t *scene, size_t bytes, uint32_t room, uint32_t face_table,
+    unsigned member, uint16_t tiles[512][1024]);
+void bfm_village_mine_view_set_camera(BfmVillageMineView *view, const BfmVillageCamera *camera);
+/* Prepare the current camera projection for actor updates before drawing. */
+const BfmBedroomView *bfm_village_mine_view_projection(BfmVillageMineView *view);
 void bfm_village_mine_view_free(BfmVillageMineView *view);
 BfmVillageField *bfm_village_mine_view_field(BfmVillageMineView *view);
 const BfmVillageCamera *bfm_village_mine_view_camera(const BfmVillageMineView *view);
