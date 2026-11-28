@@ -15,6 +15,7 @@
 #include "bedroom_award.h"
 #include "bedroom_effects.h"
 #include "village_mine_shaft_audio.h"
+#include "village_mine_lake_audio.h"
 #include "bedroom_dust.h"
 #include "bedroom_fade.h"
 #include "bedroom_field.h"
@@ -105,9 +106,8 @@ struct BfmBedroom {
     const MusashiDiscMedia *disc;
     BfmForestScore *scores[256], *prepared_score, *current_score;
     uint16_t music_field;
-    /* A village update can issue one choice sound, every woods request,
-     * and one porch knock, in that order. */
-    BfmBedroomSound sounds[BFM_VILLAGE_WOODS_SOUNDS + 2];
+    /* Keep the complete lake actor burst alongside field and interface commands. */
+    BfmBedroomSound sounds[BFM_MINE_LAKE_SOUNDS + BFM_VILLAGE_WOODS_SOUNDS + 2];
     size_t sound_count;
     int sounds_taken;
     BfmRetryAudioEvent retry_audio;
@@ -120,7 +120,7 @@ struct BfmBedroom {
     GrillinExterior pending_exterior;
     uint32_t (*frozen_recovery)[320], (*field_item_background)[320];
     BfmBedroomEffects *nightmare_effects, *box_effects, *illness_effects, *mine_effects, *switchback_effects;
-    BfmBedroomEffects *shaft_effects;
+    BfmBedroomEffects *shaft_effects, *lake_effects;
     BfmBedroomEffects *effects, *knock, *shrink_sound, *bakery_effects;
     BfmBedroomEffects *forest_bank_effects, *maze_guide_effects, *valley_effects;
     uint32_t room_sound_group;
@@ -155,6 +155,27 @@ static void queue_mounted_effect(BfmBedroom *room, BfmBedroomEffects *effects,
     if (room->mine_effects_closed_in || !command ||
         room->sound_count >= sizeof room->sounds / sizeof *room->sounds) return;
     room->sounds[room->sound_count++] = (BfmBedroomSound){effects, command, bank};
+}
+
+static void reopen_mine_effects(BfmBedroom *room, uint16_t mounted)
+{
+    uint16_t source = room->mine_effects_closed_in;
+    if ((source == 0x1052 && mounted == 0x3043) || (source == 0x3043 && mounted == 0x1052) ||
+        (source >= 0x3043 && source <= 0x3046 && mounted >= 0x3043 && mounted <= 0x3046 &&
+         (mounted == source + 1 || mounted == source - 1)))
+        room->mine_effects_closed_in = 0;
+}
+
+static int queue_mine_lake_sounds(BfmBedroom *room)
+{
+    unsigned events[BFM_MINE_LAKE_SOUNDS];
+    unsigned count = bfm_village_arrival_take_lake_sounds(room->village, events);
+    if (!count || room->mine_effects_closed_in) return 1;
+    if (!room->lake_effects) room->lake_effects = bfm_mine_lake_effects_load(room->disc);
+    if (!room->lake_effects) return 0;
+    for (unsigned i = 0; i < count; ++i)
+        queue_mounted_effect(room, room->lake_effects, BFM_ROOM_MINE_LAKE_BANK, events[i]);
+    return 1;
 }
 
 static void queue_effect(BfmBedroom *room, BfmRoomSoundBank bank, unsigned command)
@@ -264,6 +285,7 @@ void bfm_bedroom_free(BfmBedroom *room)
     bfm_bedroom_effects_free(room->mine_effects);
     bfm_bedroom_effects_free(room->switchback_effects);
     bfm_bedroom_effects_free(room->shaft_effects);
+    bfm_bedroom_effects_free(room->lake_effects);
     for (unsigned i = 0; i < sizeof room->scores / sizeof *room->scores; ++i)
         bfm_forest_score_free(room->scores[i]);
     bfm_forest_message_free(room->message);
@@ -1235,11 +1257,7 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
     if (bfm_village_arrival_take_illness_voice_stop(room->village, &stopped_generation))
         result = BFM_BEDROOM_VOICE_STOPPED;
     uint16_t mounted = bfm_village_arrival_room(room->village);
-    if ((room->mine_effects_closed_in == 0x1052 && mounted == 0x3043) ||
-        (room->mine_effects_closed_in == 0x3043 && (mounted == 0x1052 || mounted == 0x3044)) ||
-        (room->mine_effects_closed_in == 0x3044 && (mounted == 0x3043 || mounted == 0x3045)) ||
-        (room->mine_effects_closed_in == 0x3045 && mounted == 0x3044))
-        room->mine_effects_closed_in = 0;
+    reopen_mine_effects(room, mounted);
     switch (bfm_village_arrival_mine_exit_event(room->village)) {
     case BFM_NIGHTMARE_STOP_OPTICAL:
         bfm_forest_voice_stop(mine_voice);
@@ -1294,6 +1312,7 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
         for (unsigned i = 0; i < illness_count; ++i)
             queue_mounted_effect(room, room->illness_effects, BFM_ROOM_ILLNESS_BANK, illness_sounds[i]);
     }
+    if (!queue_mine_lake_sounds(room)) return 0;
     if (!bfm_village_arrival_begin_retry(room->village, room->run)) return 0;
     if (current_field_retry(room)) {
         bfm_forest_message_free(room->message);

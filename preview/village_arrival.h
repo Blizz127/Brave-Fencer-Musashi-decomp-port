@@ -57,6 +57,11 @@ unsigned bfm_village_arrival_take_score_command(BfmVillageArrival *a);
 unsigned bfm_village_arrival_take_illness_sounds(BfmVillageArrival *a, unsigned sounds[2]);
 /* One actor update may issue two fan commands, a Box cue, and a menu sound. */
 enum { BFM_MINE_SHAFT_SOUNDS = 4 };
+/* Twelve shoal requests, the current, and independent hero and creature sounds
+ * can all arrive before the room mixer consumes this field. */
+enum { BFM_MINE_LAKE_SOUNDS = 24 };
+unsigned bfm_village_arrival_take_lake_sounds(BfmVillageArrival *a,
+    unsigned events[BFM_MINE_LAKE_SOUNDS]);
 unsigned bfm_village_arrival_take_shaft_sounds(BfmVillageArrival *a,
     unsigned events[BFM_MINE_SHAFT_SOUNDS]);
 unsigned bfm_village_arrival_take_wheel_sounds(BfmVillageArrival *a, unsigned events[3]);
