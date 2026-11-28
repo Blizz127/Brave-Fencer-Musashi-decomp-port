@@ -6,6 +6,7 @@
 #include "village_clock.h"
 #include "village_lower.h"
 #include "village_illness_lower.h"
+#include "village_mine_entrance.h"
 #include "village_leno_delivery.h"
 #include "village_earth_return.h"
 #include "village_lighting.h"
@@ -52,7 +53,8 @@ typedef struct {
 
 typedef struct {
     BfmNightmareTransition wipe;
-    enum { EXIT_WALK, MOUNT_RECEIVER, HOLD_PAGE, REVEAL_FIELD } phase;
+    enum { EXIT_WALK, MOUNT_RECEIVER, HOLD_PAGE, REVEAL_FIELD, MINE_STATION, MINE_RELEASED } phase;
+    const uint8_t *mine_station;
     uint32_t page[240][320];
     int submitted;
     unsigned reveal_updates, mount_wait;
@@ -66,7 +68,10 @@ struct BfmVillageArrival {
     size_t main_bytes;
     BfmBedroomEntry *entry;
     BfmVillageLower *lower;
-    BfmVillageIllnessLower *illness_lower;
+    BfmVillageIllnessLower *illness_lower, *incoming_illness_lower;
+    BfmVillageMineEntrance *mine, *incoming_mine;
+    int mine_optical_busy;
+    BfmNightmareTransitionEvent mine_exit_event;
     unsigned illness_draw_tick;
     BfmVillageLenoDelivery *delivery;
     BfmVillageEarthReturn *earth_return;
@@ -153,6 +158,9 @@ void bfm_village_arrival_free(BfmVillageArrival *a)
     bfm_forest_maze_free(a->maze);
     free_bank(a->bank);
     bfm_southern_woods_free(a->woods);
+    bfm_village_illness_lower_free(a->incoming_illness_lower);
+    bfm_village_mine_entrance_free(a->incoming_mine);
+    bfm_village_mine_entrance_free(a->mine);
     bfm_village_illness_lower_free(a->illness_lower);
     bfm_village_lower_free(a->lower);
     clear_upper(a);
@@ -278,6 +286,7 @@ BfmRetryScreen *bfm_village_arrival_retry(const BfmVillageArrival *a)
 
 int bfm_village_arrival_begin_retry(BfmVillageArrival *a, BfmGameplayRun *run)
 {
+    if (a->mine) return 1;
     if (a->valley) return 1; /* The fatal pit receiver mounts its own retry. */
     if (a->box) return bfm_woods_box_visit_begin_retry(a->box, run);
     if (a->bank) {
@@ -321,6 +330,7 @@ uint16_t bfm_village_arrival_room(const BfmVillageArrival *a)
     if (a->maze) return 0x301b;
     if (a->bank) return 0x3014;
     if (a->woods) return 0x3025;
+    if (a->mine) return 0x3043;
     if (a->illness_lower) return 0x1052;
     if (a->lower) return 0x1010;
     return a->motion ? 0x1011 : 0;
@@ -333,6 +343,7 @@ const BfmVillagePlayer *bfm_village_arrival_player(const BfmVillageArrival *a)
     if (a->maze) return bfm_village_motion_player(bfm_forest_maze_motion(a->maze));
     if (a->bank) return bfm_village_motion_player(a->bank->motion);
     if (a->woods) return bfm_southern_woods_player(a->woods);
+    if (a->mine) return bfm_village_mine_entrance_player(a->mine);
     if (a->illness_lower) return bfm_village_illness_lower_player(a->illness_lower);
     return a->lower ? bfm_village_lower_player(a->lower) : bfm_village_motion_player(a->motion);
 }
@@ -394,13 +405,16 @@ const uint8_t *bfm_village_arrival_castle_transfer(const BfmVillageArrival *a)
 
 const uint8_t *bfm_village_arrival_shop_transfer(const BfmVillageArrival *arrival)
 {
-    if (arrival->illness_lower) return bfm_village_illness_lower_door(arrival->illness_lower);
+    if (arrival->illness_lower) return bfm_village_arrival_inn_transfer(arrival);
     return bfm_village_lower_shop_transfer(arrival->lower);
 }
 
 const uint8_t *bfm_village_arrival_inn_transfer(const BfmVillageArrival *arrival)
 {
-    if (arrival->illness_lower) return bfm_village_illness_lower_door(arrival->illness_lower);
+    if (arrival->illness_lower) {
+        const uint8_t *door = bfm_village_illness_lower_door(arrival->illness_lower);
+        return door && u32le(door) == UINT32_C(0x06002058) ? door : NULL;
+    }
     return bfm_village_lower_inn_transfer(arrival->lower);
 }
 
@@ -757,7 +771,9 @@ int bfm_village_arrival_draw_woods_crossing(const BfmVillageArrival *a, uint32_t
     if (!c) return 0;
     if (c->submitted && (c->phase == HOLD_PAGE || (c->phase == REVEAL_FIELD && c->reveal_updates < 2)))
         memcpy(pixels, c->page, sizeof c->page);
-    bfm_nightmare_transition_draw(&c->wipe, pixels);
+    /* The mine passage shades the receiver after its HUD on submission. */
+    if (c->phase != REVEAL_FIELD || (!a->mine && !a->illness_lower))
+        bfm_nightmare_transition_draw(&c->wipe, pixels);
     return 1;
 }
 
@@ -781,6 +797,112 @@ static int step_illness_street(BfmVillageArrival *a, BfmGameplayRun *run, BfmFie
      * the shop transition presents the same completed page more than once. */
     if (!bag_was_open) a->illness_draw_tick = a->scene_tick++;
     return 1;
+}
+
+struct ForestVoice *bfm_village_arrival_illness_voice(const BfmVillageArrival *a, unsigned *generation)
+{
+    unsigned current;
+    return a && a->illness_lower
+        ? bfm_village_illness_lower_voice(a->illness_lower, generation ? generation : &current) : NULL;
+}
+
+int bfm_village_arrival_take_illness_voice_stop(BfmVillageArrival *a, unsigned *generation)
+{
+    return a && a->illness_lower && bfm_village_illness_lower_take_voice_stop(a->illness_lower, generation);
+}
+
+void bfm_village_arrival_mine_optical(BfmVillageArrival *a, int busy)
+{
+    if (a) a->mine_optical_busy = busy;
+}
+
+BfmNightmareTransitionEvent bfm_village_arrival_mine_exit_event(const BfmVillageArrival *a)
+{
+    return a ? a->mine_exit_event : BFM_NIGHTMARE_TRANSITION_NONE;
+}
+
+static int step_mine_actors(BfmVillageArrival *a, BfmGameplayRun *run, BfmFieldInput input, int departure)
+{
+    if (a->illness_lower) return step_illness_street(a, run, input);
+    int ok = departure ? bfm_village_mine_entrance_step_departure(a->mine, run, a->scene_tick) :
+                         bfm_village_mine_entrance_step(a->mine, run, input, a->scene_tick);
+    if (ok) ++a->scene_tick;
+    return ok;
+}
+
+static int step_mine_passage(BfmVillageArrival *a, BfmGameplayRun *run, BfmFieldInput field)
+{
+    WoodsCrossing *c = a->crossing;
+    if (!c) {
+        if (!step_mine_actors(a, run, field, 0)) return 0;
+        const uint8_t *door = a->mine ? bfm_village_motion_transfer(bfm_village_mine_entrance_departure(a->mine)) :
+                                       bfm_village_illness_lower_door(a->illness_lower);
+        if (!door || u32le(door) != (a->mine ? UINT32_C(0x000f1052) : UINT32_C(0x02003043))) return 1;
+        c = open_woods_crossing(a->disc);
+        if (!c) return 0;
+        c->mine_station = door;
+        bfm_nightmare_transition_begin_departure(&c->wipe);
+        a->crossing = c;
+        return 1;
+    }
+
+    if (!run) return 0;
+    if (c->phase == REVEAL_FIELD) {
+        if (c->reveal_updates++)
+            bfm_nightmare_transition_step(&c->wipe, 1, 0, 0);
+        if (!step_mine_actors(a, run, (BfmFieldInput){0}, 0)) return 0;
+        if (bfm_nightmare_transition_live(&c->wipe)) {
+            free(c);
+            a->crossing = NULL;
+        }
+        return 1;
+    }
+    if (c->phase == HOLD_PAGE) {
+        /* The last presented page owns the shutter. Both rooms borrow the
+         * live entry and tiles; only their current receiver can draw again. */
+        if (a->mine && !a->incoming_illness_lower) {
+            a->incoming_illness_lower = bfm_village_illness_lower_open(a->disc, a->entry,
+                a->main, a->main_bytes, a->tiles, NULL);
+            if (!a->incoming_illness_lower) return 0;
+        } else if (a->illness_lower && !a->incoming_mine) {
+            a->incoming_mine = bfm_village_mine_entrance_open(a->disc, a->entry,
+                a->main, a->main_bytes, a->tiles);
+            if (!a->incoming_mine) return 0;
+        }
+        if (bfm_nightmare_transition_step(&c->wipe, 1, c->submitted, 1) != BFM_NIGHTMARE_ENTER_VILLAGE)
+            return 1;
+        bfm_village_mine_entrance_free(a->mine);
+        bfm_village_illness_lower_free(a->illness_lower);
+        a->mine = a->incoming_mine;
+        a->illness_lower = a->incoming_illness_lower;
+        a->incoming_mine = NULL;
+        a->incoming_illness_lower = NULL;
+        c->phase = REVEAL_FIELD;
+        c->submitted = 0;
+        a->illness_draw_tick = a->scene_tick;
+        bfm_nightmare_transition_begin_arrival(&c->wipe);
+        return 1;
+    }
+    if (c->phase != MOUNT_RECEIVER) {
+        a->mine_exit_event = bfm_nightmare_transition_step(&c->wipe, !a->mine_optical_busy, 0, 0);
+        switch (a->mine_exit_event) {
+        case BFM_NIGHTMARE_PREPARE_VILLAGE:
+            a->record->flags[281 / 8] &= (uint8_t)~(1u << (281 % 8));
+            run->story_flags[281 / 8] &= (uint8_t)~(1u << (281 % 8));
+            break;
+        case BFM_NIGHTMARE_EXIT_CAMERA: c->phase = MINE_STATION; break;
+        case BFM_NIGHTMARE_RELEASE_ROOM_AUDIO: c->phase = MINE_RELEASED; break;
+        case BFM_NIGHTMARE_CAPTURE_OUTGOING: c->phase = MOUNT_RECEIVER; break;
+        default: break;
+        }
+    }
+    if (c->phase == MOUNT_RECEIVER && run->display_page) {
+        if (!bfm_castle_room_entry(a->disc, c->mine_station, a->entry)) return 0;
+        c->mine_station = NULL;
+        c->phase = HOLD_PAGE;
+        return 1;
+    }
+    return step_mine_actors(a, run, (BfmFieldInput){0}, c->phase != EXIT_WALK);
 }
 
 int bfm_village_arrival_lower_ambient(BfmVillageArrival *a, BfmGameplayRun *run)
@@ -840,7 +962,8 @@ static int step_field(BfmVillageArrival *a, BfmGameplayRun *run,
 {
     int x = field.x, y = field.y, talk_edge = field.square_pressed;
     if (opened) *opened = NULL;
-    if (a->illness_lower) return step_illness_street(a, run, field);
+    a->mine_exit_event = BFM_NIGHTMARE_TRANSITION_NONE;
+    if (a->illness_lower || a->mine) return step_mine_passage(a, run, field);
     if (a->crossing) return step_woods_crossing(a, run, field, opened);
     /* The upper field and the lower street share the running world clock. The
      * player is already on the incoming actor list for its 17 fade-in updates. */
@@ -1116,7 +1239,7 @@ int bfm_village_arrival_step_field(BfmVillageArrival *a, BfmGameplayRun *run,
     /* The upper actor starts on the update after admission and stops when
      * its outgoing field freezes. Musashi updates before the rotor when
      * both actors use the shared random stream in the same field. */
-    int advance_upper = !a->lower && !a->woods && !a->bank && !a->box && !a->valley && !a->maze && a->motion &&
+    int advance_upper = !a->lower && !a->woods && !a->bank && !a->box && !a->valley && !a->maze && !a->mine && !a->illness_lower && a->motion &&
         (!a->transfer_tick || a->transfer_tick >= bfm_village_arrival_reveal_tick(a));
     int result = step_field(a, run, field, opened);
     if (result && advance_upper) {
@@ -1155,6 +1278,11 @@ int bfm_village_arrival_field_score(const BfmVillageArrival *a, unsigned village
     if (a && a->earth_return && bfm_village_arrival_room(a) == 0x1011) {
         unsigned track = bfm_village_earth_return_score(a->earth_return, village_score);
         return track ? (int)track : -1;
+    }
+    if (a && (a->mine || a->illness_lower)) {
+        if (a->crossing && (a->crossing->phase == MINE_RELEASED || a->crossing->phase == MOUNT_RECEIVER ||
+                            a->crossing->phase == HOLD_PAGE)) return -1;
+        return a->mine ? 0x49 : 0x27;
     }
     unsigned track = bfm_village_arrival_woods_score_selector(a);
     if (!track && a && a->box) return -1;
@@ -1227,6 +1355,7 @@ int bfm_village_arrival_rest_hud(const BfmVillageArrival *a, BfmForestHud *hud)
 {
     if (a && a->valley) return bfm_hells_valley_hud(a->valley,hud);
     if (a && a->box) return bfm_woods_box_visit_rest_hud(a->box, hud);
+    if (a && (a->mine || (a->illness_lower && a->crossing && a->crossing->phase == HOLD_PAGE))) return 1;
     if (a && a->illness_lower) return bfm_village_illness_lower_rest_hud(a->illness_lower, hud);
     return bfm_village_lower_rest_hud(a ? a->lower : NULL, hud);
 }
@@ -1299,9 +1428,16 @@ int bfm_village_arrival_menu_serviced(const BfmVillageArrival *a)
 
 int bfm_village_arrival_draw_field_window(const BfmVillageArrival *a, uint32_t pixels[240][320])
 {
-    if (!a->illness_lower || (!bfm_village_illness_lower_page(a->illness_lower) &&
-                              !bfm_village_illness_lower_bag_active(a->illness_lower))) return 1;
-    return bfm_village_illness_lower_draw_window(a->illness_lower, pixels);
+    if (a->crossing && a->crossing->phase == HOLD_PAGE && (a->illness_lower || a->mine)) return 1;
+    if (a->mine) {
+        if (!bfm_village_mine_entrance_draw_window(a->mine, pixels)) return 0;
+    } else if (a->illness_lower) {
+        if ((bfm_village_illness_lower_page(a->illness_lower) || bfm_village_illness_lower_bag_active(a->illness_lower)) &&
+            !bfm_village_illness_lower_draw_window(a->illness_lower, pixels)) return 0;
+    } else return 1;
+    if (a->crossing && a->crossing->phase == REVEAL_FIELD)
+        bfm_nightmare_transition_draw(&a->crossing->wipe, pixels);
+    return 1;
 }
 
 int bfm_village_arrival_draw_page(BfmVillageArrival *a, const uint8_t flags[64],
@@ -1321,6 +1457,8 @@ int bfm_village_arrival_draw_page(BfmVillageArrival *a, const uint8_t flags[64],
         return 1;
     }
     if (a->woods) return bfm_southern_woods_draw(a->woods, flags, window, pixels);
+    if ((a->mine || a->illness_lower) && a->crossing && a->crossing->phase == HOLD_PAGE) return 1;
+    if (a->mine) return bfm_village_mine_entrance_draw(a->mine, pixels);
     if (a->illness_lower)
         return bfm_village_illness_lower_draw(a->illness_lower, a->illness_draw_tick, flags, draw_page, pixels);
     if (a->lower) return bfm_village_lower_draw(a->lower, a->scene_tick, flags, window, draw_page, pixels);

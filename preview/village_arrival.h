@@ -6,10 +6,12 @@
 #include "bedroom_record.h"
 #include "gameplay_run.h"
 #include "retry_screen.h"
+#include "nightmare_transition.h"
 #include "forest_message.h"
 #include "village_arrival_motion.h"
 
 typedef struct BfmVillageArrival BfmVillageArrival;
+struct ForestVoice;
 BfmVillageArrival *bfm_village_arrival_open(const MusashiDiscMedia *disc, BfmBedroomEntry *entry,
                       const uint8_t *main, size_t main_bytes, uint16_t tiles[512][1024]);
 BfmVillageArrival *bfm_village_resume_inn(const MusashiDiscMedia *disc, BfmBedroomEntry *entry,
@@ -37,6 +39,12 @@ void bfm_village_arrival_lower_register(BfmVillageArrival *a, BfmGameplayRun *ru
 int bfm_village_arrival_lower_ambient(BfmVillageArrival *a, BfmGameplayRun *run);
 int bfm_village_arrival_step_field(BfmVillageArrival *arrival, BfmGameplayRun *run,
                                    BfmFieldInput field, BfmForestMessage **opened);
+struct ForestVoice *bfm_village_arrival_illness_voice(const BfmVillageArrival *arrival, unsigned *generation);
+int bfm_village_arrival_take_illness_voice_stop(BfmVillageArrival *arrival, unsigned *generation);
+/* Sample the physical reader before advancing the field. Consume the station's
+ * optical, effect and score requests on the field that produced them. */
+void bfm_village_arrival_mine_optical(BfmVillageArrival *arrival, int busy);
+BfmNightmareTransitionEvent bfm_village_arrival_mine_exit_event(const BfmVillageArrival *arrival);
 int bfm_village_arrival_award_cue(const BfmVillageArrival *arrival);
 void bfm_village_arrival_woods_score_applied(BfmVillageArrival *arrival, unsigned selector);
 unsigned bfm_village_arrival_woods_score_selector(const BfmVillageArrival *a);

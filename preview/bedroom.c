@@ -113,6 +113,7 @@ struct BfmBedroom {
     BfmNightmareRoom *nightmare;
     const uint8_t *nightmare_exit;
     int recovery_frame_submitted, mounted_recovery_score, release_room_effects;
+    uint16_t mine_effects_closed_in;
     RecoveredStreet recovered_exterior;
     BfmNightmareTransition recovery_transition;
     GrillinExterior pending_exterior;
@@ -149,7 +150,8 @@ static uint32_t word(const uint8_t *p)
 static void queue_mounted_effect(BfmBedroom *room, BfmBedroomEffects *effects,
                                  BfmRoomSoundBank bank, unsigned command)
 {
-    if (!command || room->sound_count >= sizeof room->sounds / sizeof *room->sounds) return;
+    if (room->mine_effects_closed_in || !command ||
+        room->sound_count >= sizeof room->sounds / sizeof *room->sounds) return;
     room->sounds[room->sound_count++] = (BfmBedroomSound){effects, command, bank};
 }
 
@@ -1207,8 +1209,46 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
         field.square_pressed = field.triangle_pressed = field.shoulder_held = 0;
         field.circle_pressed = field.cross_pressed = field.cross_held = 0;
     }
+    unsigned generation = 0;
+    ForestVoice *mine_voice = bfm_village_arrival_illness_voice(room->village, &generation);
+    unsigned mine_status = bfm_forest_voice_status(mine_voice);
+    bfm_village_arrival_mine_optical(room->village, mine_status != BFM_FOREST_VOICE_IDLE ||
+        bfm_forest_voice_status(current_voice(room)) != BFM_FOREST_VOICE_IDLE);
+
     int previous_score = bfm_village_arrival_field_score(room->village, village_score_selector(room));
     if (!bfm_village_arrival_step_field(room->village, room->run, field, &opened)) return 0;
+    /* Lower Grillin advances its own stream while its actor processes the page. */
+    mine_voice = bfm_village_arrival_illness_voice(room->village, &generation);
+    if (mine_status == BFM_FOREST_VOICE_PENDING &&
+        bfm_forest_voice_status(mine_voice) == BFM_FOREST_VOICE_PLAYING)
+        room->voice_ready_field = 2 * room->update;
+
+    unsigned stopped_generation;
+    if (bfm_village_arrival_take_illness_voice_stop(room->village, &stopped_generation))
+        result = BFM_BEDROOM_VOICE_STOPPED;
+    uint16_t mounted = bfm_village_arrival_room(room->village);
+    if ((room->mine_effects_closed_in == 0x1052 && mounted == 0x3043) ||
+        (room->mine_effects_closed_in == 0x3043 && mounted == 0x1052))
+        room->mine_effects_closed_in = 0;
+    switch (bfm_village_arrival_mine_exit_event(room->village)) {
+    case BFM_NIGHTMARE_STOP_OPTICAL:
+        bfm_forest_voice_stop(mine_voice);
+        bfm_forest_voice_stop(current_voice(room));
+        result = BFM_BEDROOM_VOICE_STOPPED;
+        break;
+    case BFM_NIGHTMARE_PREPARE_VILLAGE:
+        queue_mounted_effect(room, NULL, BFM_ROOM_ACTIVE_BANKS, 0x10000u + 1096);
+        queue_mounted_effect(room, NULL, BFM_ROOM_ACTIVE_BANKS, 0x10000u + 1097);
+        queue_mounted_effect(room, NULL, BFM_ROOM_ACTIVE_BANKS, 0x10000u + 2285);
+        break;
+    case BFM_NIGHTMARE_RELEASE_ROOM_AUDIO:
+        room->release_room_effects = 1;
+        room->sound_count = 0;
+        room->mine_effects_closed_in = mounted;
+        break;
+    default:
+        break;
+    }
     if (bfm_village_arrival_take_retired_window(room->village)) {
         bfm_forest_message_free(room->message);
         room->message = NULL;
@@ -1237,8 +1277,8 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
         queue_effect(room, BFM_ROOM_BOX_BANK, box_cue);
     }
     unsigned illness_sounds[2];
-    unsigned illness_count = bfm_village_arrival_take_illness_sounds(room->village, illness_sounds);
-    if (illness_count) {
+    unsigned illness_count;
+    while ((illness_count = bfm_village_arrival_take_illness_sounds(room->village, illness_sounds))) {
         if (!room->illness_effects) room->illness_effects = bfm_village_illness_effects_load(room->disc);
         if (!room->illness_effects) return 0;
         for (unsigned i = 0; i < illness_count; ++i)
@@ -2118,6 +2158,10 @@ struct ForestVoice *bfm_bedroom_voice(BfmBedroom *room, unsigned *generation)
     if (retry) {
         *generation = bfm_retry_screen_generation(retry);
         return bfm_retry_screen_voice(retry);
+    }
+    if (!room->inn && !room->bakery && room->village) {
+        ForestVoice *mine_voice = bfm_village_arrival_illness_voice(room->village, generation);
+        if (mine_voice && *generation) return mine_voice;
     }
     *generation = room->generation;
     return current_voice(room);
