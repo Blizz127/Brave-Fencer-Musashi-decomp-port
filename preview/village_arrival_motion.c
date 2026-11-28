@@ -440,9 +440,15 @@ static int displace(BfmVillageMotion *m, const uint32_t velocity[3], int require
         if (m->mine_props)
             bfm_village_mine_props_body(m->mine_props, m->player.root.xyz, candidate.xyz,
                                         m->mine_props_tick, m->airborne);
-        if (m->lake_fields)
-            bfm_village_mine_lake_fields_body(m->lake_fields, previous_foot, candidate.xyz,
-                                              m->lake_field_tick, m->airborne);
+        if (m->lake_fields) {
+            int face_entry = 0;
+            bfm_village_mine_lake_fields_body_contact(m->lake_fields, previous_foot, candidate.xyz,
+                                                      m->lake_field_tick, m->airborne, &face_entry);
+            if (m->airborne && face_entry) {
+                /* The ankle cancels local motion; gravity has its own accumulator. */
+                m->speed = m->jump.side_q16 = m->jump.vertical_q16 = 0;
+            }
+        }
         BfmMineBasketContact deck_contact = BFM_MINE_BASKET_MISS;
         int16_t deck_foot[3];
         int deck_stationary = 0;
@@ -3217,7 +3223,8 @@ int bfm_village_motion_mine_blade_hold(BfmVillageMotion *m, int finishing, int r
 int bfm_village_motion_switchback_stance(BfmVillageMotion *m, unsigned facing,
     unsigned stride_yaw, int moving, int tired, int *supported)
 {
-    if (!m || !supported || m->woods_route.room != 0x3044 || !m->player.controlled) return 0;
+    if (!m || !supported || !m->player.controlled ||
+        (m->woods_route.room != 0x3044 && m->woods_route.room != 0x3046)) return 0;
     BfmVillageMotion next = *m;
     begin_field(&next);
     *supported = 0;
