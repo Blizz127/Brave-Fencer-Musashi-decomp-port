@@ -52,6 +52,10 @@ unsigned bfm_village_arrival_woods_score_selector(const BfmVillageArrival *a);
 int bfm_village_arrival_field_score(const BfmVillageArrival *a, unsigned village_score);
 unsigned bfm_village_arrival_take_score_command(BfmVillageArrival *a);
 unsigned bfm_village_arrival_take_illness_sounds(BfmVillageArrival *a, unsigned sounds[2]);
+/* One actor update may issue two fan commands, a Box cue, and a menu sound. */
+enum { BFM_MINE_SHAFT_SOUNDS = 4 };
+unsigned bfm_village_arrival_take_shaft_sounds(BfmVillageArrival *a,
+    unsigned events[BFM_MINE_SHAFT_SOUNDS]);
 unsigned bfm_village_arrival_take_wheel_sounds(BfmVillageArrival *a, unsigned events[3]);
 unsigned bfm_village_arrival_take_mine_hit_sound(BfmVillageArrival *a);
 unsigned bfm_village_arrival_take_upper_sound(BfmVillageArrival *a);

@@ -14,6 +14,7 @@
 #include "library_books.h"
 #include "bedroom_award.h"
 #include "bedroom_effects.h"
+#include "village_mine_shaft_audio.h"
 #include "bedroom_dust.h"
 #include "bedroom_fade.h"
 #include "bedroom_field.h"
@@ -119,6 +120,7 @@ struct BfmBedroom {
     GrillinExterior pending_exterior;
     uint32_t (*frozen_recovery)[320], (*field_item_background)[320];
     BfmBedroomEffects *nightmare_effects, *box_effects, *illness_effects, *mine_effects, *switchback_effects;
+    BfmBedroomEffects *shaft_effects;
     BfmBedroomEffects *effects, *knock, *shrink_sound, *bakery_effects;
     BfmBedroomEffects *forest_bank_effects, *maze_guide_effects, *valley_effects;
     uint32_t room_sound_group;
@@ -262,6 +264,7 @@ void bfm_bedroom_free(BfmBedroom *room)
     bfm_bedroom_effects_free(room->illness_effects);
     bfm_bedroom_effects_free(room->mine_effects);
     bfm_bedroom_effects_free(room->switchback_effects);
+    bfm_bedroom_effects_free(room->shaft_effects);
     for (unsigned i = 0; i < sizeof room->scores / sizeof *room->scores; ++i)
         bfm_forest_score_free(room->scores[i]);
     bfm_forest_message_free(room->message);
@@ -1325,6 +1328,14 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
         for (unsigned i = 0; i < wheel_count; ++i)
             queue_mounted_effect(room, room->switchback_effects, BFM_ROOM_MINE_BANK, wheel_events[i]);
         queue_mounted_effect(room, room->switchback_effects, BFM_ROOM_MINE_BANK, hit_sound);
+    }
+    unsigned shaft_events[BFM_MINE_SHAFT_SOUNDS];
+    unsigned shaft_count = bfm_village_arrival_take_shaft_sounds(room->village, shaft_events);
+    if (shaft_count && !room->mine_effects_closed_in) {
+        if (!room->shaft_effects) room->shaft_effects = bfm_mine_shaft_effects_load(room->disc);
+        if (!room->shaft_effects) return 0;
+        for (unsigned i = 0; i < shaft_count; ++i)
+            queue_mounted_effect(room, room->shaft_effects, BFM_ROOM_MINE_SHAFT_BANK, shaft_events[i]);
     }
     unsigned upper_sound = bfm_village_arrival_take_upper_sound(room->village);
     if (upper_sound || player->pose.knock_contact || (player->events & BFM_VILLAGE_WELL_SOUND_EVENT)) {

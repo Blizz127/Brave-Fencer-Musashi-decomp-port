@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "bedroom_effects.h"
+#include "village_mine_shaft_audio.h"
 #include "village_mine_wheel_audio.h"
 #include "../pc_port/forest_player_archive.h"
 #include "bedroom_record.h"
@@ -10,7 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { SPU_RATE = 44100, OUTPUT_RATE = 37800, VOICES = 24, MAX_LAYERS = 4 };
+enum { SPU_RATE = 44100, OUTPUT_RATE = 37800, VOICES = 24, MAX_LAYERS = 4, MAX_KEYED_NOTES = 7 };
 enum { SEQUENCE_FULL_GAIN = 16383, MENU_RAMP_STEP = 1023 };
 enum { SEQUENCE_FIELDS = 480, RESCUE_BP_STRIKE = 2822, HEAL_ARPEGGIO = 0xb07,
        RESCUE_BP_ARPEGGIO = 3168 };
@@ -64,7 +65,7 @@ typedef struct {
     int previous, phase, done;
 } Resampler;
 typedef struct {
-    Layer initial[MAX_LAYERS];
+    Layer initial[MAX_KEYED_NOTES];
     unsigned count;
     uint8_t pitch_table[256];
 } KeyedTone;
@@ -88,13 +89,14 @@ typedef struct {
     unsigned command, menu_target, menu_staged;
     unsigned wheel_slot, wheel_level, wheel_target;
     size_t frame;
-    Layer layers[MAX_LAYERS];
+    Layer layers[MAX_KEYED_NOTES];
+    int fan_pending;
     Resampler resampler;
 } Playback;
 struct BfmBedroomEffects {
     Clip clips[CLEFT_CLIPS];
     Playback playing[VOICES];
-    int replace_matching, menu_sequences;
+    int replace_matching, menu_sequences, shaft;
     unsigned sound_phase;
     unsigned terrain_aliases;
 };
@@ -504,6 +506,8 @@ static int finish_sequence(const Sources *s, Layer notes[], unsigned count,
 
 /* Fixed records hold an interval, an independent gate and a complete
  * instrument. A zero interval ends scheduling with the current note. */
+static int keep_fan_notes(const Sources *s, unsigned command, Layer notes[], unsigned count, Clip *clip);
+
 static int prepare_fixed_sequence(const Sources *s, unsigned command, const uint8_t track[12], Clip *clip)
 {
     enum { MAX_NOTES = 66 };
@@ -511,7 +515,9 @@ static int prepare_fixed_sequence(const Sources *s, unsigned command, const uint
     uint32_t cursor = word(track);
     unsigned field = 0;
     int result = 0;
-    for (unsigned i = 0; i < MAX_NOTES; ++i, cursor += 20) {
+    int fan = track[8] == 1;
+    unsigned limit = fan ? MAX_KEYED_NOTES : MAX_NOTES;
+    for (unsigned i = 0; i < limit; ++i, cursor += 20) {
         uint8_t note[20];
         if (!read_data(s, cursor, note, sizeof note)) break;
         unsigned interval = half(note), gate = half(note+2), key = half(note+6);
@@ -524,7 +530,7 @@ static int prepare_fixed_sequence(const Sources *s, unsigned command, const uint
             voice->modulated = 1;
         }
         if (!instrument_open(s, note[10], note[11], voice) ||
-            (!gate && voice->sample.loop_start < voice->sample.frames)) break;
+            (!fan && !gate && voice->sample.loop_start < voice->sample.frames)) break;
         voice->key = (int)key;
         voice->pitch = pitch(s->pitch, voice);
         if (!voice->pitch) break;
@@ -535,7 +541,8 @@ static int prepare_fixed_sequence(const Sources *s, unsigned command, const uint
         voice->delay = field_sample(field);
         voice->gate_samples = field_sample(field + gate) - voice->delay;
         if (!interval) {
-            result = finish_sequence(s, notes, i+1, command, clip, NULL);
+            result = fan ? keep_fan_notes(s, command, notes, i+1, clip) :
+                           finish_sequence(s, notes, i+1, command, clip, NULL);
             break;
         }
         field += interval;
@@ -552,7 +559,8 @@ static int prepare_sequence(const Sources *s, unsigned command, Clip *clip)
     if (!select_command(s, command, entry, NULL) || (entry[0] & 0x7f) != 5 || entry[2]) return 0;
     uint32_t tracks = entry[1] ? word(s->data+s->bytes-4) : 0x80068a54u;
     if (!read_data(s, tracks+12*entry[3], track, sizeof track)) return 0;
-    if (!track[8] && (command == BFM_ROOM_AWARD_SOUND || command == BFM_VILLAGE_MINE_UNLOCK_SOUND))
+    if ((track[8] == 1 && (command == BFM_MINE_FAN_START || command == BFM_MINE_FAN_DECELERATE)) ||
+        (!track[8] && (command == BFM_ROOM_AWARD_SOUND || command == BFM_VILLAGE_MINE_UNLOCK_SOUND)))
         return prepare_fixed_sequence(s, command, track, clip);
     if (track[8] != 0x10 && track[8] != 0x12) return 0;
     uint32_t cursor = word(track), repeat_start = 0;
@@ -859,6 +867,8 @@ static int prepare_valley_field(Sources *s, const ForestPlayerArchive *player, B
 
 static int prepare_mine_wheel(const Sources *s, Clip *clip);
 
+#include "village_mine_shaft_mixer.inc"
+
 static BfmBedroomEffects *forest_field_effects(const MusashiDiscMedia *disc, unsigned room,
                                               unsigned member)
 {
@@ -887,6 +897,9 @@ static BfmBedroomEffects *forest_field_effects(const MusashiDiscMedia *disc, uns
                     prepare(&s, BFM_WOODS_GUARD_SOUND, &effects->clips[1]) &&
                     prepare_mine_wheel(&s, &effects->clips[2]);
             effects->replace_matching = 1;
+        } else if (room == 0x3045) {
+            effects->shaft = 1;
+            valid = prepare_mine_shaft(&s, effects);
         } else if (room == 0x3043) {
             valid = prepare(&s, BFM_MINE_POLE_SOUND, &effects->clips[0]);
             effects->replace_matching = 1;
@@ -919,6 +932,11 @@ BfmBedroomEffects *bfm_maze_guide_effects_load(const MusashiDiscMedia *disc)
 BfmBedroomEffects *bfm_valley_effects_load(const MusashiDiscMedia *disc)
 {
     return forest_field_effects(disc, 0x302b, 31);
+}
+
+BfmBedroomEffects *bfm_mine_shaft_effects_load(const MusashiDiscMedia *disc)
+{
+    return forest_field_effects(disc, 0x3045, 109);
 }
 
 BfmBedroomEffects *bfm_switchback_effects_load(const MusashiDiscMedia *disc)
@@ -1164,6 +1182,7 @@ static void start_voice(Playback *p, const Clip *clip, unsigned command)
         memcpy(sequence->notes + sequence->count, sequence->notes,
                sequence->count * sizeof *sequence->notes);
     }
+    p->fan_pending = is_fan(command);
     if (clip->tone) memcpy(p->layers, clip->tone->initial, clip->tone->count * sizeof *p->layers);
 }
 
@@ -1200,6 +1219,10 @@ void bfm_bedroom_effects_start(BfmBedroomEffects *e, unsigned command)
         bfm_bedroom_effects_start(e, RESCUE_BP_STRIKE);
         bfm_bedroom_effects_start(e, RESCUE_BP_ARPEGGIO);
         return;
+    }
+    if (e->shaft && (command == (0x10000u | BFM_MINE_FAN_START) || is_fan(command))) {
+        release_fan(e, command & 0xffffu);
+        if (command >> 16) return;
     }
     unsigned clip_command = command;
     if (command >= BFM_WOODS_TERRAIN_HIT_FIRST && command <= BFM_WOODS_TERRAIN_HIT_LAST &&
@@ -1264,7 +1287,7 @@ static void mix_block(BfmBedroomEffects *e, int16_t *stereo, size_t frames)
 {
     for (unsigned j=0; j<VOICES; ++j) {
         Playback *p = &e->playing[j];
-        if (!p->clip) continue;
+        if (!p->clip || p->fan_pending) continue;
         if (p->clip->tone || p->clip->menu_sequence) {
             KeyedTone *tone = p->clip->tone;
             MenuSequence *sequence = p->clip->menu_sequence;
@@ -1308,7 +1331,7 @@ static void advance_menu_gain(Playback *p)
 void bfm_bedroom_effects_mix(BfmBedroomEffects *e, int16_t *stereo, size_t frames)
 {
     if (!e || !stereo) return;
-    if (!e->menu_sequences && e->clips[2].id != BFM_MINE_WHEEL_LOOP) {
+    if (!e->shaft && !e->menu_sequences && e->clips[2].id != BFM_MINE_WHEEL_LOOP) {
         mix_block(e, stereo, frames);
         return;
     }
@@ -1324,6 +1347,7 @@ void bfm_bedroom_effects_mix(BfmBedroomEffects *e, int16_t *stereo, size_t frame
         if (e->sound_phase >= FIELD_PERIOD) {
             e->sound_phase -= FIELD_PERIOD;
             for (unsigned i = 0; i < VOICES; ++i) {
+                e->playing[i].fan_pending = 0;
                 advance_menu_gain(&e->playing[i]);
                 step_wheel_level(&e->playing[i]);
             }

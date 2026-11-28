@@ -8,6 +8,7 @@
 #include "village_illness_lower.h"
 #include "village_mine_entrance.h"
 #include "village_mine_wheel_audio.h"
+#include "village_mine_shaft_audio.h"
 #include "village_leno_delivery.h"
 #include "village_earth_return.h"
 #include "village_lighting.h"
@@ -74,6 +75,7 @@ struct BfmVillageArrival {
     BfmVillageIllnessLower *illness_lower, *incoming_illness_lower;
     BfmVillageMineEntrance *mine, *incoming_mine;
     unsigned wheel_events[BFM_MINE_WHEELS], wheel_event_count;
+    unsigned shaft_events[BFM_MINE_SHAFT_SOUNDS], shaft_event_count;
     int mine_optical_busy;
     BfmNightmareTransitionEvent mine_exit_event;
     unsigned illness_draw_tick;
@@ -845,10 +847,19 @@ static void collect_wheel_sound(void *context, unsigned command, unsigned value,
         a->wheel_events[a->wheel_event_count++] = event;
 }
 
+static void collect_shaft_sound(void *context, unsigned command, unsigned value)
+{
+    BfmVillageArrival *a = context;
+    unsigned event = bfm_mine_shaft_sound_event(command, value);
+    if (event && a->shaft_event_count < BFM_MINE_SHAFT_SOUNDS)
+        a->shaft_events[a->shaft_event_count++] = event;
+}
+
 static int step_mine_actors(BfmVillageArrival *a, BfmGameplayRun *run, BfmFieldInput input, int departure)
 {
     if (a->illness_lower) return step_illness_street(a, run, input);
     bfm_village_mine_entrance_set_wheel_sound(a->mine, collect_wheel_sound, a);
+    bfm_village_mine_entrance_set_shaft_sound(a->mine, collect_shaft_sound, a);
     int ok = departure ? bfm_village_mine_entrance_step_departure(a->mine, run, a->scene_tick) :
                          bfm_village_mine_entrance_step(a->mine, run, input, a->scene_tick);
     if (ok) ++a->scene_tick;
@@ -1339,6 +1350,16 @@ unsigned bfm_village_arrival_take_score_command(BfmVillageArrival *a)
 unsigned bfm_village_arrival_take_illness_sounds(BfmVillageArrival *a, unsigned sounds[2])
 {
     return a && a->illness_lower ? bfm_village_illness_lower_take_sounds(a->illness_lower, sounds) : 0;
+}
+
+unsigned bfm_village_arrival_take_shaft_sounds(BfmVillageArrival *a,
+                                              unsigned events[BFM_MINE_SHAFT_SOUNDS])
+{
+    if (!a || !events) return 0;
+    unsigned count = a->shaft_event_count;
+    memcpy(events, a->shaft_events, count * sizeof *events);
+    a->shaft_event_count = 0;
+    return count;
 }
 
 unsigned bfm_village_arrival_take_wheel_sounds(BfmVillageArrival *a, unsigned events[3])
