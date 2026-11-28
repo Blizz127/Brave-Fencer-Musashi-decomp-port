@@ -26,6 +26,12 @@
       "base": 2148696408,
       "sha256": "7027a4a6e1aaff260df6fc30c027237cc96d715a1c688102bf05d89511cf42e3"
     },
+    "sc02_0016": {
+      "kind": "blob",
+      "file": "extracted/overlays/sc02/0016.pac0.bin",
+      "base": 2148696408,
+      "sha256": "9cac3b8137bf286220e16f29270b4a90bfbec544936de80c6bae8ce02d6896e1"
+    },
     "sc02_0031": {
       "kind": "blob",
       "file": "extracted/overlays/sc02/0031.pac0.bin",
@@ -8810,6 +8816,19 @@
       "origin": "Independently reconstructed from USA SC03.CD member 0110. Counts down the lake return transition, issues the two commands and their follow-up calls when the counter wraps, then advances the state.",
       "source_sha256": "2893e645b4676a259c4df5a7acf2d30fec8b09a003c04e3e275537e7c4eda023",
       "span_sha256": "bb23cd50a044d2672d30dd92eac0a25ddb7290873e9942bce40ec4c1689cde79"
+    },
+    {
+      "name": "func_801843F4",
+      "region": "sc02_0016",
+      "vram": 2149073908,
+      "size": 60,
+      "source": "src/overlays/sc02_0016/801843f4.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC02.CD member 0016. An object action selects a handler using its second halfword and passes the same object to that handler.",
+      "source_sha256": "68d84c94c7aefef13d51fb63b73262b989f0918105f1e8dd94f4c83c9b36cf02",
+      "span_sha256": "0dfee401f280561348ff1c04477a106532b69bdc160453a61d59dfd66176aae5"
     }
   ]
 }
