@@ -8,7 +8,8 @@
 enum { BFM_MINE_LAKE_SHOAL = 0x6fe, BFM_MINE_LAKE_CURRENT = 0x738,
        BFM_MINE_LAKE_ARGUMENT = 0x4000,
        BFM_MINE_LAKE_FALL_SOUND = 0x453, BFM_MINE_LAKE_BOUNCE_SOUND = 0x454,
-       BFM_MINE_LAKE_TUMBLE_SOUND = 0x456 };
+       BFM_MINE_LAKE_TUMBLE_SOUND = 0x456,
+       BFM_MINE_LAKE_FADE_EFFECTS = 0x1c, BFM_MINE_LAKE_CLEAR_ARRANGEMENT = 0x2a };
 
 BfmBedroomEffects *bfm_mine_lake_effects_load(const MusashiDiscMedia *disc);
 
@@ -29,7 +30,8 @@ static inline unsigned bfm_mine_lake_sound_event(unsigned cue, unsigned value)
 {
     if (cue == 4 && value == BFM_MINE_LAKE_CURRENT)
         return 0x10000u | BFM_MINE_LAKE_CURRENT;
-    if (bfm_mine_lake_surface_cue(cue) || bfm_mine_lake_defeat_cue(cue))
+    if (bfm_mine_lake_surface_cue(cue) || bfm_mine_lake_defeat_cue(cue) ||
+        cue == BFM_MINE_LAKE_CLEAR_ARRANGEMENT || cue == BFM_MINE_LAKE_FADE_EFFECTS)
         return value ? 0 : cue;
     if (cue == BFM_MINE_LAKE_CURRENT) {
         if ((value & ~255u) != 0x1000u) return 0;

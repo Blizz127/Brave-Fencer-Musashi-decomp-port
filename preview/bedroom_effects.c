@@ -56,6 +56,7 @@ typedef struct {
     int key, tuning, modulated, slide, done, ntsc_fields;
     int sequence_base;
     unsigned sequence_gain, sequence_start, menu_attenuation;
+    unsigned fade_level, fade_start_gain;
     int menu_gain_latched;
     const uint16_t *sequence_levels;
     unsigned slide_hold, slide_step[2];
@@ -90,6 +91,7 @@ typedef struct {
     const Clip *clip;
     unsigned command, menu_target, menu_staged;
     unsigned wheel_slot, wheel_level, wheel_target, shoal_gain;
+    unsigned group_fade;
     size_t frame;
     Layer layers[MAX_KEYED_NOTES];
     int fan_pending;
@@ -1262,6 +1264,57 @@ static void start_lake_shoal(BfmBedroomEffects *e, unsigned value)
     }
 }
 
+/* Fade only the field effects already allocated at the final impact. The
+ * common tumble sequence protects its group and all subsequently keyed notes. */
+static void fade_lake_effects(BfmBedroomEffects *e)
+{
+    for (unsigned i = 0; i < VOICES; ++i) {
+        Playback *p = &e->playing[i];
+        if (!p->clip || !p->clip->tone) continue;
+        if (p->clip->id == BFM_MINE_LAKE_CURRENT) {
+            if (p->wheel_slot && !p->group_fade) p->group_fade = 32767;
+        } else {
+            for (unsigned j = 0; j < p->clip->tone->count; ++j) {
+                Layer *note = &p->layers[j];
+                if (note->done || note->fade_level) continue;
+                note->fade_level = 32767;
+                note->fade_start_gain = note->gain;
+            }
+        }
+    }
+}
+
+static void advance_lake_fade(Playback *p)
+{
+    if (!p->clip || !p->clip->tone) return;
+    enum { step = 544 };
+    if (p->wheel_slot && p->group_fade) {
+        Layer *note = &p->layers[0];
+        if (p->group_fade <= step) {
+            p->wheel_slot = p->group_fade = 0;
+            bfm_spu_envelope_release(&note->envelope);
+        } else {
+            p->group_fade -= step;
+            unsigned gain = note->sequence_gain * p->group_fade >> 15;
+            gain = gain * p->wheel_level >> 14;
+            note->gain = ((gain * SEQUENCE_FULL_GAIN >> 14) * SEQUENCE_FULL_GAIN) >> 14;
+        }
+        return;
+    }
+    for (unsigned j = 0; j < p->clip->tone->count; ++j) {
+        Layer *note = &p->layers[j];
+        /* Each direct note starts fading on the service after its own key-on. */
+        if (!note->fade_level || note->done || note->delay || !note->phase) continue;
+        if (note->fade_level <= step) {
+            note->fade_level = note->gain = 0;
+            bfm_spu_envelope_release(&note->envelope);
+        } else {
+            note->fade_level -= step;
+            note->gain = note->fade_start_gain * (note->fade_level >> 7) >> 8;
+        }
+    }
+}
+
 void bfm_bedroom_effects_stop(BfmBedroomEffects *effects)
 {
     if (effects) memset(effects->playing, 0, sizeof effects->playing);
@@ -1271,6 +1324,13 @@ void bfm_bedroom_effects_start(BfmBedroomEffects *e, unsigned command)
 {
     if (!e || !command) return;
     if (e->lake) {
+        if (command == BFM_MINE_LAKE_FADE_EFFECTS) {
+            fade_lake_effects(e);
+            return;
+        }
+        /* Clearing the arrangement mask affects future starts of score 0x134.
+         * The lake uses score 0x145 and has no arrangement tracks to change. */
+        if (command == BFM_MINE_LAKE_CLEAR_ARRANGEMENT) return;
         unsigned cue = command & 0xfffu, value = command >> 16;
         if (command == (0x10000u | BFM_MINE_LAKE_CURRENT)) {
             play_mine_loop(e, &e->clips[1], 0, 1, 0);
@@ -1440,6 +1500,7 @@ void bfm_bedroom_effects_mix(BfmBedroomEffects *e, int16_t *stereo, size_t frame
                 e->playing[i].fan_pending = 0;
                 advance_menu_gain(&e->playing[i]);
                 step_wheel_level(&e->playing[i]);
+                if (e->lake) advance_lake_fade(&e->playing[i]);
             }
         }
     }
