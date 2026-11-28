@@ -84,6 +84,15 @@ BfmVillageMotion *bfm_village_motion_mine_lake(const uint8_t *scene, size_t byte
 void bfm_village_motion_mine_shaft_lake_exit(BfmVillageMotion *motion, int enabled);
 /* Supply the current posted by the preceding actor turn, or NULL. */
 void bfm_village_motion_mine_lake_begin_field(BfmVillageMotion *motion, const int16_t current[3]);
+struct BfmVillageMinePit;
+uint16_t bfm_village_motion_mine_pit_material(const BfmVillageMotion *motion);
+/* After lake_begin_field, service the preceding foot's reason before ordinary controls.
+ * A locked frame owns this player update, including the field which debits HP. */
+int bfm_village_motion_mine_pit(BfmVillageMotion *motion, struct BfmVillageMinePit *pit,
+    struct BfmGameplayRun *run, BfmForestBankThornInput input, int accept_floor,
+    BfmForestBankThornFrame *frame);
+/* Publish the raw foot for the defeat view and release the regular shadow. */
+int bfm_village_motion_mine_release_rider(BfmVillageMotion *motion);
 BfmVillageMotion *bfm_village_motion_mine_shaft_saved(const uint8_t *scene, size_t bytes,
     const uint8_t *main, size_t main_bytes, const uint8_t destination[36],
     const MusashiDiscMedia *disc);

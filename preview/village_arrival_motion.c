@@ -11,6 +11,7 @@
 #include "village_ground.h"
 #include "village_illness_mine_gate.h"
 #include "village_mine_props.h"
+#include "village_mine_pit.h"
 #include "village_mine_shaft_gates.h"
 #include "village_mine_decks.h"
 #include "hells_valley_boulders.h"
@@ -1582,6 +1583,74 @@ uint16_t *bfm_village_motion_bank_pending(BfmVillageMotion *m)
     return m && (m->bank_returns || m->valley_rocks) ? &m->bank_contact_reason : NULL;
 }
 
+static void set_rescued_floor(BfmVillageMotion *m)
+{
+    const int16_t *foot = m->player.root.xyz;
+    int16_t probe[3] = {foot[0], (int16_t)(foot[1] + 8), foot[2]};
+    BfmForestContact surface;
+    if (bfm_village_ground_step(m->ground,foot,probe,&surface) == BFM_VILLAGE_GROUND_FOOTING) {
+        m->material = surface.flags;
+        memcpy(m->player.root.normal,surface.normal,sizeof surface.normal);
+    } else {
+        m->material = 0;
+        m->player.root.normal[0] = m->player.root.normal[2] = 0;
+        m->player.root.normal[1] = -4096;
+    }
+}
+
+uint16_t bfm_village_motion_mine_pit_material(const BfmVillageMotion *m)
+{
+    return m && m->woods_route.room == 0x3046 ? m->bank_contact_reason : 0;
+}
+
+int bfm_village_motion_mine_pit(BfmVillageMotion *m, BfmVillageMinePit *pit, BfmGameplayRun *run,
+    BfmForestBankThornInput input, int accept_floor, BfmForestBankThornFrame *frame)
+{
+    if (!m || m->woods_route.room != 0x3046 || !pit || !run || !frame) return 0;
+    if (!m->airborne && !m->rider && !input.scene_state && m->player.controlled)
+        bfm_village_mine_pit_remember(pit, m->ground, m->mine_action_foot);
+    input.ground = m->ground;
+    input.position = m->position;
+    input.entrance = &m->bank_entrance;
+    input.pitch = (int)m->player.pose.pitch;
+    input.yaw = (int)m->player.root.yaw;
+    uint16_t contact = accept_floor ? m->bank_contact_reason : 0;
+    if (!bfm_village_mine_pit_step(pit, run, contact, m->fall_speed, &input, frame)) return 0;
+    m->bank_contact_reason = 0;
+    if (!frame->movement_locked) return 1;
+
+    m->foot = FOOT_QUIET;
+    m->player.events = m->player.wall_contact = 0;
+    m->lake_current_posted = 0;
+    if (frame->started) {
+        memset(&m->jump, 0, sizeof m->jump);
+        m->rider = 0;
+        m->speed = m->walking = m->brake = m->landed = 0;
+        m->airborne = 1;
+    }
+    m->fall_speed = pit->recovery.vertical_speed;
+    m->player.root.yaw = frame->yaw;
+    if (!publish_root(m)) return 0;
+    if (frame->hide_body) m->player.root.shadow_visible = 0;
+    if (frame->recovered) {
+        m->airborne = 0;
+        set_rescued_floor(m);
+        if (!bfm_bedroom_motion_reenter_stance(m->ordinary, -1) ||
+            !bfm_bedroom_motion_step(m->ordinary, BFM_BEDROOM_NONE, &m->player.pose)) return 0;
+        return bfm_bedroom_motion_external_face(m->ordinary, 17, 1, &m->player.pose);
+    }
+    return 1;
+}
+
+int bfm_village_motion_mine_release_rider(BfmVillageMotion *m)
+{
+    if (!m || m->woods_route.room != 0x3046) return 0;
+    m->rider = 0;
+    if (!publish_root(m)) return 0;
+    m->player.root.shadow_visible = 0;
+    return 1;
+}
+
 int bfm_village_motion_bank_thorn(BfmVillageMotion *m, BfmForestBankThornHurt *hurt,
                                   BfmGameplayRun *run, BfmForestBankThornInput input,
                                   BfmForestBankThornFrame *frame)
@@ -1608,17 +1677,7 @@ int bfm_village_motion_bank_thorn(BfmVillageMotion *m, BfmForestBankThornHurt *h
     m->player.root.yaw = frame->yaw;
     if (!publish_root(m)) return 0;
     if (frame->recovered) {
-        const int16_t *foot = m->player.root.xyz;
-        int16_t probe[3] = {foot[0], (int16_t)(foot[1] + 8), foot[2]};
-        BfmForestContact surface;
-        if (bfm_village_ground_step(m->ground,foot,probe,&surface) == BFM_VILLAGE_GROUND_FOOTING) {
-            m->material = surface.flags;
-            memcpy(m->player.root.normal,surface.normal,sizeof surface.normal);
-        } else {
-            m->material = 0;
-            m->player.root.normal[0] = m->player.root.normal[2] = 0;
-            m->player.root.normal[1] = -4096;
-        }
+        set_rescued_floor(m);
         m->airborne = 0;
         m->bank_contact_reason = 0;
         if (!bfm_bedroom_motion_reenter_stance(m->ordinary,-1)) return 0;
@@ -1878,6 +1937,7 @@ int bfm_village_motion_woods_reaction(BfmVillageMotion *m, BfmWoodsLilies *lilie
     if (!m || !contact || !m->player.controlled ||
         (m->room != (lilies ? UINT32_C(0x8018ea38) : UINT32_C(0x801910e4)) &&
          !(m->woods_route.room == 0x3044 && !lilies) &&
+         !(m->woods_route.room == 0x3046 && !lilies) &&
          !(m->mountain_jump && !lilies && kind != BFM_WOODS_GUARD_RECOIL &&
            m->woods_route.room == 0x3026)) ||
         (unsigned)kind > BFM_WOODS_GUARD_RECOIL ||
@@ -2035,7 +2095,7 @@ static int resolve_woods_footing(BfmVillageMotion *m, int tired, int blade_held)
      * by treating its feet as resting on the terrain underneath. */
     int valley_return = m->valley_rocks && !m->airborne && !m->rider;
     if (m->room != UINT32_C(0x801910e4) &&
-        !valley_return && m->woods_route.room != 0x3044 &&
+        !valley_return && m->woods_route.room != 0x3044 && m->woods_route.room != 0x3046 &&
         !(m->woods_route.room == 0x3026 && m->mountain_jump) &&
         (m->room != UINT32_C(0x8018ea38) || !m->lilies)) return 0;
     BfmVillageMotion next = *m;
