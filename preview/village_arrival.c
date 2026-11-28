@@ -1291,6 +1291,7 @@ int bfm_village_arrival_step_field(BfmVillageArrival *a, BfmGameplayRun *run,
     int advance_upper = !a->lower && !a->woods && !a->bank && !a->box && !a->valley && !a->maze && !a->mine && !a->illness_lower && a->motion &&
         (!a->transfer_tick || a->transfer_tick >= bfm_village_arrival_reveal_tick(a));
     a->wheel_event_count = 0;
+    a->shaft_event_count = 0;
     int result = step_field(a, run, field, opened);
     if (result && advance_upper) {
         bfm_village_rotor_step(&a->rotor, run, u32le(a->record->progress + 8));
