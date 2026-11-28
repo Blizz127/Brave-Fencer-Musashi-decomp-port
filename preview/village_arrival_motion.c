@@ -1623,7 +1623,6 @@ int bfm_village_motion_mine_pit(BfmVillageMotion *m, BfmVillageMinePit *pit, Bfm
     m->player.events = m->player.wall_contact = 0;
     m->lake_current_posted = 0;
     if (frame->started) {
-        memset(&m->jump, 0, sizeof m->jump);
         m->rider = 0;
         m->speed = m->walking = m->brake = m->landed = 0;
         m->airborne = 1;
@@ -1633,13 +1632,19 @@ int bfm_village_motion_mine_pit(BfmVillageMotion *m, BfmVillageMinePit *pit, Bfm
     if (!publish_root(m)) return 0;
     if (frame->hide_body) m->player.root.shadow_visible = 0;
     if (frame->recovered) {
+        memset(&m->jump, 0, sizeof m->jump);
         m->airborne = 0;
         set_rescued_floor(m);
         if (!bfm_bedroom_motion_reenter_stance(m->ordinary, -1) ||
             !bfm_bedroom_motion_step(m->ordinary, BFM_BEDROOM_NONE, &m->player.pose)) return 0;
         return bfm_bedroom_motion_external_face(m->ordinary, 17, 1, &m->player.pose);
     }
-    return 1;
+    /* The pit replaces the movement action while the interrupted body keeps
+     * advancing through its mounted animation, including the hidden fields. */
+    if (!bfm_bedroom_motion_step(m->ordinary, BFM_BEDROOM_NONE, &m->player.pose)) return 0;
+    if (!m->jump.active) return 1;
+    ++m->jump.phase_tick;
+    return woods_air_pose(m);
 }
 
 int bfm_village_motion_mine_release_rider(BfmVillageMotion *m)
