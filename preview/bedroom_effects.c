@@ -10,7 +10,9 @@
 #include <string.h>
 
 enum { SPU_RATE = 44100, OUTPUT_RATE = 37800, VOICES = 24, MAX_LAYERS = 4 };
-enum { SEQUENCE_FIELDS = 480, RESCUE_BP_STRIKE = 2822, RESCUE_BP_ARPEGGIO = 3168 };
+enum { SEQUENCE_FULL_GAIN = 16383, MENU_RAMP_STEP = 1023 };
+enum { SEQUENCE_FIELDS = 480, RESCUE_BP_STRIKE = 2822, HEAL_ARPEGGIO = 0xb07,
+       RESCUE_BP_ARPEGGIO = 3168 };
 enum {
     SHRINE_HIT_ACCEPTED = 0x5eb, SHRINE_RESTORED = 0x5ec,
     SHRINE_SHAKE = 0x635, SHRINE_APPEAR = 0x636, SHRINE_RAYS = 0x637,
@@ -39,6 +41,7 @@ typedef struct {
     const uint8_t *data;
     size_t bytes;
     unsigned key, group;
+    int menu_sequences;
     BfmPalaceBank *common, *scene, *score;
     uint8_t volume[256], pitch[256];
 } Sources;
@@ -49,7 +52,8 @@ typedef struct {
     unsigned delay, gain, center, pitch, field, sample_in_field, gate, gate_samples;
     int key, tuning, modulated, slide, done, ntsc_fields;
     int sequence_base;
-    unsigned sequence_gain, sequence_start;
+    unsigned sequence_gain, sequence_start, menu_attenuation;
+    int menu_gain_latched;
     const uint16_t *sequence_levels;
     unsigned slide_hold, slide_step[2];
     int slide_goal[2];
@@ -63,15 +67,24 @@ typedef struct {
     unsigned count;
     uint8_t pitch_table[256];
 } KeyedTone;
+/* The first half holds the prepared sequence and the second its live notes.
+ * Each lower-village command restarts its own instance on retrigger. */
+typedef struct {
+    unsigned count;
+    uint8_t pitch_table[256];
+    uint16_t levels[SEQUENCE_FIELDS+1];
+    Layer notes[];
+} MenuSequence;
 typedef struct {
     unsigned id;
     size_t frames, retrigger_frames;
     int16_t *mono;
     KeyedTone *tone;
+    MenuSequence *menu_sequence;
 } Clip;
 typedef struct {
     const Clip *clip;
-    unsigned command;
+    unsigned command, menu_target, menu_staged;
     size_t frame;
     Layer layers[MAX_LAYERS];
     Resampler resampler;
@@ -79,7 +92,8 @@ typedef struct {
 struct BfmBedroomEffects {
     Clip clips[CLEFT_CLIPS];
     Playback playing[VOICES];
-    int replace_matching;
+    int replace_matching, menu_sequences;
+    unsigned sound_phase;
     unsigned terrain_aliases;
 };
 
@@ -254,7 +268,7 @@ static unsigned sequence_level(const Layer *voice, unsigned field)
     unsigned index = field < SEQUENCE_FIELDS ? field : SEQUENCE_FIELDS;
     unsigned level = voice->sequence_levels ? voice->sequence_levels[index] : 16383;
     unsigned gain = voice->sequence_gain * level >> 14;
-    gain = gain * 16383u >> 14;
+    gain = gain * (SEQUENCE_FULL_GAIN - voice->menu_attenuation) >> 14;
     return gain * 16383u >> 14;
 }
 
@@ -412,7 +426,7 @@ static int prepare(const Sources *s, unsigned command, Clip *clip)
         }
         int rings = command == BFM_EARTH_SCROLL_RINGS_SOUND;
         if (!layer_open(s,d,&layers[count],rings)) goto done;
-        layers[count].ntsc_fields = d[8] == 32 || (d[8] & 0x80) ||
+        layers[count].ntsc_fields = s->key == 38 || d[8] == 32 || (d[8] & 0x80) ||
             command == BFM_VALLEY_GATE_SLIDE_SOUND || half(layers[count].control) == 7 ||
             command == BFM_WOODS_CRYSTAL_BREAK_SOUND || command == BFM_WOODS_RESCUE_DEPART_SOUND ||
             command == BFM_WOODS_RESCUE_VANISH_SOUND ||
@@ -452,15 +466,60 @@ done:
     return result;
 }
 
+static int finish_sequence(const Sources *s, Layer notes[], unsigned count,
+                           unsigned command, Clip *clip, BfmDecodedSpuSample *instrument)
+{
+    if (!s->menu_sequences)
+        return render_layers(s, notes, count, command, clip);
+
+    MenuSequence *sequence = calloc(1, sizeof *sequence + 2 * count * sizeof *notes);
+    if (!sequence) return 0;
+    sequence->count = count;
+    memcpy(sequence->pitch_table, s->pitch, sizeof sequence->pitch_table);
+    memcpy(sequence->notes, notes, count * sizeof *notes);
+    if (notes[0].sequence_levels) {
+        memcpy(sequence->levels, notes[0].sequence_levels, sizeof sequence->levels);
+        for (unsigned i = 0; i < count; ++i) sequence->notes[i].sequence_levels = sequence->levels;
+    }
+    /* The mounted sequence decoder keeps one instrument across this track. */
+    *instrument = (BfmDecodedSpuSample){0};
+    clip->id = command;
+    clip->menu_sequence = sequence;
+    return 1;
+}
+
+static int prepare_pickup_note(const Sources *s, unsigned command, const uint8_t track[12], Clip *clip)
+{
+    uint8_t note[20];
+    Layer voice = {0};
+    if (!read_data(s, word(track), note, sizeof note) || half(note) || !half(note+2) ||
+        !half(note+6) || half(note+6) >= 127*256 || note[8] >= 128 || note[9] || note[13] ||
+        !read_data(s, word(note+16), voice.control, sizeof voice.control) ||
+        half(voice.control) != 6 || half(voice.control+16) != half(note+2) ||
+        !instrument_open(s, note[10], note[11], &voice)) return 0;
+    voice.key = (int)half(note+6);
+    voice.pitch = pitch(s->pitch, &voice);
+    voice.sequence_gain = half(s->volume+2*note[8])*127u >> 7;
+    voice.gain = sequence_level(&voice, 0);
+    voice.modulated = 1;
+    voice.ntsc_fields = 1;
+    voice.gate_samples = field_sample(half(note+2));
+    int ok = voice.pitch && finish_sequence(s, &voice, 1, command, clip, &voice.sample);
+    bfm_spu_sample_free(&voice.sample);
+    return ok;
+}
+
 static int prepare_sequence(const Sources *s, unsigned command, Clip *clip)
 {
-    enum { MAX_NOTES = 48 };
+    /* The two HP refill phrases require 66 voices across their repeats. */
+    enum { MAX_NOTES = 66 };
     uint8_t entry[4], track[12];
     if (!select_command(s, command, entry, NULL) || (entry[0] & 0x7f) != 5 || entry[2]) return 0;
     uint32_t tracks = entry[1] ? word(s->data+s->bytes-4) : 0x80068a54u;
-    if (!read_data(s, tracks+12*entry[3], track, sizeof track) ||
-        (track[8] != 0x10 && track[8] != 0x12))
-        return 0;
+    if (!read_data(s, tracks+12*entry[3], track, sizeof track)) return 0;
+    if (!track[8] && command == BFM_ROOM_AWARD_SOUND)
+        return prepare_pickup_note(s, command, track, clip);
+    if (track[8] != 0x10 && track[8] != 0x12) return 0;
     uint32_t cursor = word(track), repeat_start = 0;
     unsigned repeats = 0, count = 0, field = 0, attenuation = 0;
     uint16_t levels[SEQUENCE_FIELDS+1];
@@ -476,7 +535,7 @@ static int prepare_sequence(const Sources *s, unsigned command, Clip *clip)
         unsigned op = note[3];
         if (op == 0x87) {
             if (count && !repeats && !note[0] && !note[1] && !note[2])
-                result = render_layers(s,notes,count,command,clip);
+                result = finish_sequence(s,notes,count,command,clip,&timbre.sample);
             break;
         }
         if (op == 0x82) {
@@ -559,7 +618,7 @@ static int prepare_sequence(const Sources *s, unsigned command, Clip *clip)
         voice->gain = sequence_level(voice,field);
         if (!interval) {
             /* The final note can end scheduling directly and ring out. */
-            result = render_layers(s,notes,count,command,clip);
+            result = finish_sequence(s,notes,count,command,clip,&timbre.sample);
             break;
         }
         field += interval;
@@ -578,7 +637,7 @@ static int load_tables(Sources *s)
 static BfmBedroomEffects *town_effects_load(const MusashiDiscMedia *disc, unsigned member,
                                            const unsigned commands[], size_t count, int with_common)
 {
-    Sources sources = {.disc = disc};
+    Sources sources = {.disc = disc, .menu_sequences = member == 124};
     uint8_t *data = bfm_archive_effect_data(disc, "SC03.CD", member, &sources.bytes);
     if (!data || sources.bytes < 28) {
         free(data);
@@ -597,9 +656,12 @@ static BfmBedroomEffects *town_effects_load(const MusashiDiscMedia *disc, unsign
         if (sources.scene && (!with_common || sources.common) && load_tables(&sources)) {
             effects = calloc(1, sizeof *effects);
             for (size_t i = 0; effects && i < count; ++i) {
-                int prepared = commands[i] == BFM_VILLAGE_WELL_SOUND
-                    ? prepare_sequence(&sources, commands[i], &effects->clips[i])
-                    : prepare(&sources, commands[i], &effects->clips[i]);
+                unsigned command = commands[i];
+                uint8_t entry[4];
+                int prepared = select_command(&sources, command, entry, NULL) &&
+                    ((entry[0] & 0x7f) == 5
+                        ? prepare_sequence(&sources, command, &effects->clips[i])
+                        : prepare(&sources, command, &effects->clips[i]));
                 if (!prepared) {
                     bfm_bedroom_effects_free(effects);
                     effects = NULL;
@@ -619,6 +681,25 @@ BfmBedroomEffects *bfm_village_knock_sound_load(const MusashiDiscMedia *disc)
         BFM_VILLAGE_KNOCK_SOUND, BFM_VILLAGE_WELL_SOUND, BFM_WOODS_LENO_BARK_SOUND
     };
     return town_effects_load(disc, 2, commands, sizeof commands / sizeof *commands, 0);
+}
+
+BfmBedroomEffects *bfm_village_illness_effects_load(const MusashiDiscMedia *disc)
+{
+    /* SC03/124 selects the two door tones and the key presentation in its
+     * own bank. The inventory uses MAIN/2, including both voices of Heal. */
+    static const unsigned commands[] = {
+        1300, 1301, BFM_ROOM_AWARD_SOUND,
+        0x467, BFM_FIELD_MENU_ROW_SOUND, 0x46d, 0x46b, 0x46c, 0x469,
+        BFM_FIELD_MENU_COMMIT_SOUND, BFM_FIELD_MENU_ERROR_SOUND,
+        0x463, 0x464, 0x465, RESCUE_BP_STRIKE, HEAL_ARPEGGIO
+    };
+    BfmBedroomEffects *effects = town_effects_load(disc, 124, commands,
+                                                  sizeof commands / sizeof *commands, 1);
+    if (effects) {
+        effects->replace_matching = 1;
+        effects->menu_sequences = 1;
+    }
+    return effects;
 }
 
 BfmBedroomEffects *bfm_woods_box_sound_load(const MusashiDiscMedia *disc)
@@ -1008,6 +1089,10 @@ void bfm_bedroom_effects_free(BfmBedroomEffects *e)
                 bfm_spu_sample_free(&clip->tone->initial[j].sample);
             free(clip->tone);
         }
+        if (clip->menu_sequence) {
+            bfm_spu_sample_free(&clip->menu_sequence->notes[0].sample);
+            free(clip->menu_sequence);
+        }
         free(clip->mono);
     }
     free(e);
@@ -1016,6 +1101,11 @@ void bfm_bedroom_effects_free(BfmBedroomEffects *e)
 static void start_voice(Playback *p, const Clip *clip, unsigned command)
 {
     *p = (Playback){.clip=clip, .command=command};
+    if (clip->menu_sequence) {
+        MenuSequence *sequence = clip->menu_sequence;
+        memcpy(sequence->notes + sequence->count, sequence->notes,
+               sequence->count * sizeof *sequence->notes);
+    }
     if (clip->tone) memcpy(p->layers, clip->tone->initial, clip->tone->count * sizeof *p->layers);
 }
 
@@ -1027,6 +1117,20 @@ void bfm_bedroom_effects_stop(BfmBedroomEffects *effects)
 void bfm_bedroom_effects_start(BfmBedroomEffects *e, unsigned command)
 {
     if (!e || !command) return;
+    if (command == BFM_ROOM_MENU_DUCK || command == BFM_ROOM_MENU_RESTORE) {
+        for (unsigned i = 0; i < VOICES; ++i) {
+            Playback *p = &e->playing[i];
+            if (p->clip && p->clip->menu_sequence)
+                p->menu_target = command == BFM_ROOM_MENU_DUCK ? SEQUENCE_FULL_GAIN : 0;
+        }
+        return;
+    }
+    if (command == BFM_FIELD_MENU_HEAL_SOUND && e->menu_sequences) {
+        /* The item service starts both mounted sequences on the same tick. */
+        bfm_bedroom_effects_start(e, RESCUE_BP_STRIKE);
+        bfm_bedroom_effects_start(e, HEAL_ARPEGGIO);
+        return;
+    }
     if (command == BFM_WOODS_RESCUE_BP_SOUND) {
         /* The BP refill starts two common sequences on the same sound tick. */
         bfm_bedroom_effects_start(e, RESCUE_BP_STRIKE);
@@ -1078,16 +1182,20 @@ static void mix_sample(int16_t stereo[2], int value)
     stereo[1] = limited(stereo[1]+value);
 }
 
-void bfm_bedroom_effects_mix(BfmBedroomEffects *e, int16_t *stereo, size_t frames)
+static void mix_block(BfmBedroomEffects *e, int16_t *stereo, size_t frames)
 {
-    if (!e || !stereo) return;
     for (unsigned j=0; j<VOICES; ++j) {
         Playback *p = &e->playing[j];
         if (!p->clip) continue;
-        if (p->clip->tone) {
+        if (p->clip->tone || p->clip->menu_sequence) {
+            KeyedTone *tone = p->clip->tone;
+            MenuSequence *sequence = p->clip->menu_sequence;
+            unsigned count = sequence ? sequence->count : tone->count;
+            Layer *notes = sequence ? sequence->notes + count : p->layers;
+            const uint8_t *table = sequence ? sequence->pitch_table : tone->pitch_table;
             for (size_t i = 0; i < frames; ++i) {
                 int16_t value;
-                if (!next_frame(p->clip->tone->pitch_table, p->layers, p->clip->tone->count, &p->resampler, &value)) break;
+                if (!next_frame(table, notes, count, &p->resampler, &value)) break;
                 mix_sample(stereo+2*i,value);
             }
             if (p->resampler.done) p->clip = NULL;
@@ -1097,6 +1205,47 @@ void bfm_bedroom_effects_mix(BfmBedroomEffects *e, int16_t *stereo, size_t frame
             for (size_t i=0; i<n; ++i)
                 mix_sample(stereo+2*i,p->clip->mono[p->frame++]);
             if (p->frame == p->clip->frames) p->clip = NULL;
+        }
+    }
+}
+
+static void advance_menu_gain(Playback *p)
+{
+    if (!p->clip || !p->clip->menu_sequence) return;
+    MenuSequence *sequence = p->clip->menu_sequence;
+    Layer *notes = sequence->notes + sequence->count;
+    for (unsigned i = 0; i < sequence->count; ++i) {
+        Layer *note = &notes[i];
+        if (note->done || note->menu_gain_latched) continue;
+        if (note->menu_attenuation != p->menu_staged) {
+            note->menu_attenuation = p->menu_staged;
+            note->gain = sequence_level(note, note->sequence_start + note->field);
+        }
+        if (note->envelope.stage == BFM_SPU_ENVELOPE_RELEASE) note->menu_gain_latched = 1;
+    }
+    /* The previous service's gain reaches the notes before the next step. */
+    p->menu_staged = (unsigned)approach((int)p->menu_staged, (int)p->menu_target, MENU_RAMP_STEP);
+}
+
+void bfm_bedroom_effects_mix(BfmBedroomEffects *e, int16_t *stereo, size_t frames)
+{
+    if (!e || !stereo) return;
+    if (!e->menu_sequences) {
+        mix_block(e, stereo, frames);
+        return;
+    }
+    /* Convert 37.8 kHz output frames to 60000/1001 sound services per second. */
+    enum { FIELD_STEP = 100, FIELD_PERIOD = 63063 };
+    while (frames) {
+        size_t n = (FIELD_PERIOD - e->sound_phase + FIELD_STEP - 1) / FIELD_STEP;
+        if (n > frames) n = frames;
+        mix_block(e, stereo, n);
+        stereo += 2*n;
+        frames -= n;
+        e->sound_phase += (unsigned)n * FIELD_STEP;
+        if (e->sound_phase >= FIELD_PERIOD) {
+            e->sound_phase -= FIELD_PERIOD;
+            for (unsigned i = 0; i < VOICES; ++i) advance_menu_gain(&e->playing[i]);
         }
     }
 }

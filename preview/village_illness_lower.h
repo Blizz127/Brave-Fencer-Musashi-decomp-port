@@ -5,6 +5,7 @@
 #include "bedroom_record.h"
 #include "field_input.h"
 #include "forest_hud.h"
+#include "forest_message.h"
 #include "village_arrival_motion.h"
 
 typedef struct BfmVillageIllnessLower BfmVillageIllnessLower;
@@ -23,5 +24,12 @@ int bfm_village_illness_lower_step(BfmVillageIllnessLower *street, BfmGameplayRu
 int bfm_village_illness_lower_rest_hud(const BfmVillageIllnessLower *street, BfmForestHud *hud);
 int bfm_village_illness_lower_draw(BfmVillageIllnessLower *street, unsigned scene_tick,
     const uint8_t flags[64], unsigned draw_page, uint32_t pixels[240][320]);
+
+const BfmForestMessageFrame *bfm_village_illness_lower_page(const BfmVillageIllnessLower *street);
+int bfm_village_illness_lower_draw_window(const BfmVillageIllnessLower *street, uint32_t pixels[240][320]);
+int bfm_village_illness_lower_bag_active(const BfmVillageIllnessLower *street);
+int bfm_village_illness_lower_menu_serviced(const BfmVillageIllnessLower *street);
+unsigned bfm_village_illness_lower_take_score_command(BfmVillageIllnessLower *street);
+unsigned bfm_village_illness_lower_take_sounds(BfmVillageIllnessLower *street, unsigned sounds[2]);
 
 #endif

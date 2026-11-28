@@ -461,10 +461,16 @@ void bfm_desktop_voice_room_score(DesktopVoice *v, BfmForestScore *score)
 
 void bfm_desktop_voice_room_score_command(DesktopVoice *v, unsigned command)
 {
-    if (!v || (command != 18 && command != 19)) return;
+    int menu = command == BFM_ROOM_MENU_DUCK || command == BFM_ROOM_MENU_RESTORE;
+    if (!v || (!menu && command != 18 && command != 19)) return;
     if (v->device) SDL_LockAudioDevice(v->device);
-    if (v->room_score)
+    if (menu) {
+        bfm_forest_score_duck(v->room_score, BFM_SCORE_DUCK_DEEP, command == BFM_ROOM_MENU_DUCK);
+        for (unsigned i = 0; i < BFM_ROOM_BANK_COUNT; ++i)
+            bfm_bedroom_effects_start(v->room_effects[i], command);
+    } else {
         bfm_forest_score_duck(v->room_score, BFM_SCORE_DUCK_DIALOGUE, command == 18);
+    }
     if (v->device) SDL_UnlockAudioDevice(v->device);
 }
 

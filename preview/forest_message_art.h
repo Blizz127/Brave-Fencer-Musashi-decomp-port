@@ -24,6 +24,8 @@ BfmForestMessageArt *bfm_southern_woods_message_art_load(const MusashiDiscMedia 
 /* SC03/31 contains portraits for the gate party and Knitter Lunchetta. */
 BfmForestMessageArt *bfm_valley_message_art_load(const MusashiDiscMedia *disc,
     const uint8_t *scene, size_t bytes, const uint16_t tiles[512][1024]);
+/* Refresh dialogue slot two after a field script uploads the next speaker. */
+void bfm_field_message_art_refresh_speaker(BfmForestMessageArt *art, const uint16_t tiles[512][1024]);
 void bfm_forest_message_art_free(BfmForestMessageArt *art);
 void bfm_forest_message_art_draw(const BfmForestMessageArt *art,
                                  const BfmForestMessageFrame *frame,
@@ -43,4 +45,9 @@ int bfm_library_question_draw(const BfmForestMessageArt *art, const uint8_t *box
 int bfm_field_menu_hint_draw(const BfmForestMessageArt *art, const uint8_t *box,
                              const uint16_t tiles[512][1024], const uint8_t *text, size_t bytes,
                              unsigned update, uint32_t pixels[240][320]);
+/* The field item menu grows its reflected help contour over several fields.
+ * Text appears once the authored window reaches its full fourteen columns. */
+int bfm_field_menu_hint_draw_sized(const BfmForestMessageArt *art, const uint8_t *box,
+    unsigned columns, unsigned lines, const uint8_t *text, size_t bytes,
+    unsigned update, uint32_t pixels[240][320]);
 #endif

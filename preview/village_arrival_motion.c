@@ -1933,18 +1933,35 @@ int bfm_village_motion_staged_model(BfmVillageMotion *m, const BfmBedroomRoot *r
     return 1;
 }
 
-int bfm_village_motion_staged_program(BfmVillageMotion *m, const BfmBedroomRoot *root,
-                                      uint32_t program, int *ended)
+static int staged_program(BfmVillageMotion *m, const BfmBedroomRoot *root,
+                                      uint32_t program, int restart, int *ended)
 {
     if (!m || !root || !ended || root->yaw >= 4096 ||
         m->player.phase != BFM_VILLAGE_CONTROL || m->talk != NO_TALK) return 0;
     BfmBedroomRoot next = *root;
-    if (!shadow(m, &next) || !bfm_bedroom_motion_direct(m->ordinary, program) ||
-        !bfm_bedroom_motion_step(m->ordinary, BFM_BEDROOM_NONE, &m->player.pose)) return 0;
+    if (!shadow(m, &next)) return 0;
+    if (restart) {
+        if (!bfm_bedroom_motion_step_then_restart(m->ordinary, program, &m->player.pose)) return 0;
+    } else if (!bfm_bedroom_motion_direct(m->ordinary, program) ||
+               !bfm_bedroom_motion_step(m->ordinary, BFM_BEDROOM_NONE, &m->player.pose)) {
+        return 0;
+    }
     m->player.root = next;
     m->player.events = 0;
     *ended = bfm_bedroom_motion_marker(m->ordinary) == BFM_BODY_END;
     return 1;
+}
+
+int bfm_village_motion_staged_program(BfmVillageMotion *m, const BfmBedroomRoot *root,
+                                      uint32_t program, int *ended)
+{
+    return staged_program(m, root, program, 0, ended);
+}
+
+int bfm_village_motion_restart_staged_program(BfmVillageMotion *m, const BfmBedroomRoot *root,
+                                              uint32_t program, int *ended)
+{
+    return staged_program(m, root, program, 1, ended);
 }
 
 int bfm_village_motion_staged_action(BfmVillageMotion *m, const BfmBedroomRoot *root,

@@ -199,6 +199,11 @@ BfmForestMessageArt *bfm_valley_message_art_load(const MusashiDiscMedia *disc,
                             TEXTURES + 4*FIRST_ROW, PALETTES + 4*FIRST_ROW, 5);
 }
 
+void bfm_field_message_art_refresh_speaker(BfmForestMessageArt *art, const uint16_t tiles[512][1024])
+{
+    decode_portrait(art->portrait[1], tiles, 456, 400, &tiles[457][352]);
+}
+
 void bfm_forest_message_art_free(BfmForestMessageArt *art)
 {
     if (art) free(art->field_faces);
@@ -407,6 +412,27 @@ int bfm_forest_message_art_draw_placed(const BfmForestMessageArt *art, const Bfm
     return 1;
 }
 
+static int menu_text_draw(const BfmForestMessageArt *art, const uint8_t *box,
+                          const uint8_t *text, size_t bytes, unsigned update,
+                          uint32_t pixels[240][320])
+{
+    unsigned row=0,col=0,ink=1;
+    int ox=160+signed16(box+8)-64, oy=120+signed16(box+10)-20;
+    for (size_t i=3;i<bytes;++i) {
+        unsigned c=text[i];
+        if (!c) return 1;
+        if (c=='\n') {++row;col=0;continue;}
+        if (c==1 && i+1<bytes) {ink=text[++i];continue;}
+        if (c<32 || c>126 || row>=3 || col>=36 || ink>=16) return 0;
+        int gx=ox+6*(int)col++,gy=oy+14*(int)row;
+        if (gx<0 || gx+6>320 || gy<0 || gy+12>240) return 0;
+        if (update<4+row) continue;
+        for (int j=0;j<12;++j) for (int k=0;k<6;++k)
+            if (art->glyph[c-32][j]&(128u>>k)) pixels[gy+j][gx+k]=art->ink[ink];
+    }
+    return 0;
+}
+
 static int menu_question_draw(const BfmForestMessageArt *art, const uint8_t *box, const uint8_t *portrait,
                               const uint16_t tiles[512][1024], const uint8_t *text, size_t bytes,
                               unsigned update, int field_help, uint32_t pixels[240][320])
@@ -445,21 +471,7 @@ static int menu_question_draw(const BfmForestMessageArt *art, const uint8_t *box
             if (color) pixels[py+j][px+i]=rgb(color);
         }
     }
-    unsigned row=0,col=0,ink=1;
-    int ox=160+signed16(box+8)-64, oy=120+signed16(box+10)-20;
-    for (size_t i=3;i<bytes;++i) {
-        unsigned c=text[i];
-        if (!c) return 1;
-        if (c=='\n') {++row;col=0;continue;}
-        if (c==1 && i+1<bytes) {ink=text[++i];continue;}
-        if (c<32 || c>126 || row>=3 || col>=36 || ink>=16) return 0;
-        int gx=ox+6*(int)col++,gy=oy+14*(int)row;
-        if (gx<0 || gx+6>320 || gy<0 || gy+12>240) return 0;
-        if (update<4+row) continue;
-        for (int j=0;j<12;++j) for (int k=0;k<6;++k)
-            if (art->glyph[c-32][j]&(128u>>k)) pixels[gy+j][gx+k]=art->ink[ink];
-    }
-    return 0;
+    return menu_text_draw(art, box, text, bytes, update, pixels);
 }
 
 int bfm_library_question_draw(const BfmForestMessageArt *art, const uint8_t *box, const uint8_t *portrait,
@@ -474,4 +486,41 @@ int bfm_field_menu_hint_draw(const BfmForestMessageArt *art, const uint8_t *box,
                              unsigned update, uint32_t pixels[240][320])
 {
     return menu_question_draw(art,box,NULL,tiles,text,bytes,update,1,pixels);
+}
+
+/* The field status balloon grows about its own center. Its reflected
+ * contour, inset and pointer retain their separate fixed-point rounding. */
+int bfm_field_menu_hint_draw_sized(const BfmForestMessageArt *art, const uint8_t *box,
+    unsigned columns, unsigned lines, const uint8_t *text, size_t bytes,
+    unsigned update, uint32_t pixels[240][320])
+{
+    if (!art || !box || !pixels || columns > 14 || lines > 3) return 0;
+    if (!columns || !lines) return 1;
+    int x = 160 + signed16(box), y = 120 + signed16(box + 2);
+    int sx = -((12 * (int)columns + 16) * 4096 / 154);
+    int sy = (14 * (int)lines + 6) * 4096 / 42;
+    BfmDialoguePoint border[CORNERS], inset[CORNERS];
+    for (unsigned i = 0; i < CORNERS; ++i) {
+        BfmDialoguePoint point = art->contour[0][i];
+        border[i].x = x + floor_div(point.x * sx, 4096);
+        border[i].y = y + floor_div(point.y * sy, 4096);
+        inset[i].x = border[i].x - art->inset[0][i].x;
+        inset[i].y = border[i].y + art->inset[0][i].y;
+    }
+    bfm_dialogue_contour(border, inset, art->paper, art->highlight, art->outline, 10, pixels);
+
+    int right = x + floor_div(-56 * sx, 4096);
+    int top = y + floor_div(25 * sy, 4096) - 1;
+    int width = -floor_div(9 * sx, 4096), height = floor_div(9 * sy, 4096);
+    for (int j = 0; j < height; ++j) for (int i = 0; i < width; ++i) {
+        int px = right - width + i, py = top + j;
+        if ((unsigned)px >= 320 || (unsigned)py >= 240) continue;
+        int u = 15 - (i * 15 + width / 2) / width;
+        int v = (j * 15 + height / 2) / height;
+        uint32_t color = art->tail[v][u];
+        if (color) pixels[py][px] = color;
+    }
+    if (columns != 14) return 1;
+    return text && bytes >= 3 && text[0] == 2 && !text[1] && !text[2] &&
+           menu_text_draw(art, box, text, bytes, update, pixels);
 }

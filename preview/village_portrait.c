@@ -18,7 +18,17 @@ void bfm_village_macho_portrait_load(uint16_t tiles[512][1024])
     copy_portrait(tiles, 656, 424, 672, 506);
 }
 
+void bfm_village_hotelo_portrait_load(uint16_t tiles[512][1024])
+{
+    copy_portrait(tiles, 648, 464, 656, 508);
+}
+
 void bfm_village_mayor_portrait_load(uint16_t tiles[512][1024])
 {
     copy_portrait(tiles, 672, 464, 640, 509);
+}
+
+void bfm_village_wid_portrait_load(uint16_t tiles[512][1024])
+{
+    copy_portrait(tiles, 688, 464, 672, 509);
 }

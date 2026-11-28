@@ -116,8 +116,8 @@ struct BfmBedroom {
     RecoveredStreet recovered_exterior;
     BfmNightmareTransition recovery_transition;
     GrillinExterior pending_exterior;
-    uint32_t (*frozen_recovery)[320];
-    BfmBedroomEffects *nightmare_effects, *box_effects;
+    uint32_t (*frozen_recovery)[320], (*field_item_background)[320];
+    BfmBedroomEffects *nightmare_effects, *box_effects, *illness_effects;
     BfmBedroomEffects *effects, *knock, *shrink_sound, *bakery_effects;
     BfmBedroomEffects *forest_bank_effects, *maze_guide_effects, *valley_effects;
     uint32_t room_sound_group;
@@ -256,6 +256,8 @@ BfmBedroom *bfm_bedroom_open_chapter(const MusashiDiscMedia *disc, const BfmSave
 void bfm_bedroom_free(BfmBedroom *room)
 {
     if (!room) return;
+    free(room->field_item_background);
+    bfm_bedroom_effects_free(room->illness_effects);
     for (unsigned i = 0; i < sizeof room->scores / sizeof *room->scores; ++i)
         bfm_forest_score_free(room->scores[i]);
     bfm_forest_message_free(room->message);
@@ -911,18 +913,8 @@ static BfmRetryScreen *current_field_retry(const BfmBedroom *room)
     return room ? bfm_village_arrival_retry(room->village) : NULL;
 }
 
-static int submit_village_frame(BfmBedroom *room)
+static int draw_village_field(BfmBedroom *room, uint32_t frame[240][320])
 {
-    if (bfm_village_arrival_maze_crossing(room->village)) {
-        unsigned tick = bfm_village_arrival_transfer_tick(room->village);
-        if (tick > BFM_MAZE_LAST_SOURCE_TICK && tick < BFM_MAZE_REVEAL_TICK) {
-            /* The outdoor shutter keeps a copy of the last submitted source
-             * screen while the next room is loading. */
-            ++room->village_updates;
-            ++room->update;
-            return 1;
-        }
-    }
     int detector = bfm_village_arrival_detector(room->village);
     bfm_forest_hud_detector(room->hud, detector >= 0, detector < 0 ? 0u : (unsigned)detector);
     int hud_request = bfm_village_arrival_take_hud(room->village);
@@ -930,7 +922,6 @@ static int submit_village_frame(BfmBedroom *room)
     if (hud_request > 0) bfm_forest_hud_show(room->hud);
     bfm_forest_hud_tick(room->hud);
     if (!bfm_village_arrival_rest_hud(room->village, room->hud)) return 0;
-    uint32_t (*frame)[320] = room->frames[room->presented];
     memcpy(room->status.record, room->entry.state.progress, sizeof room->status.record);
     bfm_forest_hud_submit_points(room->hud, &room->status);
     uint16_t field_id = bfm_village_arrival_room(room->village);
@@ -946,8 +937,39 @@ static int submit_village_frame(BfmBedroom *room)
         if (!bfm_village_arrival_draw_page(room->village, room->story_flags, window, draw_page, frame))
             return 0;
         bfm_forest_hud_draw(room->hud, &room->status, frame);
+        if (!bfm_village_arrival_draw_field_window(room->village, frame)) return 0;
         bfm_village_arrival_submit_woods_crossing(room->village, frame,
                                                 room->frames[(room->presented + 1) % 3]);
+    }
+    return 1;
+}
+
+static int submit_village_frame(BfmBedroom *room)
+{
+    if (bfm_village_arrival_maze_crossing(room->village)) {
+        unsigned tick = bfm_village_arrival_transfer_tick(room->village);
+        if (tick > BFM_MAZE_LAST_SOURCE_TICK && tick < BFM_MAZE_REVEAL_TICK) {
+            /* The outdoor shutter keeps a copy of the last submitted source
+             * screen while the next room is loading. */
+            ++room->village_updates;
+            ++room->update;
+            return 1;
+        }
+    }
+    uint32_t (*frame)[320] = room->frames[room->presented];
+    if (bfm_village_arrival_menu_serviced(room->village)) {
+        if (!room->field_item_background) {
+            room->field_item_background = malloc(sizeof room->frames[0]);
+            if (!room->field_item_background) return 0;
+            memcpy(room->field_item_background, room->frames[(room->presented + 2) % 3],
+                   sizeof room->frames[0]);
+        }
+        memcpy(frame, room->field_item_background, sizeof room->frames[0]);
+        if (!bfm_village_arrival_draw_field_window(room->village, frame)) return 0;
+    } else {
+        free(room->field_item_background);
+        room->field_item_background = NULL;
+        if (!draw_village_field(room, frame)) return 0;
     }
     room->presented = (room->presented + 1) % 3;
     ++room->village_updates;
@@ -1213,6 +1235,14 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
         if (!room->box_effects) room->box_effects = bfm_woods_box_sound_load(room->disc);
         if (!room->box_effects) return 0;
         queue_effect(room, BFM_ROOM_BOX_BANK, box_cue);
+    }
+    unsigned illness_sounds[2];
+    unsigned illness_count = bfm_village_arrival_take_illness_sounds(room->village, illness_sounds);
+    if (illness_count) {
+        if (!room->illness_effects) room->illness_effects = bfm_village_illness_effects_load(room->disc);
+        if (!room->illness_effects) return 0;
+        for (unsigned i = 0; i < illness_count; ++i)
+            queue_mounted_effect(room, room->illness_effects, BFM_ROOM_ILLNESS_BANK, illness_sounds[i]);
     }
     if (!bfm_village_arrival_begin_retry(room->village, room->run)) return 0;
     if (current_field_retry(room)) {

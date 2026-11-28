@@ -168,15 +168,33 @@ static int select_body(BfmBedroomMotion *m, unsigned index)
     return previous == m->body.program || advance(m, &m->body, 1);
 }
 
-int bfm_bedroom_motion_direct(BfmBedroomMotion *motion, uint32_t program)
+static int restart_body(BfmBedroomMotion *motion, uint32_t program)
 {
     if (!motion || !program) return 0;
-    if (motion->body.program == program) return 1;
     BfmBedroomMotion next = *motion;
     start(&next.body, program);
     next.activity = QUIET;
     next.frame.draw_current = 1;
     if (!advance(&next, &next.body, 1)) return 0;
+    *motion = next;
+    return 1;
+}
+
+int bfm_bedroom_motion_direct(BfmBedroomMotion *motion, uint32_t program)
+{
+    return motion && program && (motion->body.program == program ||
+                                 restart_body(motion, program));
+}
+
+int bfm_bedroom_motion_step_then_restart(BfmBedroomMotion *motion, uint32_t program,
+                                         BfmBedroomPose *frame)
+{
+    if (!motion || !frame) return 0;
+    BfmBedroomMotion next = *motion;
+    BfmBedroomPose previous;
+    if (!bfm_bedroom_motion_step(&next, BFM_BEDROOM_NONE, &previous) ||
+        !restart_body(&next, program)) return 0;
+    bfm_bedroom_motion_publish_upright(&next, frame);
     *motion = next;
     return 1;
 }

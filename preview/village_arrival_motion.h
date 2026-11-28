@@ -117,6 +117,9 @@ int bfm_village_motion_rootrick_step(BfmVillageMotion *motion, struct BfmRootric
  * program retains its body cursor. ended reports the published end marker. */
 int bfm_village_motion_staged_program(BfmVillageMotion *motion, const BfmBedroomRoot *root,
                                       uint32_t program, int *ended);
+/* Start the body again even when the previous speech uses the same program. */
+int bfm_village_motion_restart_staged_program(BfmVillageMotion *motion, const BfmBedroomRoot *root,
+                                              uint32_t program, int *ended);
 int bfm_village_motion_staged_action(BfmVillageMotion *motion, const BfmBedroomRoot *root,
                                     BfmBedroomAction action);
 /* Transfer the complete live coordinate to and from a scripted field mover.

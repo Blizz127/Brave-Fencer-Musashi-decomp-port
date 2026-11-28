@@ -210,7 +210,7 @@ typedef struct {
 struct BfmVillageShopDoors {
     ShopDoor leaves[13];
     unsigned count;
-    int illness;
+    int illness, windmill_hinged, windmill_angle;
 };
 
 void bfm_village_shop_doors_free(BfmVillageShopDoors *doors)
@@ -303,6 +303,13 @@ static int storefront_open(const ShopDoor *door, const BfmSaveRecord *state, int
     }
 }
 
+void bfm_village_shop_doors_set_windmill(BfmVillageShopDoors *doors, int hinged, int angle)
+{
+    if (!doors) return;
+    doors->windmill_hinged = hinged;
+    doors->windmill_angle = angle;
+}
+
 void bfm_village_shop_doors_prepare(BfmVillageShopDoors *doors, const BfmBedroomView *view,
                                     const uint16_t tiles[512][1024], uint32_t *pixels,
                                     const BfmSaveRecord *state)
@@ -311,8 +318,13 @@ void bfm_village_shop_doors_prepare(BfmVillageShopDoors *doors, const BfmBedroom
     for (unsigned i = 0; i < doors->count; ++i) {
         ShopDoor *leaf = &doors->leaves[i];
         int open = storefront_open(leaf,state,doors->illness);
+        int angle = open ? -1536 : 0;
+        if (doors->illness && leaf->building == 16) {
+            open = doors->windmill_hinged;
+            angle = doors->windmill_angle;
+        }
         leaf->current = open || !leaf->closed ? leaf->open : leaf->closed;
-        bfm_village_mayor_door_prepare(leaf->current,view,tiles,pixels,open ? -1536 : 0);
+        bfm_village_mayor_door_prepare(leaf->current, view, tiles, pixels, angle);
     }
 }
 

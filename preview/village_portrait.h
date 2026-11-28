@@ -8,5 +8,8 @@
  * after the village tile upload and before the message art is decoded. */
 void bfm_village_macho_portrait_load(uint16_t tiles[512][1024]);
 
+void bfm_village_hotelo_portrait_load(uint16_t tiles[512][1024]);
+
 void bfm_village_mayor_portrait_load(uint16_t tiles[512][1024]);
+void bfm_village_wid_portrait_load(uint16_t tiles[512][1024]);
 #endif

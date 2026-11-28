@@ -56,6 +56,9 @@ typedef enum { BFM_BODY_PLAYING, BFM_BODY_HOLD, BFM_BODY_END } BfmBodyMarker;
  * pass. A new selection consumes its first key immediately. Repeating the
  * current selection keeps its clock, pose and any outstanding hold. */
 int bfm_bedroom_motion_direct(BfmBedroomMotion *motion, uint32_t program);
+/* The scripted player selects its new first key after the ordinary body and face pass. */
+int bfm_bedroom_motion_step_then_restart(BfmBedroomMotion *motion, uint32_t program,
+                                         BfmBedroomPose *frame);
 int bfm_bedroom_motion_direct_slot(BfmBedroomMotion *motion, unsigned slot);
 /* A looping program can display a key and signal its wrap in the same field. */
 int bfm_bedroom_motion_looped(const BfmBedroomMotion *motion);

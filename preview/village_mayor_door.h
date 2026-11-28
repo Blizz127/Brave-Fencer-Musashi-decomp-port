@@ -22,6 +22,8 @@ void bfm_village_mayor_door_draw_to(BfmVillageMayorDoor *door, int depth);
 typedef struct BfmVillageShopDoors BfmVillageShopDoors;
 BfmVillageShopDoors *bfm_village_shop_doors_load(const uint8_t *scene, size_t bytes, uint32_t room);
 void bfm_village_shop_doors_free(BfmVillageShopDoors *doors);
+/* In the illness street the windmill actor controls its own hinged leaf. */
+void bfm_village_shop_doors_set_windmill(BfmVillageShopDoors *doors, int hinged, int angle);
 void bfm_village_shop_doors_prepare(BfmVillageShopDoors *doors, const BfmBedroomView *view,
                                     const uint16_t tiles[512][1024], uint32_t *pixels,
                                     const BfmSaveRecord *state);

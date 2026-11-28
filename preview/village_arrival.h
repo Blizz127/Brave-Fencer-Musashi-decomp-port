@@ -43,6 +43,7 @@ unsigned bfm_village_arrival_woods_score_selector(const BfmVillageArrival *a);
 /* Positive selects a track, zero releases the field override, negative requests silence. */
 int bfm_village_arrival_field_score(const BfmVillageArrival *a, unsigned village_score);
 unsigned bfm_village_arrival_take_score_command(BfmVillageArrival *a);
+unsigned bfm_village_arrival_take_illness_sounds(BfmVillageArrival *a, unsigned sounds[2]);
 unsigned bfm_village_arrival_take_upper_sound(BfmVillageArrival *a);
 int bfm_village_arrival_take_retired_window(BfmVillageArrival *arrival);
 unsigned bfm_village_arrival_take_box_voice(BfmVillageArrival *arrival);
@@ -78,6 +79,8 @@ int bfm_village_arrival_continue(BfmVillageArrival *arrival);
 BfmForestMessage *bfm_village_arrival_speech(const BfmVillageArrival *arrival);
 int bfm_village_arrival_draw(BfmVillageArrival *arrival, const uint8_t flags[64],
                              const BfmForestMessageFrame *window, uint32_t pixels[240][320]);
+int bfm_village_arrival_menu_serviced(const BfmVillageArrival *arrival);
+int bfm_village_arrival_draw_field_window(const BfmVillageArrival *arrival, uint32_t pixels[240][320]);
 int bfm_village_arrival_draw_page(BfmVillageArrival *arrival, const uint8_t flags[64],
                                   const BfmForestMessageFrame *window, unsigned draw_page,
                                   uint32_t pixels[240][320]);

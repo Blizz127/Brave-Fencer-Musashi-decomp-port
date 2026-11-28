@@ -733,7 +733,8 @@ static int step_woods_crossing(BfmVillageArrival *a, BfmGameplayRun *run, BfmFie
 
 int bfm_village_arrival_woods_playtime_paused(const BfmVillageArrival *a)
 {
-    return a && a->crossing;
+    return a && (a->crossing ||
+                 (a->illness_lower && bfm_village_illness_lower_bag_active(a->illness_lower)));
 }
 
 void bfm_village_arrival_submit_woods_crossing(BfmVillageArrival *a, const uint32_t submitted[240][320],
@@ -774,10 +775,11 @@ void bfm_village_arrival_lower_register(BfmVillageArrival *a, BfmGameplayRun *ru
 
 static int step_illness_street(BfmVillageArrival *a, BfmGameplayRun *run, BfmFieldInput field)
 {
+    int bag_was_open = bfm_village_illness_lower_bag_active(a->illness_lower);
     if (!bfm_village_illness_lower_step(a->illness_lower, run, field, a->scene_tick)) return 0;
     /* Actors read the counter before it advances. Retain their sample when
      * the shop transition presents the same completed page more than once. */
-    a->illness_draw_tick = a->scene_tick++;
+    if (!bag_was_open) a->illness_draw_tick = a->scene_tick++;
     return 1;
 }
 
@@ -1161,7 +1163,14 @@ int bfm_village_arrival_field_score(const BfmVillageArrival *a, unsigned village
 
 unsigned bfm_village_arrival_take_score_command(BfmVillageArrival *a)
 {
-    return a ? bfm_village_lower_take_score_command(a->lower) : 0;
+    if (!a) return 0;
+    if (a->illness_lower) return bfm_village_illness_lower_take_score_command(a->illness_lower);
+    return bfm_village_lower_take_score_command(a->lower);
+}
+
+unsigned bfm_village_arrival_take_illness_sounds(BfmVillageArrival *a, unsigned sounds[2])
+{
+    return a && a->illness_lower ? bfm_village_illness_lower_take_sounds(a->illness_lower, sounds) : 0;
 }
 
 unsigned bfm_village_arrival_take_upper_sound(BfmVillageArrival *a)
@@ -1281,6 +1290,18 @@ static void draw_actors(void *context, int depth)
         bfm_village_gate_draw_to(a->gate, depth);
         bfm_bedroom_figure_draw_to(a->view.hero, depth);
     }
+}
+
+int bfm_village_arrival_menu_serviced(const BfmVillageArrival *a)
+{
+    return a && a->illness_lower && bfm_village_illness_lower_menu_serviced(a->illness_lower);
+}
+
+int bfm_village_arrival_draw_field_window(const BfmVillageArrival *a, uint32_t pixels[240][320])
+{
+    if (!a->illness_lower || (!bfm_village_illness_lower_page(a->illness_lower) &&
+                              !bfm_village_illness_lower_bag_active(a->illness_lower))) return 1;
+    return bfm_village_illness_lower_draw_window(a->illness_lower, pixels);
 }
 
 int bfm_village_arrival_draw_page(BfmVillageArrival *a, const uint8_t flags[64],

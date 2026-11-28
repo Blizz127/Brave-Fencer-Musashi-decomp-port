@@ -186,6 +186,13 @@ add_executable(musashi_native_boot
     village_portrait.c
     village_lower.c
     village_illness_lower.c
+    village_illness_grocery.c
+    village_illness_grocery_cast.c
+    village_illness_wid.c
+    village_illness_windmill.c
+    field_forced_bag.c
+    field_inventory_actions.c
+    field_item_menu_art.c
     bakery_door.c
     bakery_field.c
     bakery_room_art.c

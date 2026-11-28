@@ -48,6 +48,10 @@ enum { BFM_WOODS_BOX_OPEN_SOUND = 1471, BFM_WOODS_BOX_CLOSE_SOUND = 2184,
        BFM_ROOTRICK_STUMBLE_LANDING_SOUND = 0xb09,
        BFM_WALL_CLIMB_FIRST_SOUND = 0x56d, BFM_WALL_CLIMB_SECOND_SOUND = 0x56e };
 BfmBedroomEffects *bfm_woods_box_sound_load(const MusashiDiscMedia *disc);
+enum { BFM_FIELD_MENU_ROW_SOUND = 0x45a, BFM_FIELD_MENU_HEAL_SOUND = 0x45c,
+       BFM_FIELD_MENU_ERROR_SOUND = 0x45f, BFM_FIELD_MENU_COMMIT_SOUND = 0x462 };
+enum { BFM_ROOM_MENU_DUCK = 20, BFM_ROOM_MENU_RESTORE = 21 };
+BfmBedroomEffects *bfm_village_illness_effects_load(const MusashiDiscMedia *disc);
 BfmBedroomEffects *bfm_village_knock_sound_load(const MusashiDiscMedia *disc);
 BfmBedroomEffects *bfm_forest_swing_sound_load(const MusashiDiscMedia *disc);
 BfmBedroomEffects *bfm_bakery_effects_load(const MusashiDiscMedia *disc);
