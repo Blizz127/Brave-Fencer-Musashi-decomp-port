@@ -650,9 +650,18 @@ static int prepare_sequence(const Sources *s, unsigned command, Clip *clip)
                 gate = voice->gate;
                 voice->ntsc_fields = 1;
             } else {
-                if (half(voice->control) != 10 ||
-                    !read_data(s,word(note+16),voice->control,sizeof voice->control) ||
-                    !half(voice->control+16)) break;
+                unsigned type = half(voice->control);
+                if (type == 9) {
+                    /* The immediate pitch sweep has the same three targets as
+                     * type 10, with no initial hold. */
+                    memset(voice->control, 0, sizeof voice->control);
+                    voice->control[0] = 10;
+                    if (!read_data(s, word(note+16) + 2, voice->control+4, 14)) break;
+                } else if (type != 10 ||
+                           !read_data(s, word(note+16), voice->control, sizeof voice->control)) {
+                    break;
+                }
+                if (!half(voice->control+16)) break;
                 gate = half(voice->control+16);
                 voice->sequence_base = voice->key;
                 voice->modulated = 1;
@@ -885,7 +894,12 @@ static int prepare_mine_lake(const Sources *s, BfmBedroomEffects *e)
         clip->coalesce_pending = 1;
         if (!prepare(s, surface[i], clip)) return 0;
     }
-    return 1;
+    size_t slot = 2 + sizeof surface / sizeof *surface;
+    Clip *fall = &e->clips[slot], *bounce = &e->clips[slot+1];
+    fall->coalesce_pending = bounce->coalesce_pending = 1;
+    return prepare(s, BFM_MINE_LAKE_FALL_SOUND, fall) &&
+           prepare(s, BFM_MINE_LAKE_BOUNCE_SOUND, bounce) &&
+           prepare_sequence(s, BFM_MINE_LAKE_TUMBLE_SOUND, &e->clips[slot+2]);
 }
 
 #include "village_mine_shaft_mixer.inc"
@@ -920,7 +934,8 @@ static BfmBedroomEffects *forest_field_effects(const MusashiDiscMedia *disc, uns
             effects->replace_matching = 1;
         } else if (room == 0x3046) {
             effects->lake = 1;
-            valid = prepare_mine_lake(&s, effects);
+            s.common = bfm_archive_sound_bank_load(disc, "MAIN.CD", 2);
+            valid = s.common && prepare_mine_lake(&s, effects);
         } else if (room == 0x3045) {
             effects->shaft = 1;
             valid = prepare_mine_shaft(&s, effects);
@@ -1269,7 +1284,7 @@ void bfm_bedroom_effects_start(BfmBedroomEffects *e, unsigned command)
                 start_lake_shoal(e, value);
             return;
         }
-        if (!bfm_mine_lake_surface_cue(command)) return;
+        if (!bfm_mine_lake_surface_cue(command) && !bfm_mine_lake_defeat_cue(command)) return;
     }
     if (command & BFM_MINE_WHEEL_EVENT) {
         play_mine_wheel(e, command);
