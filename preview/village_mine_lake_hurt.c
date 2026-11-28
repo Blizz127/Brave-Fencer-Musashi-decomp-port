@@ -8,16 +8,19 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum {
-    RETRY_TABLE = 0x801840dc - 0x80128158,
-    SAVED_EARLY = 0x801842c8 - 0x80128158,
-    SAVED_ILLNESS = 0x801842ec - 0x80128158
-};
+typedef struct {
+    uint32_t room_binding, room;
+    size_t retry_table, saved_early;
+} MineInjuryRoom;
+
+static const MineInjuryRoom lake = {0x80181d20u, 0x80185a50u, 0x5bf84, 0x5c170};
+static const MineInjuryRoom switchback = {0x80180c54u, 0x80184870u, 0x5aeb8, 0x5b0a4};
 
 struct BfmMineLakeHurt {
     const MusashiDiscMedia *disc;
     const uint8_t *scene;
     size_t bytes;
+    const MineInjuryRoom *room;
     BfmVillageMotion *motion;
     BfmSaveRecord *save;
     BfmSwitchbackHit *hit;
@@ -28,17 +31,20 @@ struct BfmMineLakeHurt {
     BfmRetryScreen *retry;
 };
 
-BfmMineLakeHurt *bfm_mine_lake_hurt_open(const MusashiDiscMedia *disc, const uint8_t *scene,
+static BfmMineLakeHurt *open_hurt(const MineInjuryRoom *room, const MusashiDiscMedia *disc, const uint8_t *scene,
     size_t bytes, BfmVillageMotion *motion, BfmSaveRecord *save)
 {
-    const size_t binding = 0x80181d20u - 0x80128158u;
+    const size_t binding = room->room_binding - 0x80128158u;
+    size_t illness = room->saved_early + sizeof save->destination;
     const BfmVillagePlayer *p = bfm_village_motion_player(motion);
-    if (!disc || !scene || !p || !save || bytes < SAVED_ILLNESS + sizeof save->destination ||
-        u32le(scene + binding) != 0x80185a50u || u32le(scene + SAVED_EARLY) != 0x3012 ||
-        u32le(scene + SAVED_ILLNESS) != 0x3054) return NULL;
+    if (!disc || !scene || !p || !save || bytes < illness + sizeof save->destination ||
+        u32le(scene + binding) != room->room || u32le(scene + room->saved_early) != 0x3012 ||
+        u32le(scene + illness) != 0x3054) return NULL;
     BfmMineLakeHurt *h = calloc(1, sizeof *h);
     if (!h) return NULL;
-    h->hit = bfm_switchback_hit_open_lake(disc, scene, bytes, p->root.xyz);
+    h->room = room;
+    h->hit = room == &switchback ? bfm_switchback_hit_open(disc, scene, bytes, p->root.xyz) :
+                                  bfm_switchback_hit_open_lake(disc, scene, bytes, p->root.xyz);
     if (!h->hit) { free(h); return NULL; }
     h->disc = disc;
     h->scene = scene;
@@ -46,6 +52,18 @@ BfmMineLakeHurt *bfm_mine_lake_hurt_open(const MusashiDiscMedia *disc, const uin
     h->motion = motion;
     h->save = save;
     return h;
+}
+
+BfmMineLakeHurt *bfm_mine_lake_hurt_open(const MusashiDiscMedia *disc, const uint8_t *scene,
+    size_t bytes, BfmVillageMotion *motion, BfmSaveRecord *save)
+{
+    return open_hurt(&lake, disc, scene, bytes, motion, save);
+}
+
+BfmMineLakeHurt *bfm_switchback_hurt_open(const MusashiDiscMedia *disc, const uint8_t *scene,
+    size_t bytes, BfmVillageMotion *motion, BfmSaveRecord *save)
+{
+    return open_hurt(&switchback, disc, scene, bytes, motion, save);
 }
 
 void bfm_mine_lake_hurt_free(BfmMineLakeHurt *h)
@@ -121,6 +139,11 @@ unsigned bfm_mine_lake_hurt_take_sound(BfmMineLakeHurt *h)
     return h ? bfm_switchback_hit_take_sound(h->hit) : 0;
 }
 
+int bfm_mine_lake_hurt_hides_shadow(const BfmMineLakeHurt *h)
+{
+    return h && h->floor.hide_body;
+}
+
 int bfm_mine_lake_hurt_defeated(const BfmMineLakeHurt *h)
 {
     return h && h->dying;
@@ -154,7 +177,7 @@ BfmMineLakeLife bfm_mine_lake_hurt_resolve(BfmMineLakeHurt *h, BfmGameplayRun *r
         return BFM_MINE_LAKE_REVIVED;
     }
     if (!bfm_village_motion_mine_release_rider(h->motion)) return BFM_MINE_LAKE_LIFE_ERROR;
-    h->retry = bfm_village_field_defeat_open(actor, h->disc, h->scene, h->bytes, RETRY_TABLE,
+    h->retry = bfm_village_field_defeat_open(actor, h->disc, h->scene, h->bytes, h->room->retry_table,
                                              presented, run);
     return h->retry ? BFM_MINE_LAKE_RETRY : BFM_MINE_LAKE_LIFE_ERROR;
 }
@@ -177,7 +200,8 @@ int bfm_mine_lake_hurt_restore(const BfmMineLakeHurt *h, const BfmGameplayRun *r
     if (story < 10 || story >= 600) return 0;
     /* Saved Data restores its own banks, then takes the numbered entrance
        from the source room's table for the restored story. */
-    const uint8_t *destination = h->scene + (story < 200 ? SAVED_EARLY : SAVED_ILLNESS);
+    const uint8_t *destination = h->scene + h->room->saved_early +
+                                 (story < 200 ? 0 : sizeof out->destination);
     *out = *saved;
     memcpy(out->destination, destination, sizeof out->destination);
     return 1;

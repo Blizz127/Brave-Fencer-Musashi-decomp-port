@@ -392,6 +392,11 @@ static int lake_current_at_rest(BfmVillageMotion *m)
     return hit == BFM_VILLAGE_GROUND_FOOTING;
 }
 
+static int mine_has_pits(const BfmVillageMotion *m)
+{
+    return m->woods_route.room == 0x3044 || m->woods_route.room == 0x3046;
+}
+
 static int displace(BfmVillageMotion *m, const uint32_t velocity[3], int require_floor,
                     BfmWoodsMotionContact *contact, SlopeSupport *sliding)
 {
@@ -535,7 +540,7 @@ static int displace(BfmVillageMotion *m, const uint32_t velocity[3], int require
                                                &m->player.wall_contact);
         }
         if (mine_contact == 0x203) m->player.wall_contact = mine_contact;
-        if (m->woods_route.room == 0x3046 && mine_contact == 0x21c) m->bank_contact_reason = mine_contact;
+        if (mine_has_pits(m) && mine_contact == 0x21c) m->bank_contact_reason = mine_contact;
         if (deck_stationary && deck_contact != BFM_MINE_BASKET_MISS)
             memcpy(candidate.xyz, deck_foot, sizeof candidate.xyz);
         if (deck_contact != BFM_MINE_BASKET_MISS && hit == BFM_VILLAGE_GROUND_AIR) {
@@ -1714,13 +1719,13 @@ static void set_rescued_floor(BfmVillageMotion *m)
 
 uint16_t bfm_village_motion_mine_pit_material(const BfmVillageMotion *m)
 {
-    return m && m->woods_route.room == 0x3046 ? m->bank_contact_reason : 0;
+    return m && mine_has_pits(m) ? m->bank_contact_reason : 0;
 }
 
 int bfm_village_motion_mine_pit(BfmVillageMotion *m, BfmVillageMinePit *pit, BfmGameplayRun *run,
     BfmForestBankThornInput input, int accept_floor, BfmForestBankThornFrame *frame)
 {
-    if (!m || m->woods_route.room != 0x3046 || !pit || !run || !frame) return 0;
+    if (!m || !mine_has_pits(m) || !pit || !run || !frame) return 0;
     if (!m->airborne && !m->rider && !input.scene_state && m->player.controlled)
         bfm_village_mine_pit_remember(pit, m->ground, m->mine_action_foot);
     input.ground = m->ground;
@@ -1763,7 +1768,7 @@ int bfm_village_motion_mine_pit(BfmVillageMotion *m, BfmVillageMinePit *pit, Bfm
 
 int bfm_village_motion_mine_release_rider(BfmVillageMotion *m)
 {
-    if (!m || m->woods_route.room != 0x3046) return 0;
+    if (!m || !mine_has_pits(m)) return 0;
     m->rider = 0;
     if (!publish_root(m)) return 0;
     m->player.root.shadow_visible = 0;
@@ -3287,6 +3292,16 @@ int bfm_village_motion_mine_shaft_turn_fan(BfmVillageMotion *m, BfmMineShaftFanF
 void bfm_village_motion_mine_begin_field(BfmVillageMotion *m, BfmVillageMineWheels *wheels)
 {
     m->mine_wheels = wheels;
+    /* The switchback player checks its signed foot before action dispatch.
+     * Restore the numbered entrance but keep sub-unit movement and momentum. */
+    if (m->woods_route.room == 0x3044 && high(m->position[1]) >= 1025) {
+        for (unsigned axis = 0; axis < 3; ++axis) {
+            int16_t coordinate = m->bank_entrance.xyz[axis];
+            m->position[axis] = (int64_t)coordinate * Q + (m->position[axis] & (Q - 1));
+            m->player.root.xyz[axis] = coordinate;
+        }
+        m->player.root.yaw = m->bank_entrance.yaw;
+    }
     for (unsigned axis = 0; axis < 3; ++axis)
         m->mine_action_foot[axis] = (int16_t)high(m->position[axis]);
 }

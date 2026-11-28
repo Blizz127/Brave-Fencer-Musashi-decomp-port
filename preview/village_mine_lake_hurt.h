@@ -9,6 +9,8 @@ typedef struct BfmMineLakeHurt BfmMineLakeHurt;
 
 BfmMineLakeHurt *bfm_mine_lake_hurt_open(const MusashiDiscMedia *disc, const uint8_t *scene,
     size_t bytes, BfmVillageMotion *motion, BfmSaveRecord *save);
+BfmMineLakeHurt *bfm_switchback_hurt_open(const MusashiDiscMedia *disc, const uint8_t *scene,
+    size_t bytes, BfmVillageMotion *motion, BfmSaveRecord *save);
 void bfm_mine_lake_hurt_free(BfmMineLakeHurt *hurt);
 /* The player receives the last occupied actor's hit on its following field. */
 void bfm_mine_lake_hurt_queue(BfmMineLakeHurt *hurt, const BfmMineLungeHit *incoming);
@@ -23,6 +25,7 @@ int bfm_mine_lake_hurt_body(const BfmMineLakeHurt *hurt, const uint8_t *main, si
 int bfm_mine_lake_hurt_draw(const BfmMineLakeHurt *hurt, BfmBedroomFigure *figure,
     const BfmBedroomView *view);
 unsigned bfm_mine_lake_hurt_take_sound(BfmMineLakeHurt *hurt);
+int bfm_mine_lake_hurt_hides_shadow(const BfmMineLakeHurt *hurt);
 int bfm_mine_lake_hurt_defeated(const BfmMineLakeHurt *hurt);
 
 typedef enum {
