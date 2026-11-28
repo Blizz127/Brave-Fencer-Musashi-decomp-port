@@ -59,6 +59,9 @@ int bfm_bedroom_motion_direct(BfmBedroomMotion *motion, uint32_t program);
 /* The scripted player selects its new first key after the ordinary body and face pass. */
 int bfm_bedroom_motion_step_then_restart(BfmBedroomMotion *motion, uint32_t program,
                                          BfmBedroomPose *frame);
+/* Choose a field gait after the shared animation update and publish its entry key. */
+int bfm_bedroom_motion_field_gait(BfmBedroomMotion *motion, unsigned slot, int entering,
+                                  BfmBedroomPose *frame);
 int bfm_bedroom_motion_direct_slot(BfmBedroomMotion *motion, unsigned slot);
 /* A looping program can display a key and signal its wrap in the same field. */
 int bfm_bedroom_motion_looped(const BfmBedroomMotion *motion);

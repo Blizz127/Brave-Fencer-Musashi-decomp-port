@@ -16,7 +16,7 @@ typedef struct {
 
 typedef struct {
     uint32_t program;
-    unsigned cursor, remaining, interval;
+    unsigned cursor, remaining, interval, pose_count;
     enum { STREAM_ACTIVE, STREAM_LOOP, STREAM_HOLD, STREAM_END } boundary;
 } Channel;
 
@@ -96,6 +96,7 @@ static int advance(BfmBedroomMotion *m, Channel *channel, int body)
             return 1;
         case 1:
             channel->cursor = 0;
+            channel->pose_count = 0;
             channel->boundary = STREAM_LOOP;
             break;
         case 3:
@@ -142,6 +143,7 @@ static int advance(BfmBedroomMotion *m, Channel *channel, int body)
             if (body) {
                 m->frame.pose = data(m, command, PART_POSE_BYTES);
                 if (!m->frame.pose) return 0;
+                ++channel->pose_count;
             } else {
                 if ((command & 0xfffffff8u) == 0x40000000u) {
                     m->frame.face_word = command;
@@ -168,11 +170,12 @@ static int select_body(BfmBedroomMotion *m, unsigned index)
     return previous == m->body.program || advance(m, &m->body, 1);
 }
 
-static int restart_body(BfmBedroomMotion *motion, uint32_t program)
+static int restart_body(BfmBedroomMotion *motion, uint32_t program, unsigned cursor)
 {
     if (!motion || !program) return 0;
     BfmBedroomMotion next = *motion;
     start(&next.body, program);
+    next.body.cursor = cursor;
     next.activity = QUIET;
     next.frame.draw_current = 1;
     if (!advance(&next, &next.body, 1)) return 0;
@@ -183,7 +186,7 @@ static int restart_body(BfmBedroomMotion *motion, uint32_t program)
 int bfm_bedroom_motion_direct(BfmBedroomMotion *motion, uint32_t program)
 {
     return motion && program && (motion->body.program == program ||
-                                 restart_body(motion, program));
+                                 restart_body(motion, program, 0));
 }
 
 int bfm_bedroom_motion_step_then_restart(BfmBedroomMotion *motion, uint32_t program,
@@ -193,9 +196,34 @@ int bfm_bedroom_motion_step_then_restart(BfmBedroomMotion *motion, uint32_t prog
     BfmBedroomMotion next = *motion;
     BfmBedroomPose previous;
     if (!bfm_bedroom_motion_step(&next, BFM_BEDROOM_NONE, &previous) ||
-        !restart_body(&next, program)) return 0;
+        !restart_body(&next, program, 0)) return 0;
     bfm_bedroom_motion_publish_upright(&next, frame);
     *motion = next;
+    return 1;
+}
+
+int bfm_bedroom_motion_field_gait(BfmBedroomMotion *m, unsigned slot, int entering,
+                                  BfmBedroomPose *frame)
+{
+    uint32_t program;
+    if (!m || !frame || slot >= 40 || !word(m, m->body_bank + 4*slot, &program)) return 0;
+    if (m->body.program != program) {
+        unsigned cursor = 0;
+        if (!entering && slot == 7) {
+            uint32_t slow;
+            if (!word(m, m->body_bank + 4*6, &slow)) return 0;
+            if (m->body.program == slow) {
+                /* Keep the planted foot when the stick crosses into the faster walk. */
+                unsigned pose = m->body.pose_count;
+                cursor = pose < 6 ? 16 : pose < 11 ? 18 : pose < 16 ? 7 : 9;
+            } else {
+                cursor = m->body.cursor;
+            }
+        }
+        if (!restart_body(m, program, cursor)) return 0;
+    }
+    if (entering && !select_slot(m, &m->face, m->face_bank, slot == 10 ? 28 : 33)) return 0;
+    bfm_bedroom_motion_publish_upright(m, frame);
     return 1;
 }
 

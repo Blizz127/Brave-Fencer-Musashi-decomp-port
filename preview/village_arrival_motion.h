@@ -125,6 +125,9 @@ struct BfmVillageMineWheels;
 void bfm_village_motion_mine_begin_field(BfmVillageMotion *motion, struct BfmVillageMineWheels *wheels);
 int bfm_village_motion_mine_turn_wheels(BfmVillageMotion *motion, int gain[3]);
 int bfm_village_motion_mine_rider(const BfmVillageMotion *motion);
+/* The lake walk distinguishes a physical stick from digital directions with the same axes. */
+int bfm_village_motion_step_mine_lake_pad(BfmVillageMotion *motion, BfmFieldInput input,
+    int camera_yaw, const uint8_t *progress, struct BfmGameplayRun *run);
 int bfm_village_motion_step_mine_field(BfmVillageMotion *motion, int x, int y, int camera_yaw,
     int cross_pressed, int cross_held, struct BfmGameplayRun *run);
 struct BfmValleyBincho;

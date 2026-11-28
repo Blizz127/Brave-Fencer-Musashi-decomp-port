@@ -82,6 +82,8 @@ struct BfmVillageMotion {
     BfmShaftBladeFrame lake_blade_frame;
     unsigned lake_blade_flags;
     int lake_square;
+    BfmFieldPadMode lake_pad;
+    int lake_tired, lake_speed_limit;
     int16_t lake_current[3];
     int lake_current_posted;
     BfmMineShaftFan *mine_fan;
@@ -811,7 +813,7 @@ static int ordinary_input(BfmVillageMotion *m, int x, int y, int camera,
         }
         m->brake = 0;
         m->walking = 1;
-        m->speed = m->starting_speed;
+        m->speed = m->lake_tired ? 4*Q : m->starting_speed;
         *action = BFM_BEDROOM_WALK;
         m->foot = FOOT_START;
         return 1;
@@ -823,6 +825,18 @@ static int ordinary_input(BfmVillageMotion *m, int x, int y, int camera,
     m->speed = speed < limit ? speed : limit;
     if (!m->airborne && m->speed >= 11*Q) m->foot = FOOT_RUNNING;
     if (steer) speed = speed*magnitude/127;
+    if (!m->airborne && m->lake_pad) {
+        if (m->lake_tired) {
+            speed = m->speed = 4*Q;
+        } else if (m->lake_pad == BFM_FIELD_PAD_ANALOG) {
+            speed = 11*Q*magnitude/127;
+            if (speed > m->lake_speed_limit) speed = m->lake_speed_limit;
+            m->speed = speed;
+        } else if (m->speed > m->lake_speed_limit) {
+            /* Digital projects this stride before capping the retained speed. */
+            m->speed = m->lake_speed_limit;
+        }
+    }
     if (!m->airborne && speed < 9*Q+Q/4) *action = BFM_BEDROOM_WALK;
     if (m->airborne && m->fall_speed < 31*Q) m->fall_speed += GRAVITY;
     if (!move(m,speed,m->airborne ? m->fall_speed : 0,1)) return 0;
@@ -1309,6 +1323,11 @@ static int advance(BfmVillageMotion *m, int stick_x, int stick_y, int camera,
         for (unsigned i = 0; i < 3; ++i) prior_model.translation[i] = p->root.xyz[i];
         bfm_forest_upright_model(p->root.yaw, &prior_model);
     }
+    int gait_input = lake_player && !m->airborne && m->lake_pad && p->controlled &&
+                     !m->transfer && !m->ingress && !m->sliding;
+    int gait_entry = !m->walking || m->landed;
+    unsigned station_stride = lake_player && m->ingress >= 2 && m->ingress <= 2 + m->ingress_walk
+        ? m->ingress - 1 : 0;
     int run_brake = valley || m->woods_route.room == 0x3043 || switchback || station ||
                     m->room == UINT32_C(0x80190780);
     int was_braking = m->brake;
@@ -1490,8 +1509,21 @@ static int advance(BfmVillageMotion *m, int stick_x, int stick_y, int camera,
         ? BFM_BEDROOM_STANCE_IDLE : BFM_BEDROOM_STANCE_INACTIVE;
     int lake_landed = lake_air && m->landed;
     int lake_liftoff = lake_was_grounded && m->airborne && m->jump.active;
-    if (!bfm_bedroom_motion_step_field(m->ordinary,
-            lake_landed || lake_liftoff ? BFM_BEDROOM_NONE : action, run, stance, &p->pose)) return 0;
+    int gait = gait_input && m->walking && !m->airborne && !m->landed && !m->transfer;
+    if (!bfm_bedroom_motion_step_field(m->ordinary, gait || station_stride || lake_landed || lake_liftoff ? BFM_BEDROOM_NONE : action,
+                                       run, stance, &p->pose)) return 0;
+    if (gait || station_stride) {
+        unsigned slot = 6;
+        if (station_stride) {
+            /* The entrance supplies its own full-strength analog pad. */
+            gait_entry = station_stride == 1;
+            slot = gait_entry ? 6 : 8;
+        } else if (m->lake_tired) slot = 10;
+        else if (gait_entry) slot = m->lake_pad == BFM_FIELD_PAD_DIGITAL ? 7 : 6;
+        else if (m->speed > 9*Q + Q/4) slot = 8;
+        else if (m->speed > 7*Q) slot = 7;
+        if (!bfm_bedroom_motion_field_gait(m->ordinary, slot, gait_entry, &p->pose)) return 0;
+    }
     m->reported_stand = standing && !m->airborne && !m->grip.pole;
     m->box_air_action = m->airborne && !m->grip.pole && !m->water.age;
     if (lake_liftoff) {
@@ -3296,10 +3328,40 @@ int bfm_village_motion_switchback_stance(BfmVillageMotion *m, unsigned facing,
     return 1;
 }
 
+int bfm_village_motion_step_mine_lake_pad(BfmVillageMotion *m, BfmFieldInput input,
+    int camera_yaw, const uint8_t *progress, BfmGameplayRun *run)
+{
+    if (!m || m->woods_route.room != 0x3046) return 0;
+    BfmVillageMotion next = *m;
+    next.lake_pad = input.movement_pad == BFM_FIELD_PAD_ANALOG
+        ? BFM_FIELD_PAD_ANALOG : BFM_FIELD_PAD_DIGITAL;
+    if (next.lake_pad == BFM_FIELD_PAD_DIGITAL && input.charge_direction.sampled) {
+        input.x = input.charge_direction.x;
+        input.y = input.charge_direction.y;
+    }
+    next.lake_tired = progress && bfm_field_tired_stance(progress);
+    int reserve = progress ? read16(progress + 0x26) : 64;
+    int wakefulness = progress ? read16(progress + 0x2e) : 48;
+    next.lake_speed_limit = reserve < 32 || wakefulness < 32 ? 4*Q :
+                            reserve < 64 || wakefulness < 48 ? 8*Q : 11*Q;
+    if (!step_field_with_jump(&next, input.x, input.y, camera_yaw,
+                              input.cross_pressed, input.cross_held, run)) return 0;
+    next.lake_pad = BFM_FIELD_PAD_UNSPECIFIED;
+    next.lake_tired = 0;
+    *m = next;
+    return 1;
+}
+
 int bfm_village_motion_step_mine_field(BfmVillageMotion *m, int x, int y, int camera_yaw,
                                        int cross_pressed, int cross_held, BfmGameplayRun *run)
 {
-    return m && m->woods_route.room >= 0x3043 && m->woods_route.room <= 0x3046 &&
+    if (m && m->woods_route.room == 0x3046) {
+        BfmFieldInput input = {.x = x, .y = y, .cross_pressed = cross_pressed,
+                               .cross_held = cross_held, .movement_pad = BFM_FIELD_PAD_DIGITAL};
+        return bfm_village_motion_step_mine_lake_pad(m, input, camera_yaw,
+            run && run->has_player ? run->player.record : NULL, run);
+    }
+    return m && m->woods_route.room >= 0x3043 && m->woods_route.room <= 0x3045 &&
            step_field_with_jump(m,x,y,camera_yaw,cross_pressed,cross_held,run);
 }
 
@@ -3312,8 +3374,8 @@ int bfm_village_motion_step_mine_lake_field(BfmVillageMotion *m, BfmFieldInput i
     next.lake_blade_flags = (next.player.pose.hide_fusion ? 4u : 0u) |
                             (live && (live->progress[0x23] & 0x80) ? 0x400u : 0u);
     next.lake_blade_frame = (BfmShaftBladeFrame){0};
-    if (!step_field_with_jump(&next, input.x, input.y, camera_yaw, input.cross_pressed,
-                              input.cross_held, run)) return 0;
+    if (!bfm_village_motion_step_mine_lake_pad(&next, input, camera_yaw,
+                                               live ? live->progress : NULL, run)) return 0;
     next.lake_square = 0;
     *m = next;
     return 1;
