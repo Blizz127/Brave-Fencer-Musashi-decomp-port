@@ -430,6 +430,8 @@ struct BfmVillageMineCorridor387 {
     const BfmVillageGround *ground;
     const uint8_t *scene;
     size_t scene_bytes;
+    uint32_t room_address;
+    unsigned row_count;
     MusashiForestPlayerMesh *mesh;
     BfmForestPose pose, cut_pose;
     BfmBedroomLight field_lamps[3], lamps[3];
@@ -473,25 +475,31 @@ static const uint8_t *mounted(const uint8_t *scene, size_t bytes, uint32_t addre
     return scene + (address - base);
 }
 
-BfmVillageMineCorridor387 *bfm_village_mine_corridor_387_open(const uint8_t *scene,
-    size_t bytes, const BfmVillageGround *ground)
+typedef struct {
+    uint32_t binding, room, profile, shadow;
+    unsigned fixed_variant, ceiling_rows;
+} MineCreatureLayout;
+
+static BfmVillageMineCorridor387 *open_creatures(const uint8_t *scene, size_t bytes,
+    const BfmVillageGround *ground, const MineCreatureLayout *layout)
 {
-    const uint8_t *binding = mounted(scene, bytes, UINT32_C(0x80180c54), 4);
-    if (!ground || !binding || u32le(binding) != UINT32_C(0x80184870)) return NULL;
-    const uint8_t *room = mounted(scene, bytes, u32le(binding), 0xbc);
-    const uint8_t *profile = mounted(scene, bytes, UINT32_C(0x8019e640), 0x34);
-    const uint8_t *lights = mounted(scene, bytes, UINT32_C(0x8019e674), 48);
-    const uint8_t *halo = mounted(scene, bytes, UINT32_C(0x8019e6bc), 64);
-    const uint8_t *anchor = mounted(scene, bytes, UINT32_C(0x8019e6fc), 6);
-    const uint8_t *shadow = mounted(scene, bytes, UINT32_C(0x801825b8), 12);
+    const uint8_t *binding = mounted(scene, bytes, layout->binding, 4);
+    if (!ground || !binding || u32le(binding) != layout->room) return NULL;
+    const uint8_t *room = mounted(scene, bytes, layout->room, 0xbc);
+    uint32_t config = layout->profile;
+    const uint8_t *profile = mounted(scene, bytes, config, 0x34);
+    const uint8_t *lights = mounted(scene, bytes, config + 0x34, 48);
+    const uint8_t *halo = mounted(scene, bytes, config + 0x7c, 64);
+    const uint8_t *anchor = mounted(scene, bytes, config + 0xbc, 6);
+    const uint8_t *shadow = mounted(scene, bytes, layout->shadow, 12);
     if (!room || !profile || !lights || !halo || !anchor || !shadow) return NULL;
 
-    const uint8_t *clip = mounted(scene,bytes,UINT32_C(0x8019e6ac),8);
+    const uint8_t *clip = mounted(scene,bytes,config + 0x6c,8);
     const uint8_t *cut_pose = clip && (u32le(clip) & UINT32_C(0x01000000)) ?
         mounted(scene,bytes,u32le(clip) & ~UINT32_C(0x01000000),8) : NULL;
     const uint8_t *bounds = mounted(scene,bytes,u32le(profile+8),16);
-    const uint8_t *impulse = mounted(scene,bytes,UINT32_C(0x8019e7d4),12);
-    const uint8_t *foot = mounted(scene,bytes,UINT32_C(0x8019e704),6);
+    const uint8_t *impulse = mounted(scene,bytes,config + 0x194,12);
+    const uint8_t *foot = mounted(scene,bytes,config + 0xc4,6);
     if (!bounds || u32le(bounds) || !impulse || !foot || s16le(foot) || s16le(foot+4) ||
         (u16le(profile+2) & 0x8100) != 0x8000) return NULL;
     uint32_t first = u32le(room + 0xb4), end = u32le(room + 0xb8);
@@ -501,7 +509,7 @@ BfmVillageMineCorridor387 *bfm_village_mine_corridor_387_open(const uint8_t *sce
     if (!rows) return NULL;
     for (size_t i = 0; i < end-first && u16le(rows+i+6); i += 20) {
         if (u16le(rows+i+6) == 387) {
-            if (placed || u16le(rows+i+8)) return NULL;
+            if (placed || u16le(rows+i+8) != layout->fixed_variant) return NULL;
             placed = rows+i;
         }
     }
@@ -526,6 +534,8 @@ BfmVillageMineCorridor387 *bfm_village_mine_corridor_387_open(const uint8_t *sce
     a->ground = ground;
     a->scene = scene;
     a->scene_bytes = bytes;
+    a->room_address = layout->room;
+    a->row_count = layout->ceiling_rows;
     for (unsigned i = 0; i < 3; ++i) {
         a->fixed.home[i] = s16le(placed + 2*i);
         a->attachment[i] = s16le(anchor + 2*i);
@@ -547,11 +557,16 @@ BfmVillageMineCorridor387 *bfm_village_mine_corridor_387_open(const uint8_t *sce
     memcpy(a->shadow_texture, shadow, sizeof a->shadow_texture);
     a->fixed.spawn_yaw = u16le(placed+12);
     mine387_motion_start(&a->fixed.motion, a->fixed.home, a->fixed.spawn_yaw);
-    a->fixed.ceiling = (Mine387Ceiling){.phase=M387_CEILING_RELEASED, .scale_xz=4096};
+    if (layout->fixed_variant & 2) {
+        a->fixed.hidden = 1;
+        mine387_ceiling_start(&a->fixed.ceiling);
+    } else {
+        a->fixed.ceiling = (Mine387Ceiling){.phase=M387_CEILING_RELEASED, .scale_xz=4096};
+    }
     bfm_forest_actor_root(0,(const int16_t[3]){0},&a->fixed.submitted);
-    const uint8_t *ring = mounted(scene,bytes,end,20*(BFM_MINE_CEILING_ROWS+1));
-    if (!ring || u16le(ring+20*BFM_MINE_CEILING_ROWS+6)) goto fail;
-    for (unsigned i = 0; i < BFM_MINE_CEILING_ROWS; ++i) {
+    const uint8_t *ring = mounted(scene,bytes,end,20*(a->row_count+1));
+    if (!ring || u16le(ring+20*a->row_count+6)) goto fail;
+    for (unsigned i = 0; i < a->row_count; ++i) {
         const uint8_t *row = ring+20*i;
         MineResident *c = a->ceiling+i;
         if (u16le(row+6) != 387 || u16le(row+8) != 0x12) goto fail;
@@ -562,6 +577,24 @@ BfmVillageMineCorridor387 *bfm_village_mine_corridor_387_open(const uint8_t *sce
 fail:
     bfm_village_mine_corridor_387_free(a);
     return NULL;
+}
+
+BfmVillageMineCorridor387 *bfm_village_mine_corridor_387_open(const uint8_t *scene,
+    size_t bytes, const BfmVillageGround *ground)
+{
+    const MineCreatureLayout layout = {
+        0x80180c54u, 0x80184870u, 0x8019e640u, 0x801825b8u, 0, 3
+    };
+    return open_creatures(scene, bytes, ground, &layout);
+}
+
+BfmVillageMineCorridor387 *bfm_village_mine_lake_387_open(const uint8_t *scene,
+    size_t bytes, const BfmVillageGround *ground)
+{
+    const MineCreatureLayout layout = {
+        0x80181d20u, 0x80185a50u, 0x8019bf40u, 0x80183684u, 2, 2
+    };
+    return open_creatures(scene, bytes, ground, &layout);
 }
 
 void bfm_village_mine_corridor_387_free(BfmVillageMineCorridor387 *a)
@@ -596,7 +629,7 @@ static void mine387_touchdown(Mine387Motion *m, const BfmVillageMineCorridor387 
     /* The shared projection starts 20 units above its supplied root. The
      * recovery snaps vertically from four above the foot through 764 below. */
     BfmBedroomRoot foot = {.xyz = {m->xyz[0], (int16_t)(m->xyz[1] + 16), m->xyz[2]}};
-    if (bfm_bedroom_travel_air_shadow(room->scene,room->scene_bytes,UINT32_C(0x80184870),&foot) &&
+    if (bfm_bedroom_travel_air_shadow(room->scene,room->scene_bytes,room->room_address,&foot) &&
         foot.shadow_visible) {
         for (unsigned i = 0; i < 3; ++i) {
             m->xyz[i] = foot.shadow_xyz[i];
@@ -657,7 +690,7 @@ int bfm_village_mine_corridor_387_blade_row(BfmVillageMineCorridor387 *a, unsign
     unsigned event, unsigned strength, unsigned hero_yaw, const int16_t from[3],
     int16_t to[3], int16_t normal[3])
 {
-    return a && row < BFM_MINE_CEILING_ROWS &&
+    return a && row < a->row_count &&
         blade_resident(a,&a->ceiling[row],event,strength,hero_yaw,from,to,normal);
 }
 
@@ -676,7 +709,7 @@ int bfm_village_mine_corridor_387_dust(const BfmVillageMineCorridor387 *a, int16
 int bfm_village_mine_corridor_387_dust_row(const BfmVillageMineCorridor387 *a, unsigned row,
     int16_t xyz[3])
 {
-    return a && row < BFM_MINE_CEILING_ROWS && resident_dust(&a->ceiling[row],xyz);
+    return a && row < a->row_count && resident_dust(&a->ceiling[row],xyz);
 }
 
 unsigned bfm_village_mine_corridor_387_blade_sound(const BfmVillageMineCorridor387 *a,
@@ -889,7 +922,7 @@ int bfm_village_mine_corridor_387_step(BfmVillageMineCorridor387 *a,
 int bfm_village_mine_corridor_387_wants_row(const BfmVillageMineCorridor387 *a,
     unsigned row, const int16_t reference[3])
 {
-    if (!a || !reference || row >= BFM_MINE_CEILING_ROWS || a->ceiling[row].allocated) return 0;
+    if (!a || !reference || row >= a->row_count || a->ceiling[row].allocated) return 0;
     const int16_t *home = a->ceiling[row].home;
     int64_t dx = (int)reference[0]-home[0], dy = (int)reference[1]-home[1];
     int64_t dz = (int)reference[2]-home[2], distance = dx*dx+dy*dy+dz*dz;
@@ -916,7 +949,7 @@ int bfm_village_mine_corridor_387_spawn_row(BfmVillageMineCorridor387 *a,
 
 int bfm_village_mine_corridor_387_has_row(const BfmVillageMineCorridor387 *a, unsigned row)
 {
-    return a && row < BFM_MINE_CEILING_ROWS && a->ceiling[row].allocated;
+    return a && row < a->row_count && a->ceiling[row].allocated;
 }
 
 int bfm_village_mine_corridor_387_visible_row(const BfmVillageMineCorridor387 *a, unsigned row)
@@ -929,7 +962,7 @@ int bfm_village_mine_corridor_387_step_row(BfmVillageMineCorridor387 *a, unsigne
     BfmMineLungeHit *hit, BfmMineCreatureLanding *landing)
 {
     if (landing) *landing = (BfmMineCreatureLanding){0};
-    if (!a || row >= BFM_MINE_CEILING_ROWS || !hero || !run) return 0;
+    if (!a || row >= a->row_count || !hero || !run) return 0;
     return step_resident(a,&a->ceiling[row],hero,hero,target,run,tick,hit,landing);
 }
 
@@ -938,7 +971,7 @@ int bfm_village_mine_corridor_387_step_actor(BfmVillageMineCorridor387 *a, unsig
     BfmGameplayRun *run, unsigned tick, BfmMineLungeHit *hit, BfmMineCreatureLanding *landing)
 {
     if (landing) *landing = (BfmMineCreatureLanding){0};
-    if (!a || parent > BFM_MINE_WEST_CREATURE || !hero || !published || !run) return 0;
+    if (!a || (parent != BFM_MINE_WEST_CREATURE && parent >= a->row_count) || !hero || !published || !run) return 0;
     MineResident *c = parent == BFM_MINE_WEST_CREATURE ? &a->fixed : &a->ceiling[parent];
     return step_resident(a,c,hero,published,target,run,tick,hit,landing);
 }
@@ -989,7 +1022,7 @@ static int draw_halo(const BfmVillageMineCorridor387 *a, const MineResident *c,
 
 static const MineResident *shadow_parent(const BfmVillageMineCorridor387 *a, unsigned parent)
 {
-    if (!a || parent > BFM_MINE_WEST_CREATURE) return NULL;
+    if (!a || (parent != BFM_MINE_WEST_CREATURE && parent >= a->row_count)) return NULL;
     return parent == BFM_MINE_WEST_CREATURE ? &a->fixed : &a->ceiling[parent];
 }
 
@@ -1021,7 +1054,7 @@ int bfm_village_mine_corridor_387_shadow_step(const BfmVillageMineCorridor387 *a
     shadow->at_birth = 0;
     shadow->floor.yaw = (uint16_t)c->motion.yaw;
     memcpy(shadow->floor.xyz,c->motion.xyz,sizeof shadow->floor.xyz);
-    bfm_bedroom_travel_air_shadow(a->scene,a->scene_bytes,UINT32_C(0x80184870),&shadow->floor);
+    bfm_bedroom_travel_air_shadow(a->scene,a->scene_bytes,a->room_address,&shadow->floor);
     return 1;
 }
 
@@ -1030,7 +1063,7 @@ int bfm_village_mine_corridor_387_shadow_draw(const BfmVillageMineCorridor387 *a
 {
     if (!a || !shadow || !figure || !view) return 0;
     if (!shadow->active || !shadow->floor.shadow_visible) return 1;
-    if (shadow->parent > BFM_MINE_WEST_CREATURE) return 0;
+    if (shadow->parent != BFM_MINE_WEST_CREATURE && shadow->parent >= a->row_count) return 0;
     return bfm_bedroom_figure_add_floor_shadow(figure,view,&shadow->floor,
         a->shadow_texture,4096,shadow->at_birth);
 }
@@ -1077,6 +1110,6 @@ int bfm_village_mine_corridor_387_draw(const BfmVillageMineCorridor387 *a,
 int bfm_village_mine_corridor_387_draw_row(const BfmVillageMineCorridor387 *a, unsigned row,
     BfmBedroomFigure *figure, const BfmBedroomView *view)
 {
-    if (!a || !figure || !view || row >= BFM_MINE_CEILING_ROWS) return 0;
+    if (!a || !figure || !view || row >= a->row_count) return 0;
     return draw_with_shadow(a,row,figure,view);
 }

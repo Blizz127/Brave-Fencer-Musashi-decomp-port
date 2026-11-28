@@ -16,6 +16,9 @@ typedef struct {
 /* The mine encounter borrows its room geometry. It owns the creature mesh. */
 BfmVillageMineCorridor387 *bfm_village_mine_corridor_387_open(const uint8_t *scene,
     size_t bytes, const BfmVillageGround *ground);
+/* The lake mounts one fixed ceiling creature and two distance-activated rows. */
+BfmVillageMineCorridor387 *bfm_village_mine_lake_387_open(const uint8_t *scene,
+    size_t bytes, const BfmVillageGround *ground);
 void bfm_village_mine_corridor_387_free(BfmVillageMineCorridor387 *creature);
 
 /* Dispatch the fixed placement as the room is entered, before the first ordinary field. */
