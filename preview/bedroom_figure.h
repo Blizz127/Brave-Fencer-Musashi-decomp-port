@@ -86,4 +86,9 @@ int bfm_bedroom_figure_add_morph(BfmBedroomFigure *figure, const BfmBedroomView 
 /* Supply this callback to the field's ordering-table draw. */
 int bfm_bedroom_figure_next_depth(const BfmBedroomFigure *figure);
 void bfm_bedroom_figure_draw_to(void *figure, int depth);
+/* Independent floor sprite. At birth it uses xyz and a level pose. Later
+ * fields use the parent's yaw and the last visible vertical floor contact. */
+int bfm_bedroom_figure_add_floor_shadow(BfmBedroomFigure *figure, const BfmBedroomView *view,
+    const BfmBedroomRoot *ground, const uint8_t texture[12], unsigned scale, int at_birth);
+
 #endif

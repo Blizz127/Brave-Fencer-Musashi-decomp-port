@@ -66,9 +66,14 @@ int bfm_woods_pole_pose_load(BfmWoodsPolePose *pose, const uint8_t *scene, size_
 {
     const size_t room = UINT32_C(0x801961e8) - UINT32_C(0x80128158);
     if (!pose || !scene || !main || scene_bytes < room + 0x50) return 0;
-    uint32_t table = u32le(scene + room + 0x4c);
-    if (!resident_range(table, 22 * 4, main_bytes)) return 0;
-    const uint8_t *bank = main + (table - resident_base);
+    return bfm_woods_pole_pose_load_bank(pose, main, main_bytes, u32le(scene + room + 0x4c));
+}
+
+int bfm_woods_pole_pose_load_bank(BfmWoodsPolePose *pose, const uint8_t *main,
+                                  size_t main_bytes, uint32_t bank_address)
+{
+    if (!pose || !main || !resident_range(bank_address, 22 * 4, main_bytes)) return 0;
+    const uint8_t *bank = main + (bank_address - resident_base);
     BfmWoodsPolePose next = {.main = main};
     if (!read_clip(&next.climb, main, main_bytes, u32le(bank + 20 * 4), 1) ||
         !read_clip(&next.slide, main, main_bytes, u32le(bank + 21 * 4), 0)) return 0;

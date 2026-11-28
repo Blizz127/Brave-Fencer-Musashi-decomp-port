@@ -172,7 +172,8 @@ static int supported_field_member(const MusashiDiscMedia *disc, uint32_t target,
     case 0x04003000: case 0x43000: member = 4; resource = 53; group = 1; break;
     case 0x3003: member = 9; resource = 58; group = 1; break;
     case 0x3004: member = 74; resource = 123; group = 1; break;
-    case 0x02003043: member = 107; resource = 285; group = 3; break;
+    case 0x02003043: case 0x00013043: member = 107; resource = 285; group = 3; break;
+    case 0x00003044: member = 108; resource = 286; group = 3; break;
     case 0x000f1052:
     case 0x000a1052: member = 124; resource = 302; group = 3; break;
     case 0x00031010: case 0x00041010: case 0x00051010: case 0x00061010:

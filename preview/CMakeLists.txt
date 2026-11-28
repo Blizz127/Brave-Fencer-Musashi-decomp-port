@@ -191,6 +191,8 @@ add_executable(musashi_native_boot
     village_illness_wid.c
     village_illness_mine_gate.c
     village_mine_entrance.c
+    village_switchback_props.c
+    village_mine_corridor_387.c
     village_mine_view.c
     village_mine_props.c
     village_illness_mine_hero.c

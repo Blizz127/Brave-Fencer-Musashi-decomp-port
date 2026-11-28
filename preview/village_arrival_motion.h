@@ -26,7 +26,8 @@ enum {
     BFM_VILLAGE_HIT = 1u, BFM_VILLAGE_CAMERA = 2u, BFM_VILLAGE_OPEN_MESSAGE = 4u,
     BFM_VILLAGE_SHOW_HUD = 8u, BFM_VILLAGE_RELEASE = 16u, BFM_VILLAGE_TRANSFER = 32u,
     BFM_VILLAGE_WELL_SOUND_EVENT = 64u, BFM_VILLAGE_WATER_RETURN = 128u,
-    BFM_VILLAGE_WATER_SPLASH = 256u, BFM_VILLAGE_WATER_HIT = 512u
+    BFM_VILLAGE_WATER_SPLASH = 256u, BFM_VILLAGE_WATER_HIT = 512u,
+    BFM_VILLAGE_POLE_CATCH = 1024u /* First field of a successful mine grip. */
 };
 
 typedef struct {
@@ -69,6 +70,9 @@ BfmVillageMotion *bfm_village_motion_valley(const uint8_t *scene, size_t bytes,
 BfmVillageMotion *bfm_village_motion_mine(const uint8_t *scene, size_t bytes,
     const uint8_t *main, size_t main_bytes, unsigned entrance, unsigned story,
     const MusashiDiscMedia *disc);
+/* Room 3044 slot zero uses the western switchback's own fixed station. */
+BfmVillageMotion *bfm_village_motion_switchback(const uint8_t *scene, size_t bytes,
+    const uint8_t *main, size_t main_bytes, unsigned entrance, const MusashiDiscMedia *disc);
 int bfm_village_motion_mine_orb(const BfmVillageMotion *motion, unsigned orb,
                                 uint16_t tiles[512][1024]);
 struct BfmVillageMineProps;

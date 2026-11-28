@@ -13,10 +13,26 @@ struct BfmVillageMineView {
     BfmVillageField field;
     BfmVillageCamera camera;
     uint16_t (*tiles)[1024];
-    const uint8_t *zones;
+    const uint8_t *zones, *bearings, *wave, *distances;
+    unsigned zoom;
     int goal_pitch, goal_yaw, goal_radius;
     int pitch, yaw, radius, anchor[3];
 };
+
+static BfmVillageMineView *open_field(const MusashiDiscMedia *disc, const uint8_t *scene,
+    size_t bytes, uint32_t room, uint32_t face_table, unsigned member, uint16_t tiles[512][1024])
+{
+    BfmVillageMineView *view = calloc(1, sizeof *view);
+    if (!view) return NULL;
+    if (!bfm_village_field_load_room(&view->field, disc, scene, bytes, room, face_table) ||
+        !bfm_scene_read_tiles(disc, "MAIN.CD", 10, tiles) ||
+        !bfm_scene_read_tiles(disc, "SC03.CD", member, tiles)) {
+        bfm_village_mine_view_free(view);
+        return NULL;
+    }
+    view->tiles = tiles;
+    return view;
+}
 
 BfmVillageMineView *bfm_village_mine_view_open(const MusashiDiscMedia *disc,
     const uint8_t *scene, size_t bytes, uint16_t tiles[512][1024])
@@ -32,16 +48,31 @@ BfmVillageMineView *bfm_village_mine_view_open(const MusashiDiscMedia *disc,
             u16le(zone + 8) >= 4096 || u16le(zone + 10) >= 4096 ||
             !u32le(zone + 12) || u32le(zone + 12) > INT16_MAX) return NULL;
     }
-    BfmVillageMineView *view = calloc(1, sizeof *view);
-    if (!view) return NULL;
-    if (!bfm_village_field_load_room(&view->field, disc, scene, bytes, room, UINT32_C(0x801842d4)) ||
-        !bfm_scene_read_tiles(disc, "MAIN.CD", 10, tiles) ||
-        !bfm_scene_read_tiles(disc, "SC03.CD", 107, tiles)) {
-        bfm_village_mine_view_free(view);
-        return NULL;
+    BfmVillageMineView *view = open_field(disc, scene, bytes, room, UINT32_C(0x801842d4), 107, tiles);
+    if (view) view->zones = scene + zones;
+    return view;
+}
+
+BfmVillageMineView *bfm_village_mine_corridor_view_open(const MusashiDiscMedia *disc,
+    const uint8_t *scene, size_t bytes, uint16_t tiles[512][1024])
+{
+    const uint32_t base = UINT32_C(0x80128158), room = UINT32_C(0x80184870);
+    const size_t binding = UINT32_C(0x80180c54) - base;
+    const size_t paths = UINT32_C(0x80184720) - base, ranges = UINT32_C(0x80184768) - base;
+    const size_t wave = UINT32_C(0x8019de30) - base;
+    if (!disc || !scene || !tiles || bytes < wave + 2 * 1024 ||
+        u32le(scene + binding) != room || scene[paths + 4 * 14] != 255 ||
+        !u16le(scene + ranges) || !u16le(scene + ranges + 2)) return NULL;
+    for (unsigned i = 0; i < 4; ++i) {
+        const uint8_t *row = scene + paths + 14 * i;
+        if (row[0] > 1 || row[1] > 2) return NULL;
     }
-    view->zones = scene + zones;
-    view->tiles = tiles;
+    BfmVillageMineView *view = open_field(disc, scene, bytes, room, UINT32_C(0x80182acc), 108, tiles);
+    if (view) {
+        view->bearings = scene + paths;
+        view->distances = scene + ranges;
+        view->wave = scene + wave;
+    }
     return view;
 }
 
@@ -101,17 +132,17 @@ static int track_delta(int delta, int divisor, int taper)
     return step || !delta ? step : (delta < 0 ? -1 : 1);
 }
 
-static int track_angle(int angle, int goal, int in_zone)
+static int track_angle(int angle, int goal, int divisor, int taper)
 {
     int delta = goal - angle;
     if (delta > 2048) delta -= 4096;
     if (delta < -2048) delta += 4096;
-    return (angle + track_delta(delta, 10, !in_zone)) & 4095;
+    return (angle + track_delta(delta, divisor, taper)) & 4095;
 }
 
 void bfm_village_mine_view_follow(BfmVillageMineView *view, const int16_t foot[3], int entering)
 {
-    if (!view || !foot) return;
+    if (!view || !view->zones || !foot) return;
     BfmVillageCamera *camera = &view->camera;
     int target[3] = {foot[0], foot[1] - 50, foot[2]};
     if (entering) {
@@ -124,8 +155,8 @@ void bfm_village_mine_view_follow(BfmVillageMineView *view, const int16_t foot[3
         for (unsigned i = 0; i < 3; ++i) view->anchor[i] = target[i];
     }
     int in_zone = mine_zone(view, target);
-    view->pitch = track_angle(view->pitch, view->goal_pitch, in_zone);
-    view->yaw = track_angle(view->yaw, view->goal_yaw, in_zone);
+    view->pitch = track_angle(view->pitch, view->goal_pitch, 10, !in_zone);
+    view->yaw = track_angle(view->yaw, view->goal_yaw, 10, !in_zone);
     view->radius += track_delta(view->goal_radius - view->radius, 4, 1);
     camera->yaw = view->yaw;
     camera->radius = view->radius;
@@ -149,6 +180,99 @@ void bfm_village_mine_view_follow(BfmVillageMineView *view, const int16_t foot[3
         view->radius = view->goal_radius;
         for (unsigned i = 0; i < 3; ++i) view->anchor[i] = target[i];
     }
+}
+
+/* The gallery divides its length by directed boundaries. At either end of
+ * a boundary its test extends along the adjacent axis. */
+static int before_boundary(const uint8_t *row, int x, int z)
+{
+    int ax = s16le(row + 2), az = s16le(row + 4);
+    int bx = s16le(row + 6), bz = s16le(row + 8);
+    if (row[0] == 255) return 1;
+    int reversed = row[0];
+    if (x < (reversed ? bx : ax)) return 1;
+    if (x > (reversed ? ax : bx)) return 0;
+    if (z < bz) return !reversed;
+    if (z > az) return reversed;
+    return (int64_t)(bx - ax) * (z - az) < (int64_t)(bz - az) * (x - ax);
+}
+
+static int sin_q12(unsigned angle)
+{
+    return (int)lround(4096.0 * sin((angle & 4095u) * 0.0015339807878856412));
+}
+
+static int corridor_bearing(const uint8_t *rows, const int16_t foot[3], unsigned facing)
+{
+    unsigned i = 0;
+    while (!before_boundary(rows + 14*i, foot[0], foot[2])) ++i;
+    const uint8_t *row = rows + 14*i;
+    if (row[1] == 2) return 2048;
+    int x = foot[0] - sin_q12(facing) / 128 - s16le(row + 10);
+    int z = foot[2] - sin_q12(facing + 1024) / 128 - s16le(row + 12);
+    int yaw = row[1] ? bfm_waypoint_heading(-x, -z) : bfm_waypoint_heading(x, z);
+    if (yaw < 1152) return 1152;
+    return yaw > 2944 ? 2944 : yaw;
+}
+
+static int gallery_sine(const uint8_t *quarter, unsigned angle)
+{
+    unsigned phase = angle & 1023;
+    if (angle & 1024) phase = 1023 - phase;
+    int sample = s16le(quarter + 2*phase);
+    return angle & 2048 ? -sample : sample;
+}
+
+static int mul_q15(int a, int b)
+{
+    int n = a*b;
+    return n/32768 - (n%32768 < 0);
+}
+
+void bfm_village_mine_corridor_view_follow(BfmVillageMineView *view, const int16_t foot[3],
+    unsigned player_yaw, int entering, int shoulder_pressed)
+{
+    if (!view || !view->bearings || !foot) return;
+    BfmVillageCamera *camera = &view->camera;
+    if (entering) {
+        view->zoom = 0;
+        view->yaw = 0;
+        camera->focal = 400;
+        camera->radius = view->goal_radius = 1000;
+        camera->following = 1;
+    }
+    if (shoulder_pressed) {
+        view->zoom ^= 1;
+        view->goal_radius = u16le(view->distances + 2*view->zoom);
+    }
+    int goal = corridor_bearing(view->bearings, foot, player_yaw);
+    camera->yaw = track_angle(view->yaw, goal, 4, 0);
+    camera->radius += track_delta(view->goal_radius - camera->radius, 4, 1);
+    camera->target[0] = foot[0];
+    camera->target[1] = (foot[1] < 0 ? foot[1] : 0) - 80;
+    camera->target[2] = foot[2] < -128 ? foot[2] : -128;
+
+    /* This gallery builds its arm from its own mounted 15-bit quarter wave.
+     * Both pitch and roll contribute a rounded unit coefficient. */
+    const uint8_t *wave = view->wave;
+    int cp = gallery_sine(wave, 227 + 1024), sp = gallery_sine(wave, 227);
+    int unit = gallery_sine(wave, 1024), sy = gallery_sine(wave, camera->yaw);
+    int cy = gallery_sine(wave, camera->yaw + 1024);
+    int arm[3] = {mul_q15(mul_q15(cp, unit), sy), -mul_q15(sp, unit), mul_q15(cp, cy)};
+    for (unsigned i = 0; i < 3; ++i)
+        camera->eye[i] = camera->target[i] + mul_q15(arm[i], camera->radius);
+    view->yaw = entering ? goal : camera->yaw;
+    if (entering) camera->radius = view->goal_radius;
+}
+
+void bfm_village_mine_corridor_glow(unsigned world_tick, uint8_t lights[3], uint8_t halo[3])
+{
+    int pulse = sin_q12((world_tick * 56u) & 2040u);
+    int rise = pulse * 100 / 4096;
+    lights[0] = (uint8_t)(100 + rise);
+    lights[1] = (uint8_t)(130 + rise);
+    lights[2] = (uint8_t)(100 + pulse * 110 / 4096);
+    for (unsigned i = 0; i < 3; ++i) halo[i] = (uint8_t)(lights[i] - 50);
 }
 
 int bfm_village_mine_view_draw(BfmVillageMineView *view, const BfmBedroomRoot *root,

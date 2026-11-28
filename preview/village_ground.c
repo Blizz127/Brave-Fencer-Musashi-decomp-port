@@ -29,7 +29,7 @@ typedef struct {
 struct BfmVillageGround {
     Slice tables[TABLE_COUNT];
     int origin_x, origin_z, width, depth;
-    unsigned exit_material, passage_wall;
+    unsigned exit_material, passage_wall, passage_quad_pair;
     uint32_t lower_room;
     int recheck_bank_floor, summit_contacts;
 };
@@ -75,8 +75,12 @@ BfmVillageGround *bfm_village_ground_open(const uint8_t *scene, size_t bytes, ui
     }
     if (room == UINT32_C(0x8018ea38) || room == UINT32_C(0x801910e4) ||
         room == UINT32_C(0x801961e8) || room == UINT32_C(0x8018c890) ||
-        room == UINT32_C(0x80186620) || room == UINT32_C(0x8018615c))
+        room == UINT32_C(0x80186620) || room == UINT32_C(0x8018615c) ||
+        room == UINT32_C(0x80184870))
         view.passage_wall = 0x203;
+    /* The switchback mounts the western gallery receiver. Its opposite
+     * gate has a separate pair of marked quads and a different destination. */
+    if (room == UINT32_C(0x80184870)) view.passage_quad_pair = 0x8178;
     view.origin_x = read16(grid);
     view.origin_z = read16(grid + 2);
     view.width = read16(grid + 4);
@@ -214,14 +218,16 @@ static int slide(const BfmVillageGround *g, const int start[3], int end[3], uint
         int adjusted = 0, passage = 0;
         for (unsigned c = 0; c < count && !adjusted; ++c) {
             for (size_t i = 0; i < cells[c].bytes; i += 2) {
+                unsigned token = read16(cells[c].data + i);
                 Face face;
-                if (!read_face(g, read16(cells[c].data + i), &face)) return 0;
+                if (!read_face(g, token, &face)) return 0;
                 /* Cleft bank walls can lean slightly away from vertical. */
                 int bank_wall = g->recheck_bank_floor && face.material == 0x100;
                 if ((face.planes[0].normal[1] && !bank_wall) || !crosses(&face, start, end)) continue;
                 /* Marked passage walls report a crossing while allowing
                  * the regular stride to reach the far side of the plane. */
-                if (g->passage_wall && face.material == g->passage_wall) {
+                if (g->passage_wall && face.material == g->passage_wall &&
+                    (!g->passage_quad_pair || (token & ~1u) == g->passage_quad_pair)) {
                     passage = 1;
                     continue;
                 }
@@ -383,7 +389,7 @@ BfmVillageGroundResult bfm_village_ground_bank_step(const BfmVillageGround *g,
     return sweep(g, from, to, floor, airborne, wall, NULL, reason);
 }
 
-unsigned bfm_village_ground_support_probe(const BfmVillageGround *g, unsigned mode,
+static unsigned ordered_support(const BfmVillageGround *g, unsigned mode, unsigned skip_material,
     const int16_t from[3], int16_t to[3], uint16_t *material)
 {
     if (!g || !from || !to || !material || mode > 2) return 0;
@@ -404,7 +410,7 @@ unsigned bfm_village_ground_support_probe(const BfmVillageGround *g, unsigned mo
         for (size_t i = 0; i < list.bytes; i += 2) {
             Face face;
             if (!read_face(g, read16(list.data + i), &face)) return 0;
-            if (!crosses(&face, start, end)) continue;
+            if ((face.material & skip_material) || !crosses(&face, start, end)) continue;
             if (face.material & 0x200) {
                 /* A marked passage reports its surface without supporting or
                  * projecting the foot. Remaining faces may still supply ground. */
@@ -433,6 +439,18 @@ unsigned bfm_village_ground_support_probe(const BfmVillageGround *g, unsigned mo
     if (gentle || steep)
         for (int k = 0; k < 3; ++k) to[k] = (int16_t)end[k];
     return gentle | steep;
+}
+
+unsigned bfm_village_ground_support_probe(const BfmVillageGround *g, unsigned mode,
+    const int16_t from[3], int16_t to[3], uint16_t *material)
+{
+    return ordered_support(g, mode, 0, from, to, material);
+}
+
+unsigned bfm_village_ground_rock_probe(const BfmVillageGround *g, int ignore_grates,
+    const int16_t from[3], int16_t to[3], uint16_t *material)
+{
+    return ordered_support(g, 1, ignore_grates ? 0x100 : 0, from, to, material);
 }
 
 int bfm_village_ground_clear_floor(const BfmVillageGround *g, const int16_t from[3],

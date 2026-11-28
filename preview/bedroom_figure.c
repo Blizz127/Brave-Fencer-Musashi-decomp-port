@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "bedroom_visitor.h"
+#include "field_waypoint.h"
 #include "forest_raster.h"
 #include "forest_tether_trails.h"
 #include "woods_charged_fx.h"
@@ -338,18 +339,67 @@ static void collect_part(BfmBedroomFigure *figure, const BfmBedroomView *camera,
     }
 }
 
+/* These independent textured sprites use signed pitch, roll and spin. Their
+ * light normal points out of the reverse face of the local XY rectangle. */
+static void sprite_angles(int units, int *sine, int *cosine)
+{
+    angle((unsigned)abs(units), sine, cosine);
+    if (units < 0) *sine = -*sine;
+}
+
+static int signed_heading(int axis, int vertical)
+{
+    int turn = bfm_waypoint_heading(axis, vertical);
+    return axis < 0 && turn ? turn - 4096 : turn;
+}
+
+static Transform floor_sprite_basis(const BfmBedroomRoot *root, int at_birth)
+{
+    Transform plane = {0};
+    if (at_birth) {
+        /* The construction pose has a quarter-turn of pitch and no yaw. */
+        for (unsigned i = 0; i < 3; ++i) plane.r[i][i] = 4096;
+        return plane;
+    }
+    const int16_t *n = root->shadow_normal;
+    int sx, cx, sy, cy, sz, cz;
+    sprite_angles(1024 + signed_heading(n[2],n[1]), &sx,&cx);
+    sprite_angles(signed_heading(n[0],n[1]), &sy,&cy);
+    int spin = (int)((0u - root->yaw) & UINT16_MAX);
+    if (spin > INT16_MAX) spin -= 65536;
+    sprite_angles(spin, &sz,&cz);
+    /* Rotate the sprite about X, Y and Z, rounding between axis products.
+     * Convert its local XY plane to the collector's XZ convention. */
+    int tilt_x = floor_q12(-cz * sy), tilt_y = floor_q12(-sz * sy);
+    plane.r[0][0] = floor_q12(cz * cy);
+    plane.r[1][0] = floor_q12(sz * cx) - floor_q12(tilt_x * sx);
+    plane.r[2][0] = floor_q12(sz * sx) + floor_q12(tilt_x * cx);
+    plane.r[0][2] = floor_q12(-sz * cy);
+    plane.r[1][2] = floor_q12(cz * cx) + floor_q12(tilt_y * sx);
+    plane.r[2][2] = floor_q12(cz * sx) - floor_q12(tilt_y * cx);
+    plane.r[0][1] = -sy;
+    plane.r[1][1] = -floor_q12(-sx * cy);
+    plane.r[2][1] = -floor_q12(cx * cy);
+    return plane;
+}
+
 /* The shadow caster projects the player's contact, independently of the animated
  * body. Separation from the mounting plane shrinks the footprint during a fall. */
 static void collect_shadow(BfmBedroomFigure *figure, const BfmBedroomView *view,
                            const Transform *eye, const BfmBedroomBody *body, const ShadowRect *rect,
-                           int size, unsigned divisor, uint32_t rgb)
+                           int size, unsigned divisor, uint32_t rgb, const Transform *sprite)
 {
-    const double turn = 6.28318530717958647693 / 4096;
-    double yaw = -((int)((unsigned)body->heading & 4095)) * turn;
-    Transform bearing = {0};
-    rotation(0,4096,(int)lround(4096*sin(yaw)),(int)lround(4096*cos(yaw)),0,4096,bearing.r);
-    Transform slope = support_rotation(body->shadow_normal);
-    Transform ground = compose(&slope,&bearing);
+    Transform ground;
+    if (sprite) {
+        ground = *sprite;
+    } else {
+        const double turn = 6.28318530717958647693 / 4096;
+        double yaw = -((int)((unsigned)body->heading & 4095)) * turn;
+        Transform bearing = {0};
+        rotation(0,4096,(int)lround(4096*sin(yaw)),(int)lround(4096*cos(yaw)),0,4096,bearing.r);
+        Transform slope = support_rotation(body->shadow_normal);
+        ground = compose(&slope,&bearing);
+    }
     memcpy(ground.t,body->shadow_position,sizeof(ground.t));
     int separation = body->shadow_position[1] - body->position[1];
     int scale = (768-separation)*size/768;
@@ -360,6 +410,7 @@ static void collect_shadow(BfmBedroomFigure *figure, const BfmBedroomView *view,
     memcpy(camera.axes,posed.r,sizeof(camera.axes));
     memcpy(camera.translation,posed.t,sizeof(camera.translation));
     FigureFace *face = &figure->faces[figure->count];
+    int64_t depth_sum = 0;
     for (unsigned i = 0; i < 4; ++i) {
         int right = i & 1, bottom = (i >> 1) & 1;
         int16_t point[3] = {
@@ -367,15 +418,27 @@ static void collect_shadow(BfmBedroomFigure *figure, const BfmBedroomView *view,
             (int16_t)((rect->top + bottom*(int)rect->height)*scale/4096)
         };
         int screen[3];
-        if (!bfm_bedroom_project(&camera,point,screen)) return;
-        include_pixel(figure,screen[0],screen[1]);
+        if (sprite) {
+            if (!bfm_bedroom_project_packet(&camera,point,screen)) return;
+            depth_sum += screen[2];
+        } else {
+            if (!bfm_bedroom_project(&camera,point,screen)) return;
+            include_pixel(figure,screen[0],screen[1]);
+        }
         face->v[i] = (BfmForestRasterVertex){.x=screen[0],.y=screen[1],
             .u=(uint8_t)(64 + right*(rect->width-1)),
             .v=(uint8_t)(160 + bottom*(rect->height-1)),.rgb=rgb};
     }
     face->material = (BfmForestRasterMaterial){.page=0x59,.clut=0x4516,
                                                .textured=1,.translucent=1,.count=4};
-    face->depth = posed.t[2]/4+2;
+    if (sprite) {
+        int depth = (int)(depth_sum/16) + 1;
+        if ((unsigned)depth >= 4096) return;
+        face->depth = depth;
+        for (unsigned i = 0; i < 4; ++i) include_pixel(figure,face->v[i].x,face->v[i].y);
+    } else {
+        face->depth = posed.t[2]/4+2;
+    }
     face->order = figure->count++;
 }
 
@@ -588,7 +651,7 @@ int bfm_bedroom_figure_prepare_axes(BfmBedroomFigure *figure, const BfmBedroomVi
     int mini = body_scale_q12 == BFM_HERO_MINI_SCALE;
     Transform base = compose(&eye,&root);
     if (body->shadow_visible)
-        collect_shadow(figure,view,&eye,body,&figure->shadow,8192,mini ? 3 : 1,0x808080u);
+        collect_shadow(figure,view,&eye,body,&figure->shadow,8192,mini ? 3 : 1,0x808080u,NULL);
     for (unsigned i = 0; i < MUSASHI_FOREST_PLAYER_PARTS; ++i) {
         if (!(body->visible_parts & (UINT32_C(1) << i))) continue;
         Transform local = local_pose(body->pose+16,i);
@@ -782,8 +845,47 @@ static void collect_actor_shadow(BfmBedroomFigure *figure, const BfmBedroomView 
             caster.position[k] = caster.shadow_position[k];
             if (ground) caster.shadow_normal[k] = ground->shadow_normal[k];
         }
-        collect_shadow(figure,view,eye,&caster,shadow,size,1,ink);
+        collect_shadow(figure,view,eye,&caster,shadow,size,1,ink,NULL);
     }
+}
+
+int bfm_bedroom_figure_add_floor_shadow(BfmBedroomFigure *figure, const BfmBedroomView *view,
+    const BfmBedroomRoot *ground, const uint8_t texture[12], unsigned scale, int at_birth)
+{
+    ShadowRect rect;
+    if (!figure || !view || view->focal < 1 || view->focal > UINT16_MAX ||
+        !ground || !texture || !scale || scale > INT16_MAX ||
+        figure->next || !figure->surface.pixels || !read_shadow(&rect,texture)) return 0;
+    /* Such a near plane is already beyond the last accepted ordering-table slot. */
+    if (view->focal > 32767 || (!at_birth && !ground->shadow_visible)) return 1;
+    BfmBedroomBody caster = {0};
+    const int16_t *center = at_birth ? ground->xyz : ground->shadow_xyz;
+    for (unsigned k = 0; k < 3; ++k) {
+        caster.position[k] = caster.shadow_position[k] = center[k];
+        if (!at_birth && (ground->shadow_normal[k] < -4096 || ground->shadow_normal[k] > 4096))
+            return 0;
+    }
+    if ((!at_birth && ground->shadow_normal[1] >= 0) || !reserve_faces(figure,1)) return 0;
+    Transform plane = floor_sprite_basis(ground,at_birth), eye;
+    memcpy(eye.r,view->axes,sizeof eye.r);
+    memcpy(eye.t,view->translation,sizeof eye.t);
+    /* Compose each directional light with the local normal axis before
+     * applying the sprite's reverse-facing normal. */
+    int light[3][3] = {{0}};
+    for (unsigned r = 0; r < 3; ++r) {
+        int64_t dot = 0;
+        for (unsigned k = 0; k < 3; ++k)
+            dot -= (int64_t)figure->direction[r][k] * plane.r[k][1];
+        light[r][2] = floor_q12(dot);
+    }
+    const MusashiForestPlayerVector normal = {0,0,-4096};
+    const uint8_t neutral[3] = {128,128,128};
+    size_t previous = figure->count;
+    uint32_t tint = shade(figure,light,&normal,neutral);
+    collect_shadow(figure,view,&eye,&caster,&rect,(int)scale,1,tint,&plane);
+    if (figure->count != previous && previous)
+        qsort(figure->faces,figure->count,sizeof(*figure->faces),back_to_front);
+    return 1;
 }
 
 static int add_actor(BfmBedroomFigure *figure, const BfmBedroomView *view,

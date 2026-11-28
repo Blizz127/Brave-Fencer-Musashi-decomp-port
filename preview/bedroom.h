@@ -46,7 +46,7 @@ uint16_t bfm_bedroom_display_room(const BfmBedroom *room);
 typedef enum {
     BFM_ROOM_SCENE_BANK, BFM_ROOM_WOODS_BANK, BFM_ROOM_KNOCK_BANK, BFM_ROOM_RECOVERY_BANK,
     BFM_ROOM_BAKERY_BANK, BFM_ROOM_BOX_BANK, BFM_ROOM_GUIDE_BANK, BFM_ROOM_VALLEY_BANK,
-    BFM_ROOM_ILLNESS_BANK, BFM_ROOM_BANK_COUNT, BFM_ROOM_ACTIVE_BANKS
+    BFM_ROOM_ILLNESS_BANK, BFM_ROOM_MINE_BANK, BFM_ROOM_BANK_COUNT, BFM_ROOM_ACTIVE_BANKS
 } BfmRoomSoundBank;
 /* A key-off with BFM_ROOM_ACTIVE_BANKS and NULL effects targets every
  * currently mounted effect bank, in order with the other field events. */

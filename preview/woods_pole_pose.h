@@ -21,6 +21,10 @@ typedef struct {
 int bfm_woods_pole_pose_load(BfmWoodsPolePose *pose, const uint8_t *scene, size_t scene_bytes,
                              const uint8_t *main, size_t main_bytes);
 
+/* Load the two grip slots from the resident body bank named by a mounted room. */
+int bfm_woods_pole_pose_load_bank(BfmWoodsPolePose *pose, const uint8_t *main,
+                                  size_t main_bytes, uint32_t bank_address);
+
 /* Once per attached field, after the shared animation pass. Set caught on
  * each fresh contact. Up schedules one key change for the following field.
  * The ordinary jump/fall controller takes over as soon as contact ends. */

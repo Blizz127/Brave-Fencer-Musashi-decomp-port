@@ -444,7 +444,7 @@ static int prepare(const Sources *s, unsigned command, Clip *clip)
         if (!d[11]) break;
         address += sizeof d;
     }
-    if (command == BFM_WOODS_CHARGE_SOUND || command == SHRINE_APPEAR ||
+    if (command == BFM_MINE_POLE_SOUND || command == BFM_WOODS_CHARGE_SOUND || command == SHRINE_APPEAR ||
         command == BFM_EARTH_SCROLL_RINGS_SOUND || transition_key_off_target(command)) {
         if (command == BFM_WOODS_CHARGE_SOUND) {
             if (count != 1 || !layers[0].gate || layers[0].slide || layers[0].modulated) goto done;
@@ -877,6 +877,9 @@ static BfmBedroomEffects *forest_field_effects(const MusashiDiscMedia *disc, uns
             valid = prepare_bank_field(&s, &player, effects);
         } else if (room == 0x302b) {
             valid = prepare_valley_field(&s, &player, effects);
+        } else if (room == 0x3043) {
+            valid = prepare(&s, BFM_MINE_POLE_SOUND, &effects->clips[0]);
+            effects->replace_matching = 1;
         } else {
             valid = prepare(&s, BFM_WOODS_LENO_BARK_SOUND, &effects->clips[0]) &&
                     prepare(&s, BFM_MAZE_GUIDE_SNIFF_SOUND, &effects->clips[1]) &&
@@ -906,6 +909,11 @@ BfmBedroomEffects *bfm_maze_guide_effects_load(const MusashiDiscMedia *disc)
 BfmBedroomEffects *bfm_valley_effects_load(const MusashiDiscMedia *disc)
 {
     return forest_field_effects(disc, 0x302b, 31);
+}
+
+BfmBedroomEffects *bfm_mine_pole_sound_load(const MusashiDiscMedia *disc)
+{
+    return forest_field_effects(disc, 0x3043, 107);
 }
 
 BfmBedroomEffects *bfm_nightmare_sound_load(const MusashiDiscMedia *disc)
@@ -1205,6 +1213,13 @@ void bfm_bedroom_effects_start(BfmBedroomEffects *e, unsigned command)
                 Playback *p = &e->playing[j];
                 if (p->clip && p->command == command &&
                     !(p->clip->tone && p->layers[0].envelope.stage == BFM_SPU_ENVELOPE_RELEASE)) {
+                    if (command == BFM_MINE_POLE_SOUND) {
+                        /* Two catches before the first sample share a key-on. A
+                         * later catch releases the previous note as it restarts. */
+                        if (!p->layers[0].phase) return;
+                        bfm_spu_envelope_release(&p->layers[0].envelope);
+                        break;
+                    }
                     if (p->frame >= e->clips[i].retrigger_frames)
                         start_voice(p, &e->clips[i], command);
                     return;

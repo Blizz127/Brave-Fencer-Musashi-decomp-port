@@ -51,6 +51,10 @@ BfmVillageGroundResult bfm_village_ground_bank_step(const BfmVillageGround *grou
 unsigned bfm_village_ground_support_probe(const BfmVillageGround *ground, unsigned mode,
     const int16_t from[3], int16_t to[3], uint16_t *material);
 
+/* Loose rock fragments may pass through grate surfaces during their fall. */
+unsigned bfm_village_ground_rock_probe(const BfmVillageGround *ground, int ignore_grates,
+    const int16_t from[3], int16_t to[3], uint16_t *material);
+
 /* A gentle floor alone is suitable for a rescue position. Reject an
  * intervening wall even when an ordinary walking sweep could slide past it. */
 int bfm_village_ground_clear_floor(const BfmVillageGround *ground, const int16_t from[3],

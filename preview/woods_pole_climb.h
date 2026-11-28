@@ -9,6 +9,7 @@
 enum { BFM_WOODS_POLE_COUNT = 3 };
 
 typedef struct {
+    unsigned count;
     int16_t origin[BFM_WOODS_POLE_COUNT][3];
     int16_t minimum[3], maximum[3]; /* Relative to each upright pole. */
 } BfmWoodsPoleLayout;
@@ -25,6 +26,9 @@ typedef enum {
 
 /* Reads SC02 member 11, expanded section zero. A failed load preserves layout. */
 int bfm_woods_pole_load(BfmWoodsPoleLayout *layout, const uint8_t *scene, size_t bytes);
+
+/* Reads the single stationary grip in SC03 member 107, expanded section zero. */
+int bfm_mine_pole_load(BfmWoodsPoleLayout *layout, const uint8_t *scene, size_t bytes);
 
 /* Run once before motion on every ordinary field update, including ground ticks. */
 void bfm_woods_pole_begin_field(BfmWoodsPoleGrip *grip);

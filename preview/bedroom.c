@@ -118,7 +118,7 @@ struct BfmBedroom {
     BfmNightmareTransition recovery_transition;
     GrillinExterior pending_exterior;
     uint32_t (*frozen_recovery)[320], (*field_item_background)[320];
-    BfmBedroomEffects *nightmare_effects, *box_effects, *illness_effects;
+    BfmBedroomEffects *nightmare_effects, *box_effects, *illness_effects, *mine_effects;
     BfmBedroomEffects *effects, *knock, *shrink_sound, *bakery_effects;
     BfmBedroomEffects *forest_bank_effects, *maze_guide_effects, *valley_effects;
     uint32_t room_sound_group;
@@ -260,6 +260,7 @@ void bfm_bedroom_free(BfmBedroom *room)
     if (!room) return;
     free(room->field_item_background);
     bfm_bedroom_effects_free(room->illness_effects);
+    bfm_bedroom_effects_free(room->mine_effects);
     for (unsigned i = 0; i < sizeof room->scores / sizeof *room->scores; ++i)
         bfm_forest_score_free(room->scores[i]);
     bfm_forest_message_free(room->message);
@@ -1228,7 +1229,8 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
         result = BFM_BEDROOM_VOICE_STOPPED;
     uint16_t mounted = bfm_village_arrival_room(room->village);
     if ((room->mine_effects_closed_in == 0x1052 && mounted == 0x3043) ||
-        (room->mine_effects_closed_in == 0x3043 && mounted == 0x1052))
+        (room->mine_effects_closed_in == 0x3043 && (mounted == 0x1052 || mounted == 0x3044)) ||
+        (room->mine_effects_closed_in == 0x3044 && mounted == 0x3043))
         room->mine_effects_closed_in = 0;
     switch (bfm_village_arrival_mine_exit_event(room->village)) {
     case BFM_NIGHTMARE_STOP_OPTICAL:
@@ -1305,6 +1307,11 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
     if (room->story_flags != room->entry.state.flags)
         memcpy(room->story_flags, room->entry.state.flags, sizeof room->entry.state.flags);
     const BfmVillagePlayer *player = bfm_village_arrival_player(room->village);
+    if (player->events & BFM_VILLAGE_POLE_CATCH) {
+        if (!room->mine_effects) room->mine_effects = bfm_mine_pole_sound_load(room->disc);
+        if (!room->mine_effects) return 0;
+        queue_mounted_effect(room, room->mine_effects, BFM_ROOM_MINE_BANK, BFM_MINE_POLE_SOUND);
+    }
     unsigned upper_sound = bfm_village_arrival_take_upper_sound(room->village);
     if (upper_sound || player->pose.knock_contact || (player->events & BFM_VILLAGE_WELL_SOUND_EVENT)) {
         if (!room->knock) room->knock = bfm_village_knock_sound_load(room->disc);

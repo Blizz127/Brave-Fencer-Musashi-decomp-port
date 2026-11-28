@@ -55,6 +55,7 @@ typedef struct {
     BfmNightmareTransition wipe;
     enum { EXIT_WALK, MOUNT_RECEIVER, HOLD_PAGE, REVEAL_FIELD, MINE_STATION, MINE_RELEASED } phase;
     const uint8_t *mine_station;
+    int keep_mine_score;
     uint32_t page[240][320];
     int submitted;
     unsigned reveal_updates, mount_wait;
@@ -330,7 +331,7 @@ uint16_t bfm_village_arrival_room(const BfmVillageArrival *a)
     if (a->maze) return 0x301b;
     if (a->bank) return 0x3014;
     if (a->woods) return 0x3025;
-    if (a->mine) return 0x3043;
+    if (a->mine) return bfm_village_mine_entrance_room(a->mine);
     if (a->illness_lower) return 0x1052;
     if (a->lower) return 0x1010;
     return a->motion ? 0x1011 : 0;
@@ -837,10 +838,17 @@ static int step_mine_passage(BfmVillageArrival *a, BfmGameplayRun *run, BfmField
         if (!step_mine_actors(a, run, field, 0)) return 0;
         const uint8_t *door = a->mine ? bfm_village_motion_transfer(bfm_village_mine_entrance_departure(a->mine)) :
                                        bfm_village_illness_lower_door(a->illness_lower);
-        if (!door || u32le(door) != (a->mine ? UINT32_C(0x000f1052) : UINT32_C(0x02003043))) return 1;
+        if (!door) return 1;
+        uint32_t target = u32le(door);
+        uint16_t mounted = bfm_village_arrival_room(a);
+        int inside = (mounted == 0x3043 && target == UINT32_C(0x00003044)) ||
+                     (mounted == 0x3044 && target == UINT32_C(0x00013043));
+        if (!inside && !(mounted == 0x3043 && target == UINT32_C(0x000f1052)) &&
+            !(mounted == 0x1052 && target == UINT32_C(0x02003043))) return 1;
         c = open_woods_crossing(a->disc);
         if (!c) return 0;
         c->mine_station = door;
+        c->keep_mine_score = inside;
         bfm_nightmare_transition_begin_departure(&c->wipe);
         a->crossing = c;
         return 1;
@@ -860,13 +868,13 @@ static int step_mine_passage(BfmVillageArrival *a, BfmGameplayRun *run, BfmField
     if (c->phase == HOLD_PAGE) {
         /* The last presented page owns the shutter. Both rooms borrow the
          * live entry and tiles; only their current receiver can draw again. */
-        if (a->mine && !a->incoming_illness_lower) {
+        if (a->entry->scene_member == 124 && !a->incoming_illness_lower) {
             a->incoming_illness_lower = bfm_village_illness_lower_open(a->disc, a->entry,
                 a->main, a->main_bytes, a->tiles, NULL);
             if (!a->incoming_illness_lower) return 0;
-        } else if (a->illness_lower && !a->incoming_mine) {
-            a->incoming_mine = bfm_village_mine_entrance_open(a->disc, a->entry,
-                a->main, a->main_bytes, a->tiles);
+        } else if (a->entry->scene_member != 124 && !a->incoming_mine) {
+            a->incoming_mine = bfm_village_mine_entrance_open_at(a->disc, a->entry,
+                a->main, a->main_bytes, a->tiles, a->scene_tick);
             if (!a->incoming_mine) return 0;
         }
         if (bfm_nightmare_transition_step(&c->wipe, 1, c->submitted, 1) != BFM_NIGHTMARE_ENTER_VILLAGE)
@@ -1280,7 +1288,8 @@ int bfm_village_arrival_field_score(const BfmVillageArrival *a, unsigned village
         return track ? (int)track : -1;
     }
     if (a && (a->mine || a->illness_lower)) {
-        if (a->crossing && (a->crossing->phase == MINE_RELEASED || a->crossing->phase == MOUNT_RECEIVER ||
+        if (a->crossing && !a->crossing->keep_mine_score &&
+                           (a->crossing->phase == MINE_RELEASED || a->crossing->phase == MOUNT_RECEIVER ||
                             a->crossing->phase == HOLD_PAGE)) return -1;
         return a->mine ? 0x49 : 0x27;
     }
