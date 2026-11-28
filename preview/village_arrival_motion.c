@@ -2135,7 +2135,15 @@ static int resolve_woods_footing(BfmVillageMotion *m, int tired, int blade_held)
     if (feet[1] > INT16_MAX - 8) return 0;
     int16_t end[3] = {feet[0], feet[1]+8, feet[2]};
     BfmForestContact floor;
-    BfmVillageGroundResult hit = bfm_village_ground_step(next.ground, feet, end, &floor);
+    BfmVillageGroundResult hit;
+    if (next.lake_current_posted) {
+        memcpy(end, feet, sizeof end);
+        hit = lake_ground_current(&next, end, &floor);
+        for (unsigned i = 0; i < 3; ++i)
+            next.position[i] = (int64_t)end[i] * Q + (next.position[i] & (Q-1));
+    } else {
+        hit = bfm_village_ground_step(next.ground, feet, end, &floor);
+    }
     if (valley_return && (hit != BFM_VILLAGE_GROUND_FOOTING || floor.slope != 0x2000 ||
                          (floor.flags & 255) || end[1] != feet[1])) return 0;
     unsigned support = rider ? 1u : 0u;
@@ -2181,7 +2189,7 @@ static int resolve_woods_footing(BfmVillageMotion *m, int tired, int blade_held)
 
 int bfm_village_motion_box_blade_hold(BfmVillageMotion *m, int finishing)
 {
-    if (!m || !m->mountain_jump || !bfm_village_motion_grounded(m) ||
+    if (!m || (!m->mountain_jump && m->woods_route.room != 0x3046) || !bfm_village_motion_grounded(m) ||
         m->grip.pole || m->water.age || m->sliding || m->talk != NO_TALK ||
         bfm_village_motion_woods_departing(m)) return 0;
     BfmVillageMotion next = *m;
@@ -3190,6 +3198,20 @@ void bfm_village_motion_mine_props(BfmVillageMotion *m, const BfmVillageMineProp
 {
     m->mine_props = props;
     m->mine_props_tick = tick;
+}
+
+unsigned bfm_village_motion_mine_blade_slot(const BfmVillageMotion *m)
+{
+    if (!m || m->woods_route.room != 0x3046 || !m->player.controlled || m->airborne ||
+        m->sliding || m->talk != NO_TALK || bfm_village_motion_woods_departing(m)) return 0;
+    return m->walking ? 2 : 1;
+}
+
+int bfm_village_motion_mine_blade_hold(BfmVillageMotion *m, int finishing, int redirect_yaw)
+{
+    if (!m || m->woods_route.room != 0x3046 || !bfm_village_motion_box_blade_hold(m, finishing)) return 0;
+    if (redirect_yaw >= 0) m->player.root.yaw = (unsigned)redirect_yaw & 4095u;
+    return 1;
 }
 
 int bfm_village_motion_switchback_stance(BfmVillageMotion *m, unsigned facing,

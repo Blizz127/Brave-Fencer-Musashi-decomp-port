@@ -111,6 +111,9 @@ int bfm_village_motion_mine_orb(const BfmVillageMotion *motion, unsigned orb,
 struct BfmVillageMineProps;
 void bfm_village_motion_mine_props(BfmVillageMotion *motion, const struct BfmVillageMineProps *props,
                                    unsigned actor_tick);
+/* The grounded lake blade receives the standing or walking action slot. */
+unsigned bfm_village_motion_mine_blade_slot(const BfmVillageMotion *motion);
+int bfm_village_motion_mine_blade_hold(BfmVillageMotion *motion, int finishing, int redirect_yaw);
 /* The western walkway tests actual support for the stationary pose and strafe. */
 int bfm_village_motion_switchback_stance(BfmVillageMotion *m, unsigned facing, unsigned stride_yaw,
     int moving, int tired, int *supported);
