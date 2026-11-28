@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "village_mine_entrance.h"
 #include "village_mine_props.h"
+#include "village_mine_corridor_408.h"
 #include "village_switchback_props.h"
 #include "village_switchback_hit.h"
 #include "village_mine_view.h"
@@ -18,6 +19,9 @@ struct BfmVillageMineEntrance {
     BfmVillageMineView *view;
     BfmVillageMineProps *props;
     BfmVillageSwitchbackProps *switchback;
+    BfmVillageMineWheels *wheels;
+    BfmMineWheelSound wheel_sound;
+    void *wheel_sound_context;
     BfmSwitchbackHit *hit;
     BfmMineLungeHit incoming;
     const uint8_t *main;
@@ -34,6 +38,20 @@ struct BfmVillageMineEntrance {
 const BfmVillagePlayer *bfm_village_mine_entrance_player(const BfmVillageMineEntrance *mine)
 {
     return mine ? bfm_village_motion_player(mine->motion) : NULL;
+}
+
+int bfm_village_mine_entrance_rider(const BfmVillageMineEntrance *mine)
+{
+    return mine ? bfm_village_motion_mine_rider(mine->motion) : -1;
+}
+
+void bfm_village_mine_entrance_set_wheel_sound(BfmVillageMineEntrance *mine,
+    BfmMineWheelSound callback, void *context)
+{
+    if (mine) {
+        mine->wheel_sound = callback;
+        mine->wheel_sound_context = context;
+    }
 }
 
 uint16_t bfm_village_mine_entrance_room(const BfmVillageMineEntrance *mine)
@@ -55,6 +73,7 @@ void bfm_village_mine_entrance_free(BfmVillageMineEntrance *mine)
     bfm_village_mine_props_free(mine->props);
     bfm_switchback_hit_free(mine->hit);
     bfm_village_switchback_props_free(mine->switchback);
+    bfm_village_mine_wheels_free(mine->wheels);
     bfm_village_mine_view_free(mine->view);
     free(mine->scene);
     free(mine);
@@ -100,8 +119,10 @@ BfmVillageMineEntrance *bfm_village_mine_entrance_open_at(const MusashiDiscMedia
         mine->main = main;
         mine->main_bytes = main_bytes;
         mine->hit = bfm_switchback_hit_open(disc, mine->scene, bytes, p->root.xyz);
-        if (!mine->view || !mine->switchback || !mine->hit ||
+        mine->wheels = bfm_village_mine_wheels_open(mine->scene, bytes);
+        if (!mine->view || !mine->switchback || !mine->wheels || !mine->hit ||
             !bfm_village_motion_mine_orb(mine->motion, mine->orb, tiles)) goto fail;
+        bfm_village_motion_mine_begin_field(mine->motion, mine->wheels);
         bfm_village_motion_woods_exit_script(mine->motion, 0);
         bfm_village_mine_corridor_view_follow(mine->view, p->root.xyz, p->root.yaw, 1, 0);
         return mine;
@@ -151,6 +172,7 @@ int bfm_village_mine_entrance_step(BfmVillageMineEntrance *mine, BfmGameplayRun 
                         !bfm_village_motion_transfer(mine->motion) &&
                         (mine->save->flags[127 / 8] & (1u << (127 % 8)));
     bfm_village_motion_mine_props(mine->motion, mine->props, actor_tick);
+    if (mine->wheels) bfm_village_motion_mine_begin_field(mine->motion, mine->wheels);
     int pad_yaw = bfm_village_mine_view_pad_yaw(mine->view);
     int locked = mine->hit ? bfm_switchback_hit_step(mine->hit, mine->motion, run, mine->save,
                                                        input, (unsigned)pad_yaw, &mine->incoming) : 0;
@@ -163,10 +185,18 @@ int bfm_village_mine_entrance_step(BfmVillageMineEntrance *mine, BfmGameplayRun 
     }
     if (mine->switchback) {
         int scripted = !p->controlled && !bfm_village_motion_ingress_clock_running(mine->motion);
+        bfm_village_mine_corridor_view_follow(mine->view, p->root.xyz, p->root.yaw, 0, input.camera_pressed);
+        int gain[BFM_MINE_WHEEL_COUNT];
+        if (!bfm_village_motion_mine_turn_wheels(mine->motion, gain)) return 0;
+        if (mine->wheel_sound) {
+            for (unsigned i = 0; i < BFM_MINE_WHEEL_COUNT; ++i) {
+                if (gain[i] > 0) mine->wheel_sound(mine->wheel_sound_context, 0x6dd, 0x1000u | (unsigned)gain[i], i);
+                else if (gain[i] < 0) mine->wheel_sound(mine->wheel_sound_context, 4, 0x6dd, i);
+            }
+        }
         const int16_t *target = bfm_switchback_hit_target(mine->hit, mine->motion);
         if (!bfm_village_switchback_props_step_target(mine->switchback, p->root.xyz,
                 scripted ? NULL : target, actor_tick, run, &mine->incoming)) return 0;
-        bfm_village_mine_corridor_view_follow(mine->view, p->root.xyz, p->root.yaw, 0, input.camera_pressed);
     } else {
         bfm_village_mine_view_follow(mine->view, p->root.xyz, 0);
     }
@@ -207,7 +237,8 @@ unsigned bfm_village_mine_entrance_take_hit_sound(BfmVillageMineEntrance *mine)
 static int draw_switchback(void *context, BfmBedroomFigure *figure, const BfmBedroomView *view)
 {
     BfmVillageMineEntrance *mine = context;
-    return bfm_village_switchback_props_draw(mine->switchback, figure, view) &&
+    return bfm_village_mine_wheels_draw(mine->wheels, figure, view) &&
+           bfm_village_switchback_props_draw(mine->switchback, figure, view) &&
            bfm_switchback_hit_draw(mine->hit, figure, view);
 }
 

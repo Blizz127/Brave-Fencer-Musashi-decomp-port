@@ -81,6 +81,10 @@ void bfm_village_motion_mine_props(BfmVillageMotion *motion, const struct BfmVil
 /* The western walkway tests actual support for the stationary pose and strafe. */
 int bfm_village_motion_switchback_stance(BfmVillageMotion *m, unsigned facing, unsigned stride_yaw,
     int moving, int tired, int *supported);
+struct BfmVillageMineWheels;
+void bfm_village_motion_mine_begin_field(BfmVillageMotion *motion, struct BfmVillageMineWheels *wheels);
+int bfm_village_motion_mine_turn_wheels(BfmVillageMotion *motion, int gain[3]);
+int bfm_village_motion_mine_rider(const BfmVillageMotion *motion);
 int bfm_village_motion_step_mine_field(BfmVillageMotion *motion, int x, int y, int camera_yaw,
     int cross_pressed, int cross_held, struct BfmGameplayRun *run);
 struct BfmValleyBincho;

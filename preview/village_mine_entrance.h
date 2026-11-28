@@ -18,6 +18,11 @@ BfmVillageMineEntrance *bfm_village_mine_entrance_open_at(const MusashiDiscMedia
     BfmBedroomEntry *entry, const uint8_t *main, size_t main_bytes, uint16_t tiles[512][1024],
     unsigned world_tick);
 void bfm_village_mine_entrance_free(BfmVillageMineEntrance *mine);
+/* Channel is the original wheel number, 0 through 2. */
+typedef void (*BfmMineWheelSound)(void *context, unsigned command, unsigned value, unsigned channel);
+void bfm_village_mine_entrance_set_wheel_sound(BfmVillageMineEntrance *mine,
+    BfmMineWheelSound callback, void *context);
+int bfm_village_mine_entrance_rider(const BfmVillageMineEntrance *mine);
 uint16_t bfm_village_mine_entrance_room(const BfmVillageMineEntrance *mine);
 const BfmVillagePlayer *bfm_village_mine_entrance_player(const BfmVillageMineEntrance *mine);
 const BfmVillageMotion *bfm_village_mine_entrance_departure(const BfmVillageMineEntrance *mine);

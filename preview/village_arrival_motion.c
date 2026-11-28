@@ -11,6 +11,7 @@
 #include "village_ground.h"
 #include "village_illness_mine_gate.h"
 #include "village_mine_props.h"
+#include "village_mine_decks.h"
 #include "hells_valley_boulders.h"
 #include "valley_bincho.h"
 #include "valley_gate_door.h"
@@ -67,6 +68,8 @@ struct BfmVillageMotion {
     unsigned mine_gate_tick;
     const BfmVillageMineProps *mine_props;
     unsigned mine_props_tick;
+    BfmVillageMineWheels *mine_wheels;
+    int16_t mine_action_foot[3];
     BfmWoodsJumpPose *mountain_jump;
     BfmWoodsPoleLayout poles;
     BfmWoodsPoleGrip grip;
@@ -383,6 +386,25 @@ static int displace(BfmVillageMotion *m, const uint32_t velocity[3], int require
         if (m->mine_props)
             bfm_village_mine_props_body(m->mine_props, m->player.root.xyz, candidate.xyz,
                                         m->mine_props_tick, m->airborne);
+        BfmMineBasketContact deck_contact = BFM_MINE_BASKET_MISS;
+        int16_t deck_foot[3];
+        int deck_stationary = 0;
+        if (m->mine_wheels && (!m->airborne || (int32_t)velocity[1] > 0)) {
+            int rider = (int)m->rider - 1;
+            /* Gravity and the preceding basket carry do not set the action's
+             * movement bit. Only a moving action sweeps from the last
+             * published root. Retention also uses this field's pre-action foot. */
+            int moved = velocity[0] || velocity[2] ||
+                (velocity[1] && (!m->airborne || (m->jump.inherited_velocity && m->jump.vertical_q16)));
+            const int16_t *previous = moved ? m->player.root.xyz : candidate.xyz;
+            deck_stationary = !memcmp(previous, candidate.xyz, sizeof candidate.xyz);
+            deck_contact = bfm_village_mine_decks_probe(m->mine_wheels,
+                previous, candidate.xyz, m->mine_action_foot, &rider, deck_foot);
+            m->rider = (unsigned)(rider + 1);
+            if (deck_contact == BFM_MINE_BASKET_BOARD || deck_contact == BFM_MINE_BASKET_RIDE ||
+                deck_contact == BFM_MINE_BASKET_TOUCH)
+                memcpy(candidate.xyz, deck_foot, sizeof candidate.xyz);
+        }
         if (m->mine_gate) {
             bfm_village_mine_gate_block_body(m->mine_gate, m->player.root.xyz,
                                              candidate.xyz, m->mine_gate_tick, m->airborne);
@@ -418,6 +440,12 @@ static int displace(BfmVillageMotion *m, const uint32_t velocity[3], int require
         } else {
             hit = bfm_village_ground_wall_step(m->ground,m->player.root.xyz,candidate.xyz,&floor,
                                                &m->player.wall_contact);
+        }
+        if (deck_stationary && deck_contact != BFM_MINE_BASKET_MISS)
+            memcpy(candidate.xyz, deck_foot, sizeof candidate.xyz);
+        if (deck_contact != BFM_MINE_BASKET_MISS && hit == BFM_VILLAGE_GROUND_AIR) {
+            floor = (BfmForestContact){.normal={0,-4096,0}, .slope=0x2000};
+            hit = BFM_VILLAGE_GROUND_FOOTING;
         }
         if (sliding) {
             sliding->result = hit;
@@ -482,7 +510,8 @@ static int displace(BfmVillageMotion *m, const uint32_t velocity[3], int require
         /* A steep face can push a falling player sideways without supporting
          * the feet. The ordinary Valley jump uses no contact output. */
         if (hit == BFM_VILLAGE_GROUND_FOOTING && floor.slope == 0x8000 &&
-            (contact || (m->valley_rocks && m->airborne)))
+            (m->mine_wheels ? deck_contact == BFM_MINE_BASKET_MISS :
+                (contact || (m->valley_rocks && m->airborne))))
             hit = BFM_VILLAGE_GROUND_AIR;
         if (contact) {
             contact->landed = m->airborne && hit == BFM_VILLAGE_GROUND_FOOTING;
@@ -698,6 +727,7 @@ static int woods_input(BfmVillageMotion *m, int x, int y, int camera,
     int steer = power >= 16;
     if (m->jump.pressed && !m->airborne) {
         int recovering = m->jump.active;
+        if (m->mine_wheels) m->rider = 0;
         m->jump.active = 1;
         m->jump.stride = m->walking && steer && x == m->jump.previous_x && y == m->jump.previous_y;
         m->jump.hurt_fall = m->jump.inherited_velocity = 0;
@@ -1721,7 +1751,7 @@ int bfm_village_motion_woods_reaction(BfmVillageMotion *m, BfmWoodsLilies *lilie
         } else if (!next.airborne) {
             /* Recheck support without accepting any new walking movement.
              * A pad that has moved below the frozen feet no longer carries them. */
-            if (next.rider && (after_pad != next.rider || after_y > feet[1])) next.rider = 0;
+            if (lilies && next.rider && (after_pad != next.rider || after_y > feet[1])) next.rider = 0;
             const uint32_t still[3] = {0};
             if (!displace(&next,still,1,&hit,NULL)) return 0;
             memcpy(next.position,m->position,sizeof next.position);
@@ -1845,6 +1875,11 @@ static int resolve_woods_footing(BfmVillageMotion *m, int tired, int blade_held)
         if (next.rider)
             rider = bfm_woods_lilies_support(next.lilies, next.rider, next.player.root.xyz, feet);
         if (!rider) rider = bfm_woods_lilies_land(next.lilies, next.player.root.xyz, feet, 1);
+    } else if (next.mine_wheels) {
+        int deck = (int)next.rider - 1;
+        bfm_village_mine_decks_probe(next.mine_wheels, next.mine_action_foot, next.mine_action_foot,
+                                     next.mine_action_foot, &deck, feet);
+        rider = (unsigned)(deck + 1);
     }
     next.rider = rider;
     if (rider) {
@@ -2730,6 +2765,40 @@ static int step_field_with_jump(BfmVillageMotion *m, int x, int y, int camera_ya
     next.jump.previous_x = x;
     next.jump.previous_y = y;
     *m = next;
+    return 1;
+}
+
+void bfm_village_motion_mine_begin_field(BfmVillageMotion *m, BfmVillageMineWheels *wheels)
+{
+    m->mine_wheels = wheels;
+    for (unsigned axis = 0; axis < 3; ++axis)
+        m->mine_action_foot[axis] = (int16_t)high(m->position[axis]);
+}
+
+int bfm_village_motion_mine_rider(const BfmVillageMotion *m)
+{
+    return m && m->mine_wheels ? (int)m->rider - 1 : -1;
+}
+
+int bfm_village_motion_mine_turn_wheels(BfmVillageMotion *m, int gain[3])
+{
+    int32_t foot[3];
+    for (unsigned axis = 0; axis < 3; ++axis) foot[axis] = (int32_t)m->position[axis];
+    BfmMineWheelAudio audio = bfm_village_mine_wheels_step(m->mine_wheels,
+        m->player.root.xyz[0], bfm_village_motion_mine_rider(m), foot);
+    memcpy(gain, audio.gain, sizeof audio.gain);
+    BfmBedroomRoot shadow = m->player.root;
+    for (unsigned axis = 0; axis < 3; ++axis) {
+        m->position[axis] = foot[axis];
+        shadow.xyz[axis] = (int16_t)high(foot[axis]);
+    }
+    /* The body and camera already used the published player root. This
+     * later shadow pass follows the raw foot after the wheels carried it. */
+    if (!bfm_bedroom_travel_air_shadow(m->scene.data, m->scene.bytes, m->room, &shadow)) return 0;
+    bfm_village_mine_decks_shadow(m->mine_wheels, shadow.xyz, &shadow);
+    memcpy(m->player.root.shadow_xyz, shadow.shadow_xyz, sizeof shadow.shadow_xyz);
+    memcpy(m->player.root.shadow_normal, shadow.shadow_normal, sizeof shadow.shadow_normal);
+    m->player.root.shadow_visible = shadow.shadow_visible;
     return 1;
 }
 
