@@ -8797,6 +8797,19 @@
       "origin": "Independently reconstructed from USA SC03.CD member 0110. Dispatches the lake return job by its one-byte state and returns the selected step\u2019s progress result to the stage runner.",
       "source_sha256": "ca94ee10e29c4f33f12b9d33efc4cc1115877fac9d20edadbdbec6ce84917be9",
       "span_sha256": "4f1145de23b0bdffb4d1c8741462eb91ffbc5174fd070a45313e88142d74d3e5"
+    },
+    {
+      "name": "func_8017E970",
+      "region": "sc03_0110",
+      "vram": 2149050736,
+      "size": 116,
+      "source": "src/overlays/sc03_0110/8017e970.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 0110. Counts down the lake return transition, issues the two commands and their follow-up calls when the counter wraps, then advances the state.",
+      "source_sha256": "2893e645b4676a259c4df5a7acf2d30fec8b09a003c04e3e275537e7c4eda023",
+      "span_sha256": "bb23cd50a044d2672d30dd92eac0a25ddb7290873e9942bce40ec4c1689cde79"
     }
   ]
 }
