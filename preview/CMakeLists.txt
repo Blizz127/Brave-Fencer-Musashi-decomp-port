@@ -191,6 +191,17 @@ add_executable(musashi_native_boot
     village_illness_wid.c
     village_illness_mine_gate.c
     village_mine_entrance.c
+    village_mine_lake.c
+    village_mine_lake_view.c
+    village_mine_lake_fields.c
+    village_mine_lake_flyer.c
+    village_mine_currents.c
+    village_mine_lake_creatures.c
+    village_mine_creature_dust.c
+    village_mine_pit.c
+    village_mine_lake_hurt.c
+    village_mine_lake_blade.c
+    village_mine_shaft_jump_blade.c
     village_switchback_hit.c
     village_switchback_props.c
     village_mine_corridor_387.c

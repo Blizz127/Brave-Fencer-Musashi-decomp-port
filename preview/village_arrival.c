@@ -286,6 +286,7 @@ struct BfmSouthernWoods *bfm_village_arrival_woods(BfmVillageArrival *a)
 BfmRetryScreen *bfm_village_arrival_retry(const BfmVillageArrival *a)
 {
     if (!a) return NULL;
+    if (a->mine) return bfm_village_mine_entrance_retry(a->mine);
     if (a->valley) return bfm_hells_valley_retry(a->valley);
     if (a->box) return bfm_woods_box_visit_retry(a->box);
     return a->bank ? bfm_forest_bank_retry(a->bank->art) : bfm_southern_woods_retry(a->woods);
@@ -304,9 +305,19 @@ int bfm_village_arrival_begin_retry(BfmVillageArrival *a, BfmGameplayRun *run)
     return bfm_southern_woods_begin_retry(a->woods, run);
 }
 
+int bfm_village_arrival_step_retry_world(BfmVillageArrival *a, BfmGameplayRun *run,
+                                       BfmFieldInput input)
+{
+    if (!a || !a->mine) return 1;
+    if (!bfm_village_mine_entrance_step_retry_world(a->mine, run, a->scene_tick, input)) return 0;
+    ++a->scene_tick;
+    return 1;
+}
+
 int bfm_village_arrival_draw_retry(BfmVillageArrival *a, const BfmForestHud *hud,
                                  uint32_t pixels[240][320])
 {
+    if (a->mine) return bfm_village_mine_entrance_draw_retry(a->mine, hud, pixels);
     if (a->valley) return bfm_hells_valley_draw_retry(a->valley, hud, pixels);
     if (a->box) return bfm_woods_box_visit_draw_retry(a->box, hud, pixels);
     if (a->bank) return bfm_forest_bank_draw_retry(a->bank->art, a->bank->motion,
@@ -318,6 +329,7 @@ int bfm_village_arrival_prepare_recovery(const BfmVillageArrival *a, const BfmGa
                                         BfmBedroomEntry *out)
 {
     if (!a) return 0;
+    if (a->mine) return bfm_village_mine_entrance_prepare_recovery(a->mine, a->disc, run, out);
     if (a->valley) return bfm_hells_valley_recover(a->valley, run, out);
     if (a->box) return bfm_woods_box_visit_prepare_recovery(a->box, run, out);
     if (a->bank) {
@@ -397,7 +409,7 @@ int bfm_village_arrival_message_closed(BfmVillageArrival *a, unsigned answer)
 
 void bfm_village_arrival_begin_hotelo_reveal(BfmVillageArrival *a)
 {
-    bfm_village_lower_begin_hotelo_reveal(a->lower);
+    if (a->lower) bfm_village_lower_begin_hotelo_reveal(a->lower);
 }
 
 void bfm_village_arrival_set_scene_tick(BfmVillageArrival *a, unsigned tick)
@@ -858,6 +870,7 @@ static void collect_shaft_sound(void *context, unsigned command, unsigned value)
 static int step_mine_actors(BfmVillageArrival *a, BfmGameplayRun *run, BfmFieldInput input, int departure)
 {
     if (a->illness_lower) return step_illness_street(a, run, input);
+    bfm_village_mine_entrance_set_lake_exit(a->mine, 1);
     bfm_village_mine_entrance_set_wheel_sound(a->mine, collect_wheel_sound, a);
     bfm_village_mine_entrance_set_shaft_sound(a->mine, collect_shaft_sound, a);
     int ok = departure ? bfm_village_mine_entrance_step_departure(a->mine, run, a->scene_tick) :
@@ -879,7 +892,9 @@ static int step_mine_passage(BfmVillageArrival *a, BfmGameplayRun *run, BfmField
         int inside = (mounted == 0x3043 && target == UINT32_C(0x00003044)) ||
                      (mounted == 0x3044 &&
                       (target == UINT32_C(0x00013043) || target == UINT32_C(0x00003045))) ||
-                     (mounted == 0x3045 && target == UINT32_C(0x00013044));
+                     (mounted == 0x3045 &&
+                      (target == UINT32_C(0x00013044) || target == UINT32_C(0x00003046))) ||
+                     (mounted == 0x3046 && target == UINT32_C(0x00013045));
         if (!inside && !(mounted == 0x3043 && target == UINT32_C(0x000f1052)) &&
             !(mounted == 0x1052 && target == UINT32_C(0x02003043))) return 1;
         c = open_woods_crossing(a->disc);
@@ -898,8 +913,9 @@ static int step_mine_passage(BfmVillageArrival *a, BfmGameplayRun *run, BfmField
         /* The shaft's incoming walk releases its own pad while the arrival
          * curtain can still be visible. Until then the script owns the foot. */
         const BfmVillagePlayer *player = bfm_village_mine_entrance_player(a->mine);
-        int shaft_control = player && player->controlled && bfm_village_mine_entrance_room(a->mine) == 0x3045;
-        if (!step_mine_actors(a, run, shaft_control ? field : (BfmFieldInput){0}, 0)) return 0;
+        unsigned room = bfm_village_mine_entrance_room(a->mine);
+        int pad_released = player && player->controlled && (room == 0x3045 || room == 0x3046);
+        if (!step_mine_actors(a, run, pad_released ? field : (BfmFieldInput){0}, 0)) return 0;
         if (bfm_nightmare_transition_live(&c->wipe)) {
             free(c);
             a->crossing = NULL;

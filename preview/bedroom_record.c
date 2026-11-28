@@ -175,6 +175,7 @@ static int supported_field_member(const MusashiDiscMedia *disc, uint32_t target,
     case 0x02003043: case 0x00013043: member = 107; resource = 285; group = 3; break;
     case 0x00003045: case 0x00013045: case 0x00ff3045: member = 109; resource = 287; group = 3; break;
     case 0x00003044: case 0x00013044: member = 108; resource = 286; group = 3; break;
+    case 0x00003046: member = 110; resource = 288; group = 3; break;
     case 0x000f1052:
     case 0x000a1052: member = 124; resource = 302; group = 3; break;
     case 0x00031010: case 0x00041010: case 0x00051010: case 0x00061010:
@@ -198,9 +199,9 @@ int bfm_woods_restart_entry(const MusashiDiscMedia *disc, const BfmSaveRecord *r
     if (!disc || !record || !out) return 0;
     uint32_t target = word(record->destination);
     unsigned member;
-    if (target == 0x3012u) {
-        member = 3;
-        if (!mounted_room_member(disc, 3, member, 181)) return 0;
+    if (target == 0x3012u || target == 0x3054u) {
+        member = target == 0x3012u ? 3u : 126u;
+        if (!mounted_room_member(disc, 3, member, 178u + member)) return 0;
     } else if (!supported_field_member(disc, target, &member)) {
         return 0;
     }

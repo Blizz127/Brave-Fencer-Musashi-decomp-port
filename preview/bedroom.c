@@ -167,12 +167,11 @@ static void queue_effect(BfmBedroom *room, BfmRoomSoundBank bank, unsigned comma
     queue_mounted_effect(room,effects,bank,command);
 }
 
-static unsigned village_score_selector(const BfmBedroom *room)
+static unsigned village_score_selector(const BfmBedroomEntry *entry)
 {
-    if (half(room->entry.state.destination) == 0x1052 ||
-        half(room->entry.state.destination) == 0x2058)
+    if (half(entry->state.destination) == 0x1052 || half(entry->state.destination) == 0x2058)
         return 0x27;
-    unsigned minute = half(room->entry.state.progress + 0x1a);
+    unsigned minute = half(entry->state.progress + 0x1a);
     return minute >= 420 && minute < 1140 ? 0x0f : 0x10;
 }
 
@@ -210,7 +209,7 @@ static int forest_room_audio(BfmBedroom *room)
             selector = save->progress[0x37] == 4 ? 0x3c : 0x0a;
         }
     } else if (field == 0x1010 && room->music_field == 0x3014) {
-        selector = village_score_selector(room);
+        selector = village_score_selector(&room->entry);
     }
     if (selector) {
         BfmForestScore *next = room_score(room,selector);
@@ -320,7 +319,7 @@ static BfmBedroom *open_entry(const MusashiDiscMedia *disc, const BfmBedroomEntr
                                 room->main_bytes, room->tiles, &room->hud);
         if (!room->village) goto failed;
         room->voice = bfm_bedroom_voice_load(disc);
-        room->current_score = room_score(room, village_score_selector(room));
+        room->current_score = room_score(room, village_score_selector(&room->entry));
         if (!room->current_score) goto failed;
         if (entry->scene_member == 124) {
             if (!bfm_nightmare_transition_open(disc, &room->recovery_transition)) goto failed;
@@ -1158,6 +1157,8 @@ static int woods_retry_step(BfmBedroom *room, BfmRetryScreen *retry, BfmFieldInp
     unsigned before = bfm_forest_voice_status(voice);
     if (bfm_retry_screen_choose_step(retry, held, pressed, direction, cancel || reveal, accept) < 0)
         return 0;
+    if (!bfm_village_arrival_step_retry_world(room->village, room->run, field) ||
+        !queue_mine_lake_sounds(room)) return 0;
     if (before == BFM_FOREST_VOICE_PENDING && bfm_forest_voice_status(voice) == BFM_FOREST_VOICE_PLAYING)
         room->voice_ready_field = 2 * room->update;
     if (bfm_retry_screen_choice_changed(retry))
@@ -1222,7 +1223,7 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
     bfm_village_arrival_mine_optical(room->village, mine_status != BFM_FOREST_VOICE_IDLE ||
         bfm_forest_voice_status(current_voice(room)) != BFM_FOREST_VOICE_IDLE);
 
-    int previous_score = bfm_village_arrival_field_score(room->village, village_score_selector(room));
+    int previous_score = bfm_village_arrival_field_score(room->village, village_score_selector(&room->entry));
     if (!bfm_village_arrival_step_field(room->village, room->run, field, &opened)) return 0;
     /* Lower Grillin advances its own stream while its actor processes the page. */
     mine_voice = bfm_village_arrival_illness_voice(room->village, &generation);
@@ -1264,11 +1265,11 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
     }
     unsigned field_voice = bfm_village_arrival_take_box_voice(room->village);
     if (field_voice && !request_field_voice(room, 1, field_voice)) return 0;
-    int next_score = bfm_village_arrival_field_score(room->village, village_score_selector(room));
+    int next_score = bfm_village_arrival_field_score(room->village, village_score_selector(&room->entry));
     if (previous_score != next_score && next_score < 0) {
         room->current_score = NULL;
     } else if (previous_score != next_score) {
-        unsigned selector = next_score ? (unsigned)next_score : village_score_selector(room);
+        unsigned selector = next_score ? (unsigned)next_score : village_score_selector(&room->entry);
         BfmForestScore *score = room_score(room, selector);
         if (!score) return 0;
         room->current_score = score;
@@ -1348,7 +1349,7 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
         if (upper_sound) queue_effect(room, BFM_ROOM_KNOCK_BANK, upper_sound);
     }
     if (player->events & BFM_VILLAGE_CAMERA) {
-        if (!apply(room, BFM_BED_SOUND_CHANGE, village_score_selector(room)))
+        if (!apply(room, BFM_BED_SOUND_CHANGE, village_score_selector(&room->entry)))
             return 0;
         /* The observed village handoff admits the waiting actor on the
          * 45th room update after the camera change and bank request. */
@@ -1422,7 +1423,7 @@ static int mount_grillin_exterior(BfmBedroom *room, const uint8_t *door, Grillin
 {
     BfmBedroomEntry previous = room->entry, incoming = previous;
     if (!bfm_castle_room_entry(room->disc, door, &incoming)) return 0;
-    BfmForestScore *score = room_score(room, village_score_selector(room));
+    BfmForestScore *score = room_score(room, village_score_selector(&incoming));
     if (!score) return 0;
 
     /* The inn counter shares the street's tile allocation. Restore it if
@@ -2040,7 +2041,7 @@ uint16_t bfm_bedroom_display_room(const BfmBedroom *room)
 {
     if (room->castle_tick >= 30) return (uint16_t)half(room->castle_door);
     if (room->audience) return 0x3003;
-    if (room->nightmare) return 0x3012;
+    if (room->nightmare) return bfm_nightmare_room_number(room->nightmare);
     if (room->bakery) return 0x2015;
     if (room->inn) return bfm_inn_field_room(room->inn);
     if (room->village) return bfm_village_arrival_room(room->village);

@@ -22,6 +22,9 @@ uint16_t bfm_village_arrival_room(const BfmVillageArrival *arrival);
 struct BfmSouthernWoods *bfm_village_arrival_woods(BfmVillageArrival *arrival);
 BfmRetryScreen *bfm_village_arrival_retry(const BfmVillageArrival *arrival);
 int bfm_village_arrival_begin_retry(BfmVillageArrival *arrival, BfmGameplayRun *run);
+/* Service the outgoing mine actors after each normal Retry update. */
+int bfm_village_arrival_step_retry_world(BfmVillageArrival *arrival, BfmGameplayRun *run,
+                                       BfmFieldInput input);
 int bfm_village_arrival_draw_retry(BfmVillageArrival *arrival, const BfmForestHud *hud,
                                  uint32_t pixels[240][320]);
 int bfm_village_arrival_prepare_recovery(const BfmVillageArrival *arrival, const BfmGameplayRun *run,
