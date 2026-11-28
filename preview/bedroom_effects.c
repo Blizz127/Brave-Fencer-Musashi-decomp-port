@@ -44,7 +44,7 @@ typedef struct {
     const uint8_t *data;
     size_t bytes;
     unsigned key, group;
-    int menu_sequences;
+    int menu_sequences, integer_centers;
     BfmPalaceBank *common, *scene, *score;
     uint8_t volume[256], pitch[256];
 } Sources;
@@ -193,7 +193,7 @@ static int instrument_open(const Sources *s, unsigned bank, unsigned instrument,
         !bfm_palace_sound_sample(vab, tone.sample, &encoded) ||
         !bfm_spu_sample_decode(encoded.data, encoded.bytes, &l->sample)) return 0;
     l->center = tone.center;
-    l->tuning = bank & 0x80u ? 0 : tone.tuning;
+    l->tuning = (bank & 0x80u) || s->integer_centers ? 0 : tone.tuning;
     bfm_spu_envelope_start(&l->envelope,(uint16_t)tone.adsr1,(uint16_t)tone.adsr2);
     return 1;
 }
@@ -278,7 +278,9 @@ static unsigned sequence_level(const Layer *voice, unsigned field)
 {
     unsigned index = field < SEQUENCE_FIELDS ? field : SEQUENCE_FIELDS;
     unsigned level = voice->sequence_levels ? voice->sequence_levels[index] : 16383;
-    unsigned gain = voice->sequence_gain * level >> 14;
+    unsigned gain = voice->sequence_gain;
+    if (voice->fade_level) gain = gain * voice->fade_level >> 15;
+    gain = gain * level >> 14;
     gain = gain * (SEQUENCE_FULL_GAIN - voice->menu_attenuation) >> 14;
     return gain * 16383u >> 14;
 }
@@ -425,6 +427,7 @@ static int prepare(const Sources *s, unsigned command, Clip *clip)
     Layer layers[MAX_LAYERS] = {0};
     unsigned count = 0;
     int result = 0;
+    int lake_rescue = s->group == 7 && s->key == 39 && bfm_mine_lake_rescue_cue(command);
     if (!description(s, command, &address, NULL)) return 0;
     for (;;) {
         uint8_t d[20];
@@ -445,7 +448,7 @@ static int prepare(const Sources *s, unsigned command, Clip *clip)
         int shoal = command == BFM_MINE_LAKE_SHOAL;
         if (!layer_open(s,d,&layers[count],rings,shoal)) goto done;
         if (shoal) layers[count].gain = half(s->volume+2*d[6])*127u >> 7;
-        layers[count].ntsc_fields = shoal || s->key == 38 || d[8] == 32 || (d[8] & 0x80) ||
+        layers[count].ntsc_fields = lake_rescue || shoal || s->key == 38 || d[8] == 32 || (d[8] & 0x80) ||
             command == BFM_VALLEY_GATE_SLIDE_SOUND || half(layers[count].control) == 7 ||
             command == BFM_WOODS_CRYSTAL_BREAK_SOUND || command == BFM_WOODS_RESCUE_DEPART_SOUND ||
             command == BFM_WOODS_RESCUE_VANISH_SOUND ||
@@ -574,7 +577,11 @@ static int prepare_sequence(const Sources *s, unsigned command, Clip *clip)
         return prepare_fixed_sequence(s, command, track, clip);
     if (track[8] != 0x10 && track[8] != 0x12) return 0;
     uint32_t cursor = word(track), repeat_start = 0;
-    unsigned repeats = 0, count = 0, field = 0, attenuation = 0;
+    unsigned repeats = 0, count = 0, attenuation = 0;
+    /* The lake reward allocates both groups on issue. Their first notes key
+     * on at the following sound service. */
+    unsigned field = s->group == 7 && s->key == 39 &&
+                     (command == RESCUE_BP_STRIKE || command == RESCUE_BP_ARPEGGIO);
     uint16_t levels[SEQUENCE_FIELDS+1];
     for (unsigned i=0; i<=SEQUENCE_FIELDS; ++i) levels[i] = 16383;
     const uint16_t *active_levels = NULL;
@@ -886,7 +893,7 @@ static int prepare_valley_field(Sources *s, const ForestPlayerArchive *player, B
 
 static int prepare_mine_loop(const Sources *s, unsigned cue, Clip *clip);
 
-static int prepare_mine_lake(const Sources *s, BfmBedroomEffects *e)
+static int prepare_mine_lake(Sources *s, BfmBedroomEffects *e)
 {
     const unsigned surface[] = {0x406, 0x407, 0x408, 0x409, 0x41e, 0x42f};
     if (s->group != 7 || s->key != 39 ||
@@ -900,9 +907,26 @@ static int prepare_mine_lake(const Sources *s, BfmBedroomEffects *e)
     size_t slot = 2 + sizeof surface / sizeof *surface;
     Clip *fall = &e->clips[slot], *bounce = &e->clips[slot+1];
     fall->coalesce_pending = bounce->coalesce_pending = 1;
-    return prepare(s, BFM_MINE_LAKE_FALL_SOUND, fall) &&
-           prepare(s, BFM_MINE_LAKE_BOUNCE_SOUND, bounce) &&
-           prepare_sequence(s, BFM_MINE_LAKE_TUMBLE_SOUND, &e->clips[slot+2]);
+    if (!prepare(s, BFM_MINE_LAKE_FALL_SOUND, fall) ||
+        !prepare(s, BFM_MINE_LAKE_BOUNCE_SOUND, bounce) ||
+        !prepare_sequence(s, BFM_MINE_LAKE_TUMBLE_SOUND, &e->clips[slot+2])) return 0;
+    slot += 3;
+    /* Both room effects and the common reward use the cached integer center. */
+    s->integer_centers = 1;
+    static const unsigned rescue[] = {
+        BFM_WOODS_CRYSTAL_HIT_SOUND, BFM_WOODS_CRYSTAL_BREAK_SOUND,
+        BFM_MINE_LAKE_RESCUE_DEPART, BFM_MINE_LAKE_RESCUE_VANISH, BFM_MINE_LAKE_RAISE_ITEM
+    };
+    for (size_t i = 0; i < sizeof rescue / sizeof *rescue; ++i) {
+        Clip *clip = &e->clips[slot++];
+        clip->coalesce_pending = 1;
+        if (!prepare(s, rescue[i], clip)) return 0;
+    }
+    if (!prepare_sequence(s, RESCUE_BP_STRIKE, &e->clips[slot])) return 0;
+    /* The strike is protected. The arpeggio keeps its scheduled notes live
+     * so a defeat fade can reduce even notes keyed later in the phrase. */
+    s->menu_sequences = 1;
+    return prepare_sequence(s, RESCUE_BP_ARPEGGIO, &e->clips[slot+1]);
 }
 
 #include "village_mine_shaft_mixer.inc"
@@ -1271,7 +1295,12 @@ static void fade_lake_effects(BfmBedroomEffects *e)
 {
     for (unsigned i = 0; i < VOICES; ++i) {
         Playback *p = &e->playing[i];
-        if (!p->clip || !p->clip->tone) continue;
+        if (!p->clip) continue;
+        if (p->command == RESCUE_BP_ARPEGGIO) {
+            if (!p->group_fade) p->group_fade = 32767;
+            continue;
+        }
+        if (!p->clip->tone) continue;
         if (p->clip->id == BFM_MINE_LAKE_CURRENT) {
             if (p->wheel_slot && !p->group_fade) p->group_fade = 32767;
         } else {
@@ -1288,8 +1317,27 @@ static void fade_lake_effects(BfmBedroomEffects *e)
 
 static void advance_lake_fade(Playback *p)
 {
-    if (!p->clip || !p->clip->tone) return;
+    if (!p->clip) return;
     enum { step = 544 };
+    if (p->command == RESCUE_BP_ARPEGGIO && p->group_fade) {
+        if (p->group_fade <= step) {
+            /* The authored volume is already zero at the earliest possible
+             * cutoff. Retiring the group cancels its remaining note starts. */
+            p->clip = NULL;
+            return;
+        }
+        p->group_fade -= step;
+        MenuSequence *sequence = p->clip->menu_sequence;
+        Layer *notes = sequence->notes + sequence->count;
+        for (unsigned i = 0; i < sequence->count; ++i) {
+            Layer *note = &notes[i];
+            if (note->done) continue;
+            note->fade_level = p->group_fade;
+            note->gain = sequence_level(note, note->sequence_start + note->field);
+        }
+        return;
+    }
+    if (!p->clip->tone) return;
     if (p->wheel_slot && p->group_fade) {
         Layer *note = &p->layers[0];
         if (p->group_fade <= step) {
@@ -1347,7 +1395,9 @@ void bfm_bedroom_effects_start(BfmBedroomEffects *e, unsigned command)
                 start_lake_shoal(e, value);
             return;
         }
-        if (!bfm_mine_lake_surface_cue(command) && !bfm_mine_lake_defeat_cue(command)) return;
+        /* The BP reward dispatches its two common sequences on this same bank. */
+        if (command != bfm_mine_lake_sound_event(command, 0) &&
+            command != RESCUE_BP_STRIKE && command != RESCUE_BP_ARPEGGIO) return;
     }
     if (command & BFM_MINE_WHEEL_EVENT) {
         play_mine_wheel(e, command);
@@ -1414,7 +1464,13 @@ void bfm_bedroom_effects_start(BfmBedroomEffects *e, unsigned command)
                         /* Pending requests share a key-on. After playback starts,
                          * the old note releases alongside the new onset. */
                         if (!p->layers[0].phase) return;
-                        bfm_spu_envelope_release(&p->layers[0].envelope);
+                        unsigned keys = e->lake && bfm_mine_lake_rescue_cue(command)
+                            ? p->clip->tone->count : 1;
+                        for (unsigned j = 0; j < keys; ++j) {
+                            Layer *note = &p->layers[j];
+                            if (note->delay) note->done = 1;
+                            else bfm_spu_envelope_release(&note->envelope);
+                        }
                         break;
                     }
                     if (p->frame >= e->clips[i].retrigger_frames)

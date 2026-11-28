@@ -9,7 +9,18 @@
 
 typedef struct BfmVillageMineLakeFields BfmVillageMineLakeFields;
 
-/* The mounted SC03/110 scene must outlive its actors. */
+typedef struct {
+    unsigned resident_id, sound;
+    int started, reveal, approach;
+    const BfmBedroomRoot *root;
+    const MusashiForestPlayerMesh *model;
+    const uint8_t *resource;
+    size_t resource_bytes;
+    uint32_t resource_base;
+    unsigned parts, pose_tick;
+} BfmVillageMineLakeFieldEvent;
+
+/* The mounted SC03/110 scene and live variables must outlive their actors. */
 BfmVillageMineLakeFields *bfm_village_mine_lake_fields_open(const uint8_t *scene, size_t bytes,
                                                             const uint8_t variables[256]);
 void bfm_village_mine_lake_fields_free(BfmVillageMineLakeFields *fields);
@@ -35,6 +46,16 @@ int bfm_village_mine_lake_fields_body_contact(const BfmVillageMineLakeFields *fi
  * subsequent mode-1 release script and the eventual rescue registration. */
 unsigned bfm_village_mine_lake_fields_hit(const BfmVillageMineLakeFields *fields,
     const BfmVillageGround *ground, const BfmWoodsCasterMeleeFrame *swing, int16_t hit[3]);
+/* The caller clips the segment against terrain and earlier actors. An accepted
+ * hit shortens it so later actors see the same endpoint. */
+unsigned bfm_village_mine_lake_fields_blade(BfmVillageMineLakeFields *fields, unsigned event,
+    const int16_t from[3], int16_t to[3], int16_t normal[3]);
+int bfm_village_mine_lake_fields_service(BfmVillageMineLakeFields *fields, BfmGameplayRun *run,
+    const int16_t player[3], const int32_t eye[3], unsigned tick, const MusashiDiscMedia *disc);
+/* Two entries in mounted placement order, valid until the next service. */
+const BfmVillageMineLakeFieldEvent *bfm_village_mine_lake_fields_events(const BfmVillageMineLakeFields *fields);
+int bfm_village_mine_lake_fields_busy(const BfmVillageMineLakeFields *fields);
+void bfm_village_mine_lake_fields_claim_body(BfmVillageMineLakeFields *fields, unsigned id);
 int bfm_village_mine_lake_fields_draw(void *fields, BfmBedroomFigure *figure,
                                      const BfmBedroomView *view);
 #endif

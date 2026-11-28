@@ -24,6 +24,8 @@ BfmForestMessageArt *bfm_southern_woods_message_art_load(const MusashiDiscMedia 
 /* SC03/31 contains portraits for the gate party and Knitter Lunchetta. */
 BfmForestMessageArt *bfm_valley_message_art_load(const MusashiDiscMedia *disc,
     const uint8_t *scene, size_t bytes, const uint16_t tiles[512][1024]);
+BfmForestMessageArt *bfm_mine_lake_message_art_load(const MusashiDiscMedia *disc,
+    const uint8_t *scene, size_t bytes, const uint16_t tiles[512][1024]);
 /* Refresh dialogue slot two after a field script uploads the next speaker. */
 void bfm_field_message_art_refresh_speaker(BfmForestMessageArt *art, const uint16_t tiles[512][1024]);
 void bfm_forest_message_art_free(BfmForestMessageArt *art);

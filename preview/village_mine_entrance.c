@@ -3,6 +3,7 @@
 #include "village_mine_props.h"
 #include "village_mine_lake.h"
 #include "village_mine_lake_hurt.h"
+#include "village_mine_lake_rescue.h"
 #include "woods_fusion_art.h"
 #include "village_mine_corridor_408.h"
 #include "village_switchback_props.h"
@@ -40,6 +41,7 @@ struct BfmVillageMineEntrance {
     BfmVillageMineWheels *wheels;
     MineShaft *shaft;
     BfmVillageMineLake *lake;
+    BfmMineLakeRescue *rescue;
     BfmVillageFieldDefeat defeat;
     BfmMineLakeSound lake_sound;
     void *lake_sound_context;
@@ -117,6 +119,7 @@ void bfm_village_mine_entrance_free(BfmVillageMineEntrance *mine)
     if (!mine) return;
     bfm_forest_message_free(mine->window);
     bfm_forest_message_art_free(mine->art);
+    bfm_mine_lake_rescue_free(mine->rescue);
     if (mine->lake) bfm_village_mine_lake_free(mine->lake);
     else {
         bfm_mine_lake_hurt_free(mine->hurt);
@@ -133,6 +136,18 @@ void bfm_village_mine_entrance_free(BfmVillageMineEntrance *mine)
     }
     free(mine->scene);
     free(mine);
+}
+
+static void rescue_camera(void *context, BfmVillageCamera *camera)
+{
+    BfmVillageMineEntrance *mine = context;
+    bfm_mine_lake_rescue_camera(mine->rescue, camera);
+}
+
+static int draw_resident(void *context, BfmBedroomFigure *figure, const BfmBedroomView *view)
+{
+    const BfmVillageMineEntrance *mine = context;
+    return bfm_mine_lake_rescue_add(mine->rescue, figure, view, mine->age);
 }
 
 BfmVillageMineEntrance *bfm_village_mine_entrance_open(const MusashiDiscMedia *disc,
@@ -180,8 +195,10 @@ BfmVillageMineEntrance *bfm_village_mine_entrance_open_at(const MusashiDiscMedia
         mine->view = bfm_village_mine_lake_view(mine->lake);
         mine->hurt = bfm_village_mine_lake_hurt(mine->lake);
         if (!mine->view || !bfm_village_motion_mine_orb(mine->motion, mine->orb, tiles)) goto fail;
-        mine->art = bfm_castle_message_art_load(disc, mine->scene, bytes, tiles, 0x5a2e4);
-        if (!mine->art) goto fail;
+        mine->art = bfm_mine_lake_message_art_load(disc, mine->scene, bytes, tiles);
+        mine->rescue = bfm_mine_lake_rescue_open(mine->scene, bytes, main, main_bytes, mine->save);
+        if (!mine->art || !mine->rescue) goto fail;
+        bfm_village_mine_lake_rescue_hooks(mine->lake, mine, rescue_camera, draw_resident);
         bfm_village_motion_woods_exit_script(mine->motion, 0);
     } else if (corridor) {
         mine->age = world_tick;
@@ -378,6 +395,39 @@ static int step_shaft(BfmVillageMineEntrance *mine, BfmGameplayRun *run, BfmFiel
     return 1;
 }
 
+static int step_rescue(BfmVillageMineEntrance *mine, BfmGameplayRun *run)
+{
+    BfmForestMessage *opened = NULL;
+    BfmMineLakeRescueEvents cues = {0};
+    const BfmVillageCamera *camera = bfm_village_mine_view_camera(mine->view);
+    if (!bfm_village_mine_lake_player_claimed(mine->lake) &&
+        !bfm_mine_lake_rescue_step(mine->rescue, run, mine->motion, camera,
+            bfm_village_mine_view_projection(mine->view),
+            bfm_village_mine_lake_rescue_player_ready(mine->lake), &opened, &cues))
+        return 0;
+    if (opened) {
+        if (mine->window) {
+            bfm_forest_message_free(opened);
+            return 0;
+        }
+        mine->window = opened;
+    }
+    if (mine->lake_sound) {
+        if (cues.player_sound) mine->lake_sound(mine->lake_sound_context, cues.player_sound, 0);
+        if (cues.actor_sound) mine->lake_sound(mine->lake_sound_context, cues.actor_sound, 0);
+    }
+    const BfmVillageMineLakeFieldEvent *fields = bfm_village_mine_lake_rescue_events(mine->lake);
+    for (unsigned i = 0; i < 2; ++i) {
+        const BfmVillageMineLakeFieldEvent *field = &fields[i];
+        if (!field->approach) continue;
+        if (!bfm_mine_lake_rescue_begin(mine->rescue, run, field->resident_id, field->root,
+                field->model, field->resource, field->resource_bytes, field->pose_tick, camera))
+            return 0;
+        bfm_village_mine_lake_rescue_claim_body(mine->lake, field->resident_id);
+    }
+    return 1;
+}
+
 int bfm_village_mine_entrance_step(BfmVillageMineEntrance *mine, BfmGameplayRun *run,
                                    BfmFieldInput input, unsigned actor_tick)
 {
@@ -390,7 +440,9 @@ int bfm_village_mine_entrance_step(BfmVillageMineEntrance *mine, BfmGameplayRun 
         mine->window = bfm_village_mine_props_read(mine->props, p->root.xyz, 1, NULL, point);
         if (mine->window && !bfm_village_motion_begin_read(mine->motion, point)) return 0;
     }
-    int clock_running = !using_box && !mine->window && (p->controlled || bfm_village_motion_ingress_clock_running(mine->motion)) &&
+    int rescuing = mine->lake && (bfm_village_mine_lake_rescue_busy(mine->lake) ||
+                                  bfm_mine_lake_rescue_busy(mine->rescue));
+    int clock_running = !using_box && !rescuing && !mine->window && (p->controlled || bfm_village_motion_ingress_clock_running(mine->motion)) &&
                         !bfm_village_motion_transfer(mine->motion) &&
                         (mine->save->flags[127 / 8] & (1u << (127 % 8)));
     bfm_village_motion_mine_props(mine->motion, mine->props, actor_tick);
@@ -400,8 +452,9 @@ int bfm_village_mine_entrance_step(BfmVillageMineEntrance *mine, BfmGameplayRun 
         prior ? (BfmFieldInput){0} : input, (unsigned)pad_yaw, actor_tick) : 0;
     if (locked < 0) return 0;
     if (mine->lake) {
-        if (!bfm_village_mine_lake_player(mine->lake, run, input, pad_yaw, actor_tick,
-                mine->lake_sound, mine->lake_sound_context)) return 0;
+        if (!bfm_village_mine_lake_player_scripted(mine->lake, run, input, pad_yaw, actor_tick,
+                mine->lake_sound, mine->lake_sound_context, bfm_mine_lake_rescue_drives_player(mine->rescue)))
+            return 0;
     } else if (mine->shaft) {
         if (!step_shaft(mine, run, mine->window ? (BfmFieldInput){0} : input, pad_yaw, actor_tick)) return 0;
     } else if (!locked && !(mine->switchback && prior) &&
@@ -427,6 +480,7 @@ int bfm_village_mine_entrance_step(BfmVillageMineEntrance *mine, BfmGameplayRun 
     } else if (mine->lake) {
         if (!bfm_village_mine_lake_actors(mine->lake, run, input.camera_pressed,
                 actor_tick, mine->lake_sound, mine->lake_sound_context, 0)) return 0;
+        if (!step_rescue(mine, run)) return 0;
     } else if (mine->shaft) {
         bfm_village_mine_shaft_view_follow(mine->view, p->root.xyz);
     } else {
@@ -446,7 +500,9 @@ int bfm_village_mine_entrance_step(BfmVillageMineEntrance *mine, BfmGameplayRun 
         if (!frame || (frame->events & BFM_FOREST_VOICE_REQUEST)) return 0;
         if (frame->events & BFM_FOREST_MESSAGE_CLOSED) {
             if (box_page) bfm_woods_box_use_close(&mine->shaft->use, frame->choices ? frame->answer : 0);
-            else if (!mine->hurt && !bfm_village_motion_end_read(mine->motion)) return 0;
+            else if (mine->rescue && bfm_mine_lake_rescue_window(mine->rescue, NULL)) {
+                if (!bfm_mine_lake_rescue_close(mine->rescue)) return 0;
+            } else if (!mine->hurt && !bfm_village_motion_end_read(mine->motion)) return 0;
             bfm_forest_message_free(prior);
             mine->window = NULL;
         }
@@ -522,6 +578,16 @@ const BfmForestMessageFrame *bfm_village_mine_entrance_page(const BfmVillageMine
 int bfm_village_mine_entrance_draw_window(const BfmVillageMineEntrance *mine, uint32_t pixels[240][320])
 {
     if (!mine || !pixels) return 0;
-    return !mine->window || bfm_forest_message_art_draw_placed(mine->art,
-        bfm_forest_message_frame(mine->window), 0, 0, pixels);
+    if (!mine->window) return 1;
+    const BfmForestMessageFrame *frame = bfm_forest_message_frame(mine->window);
+    const BfmBedroomRoot *speaker = NULL;
+    if (mine->rescue && bfm_mine_lake_rescue_window(mine->rescue, &speaker) == BFM_LAKE_RESCUE_WINDOW_RESIDENT) {
+        const BfmBedroomView *view = bfm_village_mine_view_projection(mine->view);
+        int resident[3], hero[3];
+        if (!speaker || !bfm_bedroom_project(view, speaker->xyz, resident) ||
+            !bfm_bedroom_project(view, bfm_village_mine_entrance_player(mine)->root.xyz, hero)) return 0;
+        return bfm_forest_message_art_draw_placed(mine->art, frame, (int16_t)(resident[0] - 160),
+                                                 resident[0] >= hero[0], pixels);
+    }
+    return bfm_forest_message_art_draw_placed(mine->art, frame, 0, 0, pixels);
 }

@@ -199,6 +199,16 @@ BfmForestMessageArt *bfm_valley_message_art_load(const MusashiDiscMedia *disc,
                             TEXTURES + 4*FIRST_ROW, PALETTES + 4*FIRST_ROW, 5);
 }
 
+BfmForestMessageArt *bfm_mine_lake_message_art_load(const MusashiDiscMedia *disc,
+    const uint8_t *scene, size_t bytes, const uint16_t tiles[512][1024])
+{
+    /* The room's two captive messages select portraits 9 and 10. */
+    enum { INSET = 0x5a2e4, TEXTURES = 0x801823b4u - 0x80128158u,
+           PALETTES = 0x801823f8u - 0x80128158u, FIRST_ROW = FIRST_FIELD_FACE - 1 };
+    return load_field_faces(disc, scene, bytes, tiles, INSET,
+                            TEXTURES + 4*FIRST_ROW, PALETTES + 4*FIRST_ROW, 2);
+}
+
 void bfm_field_message_art_refresh_speaker(BfmForestMessageArt *art, const uint16_t tiles[512][1024])
 {
     decode_portrait(art->portrait[1], tiles, 456, 400, &tiles[457][352]);

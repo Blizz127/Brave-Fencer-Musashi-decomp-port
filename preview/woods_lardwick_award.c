@@ -4,10 +4,11 @@
 #include "woods_twinpeak_stride.h"
 #include "../pc_port/forest_player_bytes.h"
 
+#include <limits.h>
 #include <string.h>
 
 enum {
-    SOLDIER_VARIABLE = 69, ALL_RESCUED = 35, FINAL_RESCUE_FIGURE = 37,
+    RESCUE_VARIABLE_BASE = 58, ALL_RESCUED = 35, FINAL_RESCUE_FIGURE = 37,
     BINCHO_SOUND = 3070, MAX_BP_LIMIT = 1634
 };
 
@@ -19,16 +20,71 @@ static const uint8_t *mounted(const uint8_t *data, size_t bytes, uint32_t base,
     return offset <= bytes && length <= bytes - offset ? data + offset : NULL;
 }
 
-int bfm_woods_lardwick_award_open(BfmWoodsLardwickAward *award,
+typedef struct {
+    uint32_t performance;
+    unsigned wait_fields;
+} BfmAwardProgram;
+
+static int read_award_program(const uint8_t *scene, size_t bytes, uint32_t base,
+                              uint32_t entry, uint32_t callback, BfmAwardProgram *out)
+{
+    enum { START_PERFORMANCE = 59, WAIT_FIELDS = 63, CALL_REWARD = 51,
+           SYNC_PLAYER = 64, RETURN_TO_ACTOR = 2 };
+    enum { READY, PERFORMING, REWARDED, SYNCHRONIZED } phase = READY;
+    BfmAwardProgram program = {0};
+    if (entry & 3u) return 0;
+    const uint8_t *record = mounted(scene, bytes, base, entry, 8);
+    if (!record) return 0;
+    size_t remaining = bytes - (size_t)(entry - base);
+
+    /* The actor advances its reward timer alongside the player performance.
+     * Only waits before the callback can be represented by that timer. */
+    while (remaining >= 8) {
+        uint32_t operand = u32le(record + 4);
+        switch (u32le(record)) {
+        case START_PERFORMANCE:
+            if (phase != READY || (operand & 3u) ||
+                !mounted(scene, bytes, base, operand, 28)) return 0;
+            program.performance = operand;
+            phase = PERFORMING;
+            break;
+        case WAIT_FIELDS:
+            if (phase != PERFORMING || !operand ||
+                operand > UINT_MAX - program.wait_fields) return 0;
+            program.wait_fields += operand;
+            break;
+        case CALL_REWARD:
+            if (phase != PERFORMING || !program.wait_fields || operand != callback) return 0;
+            phase = REWARDED;
+            break;
+        case SYNC_PLAYER:
+            if (phase != REWARDED || operand) return 0;
+            phase = SYNCHRONIZED;
+            break;
+        case RETURN_TO_ACTOR:
+            if (phase != SYNCHRONIZED || operand) return 0;
+            *out = program;
+            return 1;
+        default:
+            return 0;
+        }
+        record += 8;
+        remaining -= 8;
+    }
+    return 0;
+}
+
+static int open_award(BfmWoodsLardwickAward *award,
     const uint8_t *scene, size_t scene_bytes, const uint8_t *main, size_t main_bytes,
-    uint32_t common_script)
+    uint32_t common_script, uint32_t callback, unsigned resident_id)
 {
     const uint32_t field_base = UINT32_C(0x80128158), player_base = UINT32_C(0x800cedf8);
-    const uint8_t *rows = mounted(scene, scene_bytes, field_base, common_script, 40);
-    if (!award || !rows || u32le(rows) != 59 || u32le(rows + 8) != 63 ||
-        u32le(rows + 16) != 51 || u32le(rows + 20) != UINT32_C(0x8017cccc) ||
-        u32le(rows + 24) != 64 || u32le(rows + 32) != 2) return 0;
-    const uint8_t *performance = mounted(scene, scene_bytes, field_base, u32le(rows + 4), 28);
+    /* The independently decoded common program supplies these two fields. */
+    BfmAwardProgram program;
+    if (!award || !read_award_program(scene, scene_bytes, field_base, common_script,
+                                      callback, &program)) return 0;
+    const uint8_t *performance = mounted(scene, scene_bytes, field_base,
+                                         program.performance, 28);
     if (!performance) return 0;
     /* This action has no item, target actor or staging position. */
     for (unsigned offset = 0; offset < 24; offset += 4)
@@ -43,10 +99,27 @@ int bfm_woods_lardwick_award_open(BfmWoodsLardwickAward *award,
     if (!end || !figure) return 0;
     *award = (BfmWoodsLardwickAward){
         .message = message, .message_bytes = (size_t)(end - message) + 1,
-        .wait_fields = u32le(rows + 12), .figure_price = u16le(figure),
-        .figure_trend = figure[2]
+        .wait_fields = program.wait_fields, .figure_price = u16le(figure),
+        .figure_trend = figure[2], .rescue_variable = RESCUE_VARIABLE_BASE + resident_id
     };
     return 1;
+}
+
+int bfm_woods_lardwick_award_open(BfmWoodsLardwickAward *award,
+    const uint8_t *scene, size_t scene_bytes, const uint8_t *main, size_t main_bytes,
+    uint32_t common_script)
+{
+    return open_award(award, scene, scene_bytes, main, main_bytes, common_script,
+                      UINT32_C(0x8017cccc), 11);
+}
+
+int bfm_mine_lake_award_open(BfmWoodsLardwickAward *award,
+    const uint8_t *scene, size_t scene_bytes, const uint8_t *main, size_t main_bytes,
+    uint32_t common_script, unsigned resident_id)
+{
+    if (resident_id != 21 && resident_id != 27) return 0;
+    return open_award(award, scene, scene_bytes, main, main_bytes, common_script,
+                      UINT32_C(0x8017c8f4), resident_id);
 }
 
 BfmForestMessage *bfm_woods_lardwick_award_message(const BfmWoodsLardwickAward *award)
@@ -130,9 +203,11 @@ int bfm_woods_lardwick_award_step(BfmWoodsLardwickAward *award, BfmVillageMotion
     return 1;
 }
 
-static int registered(const BfmSaveRecord *save, const BfmGameplayRun *run)
+static int registered(const BfmWoodsLardwickAward *award, const BfmSaveRecord *save,
+                      const BfmGameplayRun *run)
 {
-    return save->variables[SOLDIER_VARIABLE] || (run && run->banks.variables[SOLDIER_VARIABLE]);
+    unsigned index = award->rescue_variable;
+    return save->variables[index] || (run && run->banks.variables[index]);
 }
 
 static void write_half(uint8_t *out, uint16_t value)
@@ -144,7 +219,7 @@ static void write_half(uint8_t *out, uint16_t value)
 unsigned bfm_woods_lardwick_award_bp(BfmWoodsLardwickAward *award,
     BfmSaveRecord *save, BfmGameplayRun *run)
 {
-    if (!award || !award->message || award->bp_applied || !save || registered(save, run)) return 0;
+    if (!award || !award->message || award->bp_applied || !save || registered(award, save, run)) return 0;
     uint8_t *progress = run && run->has_player ? run->player.record : save->progress;
     uint16_t max_bp = (uint16_t)(u16le(progress + 0x3e) + 5);
     uint16_t bp = (uint16_t)(u16le(progress + 0x40) + 9999);
@@ -161,15 +236,15 @@ int bfm_woods_lardwick_award_commit(const BfmWoodsLardwickAward *award,
     BfmSaveRecord *save, BfmGameplayRun *run)
 {
     if (!save || !award || !award->message) return 0;
-    if (registered(save, run)) return 1;
+    if (registered(award, save, run)) return 1;
     if (!award->bp_applied) return 0;
 
     uint8_t *progress = run && run->has_player ? run->player.record : save->progress;
     uint32_t count = u32le(progress + 0x0c) + 1u;
     for (unsigned i = 0; i < 4; ++i) progress[0x0c + i] = (uint8_t)(count >> (8 * i));
     if (progress != save->progress) memcpy(save->progress + 0x0c, progress + 0x0c, 4);
-    save->variables[SOLDIER_VARIABLE] = 1;
-    if (run) run->banks.variables[SOLDIER_VARIABLE] = 1;
+    save->variables[award->rescue_variable] = 1;
+    if (run) run->banks.variables[award->rescue_variable] = 1;
 
     if (count >= ALL_RESCUED) {
         const size_t stock = 98 + FINAL_RESCUE_FIGURE;

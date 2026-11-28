@@ -192,6 +192,8 @@ add_executable(musashi_native_boot
     village_illness_mine_gate.c
     village_mine_entrance.c
     village_mine_lake.c
+    village_mine_lake_rescue.c
+    village_mine_lake_resident_art.c
     village_mine_lake_view.c
     village_mine_lake_fields.c
     village_mine_lake_flyer.c

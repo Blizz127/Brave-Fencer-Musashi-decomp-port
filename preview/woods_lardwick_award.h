@@ -12,6 +12,7 @@ typedef struct {
     unsigned wait_fields;
     uint16_t figure_price;
     uint8_t figure_trend;
+    uint8_t rescue_variable;
     unsigned player_phase, saved_heading;
     int bp_applied, body_ended;
 } BfmWoodsLardwickAward;
@@ -21,6 +22,11 @@ typedef struct {
 int bfm_woods_lardwick_award_open(BfmWoodsLardwickAward *award,
     const uint8_t *scene, size_t scene_bytes, const uint8_t *main, size_t main_bytes,
     uint32_t common_script);
+/* The two lake captives use the same player award, with their own resident
+ * flag and the callback mounted in the lake's room script. */
+int bfm_mine_lake_award_open(BfmWoodsLardwickAward *award,
+    const uint8_t *scene, size_t scene_bytes, const uint8_t *main, size_t main_bytes,
+    uint32_t common_script, unsigned resident_id);
 BfmForestMessage *bfm_woods_lardwick_award_message(const BfmWoodsLardwickAward *award);
 
 typedef struct {
