@@ -18,6 +18,18 @@ void bfm_village_mine_lake_fields_step(BfmVillageMineLakeFields *fields, BfmGame
 int bfm_village_mine_lake_fields_body(const BfmVillageMineLakeFields *fields,
     const int16_t previous[3], int16_t proposed[3], unsigned field_tick, int airborne);
 
+/* Call when the selected captive first attempts to allocate its own model.
+ * Until then the fractured crystal keeps its body, even while invisible.
+ * Either allocation outcome releases the old model slot. */
+void bfm_village_mine_lake_fields_resident_allocation(BfmVillageMineLakeFields *fields,
+                                                      unsigned resident_id);
+
+/* The return includes an inside nudge. Ordinary airborne motion clears local
+ * speed only on a fresh face entry, reported separately in airborne_entry. */
+int bfm_village_mine_lake_fields_body_contact(const BfmVillageMineLakeFields *fields,
+    const int16_t previous[3], int16_t proposed[3], unsigned field_tick, int airborne,
+    int *airborne_entry);
+
 /* Query the sealed fields before their actor update. Return the resident ID and
  * intersection of a wall-clipped, accepted blade segment. The room owns the
  * subsequent mode-1 release script and the eventual rescue registration. */

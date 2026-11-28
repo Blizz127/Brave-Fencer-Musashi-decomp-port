@@ -16,6 +16,7 @@ static const uint32_t fixture_model = UINT32_C(0x8019bf28);
 
 typedef struct {
     unsigned id;
+    int owns_crystal_body;
     BfmWoodsLardwickField field;
 } LakeCaptive;
 
@@ -53,6 +54,7 @@ static int load_captive(LakeCaptive *c, const uint8_t *row, const uint8_t *param
     f->root.normal[1] = -4096;
     f->active = f->crystal_visible = f->glow_visible = 1;
     f->accepted_hits = hits;
+    c->owns_crystal_body = 1;
     return 1;
 }
 
@@ -122,19 +124,44 @@ void bfm_village_mine_lake_fields_step(BfmVillageMineLakeFields *fields, BfmGame
         bfm_woods_lardwick_field_step(&fields->captives[i].field, run, player, field_tick);
 }
 
+void bfm_village_mine_lake_fields_resident_allocation(BfmVillageMineLakeFields *fields,
+                                                      unsigned resident_id)
+{
+    if (!fields) return;
+    for (unsigned i = 0; i < CAPTIVES; ++i) {
+        LakeCaptive *c = &fields->captives[i];
+        if (c->id == resident_id) c->owns_crystal_body = 0;
+    }
+}
+
+int bfm_village_mine_lake_fields_body_contact(const BfmVillageMineLakeFields *fields,
+    const int16_t previous[3], int16_t proposed[3], unsigned field_tick, int airborne,
+    int *airborne_entry)
+{
+    if (airborne_entry) *airborne_entry = 0;
+    if (!fields || !previous || !proposed) return 0;
+    int touched = 0;
+    for (unsigned i = 0; i < CAPTIVES; ++i) {
+        const LakeCaptive *c = &fields->captives[i];
+        if (!c->owns_crystal_body) continue;
+        const BfmWoodsLardwickField *f = &c->field;
+        BfmForestTransform body;
+        bfm_forest_actor_root(f->root.yaw, f->root.xyz, &body);
+        if (airborne && airborne_entry && !*airborne_entry) {
+            const int16_t from[3] = {previous[0], (int16_t)(previous[1] - 16), previous[2]};
+            const int16_t to[3] = {proposed[0], (int16_t)(proposed[1] - 16), proposed[2]};
+            int16_t contact[3];
+            *airborne_entry = bfm_forest_body_slide_on_entry(&f->bounds, &body, from, to, contact);
+        }
+        touched |= bfm_valley_box_block_body(&f->bounds, &body, previous, proposed, field_tick, airborne);
+    }
+    return touched;
+}
+
 int bfm_village_mine_lake_fields_body(const BfmVillageMineLakeFields *fields,
     const int16_t previous[3], int16_t proposed[3], unsigned field_tick, int airborne)
 {
-    if (!fields || !previous || !proposed) return 0;
-    int blocked = 0;
-    for (unsigned i = 0; i < CAPTIVES; ++i) {
-        const BfmWoodsLardwickField *f = &fields->captives[i].field;
-        if (!f->crystal_visible) continue;
-        BfmForestTransform body;
-        bfm_forest_actor_root(f->root.yaw, f->root.xyz, &body);
-        blocked |= bfm_valley_box_block_body(&f->bounds, &body, previous, proposed, field_tick, airborne);
-    }
-    return blocked;
+    return bfm_village_mine_lake_fields_body_contact(fields, previous, proposed, field_tick, airborne, NULL);
 }
 
 unsigned bfm_village_mine_lake_fields_hit(const BfmVillageMineLakeFields *fields,
