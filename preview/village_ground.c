@@ -9,6 +9,7 @@
 
 enum { CELL, DISTANCE, NORMAL, LIST, TRIANGLE, QUAD, TABLE_COUNT };
 enum { GENTLE_CLEARANCE = 6144, EDGE_CLEARANCE = 12032 };
+static const uint32_t illness_lower_room = UINT32_C(0x80190780);
 
 typedef struct {
     const uint8_t *data;
@@ -29,7 +30,8 @@ struct BfmVillageGround {
     Slice tables[TABLE_COUNT];
     int origin_x, origin_z, width, depth;
     unsigned exit_material, passage_wall;
-    int lower_village, recheck_bank_floor, summit_contacts;
+    uint32_t lower_room;
+    int recheck_bank_floor, summit_contacts;
 };
 
 static unsigned read16(const uint8_t *p)
@@ -67,13 +69,13 @@ BfmVillageGround *bfm_village_ground_open(const uint8_t *scene, size_t bytes, ui
     if (room == UINT32_C(0x8018c794)) view.exit_material = 0x106;
     view.summit_contacts = room == UINT32_C(0x801961e8);
     view.recheck_bank_floor = room == UINT32_C(0x8018ea38);
-    if (room == UINT32_C(0x80192b18)) {
-        view.exit_material = 0x105;
-        view.lower_village = 1;
+    if (room == UINT32_C(0x80192b18) || room == illness_lower_room) {
+        view.exit_material = room == illness_lower_room ? 0x106 : 0x105;
+        view.lower_room = room;
     }
     if (room == UINT32_C(0x8018ea38) || room == UINT32_C(0x801910e4) ||
         room == UINT32_C(0x801961e8) || room == UINT32_C(0x8018c890) ||
-        room == UINT32_C(0x80186620))
+        room == UINT32_C(0x80186620) || room == UINT32_C(0x8018615c))
         view.passage_wall = 0x203;
     view.origin_x = read16(grid);
     view.origin_z = read16(grid + 2);
@@ -184,9 +186,11 @@ static int floors(const BfmVillageGround *g, const int start[3], int end[3],
     for (size_t i = 0; i < list.bytes; i += 2) {
         Face face;
         if (!read_face(g, read16(list.data + i), &face)) return -1;
-        /* Castle and forest thresholds carry the exit material on the walkable floor. */
-        int threshold = g->lower_village && (face.material == 0x107 ||
-                                             face.material == 0x109 || face.material == 0x10a);
+        /* Lower Grillin thresholds carry the exit material on walkable ground.
+         * The mine sill belongs to the street with the paired key gate. */
+        int threshold = g->lower_room && (face.material == 0x105 || face.material == 0x107 ||
+                                          face.material == 0x109 || face.material == 0x10a ||
+                                          (g->lower_room == illness_lower_room && face.material == 0x113));
         int thorn = bank_events && (uint8_t)face.material == BFM_FOREST_BANK_THORN_REASON;
         if (face.planes[0].normal[1] >= -1024 ||
             ((face.material & 0x300) && face.material != g->exit_material && !threshold && !thorn) ||
@@ -215,7 +219,7 @@ static int slide(const BfmVillageGround *g, const int start[3], int end[3], uint
                 /* Cleft bank walls can lean slightly away from vertical. */
                 int bank_wall = g->recheck_bank_floor && face.material == 0x100;
                 if ((face.planes[0].normal[1] && !bank_wall) || !crosses(&face, start, end)) continue;
-                /* The marked forest exits report a crossing while allowing
+                /* Marked passage walls report a crossing while allowing
                  * the regular stride to reach the far side of the plane. */
                 if (g->passage_wall && face.material == g->passage_wall) {
                     passage = 1;
