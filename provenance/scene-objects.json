@@ -8829,6 +8829,19 @@
       "origin": "Independently reconstructed from USA SC02.CD member 0016. An object action selects a handler using its second halfword and passes the same object to that handler.",
       "source_sha256": "68d84c94c7aefef13d51fb63b73262b989f0918105f1e8dd94f4c83c9b36cf02",
       "span_sha256": "0dfee401f280561348ff1c04477a106532b69bdc160453a61d59dfd66176aae5"
+    },
+    {
+      "name": "func_80184154",
+      "region": "sc02_0016",
+      "vram": 2149073236,
+      "size": 672,
+      "source": "src/overlays/sc02_0016/80184154.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC02.CD member 0016. The effect submits four faces with its primary transform and repeats them with an optional secondary transform. It halves the brightness on its first two updates and retires on the third.",
+      "source_sha256": "160ab996095c717135b00c072a5e77446fce1d08277dea0cd9a74f18812c6a00",
+      "span_sha256": "a943acfa4e7b6097c9a09ba88b5a8ba6a0d59298e1a4a712a43487e3e831b951"
     }
   ]
 }
