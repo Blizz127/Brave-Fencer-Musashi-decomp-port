@@ -25,7 +25,10 @@ const BfmForestTransform *bfm_mine_shaft_fan_shape(const BfmMineShaftFan *fan,
 /* The ordinary player tests its ankles before its supporting foot. The
  * airborne mask suppresses the horizontal push on a vertical face entry. */
 enum { BFM_SHAFT_BODY_GROUND, BFM_SHAFT_BODY_AIR, BFM_SHAFT_BODY_AIR_NO_FACE_PUSH };
-void bfm_mine_shaft_fan_body(const BfmMineShaftFan *fan, int rider,
+/* Ground returns bit 0 for a face entry and bit 1 for an interior start.
+ * Air returns 1 for entry. Only AIR_NO_FACE_PUSH also reports interior
+ * contact, although both airborne modes can move the foot out of a box. */
+int bfm_mine_shaft_fan_body(const BfmMineShaftFan *fan, int rider,
     const int16_t previous[3], int16_t foot[3], unsigned tick, int mode);
 BfmMineBasketContact bfm_mine_shaft_fan_probe(const BfmMineShaftFan *fan,
     const int16_t previous[3], const int16_t candidate[3], const int16_t last_supported[3],

@@ -101,10 +101,11 @@ const BfmForestTransform *bfm_mine_shaft_fan_shape(const BfmMineShaftFan *fan,
     return &fan->piece[piece];
 }
 
-void bfm_mine_shaft_fan_body(const BfmMineShaftFan *fan, int rider,
+int bfm_mine_shaft_fan_body(const BfmMineShaftFan *fan, int rider,
     const int16_t previous[3], int16_t foot[3], unsigned tick, int mode)
 {
-    if (!fan || !previous || !foot) return;
+    if (!fan || !previous || !foot) return 0;
+    int contacts = 0;
     int16_t start[3] = {previous[0], previous[1]-16, previous[2]};
     unsigned phase = (tick >> 5) & 3;
     int push_x = phase < 2 ? 7 : 8, push_z = phase == 2 ? 7 : 8;
@@ -121,9 +122,14 @@ void bfm_mine_shaft_fan_body(const BfmMineShaftFan *fan, int rider,
             int entered = bfm_forest_body_slide_on_entry(box,root,start,endpoint,hit);
             memcpy(endpoint,hit,sizeof endpoint);
             if (entered) {
+                contacts |= 1;
                 foot[0] = hit[0];
                 foot[1] = hit[1] + 16;
                 foot[2] = hit[2];
+            } else if (mode == BFM_SHAFT_BODY_GROUND) {
+                contacts |= 2;
+            } else if (mode == BFM_SHAFT_BODY_AIR_NO_FACE_PUSH) {
+                contacts = 1;
             }
             if (!entered || (mode != BFM_SHAFT_BODY_AIR_NO_FACE_PUSH && abs(normal[1]) > 2048)) {
                 const int16_t *side = !entered && mode == BFM_SHAFT_BODY_GROUND ? start : hit;
@@ -132,6 +138,7 @@ void bfm_mine_shaft_fan_body(const BfmMineShaftFan *fan, int rider,
             }
         }
     }
+    return contacts;
 }
 
 BfmMineBasketContact bfm_mine_shaft_fan_probe(const BfmMineShaftFan *fan,
