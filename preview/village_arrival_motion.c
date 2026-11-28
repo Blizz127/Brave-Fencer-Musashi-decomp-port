@@ -1635,8 +1635,8 @@ int bfm_village_motion_mine_pit(BfmVillageMotion *m, BfmVillageMinePit *pit, Bfm
         memset(&m->jump, 0, sizeof m->jump);
         m->airborne = 0;
         set_rescued_floor(m);
-        if (!bfm_bedroom_motion_reenter_stance(m->ordinary, -1) ||
-            !bfm_bedroom_motion_step(m->ordinary, BFM_BEDROOM_NONE, &m->player.pose)) return 0;
+        if (!bfm_bedroom_motion_reenter_stance(m->ordinary, -1)) return 0;
+        bfm_bedroom_motion_publish_upright(m->ordinary, &m->player.pose);
         return bfm_bedroom_motion_external_face(m->ordinary, 17, 1, &m->player.pose);
     }
     /* The pit replaces the movement action while the interrupted body keeps
