@@ -78,6 +78,12 @@ BfmVillageMotion *bfm_village_motion_switchback(const uint8_t *scene, size_t byt
 /* The upper west passage and the recorded Memory Box have separate stations. */
 BfmVillageMotion *bfm_village_motion_mine_shaft(const uint8_t *scene, size_t bytes,
     const uint8_t *main, size_t main_bytes, unsigned entrance, const MusashiDiscMedia *disc);
+BfmVillageMotion *bfm_village_motion_mine_lake(const uint8_t *scene, size_t bytes,
+    const uint8_t *main, size_t main_bytes, unsigned entrance, const MusashiDiscMedia *disc);
+/* Enable the shaft's second numbered passage only when its lake receiver is installed. */
+void bfm_village_motion_mine_shaft_lake_exit(BfmVillageMotion *motion, int enabled);
+/* Supply the current posted by the preceding actor turn, or NULL. */
+void bfm_village_motion_mine_lake_begin_field(BfmVillageMotion *motion, const int16_t current[3]);
 BfmVillageMotion *bfm_village_motion_mine_shaft_saved(const uint8_t *scene, size_t bytes,
     const uint8_t *main, size_t main_bytes, const uint8_t destination[36],
     const MusashiDiscMedia *disc);

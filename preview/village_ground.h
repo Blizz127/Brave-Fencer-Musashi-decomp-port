@@ -51,6 +51,10 @@ BfmVillageGroundResult bfm_village_ground_bank_step(const BfmVillageGround *grou
 unsigned bfm_village_ground_support_probe(const BfmVillageGround *ground, unsigned mode,
     const int16_t from[3], int16_t to[3], uint16_t *material);
 
+/* Return the supporting plane normal alongside the projected endpoint. */
+unsigned bfm_village_ground_support_normal(const BfmVillageGround *ground, unsigned mode,
+    const int16_t from[3], int16_t to[3], uint16_t *material, int16_t normal[3]);
+
 /* Loose rock fragments may pass through grate surfaces during their fall. */
 unsigned bfm_village_ground_rock_probe(const BfmVillageGround *ground, int ignore_grates,
     const int16_t from[3], int16_t to[3], uint16_t *material);

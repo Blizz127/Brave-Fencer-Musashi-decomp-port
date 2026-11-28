@@ -76,7 +76,7 @@ BfmVillageGround *bfm_village_ground_open(const uint8_t *scene, size_t bytes, ui
     if (room == UINT32_C(0x8018ea38) || room == UINT32_C(0x801910e4) ||
         room == UINT32_C(0x801961e8) || room == UINT32_C(0x8018c890) ||
         room == UINT32_C(0x80186620) || room == UINT32_C(0x8018615c) ||
-        room == UINT32_C(0x80184870) || room == UINT32_C(0x80181f28))
+        room == UINT32_C(0x80184870) || room == UINT32_C(0x80181f28) || room == UINT32_C(0x80185a50))
         view.passage_wall = 0x203;
     view.origin_x = read16(grid);
     view.origin_z = read16(grid + 2);
@@ -386,7 +386,7 @@ BfmVillageGroundResult bfm_village_ground_bank_step(const BfmVillageGround *g,
 }
 
 static unsigned ordered_support(const BfmVillageGround *g, unsigned mode, unsigned skip_material,
-    const int16_t from[3], int16_t to[3], uint16_t *material)
+    const int16_t from[3], int16_t to[3], uint16_t *material, int16_t normal[3])
 {
     if (!g || !from || !to || !material || mode > 2) return 0;
     int start[3] = {from[0], from[1], from[2]};
@@ -415,6 +415,9 @@ static unsigned ordered_support(const BfmVillageGround *g, unsigned mode, unsign
             }
             if (!project(face.planes, end)) return 0;
             int ny = face.planes[0].normal[1];
+            if (normal && (ny < -3019 || !gentle))
+                for (unsigned axis = 0; axis < 3; ++axis)
+                    normal[axis] = (int16_t)face.planes[0].normal[axis];
             if (ny < -3019) {
                 gentle = 0x2000;
                 *material = (uint16_t)face.material;
@@ -440,13 +443,19 @@ static unsigned ordered_support(const BfmVillageGround *g, unsigned mode, unsign
 unsigned bfm_village_ground_support_probe(const BfmVillageGround *g, unsigned mode,
     const int16_t from[3], int16_t to[3], uint16_t *material)
 {
-    return ordered_support(g, mode, 0, from, to, material);
+    return ordered_support(g, mode, 0, from, to, material, NULL);
+}
+
+unsigned bfm_village_ground_support_normal(const BfmVillageGround *g, unsigned mode,
+    const int16_t from[3], int16_t to[3], uint16_t *material, int16_t normal[3])
+{
+    return ordered_support(g, mode, 0, from, to, material, normal);
 }
 
 unsigned bfm_village_ground_rock_probe(const BfmVillageGround *g, int ignore_grates,
     const int16_t from[3], int16_t to[3], uint16_t *material)
 {
-    return ordered_support(g, 1, ignore_grates ? 0x100 : 0, from, to, material);
+    return ordered_support(g, 1, ignore_grates ? 0x100 : 0, from, to, material, NULL);
 }
 
 int bfm_village_ground_clear_floor(const BfmVillageGround *g, const int16_t from[3],
