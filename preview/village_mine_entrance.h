@@ -22,6 +22,10 @@ void bfm_village_mine_entrance_free(BfmVillageMineEntrance *mine);
 typedef void (*BfmMineWheelSound)(void *context, unsigned command, unsigned value, unsigned channel);
 void bfm_village_mine_entrance_set_wheel_sound(BfmVillageMineEntrance *mine,
     BfmMineWheelSound callback, void *context);
+/* The fan and checkpoint use the shaft's mounted effect bank. */
+typedef void (*BfmMineShaftSound)(void *context, unsigned command, unsigned value);
+void bfm_village_mine_entrance_set_shaft_sound(BfmVillageMineEntrance *mine,
+    BfmMineShaftSound callback, void *context);
 int bfm_village_mine_entrance_rider(const BfmVillageMineEntrance *mine);
 uint16_t bfm_village_mine_entrance_room(const BfmVillageMineEntrance *mine);
 const BfmVillagePlayer *bfm_village_mine_entrance_player(const BfmVillageMineEntrance *mine);
