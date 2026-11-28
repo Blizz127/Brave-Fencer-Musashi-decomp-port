@@ -12,6 +12,7 @@
 #include "village_illness_mine_gate.h"
 #include "village_mine_props.h"
 #include "village_mine_pit.h"
+#include "village_mine_lake_fields.h"
 #include "village_mine_shaft_gates.h"
 #include "village_mine_decks.h"
 #include "hells_valley_boulders.h"
@@ -73,6 +74,8 @@ struct BfmVillageMotion {
     BfmVillageMineWheels *mine_wheels;
     BfmVillageMineShaftGates shaft_gates;
     int shaft_lake_open;
+    const BfmVillageMineLakeFields *lake_fields;
+    unsigned lake_field_tick;
     int16_t lake_current[3];
     int lake_current_posted;
     BfmMineShaftFan *mine_fan;
@@ -437,6 +440,9 @@ static int displace(BfmVillageMotion *m, const uint32_t velocity[3], int require
         if (m->mine_props)
             bfm_village_mine_props_body(m->mine_props, m->player.root.xyz, candidate.xyz,
                                         m->mine_props_tick, m->airborne);
+        if (m->lake_fields)
+            bfm_village_mine_lake_fields_body(m->lake_fields, previous_foot, candidate.xyz,
+                                              m->lake_field_tick, m->airborne);
         BfmMineBasketContact deck_contact = BFM_MINE_BASKET_MISS;
         int16_t deck_foot[3];
         int deck_stationary = 0;
@@ -2999,6 +3005,14 @@ BfmVillageMotion *bfm_village_motion_mine_lake(const uint8_t *scene, size_t byte
 void bfm_village_motion_mine_shaft_lake_exit(BfmVillageMotion *m, int enabled)
 {
     if (m && m->woods_route.room == 0x3045) m->shaft_lake_open = enabled != 0;
+}
+
+void bfm_village_motion_mine_lake_fields(BfmVillageMotion *m,
+    const BfmVillageMineLakeFields *fields, unsigned actor_tick)
+{
+    if (!m || m->woods_route.room != 0x3046) return;
+    m->lake_fields = fields;
+    m->lake_field_tick = actor_tick;
 }
 
 void bfm_village_motion_mine_lake_begin_field(BfmVillageMotion *m, const int16_t current[3])

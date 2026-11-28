@@ -82,6 +82,10 @@ BfmVillageMotion *bfm_village_motion_mine_lake(const uint8_t *scene, size_t byte
     const uint8_t *main, size_t main_bytes, unsigned entrance, const MusashiDiscMedia *disc);
 /* Enable the shaft's second numbered passage only when its lake receiver is installed. */
 void bfm_village_motion_mine_shaft_lake_exit(BfmVillageMotion *motion, int enabled);
+struct BfmVillageMineLakeFields;
+/* Borrow crystal shapes from the last completed actor turn for the player sweep. */
+void bfm_village_motion_mine_lake_fields(BfmVillageMotion *motion,
+    const struct BfmVillageMineLakeFields *fields, unsigned actor_tick);
 /* Supply the current posted by the preceding actor turn, or NULL. */
 void bfm_village_motion_mine_lake_begin_field(BfmVillageMotion *motion, const int16_t current[3]);
 struct BfmVillageMinePit;
