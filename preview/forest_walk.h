@@ -7,6 +7,10 @@
 
 typedef struct BfmForestWalk BfmForestWalk;
 
+/* The field camera normalizes the horizontal bearing and the pitched arm
+ * separately. Angles use one 4096-unit turn; the result is signed Q12. */
+void bfm_forest_camera_orbit_axis(int pitch, int yaw, int axis[3]);
+
 enum { BFM_FOREST_R1 = 1u << 11, BFM_FOREST_TRIANGLE = 1u << 12, BFM_FOREST_CIRCLE = 1u << 13, BFM_FOREST_CROSS = 1u << 14, BFM_FOREST_SQUARE = 1u << 15 };
 
 /* The door owns this short automatic walk. Caller hands over the transfer

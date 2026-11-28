@@ -189,6 +189,19 @@ static void normalize_axis(int out[3])
     for (unsigned i=0;i<3;i++) out[i]=floor_shift((int64_t)out[i]*gain,shift);
 }
 
+void bfm_forest_camera_orbit_axis(int pitch, int yaw, int axis[3])
+{
+    axis[0] = (int)lround(sin(yaw * radians) * 4096);
+    axis[1] = 0;
+    axis[2] = (int)lround(cos(yaw * radians) * 4096);
+    normalize_axis(axis);
+    int horizontal = (int)lround(cos(pitch * radians) * 4096);
+    axis[0] = floor_shift((int64_t)axis[0] * horizontal, 12);
+    axis[1] = -(int)lround(sin(pitch * radians) * 4096);
+    axis[2] = floor_shift((int64_t)axis[2] * horizontal, 12);
+    normalize_axis(axis);
+}
+
 static int setup_cameras(BfmForestWalk *w)
 {
     D_80126B5E=(u16)w->cached[0]; D_80126B62=(u16)w->cached[1]; D_80126B66=(u16)w->cached[2];
@@ -203,13 +216,8 @@ static int setup_cameras(BfmForestWalk *w)
     func_8017D98C();
     if (u32le(D_80126948.bytes)!=UINT32_C(0x8017da08) || D_8012696C || !D_8012695C) return 0;
     w->follow_projection=D_80126954;
-    int vx=(int)lround(sin(D_8012696A*radians)*4096), vz=(int)lround(cos(D_8012696A*radians)*4096);
-    int axis[]={vx,0,vz}; normalize_axis(axis);
-    int c=(int)lround(cos(D_80126968*radians)*4096);
-    axis[0]=floor_shift((int64_t)axis[0]*c,12); axis[1]=-(int)lround(sin(D_80126968*radians)*4096);
-    axis[2]=floor_shift((int64_t)axis[2]*c,12); normalize_axis(axis);
-    memcpy(w->orbit, axis, sizeof w->orbit);
-    for (unsigned a=0;a<3;++a) w->follow_offset[a]=floor_shift((int64_t)axis[a]*D_8012695C,12);
+    bfm_forest_camera_orbit_axis(D_80126968, D_8012696A, w->orbit);
+    for (unsigned a=0;a<3;++a) w->follow_offset[a]=floor_shift((int64_t)w->orbit[a]*D_8012695C,12);
     return 1;
 }
 
