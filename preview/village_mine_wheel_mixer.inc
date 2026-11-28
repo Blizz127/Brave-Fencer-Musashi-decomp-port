@@ -1,17 +1,17 @@
 /* SPDX-License-Identifier: MIT */
 /* The room mixer owns these keyed layers, their mounted waveforms and SPU
  * release envelopes. The wheel sequencer only steers one note per group. */
-static int prepare_mine_wheel(const Sources *s, Clip *clip)
+static int prepare_mine_loop(const Sources *s, unsigned cue, Clip *clip)
 {
     uint8_t entry[4], track[12], records[40];
-    if (!select_command(s, BFM_MINE_WHEEL_LOOP, entry, NULL) ||
+    if (!select_command(s, cue, entry, NULL) ||
         (entry[0] & 0x7f) != 5 || !entry[1] || entry[2]) return 0;
     uint32_t tracks = word(s->data+s->bytes-4);
     if (!read_data(s, tracks+12*entry[3], track, sizeof track) || track[8] != 1 ||
         !read_data(s, word(track), records, sizeof records)) return 0;
     const uint8_t *note = records, *rest = records+20;
     unsigned key = half(note+6);
-    /* A held note, followed by a silent repeating rest, drives the wheel. */
+    /* A held note, followed by a silent repeating rest, drives the wheel or lake current. */
     if (!half(note) || half(note+2) || !key || key >= 127*256 || note[8] >= 128 ||
         note[9] || note[13] || word(note+16) ||
         !half(rest) || half(rest+6) || rest[13] != 2) return 0;
@@ -29,7 +29,7 @@ static int prepare_mine_wheel(const Sources *s, Clip *clip)
     clip->tone->count = 1;
     clip->tone->initial[0] = voice;
     memcpy(clip->tone->pitch_table, s->pitch, sizeof s->pitch);
-    clip->id = BFM_MINE_WHEEL_LOOP;
+    clip->id = cue;
     return 1;
 }
 
@@ -47,12 +47,8 @@ static void step_wheel_level(Playback *p)
         set_wheel_level(p, (unsigned)approach((int)p->wheel_level, (int)p->wheel_target, 256));
 }
 
-static void play_mine_wheel(BfmBedroomEffects *e, unsigned event)
+static void play_mine_loop(BfmBedroomEffects *e, const Clip *clip, unsigned tag, int stop, unsigned gain)
 {
-    unsigned tag = event >> 16 & 3u;
-    int stop = (event & BFM_MINE_WHEEL_KEY_OFF) != 0;
-    if (tag >= BFM_MINE_WHEELS || (event & 0xffffu) != BFM_MINE_WHEEL_LOOP ||
-        e->clips[2].id != BFM_MINE_WHEEL_LOOP) return;
     Playback *free_voice = NULL, *match = NULL;
     unsigned used = 0;
     for (unsigned i = 0; i < VOICES; ++i) {
@@ -71,7 +67,7 @@ static void play_mine_wheel(BfmBedroomEffects *e, unsigned event)
         }
     }
     if (stop) return;
-    unsigned target = ((event >> 19) & 127u) * SEQUENCE_FULL_GAIN >> 7;
+    unsigned target = gain * SEQUENCE_FULL_GAIN >> 7;
     if (match) {
         match->wheel_target = target;
         return;
@@ -79,8 +75,17 @@ static void play_mine_wheel(BfmBedroomEffects *e, unsigned event)
     if (!free_voice) return;
     unsigned slot = 1;
     while (used & (1u << slot)) ++slot;
-    start_voice(free_voice, &e->clips[2], tag);
+    start_voice(free_voice, clip, tag);
     free_voice->wheel_slot = slot;
     free_voice->wheel_target = target;
     set_wheel_level(free_voice, target);
+}
+
+static void play_mine_wheel(BfmBedroomEffects *e, unsigned event)
+{
+    unsigned tag = event >> 16 & 3u;
+    if (tag >= BFM_MINE_WHEELS || (event & 0xffffu) != BFM_MINE_WHEEL_LOOP ||
+        e->clips[2].id != BFM_MINE_WHEEL_LOOP) return;
+    play_mine_loop(e, &e->clips[2], tag, (event & BFM_MINE_WHEEL_KEY_OFF) != 0,
+                   event >> 19 & 127u);
 }

@@ -2,6 +2,7 @@
 #include "bedroom_effects.h"
 #include "village_mine_shaft_audio.h"
 #include "village_mine_wheel_audio.h"
+#include "village_mine_lake_audio.h"
 #include "../pc_port/forest_player_archive.h"
 #include "bedroom_record.h"
 #include "bedroom_score.h"
@@ -79,6 +80,7 @@ typedef struct {
 } MenuSequence;
 typedef struct {
     unsigned id;
+    int coalesce_pending;
     size_t frames, retrigger_frames;
     int16_t *mono;
     KeyedTone *tone;
@@ -87,7 +89,7 @@ typedef struct {
 typedef struct {
     const Clip *clip;
     unsigned command, menu_target, menu_staged;
-    unsigned wheel_slot, wheel_level, wheel_target;
+    unsigned wheel_slot, wheel_level, wheel_target, shoal_gain;
     size_t frame;
     Layer layers[MAX_KEYED_NOTES];
     int fan_pending;
@@ -96,7 +98,7 @@ typedef struct {
 struct BfmBedroomEffects {
     Clip clips[CLEFT_CLIPS];
     Playback playing[VOICES];
-    int replace_matching, menu_sequences, shaft;
+    int replace_matching, menu_sequences, shaft, lake;
     unsigned sound_phase;
     unsigned terrain_aliases;
 };
@@ -147,7 +149,9 @@ static int description(const Sources *s, unsigned command, uint32_t *address, un
     /* Direct common menu effects preserve their high service-mode flag
      * in the resident slot. The lower six bits select the instrument
      * descriptor and run the same envelope. */
-    if (entry[0] != 1 && entry[0] != 0x41) return 0;
+    if (entry[0] != 1 && entry[0] != 0x41 &&
+        !(command == BFM_MINE_LAKE_SHOAL && s->group == 7 && s->key == 39 && entry[0] == 9))
+        return 0;
     uint32_t tables = entry[1] ? word(s->data+s->bytes-8) : 0x80068304u;
     if (!read_data(s, tables+4*entry[2], pointer, 4)) return 0;
     *address = word(pointer)+20u*entry[3];
@@ -216,12 +220,12 @@ static unsigned field_sample(unsigned field)
     return (unsigned)((uint64_t)field*SPU_RATE*1001u/60000u);
 }
 
-static int layer_open(const Sources *s, const uint8_t d[20], Layer *l, int sustained)
+static int layer_open(const Sources *s, const uint8_t d[20], Layer *l, int sustained, int fractional_key)
 {
-    if (d[4] || d[7] || d[5]>=128 || d[6]>=128 || !instrument_open(s,d[8],d[9],l)) return 0;
+    if ((!fractional_key && d[4]) || d[7] || d[5]>=128 || d[6]>=128 || !instrument_open(s,d[8],d[9],l)) return 0;
     l->delay = half(d+2) * (SPU_RATE/60);
     l->gain = ((half(s->volume+2*d[6])*127 >> 7)*127) >> 7;
-    l->key = d[5]*256;
+    l->key = (int)half(d+4);
     l->pitch = pitch(s->pitch,l);
     if (word(d+16)) {
         uint32_t command = word(d+16);
@@ -435,8 +439,10 @@ static int prepare(const Sources *s, unsigned command, Clip *clip)
             clip->retrigger_frames = guard;
         }
         int rings = command == BFM_EARTH_SCROLL_RINGS_SOUND;
-        if (!layer_open(s,d,&layers[count],rings)) goto done;
-        layers[count].ntsc_fields = s->key == 38 || d[8] == 32 || (d[8] & 0x80) ||
+        int shoal = command == BFM_MINE_LAKE_SHOAL;
+        if (!layer_open(s,d,&layers[count],rings,shoal)) goto done;
+        if (shoal) layers[count].gain = half(s->volume+2*d[6])*127u >> 7;
+        layers[count].ntsc_fields = shoal || s->key == 38 || d[8] == 32 || (d[8] & 0x80) ||
             command == BFM_VALLEY_GATE_SLIDE_SOUND || half(layers[count].control) == 7 ||
             command == BFM_WOODS_CRYSTAL_BREAK_SOUND || command == BFM_WOODS_RESCUE_DEPART_SOUND ||
             command == BFM_WOODS_RESCUE_VANISH_SOUND ||
@@ -448,7 +454,8 @@ static int prepare(const Sources *s, unsigned command, Clip *clip)
         if (!d[11]) break;
         address += sizeof d;
     }
-    if (command == BFM_MINE_POLE_SOUND || command == BFM_WOODS_CHARGE_SOUND || command == SHRINE_APPEAR ||
+    if (command == BFM_MINE_LAKE_SHOAL || clip->coalesce_pending ||
+        command == BFM_MINE_POLE_SOUND || command == BFM_WOODS_CHARGE_SOUND || command == SHRINE_APPEAR ||
         command == BFM_EARTH_SCROLL_RINGS_SOUND || transition_key_off_target(command)) {
         if (command == BFM_WOODS_CHARGE_SOUND) {
             if (count != 1 || !layers[0].gate || layers[0].slide || layers[0].modulated) goto done;
@@ -865,7 +872,21 @@ static int prepare_valley_field(Sources *s, const ForestPlayerArchive *player, B
            prepare(s, BFM_VALLEY_EARTH_RING_SOUND, &effects->clips[3]);
 }
 
-static int prepare_mine_wheel(const Sources *s, Clip *clip);
+static int prepare_mine_loop(const Sources *s, unsigned cue, Clip *clip);
+
+static int prepare_mine_lake(const Sources *s, BfmBedroomEffects *e)
+{
+    const unsigned surface[] = {0x406, 0x407, 0x408, 0x409, 0x41e, 0x42f};
+    if (s->group != 7 || s->key != 39 ||
+        !prepare(s, BFM_MINE_LAKE_SHOAL, &e->clips[0]) ||
+        !prepare_mine_loop(s, BFM_MINE_LAKE_CURRENT, &e->clips[1])) return 0;
+    for (size_t i = 0; i < sizeof surface / sizeof *surface; ++i) {
+        Clip *clip = &e->clips[2+i];
+        clip->coalesce_pending = 1;
+        if (!prepare(s, surface[i], clip)) return 0;
+    }
+    return 1;
+}
 
 #include "village_mine_shaft_mixer.inc"
 
@@ -895,8 +916,11 @@ static BfmBedroomEffects *forest_field_effects(const MusashiDiscMedia *disc, uns
             s.common = bfm_archive_sound_bank_load(disc, "MAIN.CD", 2);
             valid = s.common && prepare(&s, BFM_WOODS_HURT_SOUND, &effects->clips[0]) &&
                     prepare(&s, BFM_WOODS_GUARD_SOUND, &effects->clips[1]) &&
-                    prepare_mine_wheel(&s, &effects->clips[2]);
+                    prepare_mine_loop(&s, BFM_MINE_WHEEL_LOOP, &effects->clips[2]);
             effects->replace_matching = 1;
+        } else if (room == 0x3046) {
+            effects->lake = 1;
+            valid = prepare_mine_lake(&s, effects);
         } else if (room == 0x3045) {
             effects->shaft = 1;
             valid = prepare_mine_shaft(&s, effects);
@@ -932,6 +956,11 @@ BfmBedroomEffects *bfm_maze_guide_effects_load(const MusashiDiscMedia *disc)
 BfmBedroomEffects *bfm_valley_effects_load(const MusashiDiscMedia *disc)
 {
     return forest_field_effects(disc, 0x302b, 31);
+}
+
+BfmBedroomEffects *bfm_mine_lake_effects_load(const MusashiDiscMedia *disc)
+{
+    return forest_field_effects(disc, 0x3046, 110);
 }
 
 BfmBedroomEffects *bfm_mine_shaft_effects_load(const MusashiDiscMedia *disc)
@@ -1188,6 +1217,36 @@ static void start_voice(Playback *p, const Clip *clip, unsigned command)
 
 #include "village_mine_wheel_mixer.inc"
 
+static void start_lake_shoal(BfmBedroomEffects *e, unsigned value)
+{
+    unsigned gain = value & 127u;
+    Playback *free_voice = NULL;
+    Clip *clip = &e->clips[0];
+    for (unsigned i = 0; i < VOICES; ++i) {
+        Playback *p = &e->playing[i];
+        if (!p->clip && !free_voice) free_voice = p;
+        if (p->clip != clip || p->layers[0].envelope.stage == BFM_SPU_ENVELOPE_RELEASE) continue;
+        if (gain < p->shoal_gain) return;
+        for (unsigned j = 0; j < clip->tone->count; ++j) {
+            Layer *note = &p->layers[j];
+            if (note->delay) note->done = 1;
+            else bfm_spu_envelope_release(&note->envelope);
+        }
+    }
+    if (!free_voice) return;
+    start_voice(free_voice, clip, clip->id);
+    free_voice->shoal_gain = gain;
+    for (unsigned j = 0; j < clip->tone->count; ++j) {
+        Layer *note = &free_voice->layers[j];
+        if (gain < 48) gain = 47 - (47-gain)/2;
+        note->gain = note->gain * gain >> 7;
+        if (value & 0x8000u) {
+            note->key -= 128;
+            note->pitch = pitch(clip->tone->pitch_table, note);
+        }
+    }
+}
+
 void bfm_bedroom_effects_stop(BfmBedroomEffects *effects)
 {
     if (effects) memset(effects->playing, 0, sizeof effects->playing);
@@ -1196,6 +1255,22 @@ void bfm_bedroom_effects_stop(BfmBedroomEffects *effects)
 void bfm_bedroom_effects_start(BfmBedroomEffects *e, unsigned command)
 {
     if (!e || !command) return;
+    if (e->lake) {
+        unsigned cue = command & 0xfffu, value = command >> 16;
+        if (command == (0x10000u | BFM_MINE_LAKE_CURRENT)) {
+            play_mine_loop(e, &e->clips[1], 0, 1, 0);
+            return;
+        }
+        if ((command & 0xf000u) == BFM_MINE_LAKE_ARGUMENT) {
+            if (command != bfm_mine_lake_sound_event(cue, value)) return;
+            if (cue == BFM_MINE_LAKE_CURRENT)
+                play_mine_loop(e, &e->clips[1], 0, 0, value & 127u);
+            else if (cue == BFM_MINE_LAKE_SHOAL)
+                start_lake_shoal(e, value);
+            return;
+        }
+        if (!bfm_mine_lake_surface_cue(command)) return;
+    }
     if (command & BFM_MINE_WHEEL_EVENT) {
         play_mine_wheel(e, command);
         return;
@@ -1251,15 +1326,15 @@ void bfm_bedroom_effects_start(BfmBedroomEffects *e, unsigned command)
         /* Repeated menu commands and rapid Gunshot fire restart the active
          * instance of that command. Surface aliases keep separate cursors
          * even when the mounted sample is the same. */
-        if (e->replace_matching || i >= 3 || e->clips[i].menu_sequence ||
+        if (e->replace_matching || e->clips[i].coalesce_pending || i >= 3 || e->clips[i].menu_sequence ||
             command == BFM_FOREST_GUNSHOT_SOUND) {
             for (unsigned j=0; j<VOICES; ++j) {
                 Playback *p = &e->playing[j];
                 if (p->clip && p->command == command &&
                     !(p->clip->tone && p->layers[0].envelope.stage == BFM_SPU_ENVELOPE_RELEASE)) {
-                    if (command == BFM_MINE_POLE_SOUND) {
-                        /* Two catches before the first sample share a key-on. A
-                         * later catch releases the previous note as it restarts. */
+                    if (command == BFM_MINE_POLE_SOUND || e->clips[i].coalesce_pending) {
+                        /* Pending requests share a key-on. After playback starts,
+                         * the old note releases alongside the new onset. */
                         if (!p->layers[0].phase) return;
                         bfm_spu_envelope_release(&p->layers[0].envelope);
                         break;
@@ -1331,7 +1406,7 @@ static void advance_menu_gain(Playback *p)
 void bfm_bedroom_effects_mix(BfmBedroomEffects *e, int16_t *stereo, size_t frames)
 {
     if (!e || !stereo) return;
-    if (!e->shaft && !e->menu_sequences && e->clips[2].id != BFM_MINE_WHEEL_LOOP) {
+    if (!e->lake && !e->shaft && !e->menu_sequences && e->clips[2].id != BFM_MINE_WHEEL_LOOP) {
         mix_block(e, stereo, frames);
         return;
     }
