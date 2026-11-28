@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: MIT */
 #include "village_mine_entrance.h"
 #include "village_mine_props.h"
+#include "village_mine_lake.h"
+#include "village_mine_lake_hurt.h"
+#include "woods_fusion_art.h"
 #include "village_mine_corridor_408.h"
 #include "village_switchback_props.h"
 #include "village_switchback_hit.h"
@@ -37,6 +40,10 @@ struct BfmVillageMineEntrance {
     BfmVillageSwitchbackProps *switchback;
     BfmVillageMineWheels *wheels;
     MineShaft *shaft;
+    BfmVillageMineLake *lake;
+    BfmVillageFieldDefeat lake_defeat;
+    BfmMineLakeSound lake_sound;
+    void *lake_sound_context;
     BfmMineShaftSound shaft_sound;
     void *shaft_sound_context;
     BfmMineWheelSound wheel_sound;
@@ -82,6 +89,21 @@ void bfm_village_mine_entrance_set_shaft_sound(BfmVillageMineEntrance *mine,
     }
 }
 
+void bfm_village_mine_entrance_set_lake_sound(BfmVillageMineEntrance *mine,
+    BfmMineLakeSound callback, void *context)
+{
+    if (mine) {
+        mine->lake_sound = callback;
+        mine->lake_sound_context = context;
+    }
+}
+
+void bfm_village_mine_entrance_set_lake_exit(BfmVillageMineEntrance *mine, int enabled)
+{
+    if (mine && mine->shaft)
+        bfm_village_motion_mine_shaft_lake_exit(mine->motion, enabled);
+}
+
 uint16_t bfm_village_mine_entrance_room(const BfmVillageMineEntrance *mine)
 {
     return mine ? mine->room : 0;
@@ -97,12 +119,13 @@ void bfm_village_mine_entrance_free(BfmVillageMineEntrance *mine)
     if (!mine) return;
     bfm_forest_message_free(mine->window);
     bfm_forest_message_art_free(mine->art);
+    if (mine->lake) bfm_village_mine_lake_free(mine->lake);
+    else bfm_village_mine_view_free(mine->view);
     bfm_village_motion_free(mine->motion);
     bfm_village_mine_props_free(mine->props);
     bfm_switchback_hit_free(mine->hit);
     bfm_village_switchback_props_free(mine->switchback);
     bfm_village_mine_wheels_free(mine->wheels);
-    bfm_village_mine_view_free(mine->view);
     if (mine->shaft) {
         bfm_mine_shaft_fan_free(mine->shaft->fan);
         bfm_woods_3026_box_art_free(mine->shaft->art);
@@ -131,11 +154,12 @@ BfmVillageMineEntrance *bfm_village_mine_entrance_open_at(const MusashiDiscMedia
     int shaft = entry->scene_member == 109 &&
         (station == UINT32_C(0x00003045) || station == UINT32_C(0x00013045) ||
          station == UINT32_C(0x00ff3045));
-    if (!entrance && !corridor && !shaft) return NULL;
+    int lake = entry->scene_member == 110 && station == UINT32_C(0x00003046);
+    if (!entrance && !corridor && !shaft && !lake) return NULL;
     BfmVillageMineEntrance *mine = calloc(1, sizeof *mine);
     if (!mine) return NULL;
     size_t bytes;
-    if (corridor || shaft)
+    if (corridor || shaft || lake)
         mine->scene = bfm_scene_unpack_pac0(disc, "SC03.CD", entry->scene_member,
             BFM_FIELD_SCENE_CAPACITY, BFM_FIELD_SCENE_CAPACITY, &bytes);
     else
@@ -145,6 +169,26 @@ BfmVillageMineEntrance *bfm_village_mine_entrance_open_at(const MusashiDiscMedia
     mine->save = &entry->state;
     mine->tiles = tiles;
     mine->orb = mine->save->progress[0x48];
+    if (lake) {
+        mine->age = world_tick;
+        mine->motion = bfm_village_motion_mine_lake(mine->scene, bytes, main, main_bytes,
+            entry->state.destination[2], disc);
+        const BfmVillagePlayer *p = bfm_village_mine_entrance_player(mine);
+        if (!p || !p->pose.pose) goto fail;
+        mine->lake = bfm_village_mine_lake_open(disc, mine->scene, bytes, main, main_bytes,
+            tiles, mine->motion, mine->save);
+        mine->view = bfm_village_mine_lake_view(mine->lake);
+        if (!mine->view || !bfm_village_motion_mine_orb(mine->motion, mine->orb, tiles)) goto fail;
+        mine->art = bfm_castle_message_art_load(disc, mine->scene, bytes, tiles, 0x5a2e4);
+        if (!mine->art) goto fail;
+        mine->lake_defeat = (BfmVillageFieldDefeat){
+            .field = bfm_village_mine_view_field(mine->view), .motion = mine->motion,
+            .save = mine->save, .main = main, .main_bytes = main_bytes,
+            .tiles = tiles, .age = &mine->age, .world_cutoff = 19
+        };
+        bfm_village_motion_woods_exit_script(mine->motion, 0);
+        return mine;
+    }
     if (corridor) {
         mine->age = world_tick;
         mine->motion = bfm_village_motion_switchback(mine->scene, bytes, main, main_bytes,
@@ -224,6 +268,51 @@ fail:
     return NULL;
 }
 
+BfmRetryScreen *bfm_village_mine_entrance_retry(const BfmVillageMineEntrance *mine)
+{
+    return mine && mine->lake
+        ? bfm_mine_lake_hurt_retry(bfm_village_mine_lake_hurt(mine->lake)) : NULL;
+}
+
+int bfm_village_mine_entrance_prepare_recovery(const BfmVillageMineEntrance *mine,
+    const MusashiDiscMedia *disc, const BfmGameplayRun *run, BfmBedroomEntry *entry)
+{
+    BfmSaveRecord restored;
+    return mine && mine->lake &&
+           bfm_mine_lake_hurt_restore(bfm_village_mine_lake_hurt(mine->lake), run, &restored) &&
+           bfm_woods_restart_entry(disc, &restored, entry);
+}
+
+int bfm_village_mine_entrance_step_retry_world(BfmVillageMineEntrance *mine, BfmGameplayRun *run,
+    unsigned actor_tick, BfmFieldInput input)
+{
+    BfmRetryScreen *retry = bfm_village_mine_entrance_retry(mine);
+    if (!retry) return 0;
+    mine->age = actor_tick;
+    unsigned commands[2];
+    unsigned count = bfm_retry_screen_body_commands(retry, commands);
+    for (unsigned i = 0; mine->lake_sound && i < count; ++i)
+        mine->lake_sound(mine->lake_sound_context, commands[i], 0);
+    if (!bfm_retry_screen_keep_world(retry)) return 1;
+    if (!bfm_village_mine_lake_actors(mine->lake, run, input.camera_pressed, actor_tick,
+            mine->lake_sound, mine->lake_sound_context, 1)) return 0;
+    const BfmVillageCamera *presented = bfm_village_mine_view_camera(mine->view);
+    BfmForestCamera camera;
+    if (!bfm_woods_effect_camera(bfm_village_mine_view_projection(mine->view), &camera)) return 0;
+    static const int16_t orbit_offset[3] = {0, -80, 0};
+    bfm_retry_screen_update_field_orbit(retry, &camera, presented->radius, 227, 2048, orbit_offset);
+    return 1;
+}
+
+int bfm_village_mine_entrance_draw_retry(BfmVillageMineEntrance *mine, const BfmForestHud *hud,
+    uint32_t pixels[240][320])
+{
+    BfmRetryScreen *retry = bfm_village_mine_entrance_retry(mine);
+    if (!retry) return 0;
+    if (bfm_retry_screen_keep_world(retry) && !bfm_village_mine_entrance_draw(mine, pixels)) return 0;
+    return bfm_retry_screen_draw(retry, hud, mine->art, pixels);
+}
+
 static int step_shaft(BfmVillageMineEntrance *mine, BfmGameplayRun *run, BfmFieldInput input,
                       int pad_yaw, unsigned tick)
 {
@@ -285,7 +374,22 @@ int bfm_village_mine_entrance_step(BfmVillageMineEntrance *mine, BfmGameplayRun 
     int locked = mine->hit ? bfm_switchback_hit_step(mine->hit, mine->motion, run, mine->save,
                                                        input, (unsigned)pad_yaw, &mine->incoming) : 0;
     if (locked < 0) return 0;
-    if (mine->shaft) {
+    if (mine->lake) {
+        if (!bfm_village_mine_lake_player(mine->lake, run, input, pad_yaw, actor_tick,
+                mine->lake_sound, mine->lake_sound_context)) return 0;
+        BfmMineLakeHurt *hurt = bfm_village_mine_lake_hurt(mine->lake);
+        if (bfm_mine_lake_hurt_defeated(hurt)) {
+            BfmForestMessage *notice = NULL;
+            BfmMineLakeLife life = bfm_mine_lake_hurt_resolve(hurt, run, &mine->lake_defeat,
+                bfm_village_mine_view_camera(mine->view), 0, &notice);
+            if (life == BFM_MINE_LAKE_LIFE_ERROR) return 0;
+            if (life == BFM_MINE_LAKE_RETRY) {
+                bfm_retry_screen_start_tumble(bfm_mine_lake_hurt_retry(hurt));
+                return bfm_village_mine_entrance_step_retry_world(mine, run, actor_tick, input);
+            }
+            if (notice) mine->window = notice;
+        }
+    } else if (mine->shaft) {
         if (!step_shaft(mine, run, mine->window ? (BfmFieldInput){0} : input, pad_yaw, actor_tick)) return 0;
     } else if (!locked && !bfm_village_motion_step_mine_field(mine->motion, input.x, input.y, pad_yaw,
             input.cross_pressed, input.cross_held, run)) return 0;
@@ -307,6 +411,9 @@ int bfm_village_mine_entrance_step(BfmVillageMineEntrance *mine, BfmGameplayRun 
         const int16_t *target = bfm_switchback_hit_target(mine->hit, mine->motion);
         if (!bfm_village_switchback_props_step_target(mine->switchback, p->root.xyz,
                 scripted ? NULL : target, actor_tick, run, &mine->incoming)) return 0;
+    } else if (mine->lake) {
+        if (!bfm_village_mine_lake_actors(mine->lake, run, input.camera_pressed,
+                actor_tick, mine->lake_sound, mine->lake_sound_context, 0)) return 0;
     } else if (mine->shaft) {
         bfm_village_mine_shaft_view_follow(mine->view, p->root.xyz);
     } else {
@@ -326,7 +433,7 @@ int bfm_village_mine_entrance_step(BfmVillageMineEntrance *mine, BfmGameplayRun 
         if (!frame || (frame->events & BFM_FOREST_VOICE_REQUEST)) return 0;
         if (frame->events & BFM_FOREST_MESSAGE_CLOSED) {
             if (box_page) bfm_woods_box_use_close(&mine->shaft->use, frame->choices ? frame->answer : 0);
-            else if (!bfm_village_motion_end_read(mine->motion)) return 0;
+            else if (!mine->lake && !bfm_village_motion_end_read(mine->motion)) return 0;
             bfm_forest_message_free(prior);
             mine->window = NULL;
         }
@@ -383,6 +490,8 @@ int bfm_village_mine_entrance_draw(BfmVillageMineEntrance *mine, uint32_t pixels
         return bfm_village_mine_view_draw_parts(mine->view, &p->root, &body, mine->save->flags,
             mine->age, visible, scale, pixels, draw_switchback, mine);
     }
+    if (mine->lake)
+        return bfm_village_mine_lake_draw(mine->lake, mine->age, scale, bfm_village_mine_entrance_retry(mine) != NULL, pixels);
     if (mine->shaft)
         return bfm_village_mine_view_draw(mine->view, &p->root, &p->pose, mine->save->flags,
             mine->age, scale, pixels, draw_shaft, mine);

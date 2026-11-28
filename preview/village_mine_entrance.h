@@ -7,6 +7,8 @@
 #include "forest_message.h"
 #include "gameplay_run.h"
 #include "village_arrival_motion.h"
+#include "village_mine_lake.h"
+#include "retry_screen.h"
 
 typedef struct BfmVillageMineEntrance BfmVillageMineEntrance;
 
@@ -26,6 +28,17 @@ void bfm_village_mine_entrance_set_wheel_sound(BfmVillageMineEntrance *mine,
 typedef void (*BfmMineShaftSound)(void *context, unsigned command, unsigned value);
 void bfm_village_mine_entrance_set_shaft_sound(BfmVillageMineEntrance *mine,
     BfmMineShaftSound callback, void *context);
+void bfm_village_mine_entrance_set_lake_sound(BfmVillageMineEntrance *mine,
+    BfmMineLakeSound callback, void *context);
+/* Lower shaft exit admission follows the installed receiver. */
+void bfm_village_mine_entrance_set_lake_exit(BfmVillageMineEntrance *mine, int enabled);
+BfmRetryScreen *bfm_village_mine_entrance_retry(const BfmVillageMineEntrance *mine);
+int bfm_village_mine_entrance_prepare_recovery(const BfmVillageMineEntrance *mine,
+    const MusashiDiscMedia *disc, const BfmGameplayRun *run, BfmBedroomEntry *entry);
+int bfm_village_mine_entrance_step_retry_world(BfmVillageMineEntrance *mine, BfmGameplayRun *run,
+    unsigned actor_tick, BfmFieldInput input);
+int bfm_village_mine_entrance_draw_retry(BfmVillageMineEntrance *mine, const BfmForestHud *hud,
+    uint32_t pixels[240][320]);
 int bfm_village_mine_entrance_rider(const BfmVillageMineEntrance *mine);
 uint16_t bfm_village_mine_entrance_room(const BfmVillageMineEntrance *mine);
 const BfmVillagePlayer *bfm_village_mine_entrance_player(const BfmVillageMineEntrance *mine);
