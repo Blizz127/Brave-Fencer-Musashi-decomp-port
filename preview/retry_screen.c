@@ -36,17 +36,24 @@ struct BfmRetryScreen {
     BfmForestCamera camera;
     BfmForestModelLighting light;
     int radius, orbit_pitch, orbit_yaw, offset[3];
+    int field_orbit;
     ForestVoice *voice;
     BfmForestMessage *page;
     uint32_t line[LINES + 1], visible;
     DefeatClip clip[2];
     unsigned clip_index, key, yaw, pitch, age, timer, generation, wipe_shade;
     int velocity, shorten, voice_stopped, choice_changed;
+    unsigned body_sound;
     int16_t feet[3];
     DefeatPhase phase;
     BfmRetryAudioEvent audio_event, pending_woods_score;
     int woods_score_started;
 };
+
+static unsigned world_cutoff(const BfmRetryScreen *s)
+{
+    return s->woods.world_cutoff ? s->woods.world_cutoff : WORLD_CUTOFF;
+}
 
 /* The shared player program names its model and successive frame records.
  * The first sixteen bytes of each frame are the animation header. */
@@ -120,7 +127,8 @@ static int read_resources(BfmRetryScreen *s, const uint8_t *mounted, size_t byte
 void bfm_retry_screen_update_outgoing_view(BfmRetryScreen *s, const BfmForestCamera *last_camera,
                                           const int32_t last_target[3])
 {
-    if (!s || !last_camera || !last_target || s->age >= WORLD_CUTOFF) return;
+    if (!bfm_retry_screen_keep_world(s) || !last_camera || !last_target) return;
+    s->field_orbit = 0;
     s->camera = *last_camera;
     /* The incoming target's depth is the old camera arm. The third row
      * of the submitted view supplies its orientation. */
@@ -137,6 +145,18 @@ void bfm_retry_screen_update_outgoing_view(BfmRetryScreen *s, const BfmForestCam
 }
 
 unsigned bfm_retry_screen_yaw(const BfmRetryScreen *s) { return s ? s->yaw : 0; }
+
+void bfm_retry_screen_update_field_orbit(BfmRetryScreen *s, const BfmForestCamera *view,
+    int radius, int pitch, int yaw, const int16_t offset[3])
+{
+    if (!bfm_retry_screen_keep_world(s) || !view || !offset || radius <= 0) return;
+    s->camera = *view;
+    s->field_orbit = 1;
+    s->radius = radius;
+    s->orbit_pitch = pitch & TURN_MASK;
+    s->orbit_yaw = yaw & TURN_MASK;
+    for (unsigned i = 0; i < 3; ++i) s->offset[i] = offset[i];
+}
 
 static BfmRetryScreen *open_screen(const MusashiDiscMedia *disc, const uint8_t *data, size_t bytes,
                                    BfmGameplayRun *gameplay, const BfmForestCamera *last_camera,
@@ -233,6 +253,7 @@ static void tumble(BfmRetryScreen *s, unsigned speed)
             if (!--s->timer) {
                 s->phase = FALL;
                 s->velocity = 91 * 65536;
+                s->body_sound = 0x453;
             }
             break;
         case FALL:
@@ -244,8 +265,10 @@ static void tumble(BfmRetryScreen *s, unsigned speed)
                 if (s->phase == FALL) {
                     s->phase = BOUNCE;
                     s->velocity = -22 * 65536;
+                    s->body_sound = 0x454;
                 } else {
                     s->phase = WAIT_FOR_LINE;
+                    s->body_sound = 0x1c;
                     s->clip_index = 1;
                     s->key = 0;
                 }
@@ -263,6 +286,26 @@ static int approach(int delta, int divisor)
     return delta / divisor;
 }
 
+void bfm_retry_screen_start_tumble(BfmRetryScreen *s)
+{
+    if (!s || s->phase != STAGGER) return;
+    s->velocity = 227 * 65536;
+    s->phase = SPIN;
+    s->body_sound = 0x456;
+}
+
+unsigned bfm_retry_screen_body_commands(const BfmRetryScreen *s, unsigned commands[2])
+{
+    if (!s || !commands || !s->body_sound) return 0;
+    if (s->body_sound == 0x1c) {
+        commands[0] = 0x2a;
+        commands[1] = 0x1c;
+        return 2;
+    }
+    commands[0] = s->body_sound;
+    return 1;
+}
+
 static int ease_angle(int from, int to)
 {
     int delta = to - (from & TURN_MASK);
@@ -278,14 +321,20 @@ static int move_camera(BfmRetryScreen *s)
     s->radius += approach(300 - s->radius, 4);
     s->orbit_pitch = ease_angle(s->orbit_pitch, 341);
     s->orbit_yaw = ease_angle(s->orbit_yaw, 2048);
-    BfmForestTransform arm;
-    bfm_forest_actor_pitch_yaw((unsigned)s->orbit_pitch, (unsigned)s->orbit_yaw, s->feet, &arm);
+    int axis[3];
+    if (s->field_orbit) {
+        bfm_forest_camera_orbit_axis(s->orbit_pitch, s->orbit_yaw, axis);
+    } else {
+        BfmForestTransform arm;
+        bfm_forest_actor_pitch_yaw((unsigned)s->orbit_pitch, (unsigned)s->orbit_yaw, s->feet, &arm);
+        for (unsigned i = 0; i < 3; ++i) axis[i] = arm.rotation[i][2];
+    }
     int32_t target[3], eye[3];
     for (unsigned i = 0; i < 3; ++i) {
         int desired = i == 1 ? -40 : 0;
         s->offset[i] += approach(desired - s->offset[i], 16);
         target[i] = s->feet[i] + s->offset[i];
-        int64_t v = (int64_t)arm.rotation[i][2] * s->radius;
+        int64_t v = (int64_t)axis[i] * s->radius;
         eye[i] = target[i] + (int32_t)(v / 4096 - (v % 4096 < 0));
     }
     if (bfm_forest_camera_look_at(eye, target, (uint16_t)projection, &s->camera)) return 1;
@@ -391,27 +440,26 @@ int bfm_retry_screen_choose_step(BfmRetryScreen *s, unsigned held_pad, unsigned 
     if (!s) return -1;
     s->voice_stopped = 0;
     s->choice_changed = 0;
+    s->body_sound = 0;
     if (s->pending_woods_score != BFM_RETRY_AUDIO_NONE) s->phase = FAILED;
     if (s->phase == FAILED) return -1;
     s->audio_event = BFM_RETRY_AUDIO_NONE;
     if (s->phase == FINISHED) return 1;
     bfm_forest_voice_step(s->voice);
     ++s->age;
+    if (s->age == 1) s->audio_event = BFM_RETRY_AUDIO_FADE_FIELD;
     if (s->age == SCORE_REQUEST) s->audio_event = BFM_RETRY_AUDIO_START;
     /* The transfer installs and evaluates the camera before the ordinary
      * camera pass evaluates it again on that same update. */
-    if ((s->age == WORLD_CUTOFF && !move_camera(s)) ||
-        (s->age >= WORLD_CUTOFF && !move_camera(s))) {
+    unsigned cutoff = world_cutoff(s);
+    if ((s->age == cutoff && !move_camera(s)) ||
+        (s->age >= cutoff && !move_camera(s))) {
         s->phase = FAILED;
         return -1;
     }
     if (s->phase != STAGGER && s->key + 1 < s->clip[s->clip_index].count) ++s->key;
     if (s->phase == STAGGER) {
-        if (s->age == 1) {
-            s->audio_event = BFM_RETRY_AUDIO_FADE_FIELD;
-            s->velocity = 227 * 65536;
-            s->phase = SPIN;
-        }
+        if (s->age == 1) bfm_retry_screen_start_tumble(s);
     } else if (s->phase <= BOUNCE) {
         tumble(s, held_pad & face ? 4 : 1);
     } else {
@@ -498,7 +546,7 @@ int bfm_retry_screen_step(BfmRetryScreen *s, unsigned held_pad, unsigned pressed
 
 int bfm_retry_screen_keep_world(const BfmRetryScreen *s)
 {
-    return s && s->age < WORLD_CUTOFF;
+    return s && s->age < world_cutoff(s);
 }
 
 static unsigned dim_channel(unsigned channel, unsigned subtract)

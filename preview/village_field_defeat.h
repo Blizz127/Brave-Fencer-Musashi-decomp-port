@@ -16,6 +16,8 @@ typedef struct {
     size_t main_bytes;
     uint16_t (*tiles)[1024];
     const unsigned *age;
+    /* Zero selects the ordinary field cutoff. */
+    unsigned world_cutoff;
 } BfmVillageFieldDefeat;
 
 /* Use this field's presented camera and its mounted dialogue and light table.

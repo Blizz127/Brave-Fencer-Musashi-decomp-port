@@ -31,6 +31,8 @@ typedef struct {
                       unsigned yaw, unsigned pitch, uint32_t visible,
                       const BfmForestModelLighting *lighting,
                       uint32_t pixels[240][320]);
+    /* First update on which the defeat camera owns the whole view. */
+    unsigned world_cutoff;
 } BfmWoodsRetryPresentation;
 typedef struct {
     BfmForestTerrain *terrain;
@@ -56,6 +58,16 @@ BfmRetryScreen *bfm_retry_screen_open_mounted(const MusashiDiscMedia *disc,
  * The field heading tracker can sample the turning player's current yaw. */
 void bfm_retry_screen_update_outgoing_view(BfmRetryScreen *screen, const BfmForestCamera *view,
                                           const int32_t target[3]);
+/* Supply the presented view and the field's live orbit state separately when
+ * its scenery camera clamps the target before submission. */
+void bfm_retry_screen_update_field_orbit(BfmRetryScreen *screen, const BfmForestCamera *view,
+    int radius, int pitch, int yaw, const int16_t offset[3]);
+/* A field which dispatches the initial substate during detection calls this
+ * once before its next regular update. The first rotation is still pending. */
+void bfm_retry_screen_start_tumble(BfmRetryScreen *screen);
+/* The ordered sound commands issued by the latest body update or initial
+ * dispatch. Each takes argument zero. The final landing issues two controls. */
+unsigned bfm_retry_screen_body_commands(const BfmRetryScreen *screen, unsigned commands[2]);
 unsigned bfm_retry_screen_yaw(const BfmRetryScreen *screen);
 /* One normal 30 Hz game update. Returns 0 while active, 1 when the caller
  * may transfer to the checkpoint, or -1 on a mounted-service failure. */

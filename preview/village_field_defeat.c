@@ -58,7 +58,8 @@ BfmRetryScreen *bfm_village_field_defeat_open(BfmVillageFieldDefeat *actor,
     if (!bfm_bedroom_resident_data(disc, UINT32_C(0x80062ba0) + 2,
                                    &wipe_step, sizeof wipe_step) || !wipe_step) return NULL;
     const BfmWoodsRetryPresentation presentation = {
-        .context = actor, .wipe_step = wipe_step, .draw_actor = draw_retry_actor
+        .context = actor, .wipe_step = wipe_step, .draw_actor = draw_retry_actor,
+        .world_cutoff = actor->world_cutoff
     };
     const BfmRetryMountedRoom room = {.data = scene + table_offset,
         .bytes = BFM_RETRY_ROOM_DATA_BYTES, .woods = &presentation};
