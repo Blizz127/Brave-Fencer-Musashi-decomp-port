@@ -2,6 +2,7 @@
 #include "village_arrival_motion.h"
 #include "field_rest_pose.h"
 #include "forest_motion.h"
+#include "forest_pose.h"
 #include "forest_status.h"
 #include "forest_bank_hop.h"
 #include "forest_maze_gate.h"
@@ -76,6 +77,11 @@ struct BfmVillageMotion {
     int shaft_lake_open;
     const BfmVillageMineLakeFields *lake_fields;
     unsigned lake_field_tick;
+    BfmShaftBladeData *lake_blade_data;
+    BfmShaftJumpBlade lake_blade;
+    BfmShaftBladeFrame lake_blade_frame;
+    unsigned lake_blade_flags;
+    int lake_square;
     int16_t lake_current[3];
     int lake_current_posted;
     BfmMineShaftFan *mine_fan;
@@ -1292,6 +1298,17 @@ static int advance(BfmVillageMotion *m, int stick_x, int stick_y, int camera,
     int switchback = m->woods_route.room == 0x3044;
     int station = m->woods_route.room == 0x3045 || m->woods_route.room == 0x3046;
     int lake_grounded = m->lake_current_posted && !m->airborne;
+    int lake_player = m->woods_route.room == 0x3046;
+    int lake_air = lake_player && m->airborne && m->jump.active;
+    int lake_was_grounded = lake_player && !m->airborne;
+    int descending = lake_air && m->fall_speed >= 0;
+    int swing = lake_air && run && run->has_player &&
+                (m->lake_square || bfm_shaft_jump_blade_active(&m->lake_blade));
+    BfmForestTransform prior_model;
+    if (swing) {
+        for (unsigned i = 0; i < 3; ++i) prior_model.translation[i] = p->root.xyz[i];
+        bfm_forest_upright_model(p->root.yaw, &prior_model);
+    }
     int run_brake = valley || m->woods_route.room == 0x3043 || switchback || station ||
                     m->room == UINT32_C(0x80190780);
     int was_braking = m->brake;
@@ -1471,9 +1488,31 @@ static int advance(BfmVillageMotion *m, int stick_x, int stick_y, int camera,
     if (run_brake) bfm_bedroom_motion_stance_condition(m->ordinary,tired);
     BfmBedroomStance stance = (brake_stance || (standing && p->controlled)) && idle_allowed && !m->transfer
         ? BFM_BEDROOM_STANCE_IDLE : BFM_BEDROOM_STANCE_INACTIVE;
-    if (!bfm_bedroom_motion_step_field(m->ordinary,action,run,stance,&p->pose)) return 0;
+    int lake_landed = lake_air && m->landed;
+    int lake_liftoff = lake_was_grounded && m->airborne && m->jump.active;
+    if (!bfm_bedroom_motion_step_field(m->ordinary,
+            lake_landed || lake_liftoff ? BFM_BEDROOM_NONE : action, run, stance, &p->pose)) return 0;
     m->reported_stand = standing && !m->airborne && !m->grip.pole;
     m->box_air_action = m->airborne && !m->grip.pole && !m->water.age;
+    if (lake_liftoff) {
+        if (!bfm_bedroom_motion_reenter_fall(m->ordinary, m->jump.stride)) return 0;
+        bfm_bedroom_motion_publish_upright(m->ordinary, &p->pose);
+        return 1;
+    }
+    if (lake_air) {
+        if (swing && !bfm_shaft_jump_blade_step(&m->lake_blade, m->lake_blade_data,
+                m->ordinary, run, &prior_model, m->lake_square, m->lake_blade_flags,
+                &p->pose, &m->lake_blade_frame)) return 0;
+        if (lake_landed) {
+            int moving = m->jump.stride || bfm_shaft_jump_blade_active(&m->lake_blade);
+            if (!bfm_bedroom_motion_direct_slot(m->ordinary, moving ? 16 : 14)) return 0;
+            bfm_bedroom_motion_publish_upright(m->ordinary, &p->pose);
+            bfm_shaft_jump_blade_cancel(&m->lake_blade);
+        } else if (descending) {
+            bfm_bedroom_motion_descend(m->ordinary);
+        }
+        return 1;
+    }
     if (m->grip.pole)
         return bfm_woods_pole_pose_apply(&m->pole_pose,m->ordinary,m->pole_move,m->pole_caught,1,&p->pose);
     if (m->bank_returns && m->airborne && m->fall_speed >= 0)
@@ -2852,6 +2891,7 @@ void bfm_village_motion_free(BfmVillageMotion *m)
         bfm_village_ground_free(m->ground);
         free(m->mountain_jump);
         free(m->field_jumps);
+        free(m->lake_blade_data);
         free(m->bank_returns);
     }
     free(m);
@@ -2976,6 +3016,11 @@ static BfmVillageMotion *open_mine_passage(const uint8_t *scene, size_t bytes,
             read32(m->shaft_gates.gate[1].door) != UINT32_C(0x00003046)) goto fail;
         m->woods_route.room = 0x3045;
     } else if (!register_mine_gates(m, room, room_id)) goto fail;
+    if (room_id == 0x3046) {
+        m->lake_blade_data = malloc(sizeof *m->lake_blade_data);
+        if (!m->lake_blade_data ||
+            !bfm_lake_jump_blade_load(m->lake_blade_data, disc, scene, bytes)) goto fail;
+    }
     const uint8_t *departure = at(&m->scene, rooms[field].exit_walk, 20);
     if (!departure || read32(departure) != UINT32_C(0x801706ac) ||
         read32(departure + 4) != UINT32_C(0x801704b0) || read32(departure + 8) != UINT32_C(0x8016f9c4) ||
@@ -3034,6 +3079,7 @@ void bfm_village_motion_mine_lake_begin_field(BfmVillageMotion *m, const int16_t
     if (!m || m->woods_route.room != 0x3046) return;
     for (unsigned axis = 0; axis < 3; ++axis)
         m->mine_action_foot[axis] = (int16_t)high(m->position[axis]);
+    m->lake_blade_frame = (BfmShaftBladeFrame){0};
     m->lake_current_posted = current != NULL;
     if (current) memcpy(m->lake_current, current, sizeof m->lake_current);
 }
@@ -3255,6 +3301,27 @@ int bfm_village_motion_step_mine_field(BfmVillageMotion *m, int x, int y, int ca
 {
     return m && m->woods_route.room >= 0x3043 && m->woods_route.room <= 0x3046 &&
            step_field_with_jump(m,x,y,camera_yaw,cross_pressed,cross_held,run);
+}
+
+int bfm_village_motion_step_mine_lake_field(BfmVillageMotion *m, BfmFieldInput input,
+    int camera_yaw, const BfmSaveRecord *live, BfmGameplayRun *run)
+{
+    if (!m || m->woods_route.room != 0x3046) return 0;
+    BfmVillageMotion next = *m;
+    next.lake_square = input.square_pressed;
+    next.lake_blade_flags = (next.player.pose.hide_fusion ? 4u : 0u) |
+                            (live && (live->progress[0x23] & 0x80) ? 0x400u : 0u);
+    next.lake_blade_frame = (BfmShaftBladeFrame){0};
+    if (!step_field_with_jump(&next, input.x, input.y, camera_yaw, input.cross_pressed,
+                              input.cross_held, run)) return 0;
+    next.lake_square = 0;
+    *m = next;
+    return 1;
+}
+
+const BfmShaftBladeFrame *bfm_village_motion_mine_shaft_blade(const BfmVillageMotion *m)
+{
+    return m && m->lake_blade_frame.event ? &m->lake_blade_frame : NULL;
 }
 
 int bfm_village_motion_step_maze_field(BfmVillageMotion *m, int x, int y, int camera_yaw,

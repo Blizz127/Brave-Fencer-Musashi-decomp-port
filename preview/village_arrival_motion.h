@@ -13,6 +13,7 @@
 #include "field_rest.h"
 #include "woods_3026_box_hit.h"
 #include "village_mine_shaft_fan.h"
+#include "village_mine_shaft_jump_blade.h"
 
 typedef struct BfmVillageMotion BfmVillageMotion;
 struct BfmVillageMineGate;
@@ -114,6 +115,9 @@ void bfm_village_motion_mine_props(BfmVillageMotion *motion, const struct BfmVil
 /* The grounded lake blade receives the standing or walking action slot. */
 unsigned bfm_village_motion_mine_blade_slot(const BfmVillageMotion *motion);
 int bfm_village_motion_mine_blade_hold(BfmVillageMotion *motion, int finishing, int redirect_yaw);
+int bfm_village_motion_step_mine_lake_field(BfmVillageMotion *motion, BfmFieldInput input,
+    int camera_yaw, const BfmSaveRecord *live, struct BfmGameplayRun *run);
+const BfmShaftBladeFrame *bfm_village_motion_mine_shaft_blade(const BfmVillageMotion *motion);
 /* The western walkway tests actual support for the stationary pose and strafe. */
 int bfm_village_motion_switchback_stance(BfmVillageMotion *m, unsigned facing, unsigned stride_yaw,
     int moving, int tired, int *supported);
