@@ -47,6 +47,7 @@ typedef struct {
     BfmBedroomEntry entry;
     uint16_t tiles[512][1024];
     BfmWoodsBoxVisit *box;
+    BfmVillageMineEntrance *mine;
     BfmHellsValley *valley;
     BfmSouthernWoods *woods;
 } WoodsArrival;
@@ -145,6 +146,7 @@ static void free_woods_arrival(WoodsArrival *pending)
     if (!pending) return;
     bfm_hells_valley_free(pending->valley);
     bfm_woods_box_visit_free(pending->box);
+    bfm_village_mine_entrance_free(pending->mine);
     bfm_southern_woods_free(pending->woods);
     free(pending);
 }
@@ -575,7 +577,7 @@ static int prepare_woods_arrival(BfmVillageArrival *a, const uint8_t *door,
     uint32_t target = u32le(door);
     if (a->incoming_woods || (target != 0x302b && target != 0x00013025 &&
         target != 0x00013026 && target != 0x00033025 &&
-        !(restored && target == 0x00ff3026))) return 0;
+        !(restored && (target == 0x00ff3026 || target == 0x00ff3045)))) return 0;
     WoodsArrival *pending = calloc(1, sizeof *pending);
     if (!pending) return 0;
     uint32_t (*frame)[320] = malloc(240 * sizeof *frame);
@@ -593,6 +595,12 @@ static int prepare_woods_arrival(BfmVillageArrival *a, const uint8_t *door,
                                                   a->main_bytes, a->tiles);
         if (pending->woods)
             drawn = bfm_southern_woods_draw(pending->woods, a->record->flags, NULL, frame);
+    } else if (target == 0x00ff3045) {
+        *a->entry = *restored;
+        pending->mine = bfm_village_mine_entrance_open_at(a->disc, a->entry, a->main,
+            a->main_bytes, a->tiles, a->scene_tick);
+        if (pending->mine)
+            drawn = bfm_village_mine_entrance_draw(pending->mine, frame);
     } else {
         if (restored) *a->entry = *restored;
         if (restored || bfm_castle_room_entry(a->disc, door, a->entry)) {
@@ -631,6 +639,8 @@ static void install_woods_arrival(BfmVillageArrival *a)
     *a->entry = pending->entry;
     memcpy(a->tiles, pending->tiles, sizeof pending->tiles);
     a->woods = pending->woods;
+    bfm_village_mine_entrance_free(a->mine);
+    a->mine = pending->mine;
     a->box = pending->box;
     a->valley = pending->valley;
     free(pending);
@@ -649,8 +659,11 @@ static WoodsCrossing *open_woods_crossing(const MusashiDiscMedia *disc)
 
 int bfm_village_arrival_restore_woods_box(BfmVillageArrival *a, const BfmBedroomEntry *restored)
 {
-    if (!a || !restored || a->crossing || (!a->woods && !a->bank && !a->box && !a->valley) || restored->scene_member != 11 ||
-        u32le(restored->state.destination) != 0x00ff3026) return 0;
+    if (!a || !restored || a->crossing || (!a->woods && !a->bank && !a->box && !a->valley && !a->mine))
+        return 0;
+    uint32_t target = u32le(restored->state.destination);
+    if (!((target == 0x00ff3026 && restored->scene_member == 11) ||
+          (target == 0x00ff3045 && restored->scene_member == 109))) return 0;
     WoodsCrossing *c = open_woods_crossing(a->disc);
     if (!c) return 0;
     if (!prepare_woods_arrival(a, restored->state.destination, restored)) { free(c); return 0; }
@@ -842,7 +855,9 @@ static int step_mine_passage(BfmVillageArrival *a, BfmGameplayRun *run, BfmField
         uint32_t target = u32le(door);
         uint16_t mounted = bfm_village_arrival_room(a);
         int inside = (mounted == 0x3043 && target == UINT32_C(0x00003044)) ||
-                     (mounted == 0x3044 && target == UINT32_C(0x00013043));
+                     (mounted == 0x3044 &&
+                      (target == UINT32_C(0x00013043) || target == UINT32_C(0x00003045))) ||
+                     (mounted == 0x3045 && target == UINT32_C(0x00013044));
         if (!inside && !(mounted == 0x3043 && target == UINT32_C(0x000f1052)) &&
             !(mounted == 0x1052 && target == UINT32_C(0x02003043))) return 1;
         c = open_woods_crossing(a->disc);
@@ -858,7 +873,11 @@ static int step_mine_passage(BfmVillageArrival *a, BfmGameplayRun *run, BfmField
     if (c->phase == REVEAL_FIELD) {
         if (c->reveal_updates++)
             bfm_nightmare_transition_step(&c->wipe, 1, 0, 0);
-        if (!step_mine_actors(a, run, (BfmFieldInput){0}, 0)) return 0;
+        /* The shaft's incoming walk releases its own pad while the arrival
+         * curtain can still be visible. Until then the script owns the foot. */
+        const BfmVillagePlayer *player = bfm_village_mine_entrance_player(a->mine);
+        int shaft_control = player && player->controlled && bfm_village_mine_entrance_room(a->mine) == 0x3045;
+        if (!step_mine_actors(a, run, shaft_control ? field : (BfmFieldInput){0}, 0)) return 0;
         if (bfm_nightmare_transition_live(&c->wipe)) {
             free(c);
             a->crossing = NULL;

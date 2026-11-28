@@ -1019,8 +1019,10 @@ static void install_grillin_exterior(BfmBedroom *room, GrillinExterior *out, int
 /* Other fields can record temporary checkpoints before their native receiver exists. */
 static int unmounted_box_endpoint(const BfmBedroom *room)
 {
-    return bfm_bedroom_retry_destination(room) == BFM_WOODS_RESTORE_BOX &&
-           (!room->run || word(room->run->memory_box.state.destination) != 0x00ff3026u);
+    if (bfm_bedroom_retry_destination(room) != BFM_WOODS_RESTORE_BOX) return 0;
+    if (!room->run) return 1;
+    uint32_t target = word(room->run->memory_box.state.destination);
+    return target != 0x00ff3026u && target != 0x00ff3045u;
 }
 
 static int open_woods_recovery(BfmBedroom *room)
@@ -1028,7 +1030,7 @@ static int open_woods_recovery(BfmBedroom *room)
     BfmBedroomEntry restored;
     if (!bfm_bedroom_prepare_woods_recovery(room, &restored)) return 0;
     if (bfm_bedroom_retry_destination(room) == BFM_WOODS_RESTORE_BOX) {
-        BfmForestScore *score = room_score(room, 0x18);
+        BfmForestScore *score = room_score(room, restored.scene_member == 109 ? 0x49 : 0x18);
         if (!score || !bfm_village_arrival_restore_woods_box(room->village, &restored)) return 0;
         room->current_score = score;
         room->story_flags = room->entry.state.flags;
@@ -1231,7 +1233,8 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
     uint16_t mounted = bfm_village_arrival_room(room->village);
     if ((room->mine_effects_closed_in == 0x1052 && mounted == 0x3043) ||
         (room->mine_effects_closed_in == 0x3043 && (mounted == 0x1052 || mounted == 0x3044)) ||
-        (room->mine_effects_closed_in == 0x3044 && mounted == 0x3043))
+        (room->mine_effects_closed_in == 0x3044 && (mounted == 0x3043 || mounted == 0x3045)) ||
+        (room->mine_effects_closed_in == 0x3045 && mounted == 0x3044))
         room->mine_effects_closed_in = 0;
     switch (bfm_village_arrival_mine_exit_event(room->village)) {
     case BFM_NIGHTMARE_STOP_OPTICAL:
