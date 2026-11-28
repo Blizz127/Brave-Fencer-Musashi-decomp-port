@@ -172,7 +172,13 @@ int bfm_mine_lake_hurt_restore(const BfmMineLakeHurt *h, const BfmGameplayRun *r
     if (choice == BFM_WOODS_RESTORE_BOX)
         return bfm_gameplay_field_recovery(run, BFM_CHECKPOINT_MEMORY_BOX, NULL, 0, 0, out);
     if (choice != BFM_WOODS_RESTORE_SAVED || !run->saved_data.present) return 0;
-    unsigned story = u32le(run->saved_data.state.progress + 8);
-    return bfm_gameplay_field_recovery(run, BFM_CHECKPOINT_SAVED_DATA, h->scene, h->bytes,
-                                      story < 200 ? SAVED_EARLY : SAVED_ILLNESS, out);
+    const BfmSaveRecord *saved = &run->saved_data.state;
+    unsigned story = u32le(saved->progress + 8);
+    if (story < 10 || story >= 600) return 0;
+    /* Saved Data restores its own banks, then takes the numbered entrance
+       from the source room's table for the restored story. */
+    const uint8_t *destination = h->scene + (story < 200 ? SAVED_EARLY : SAVED_ILLNESS);
+    *out = *saved;
+    memcpy(out->destination, destination, sizeof out->destination);
+    return 1;
 }
