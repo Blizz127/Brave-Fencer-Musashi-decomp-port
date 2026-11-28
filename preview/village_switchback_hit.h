@@ -10,6 +10,12 @@ typedef struct BfmSwitchbackHit BfmSwitchbackHit;
 
 BfmSwitchbackHit *bfm_switchback_hit_open(const MusashiDiscMedia *disc,
     const uint8_t *scene, size_t bytes, const int16_t feet[3]);
+BfmSwitchbackHit *bfm_switchback_hit_open_lake(const MusashiDiscMedia *disc,
+    const uint8_t *scene, size_t bytes, const int16_t feet[3]);
+/* An active injury protects against another fall. A guard can be interrupted. */
+int bfm_switchback_hit_can_fall(const BfmSwitchbackHit *hit);
+int bfm_switchback_hit_environment(BfmSwitchbackHit *hit, BfmGameplayRun *run,
+    const BfmBedroomRoot *root, const BfmForestBankThornFrame *floor);
 void bfm_switchback_hit_free(BfmSwitchbackHit *hit);
 /* The hero receives the previous actor field's lunge before dispatching the pad. */
 int bfm_switchback_hit_step(BfmSwitchbackHit *hit, BfmVillageMotion *motion, BfmGameplayRun *run,

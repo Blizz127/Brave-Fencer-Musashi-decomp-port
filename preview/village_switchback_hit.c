@@ -17,16 +17,14 @@ struct BfmSwitchbackHit {
     BfmForestDamageDigits credit;
     BfmForestCast cast;
     uint8_t credit_palette;
-    int guarding;
+    int guarding, tracking_fall;
     unsigned camera_offset;
     int16_t last[3], previous[3], hurt_target[3];
 };
 
-BfmSwitchbackHit *bfm_switchback_hit_open(const MusashiDiscMedia *disc,
-    const uint8_t *scene, size_t bytes, const int16_t feet[3])
+static BfmSwitchbackHit *open_hit(const MusashiDiscMedia *disc, const uint8_t *scene, size_t bytes,
+    const int16_t feet[3], size_t room, size_t palettes)
 {
-    const size_t room = UINT32_C(0x80184870) - UINT32_C(0x80128158);
-    const size_t palettes = UINT32_C(0x80183e04) - UINT32_C(0x80128158);
     if (!disc || !scene || !feet || bytes < room + 0x50 || bytes < palettes + 6) return NULL;
     BfmSwitchbackHit *hit = calloc(1, sizeof *hit);
     if (!hit) return NULL;
@@ -40,6 +38,18 @@ BfmSwitchbackHit *bfm_switchback_hit_open(const MusashiDiscMedia *disc,
     memcpy(hit->last, feet, sizeof hit->last);
     memcpy(hit->previous, feet, sizeof hit->previous);
     return hit;
+}
+
+BfmSwitchbackHit *bfm_switchback_hit_open(const MusashiDiscMedia *disc, const uint8_t *scene,
+    size_t bytes, const int16_t feet[3])
+{
+    return open_hit(disc, scene, bytes, feet, 0x80184870u - 0x80128158u, 0x80183e04u - 0x80128158u);
+}
+
+BfmSwitchbackHit *bfm_switchback_hit_open_lake(const MusashiDiscMedia *disc, const uint8_t *scene,
+    size_t bytes, const int16_t feet[3])
+{
+    return open_hit(disc, scene, bytes, feet, 0x80185a50u - 0x80128158u, 0x80184ed0u - 0x80128158u);
 }
 
 void bfm_switchback_hit_free(BfmSwitchbackHit *hit)
@@ -155,12 +165,41 @@ int bfm_switchback_hit_step(BfmSwitchbackHit *hit, BfmVillageMotion *motion, Bfm
     return consumed;
 }
 
+int bfm_switchback_hit_can_fall(const BfmSwitchbackHit *hit)
+{
+    return hit && (hit->guarding || !hit->frame.pose);
+}
+
+int bfm_switchback_hit_environment(BfmSwitchbackHit *hit, BfmGameplayRun *run,
+    const BfmBedroomRoot *root, const BfmForestBankThornFrame *floor)
+{
+    BfmWoodsPlayerHitInput inactive = {.root = root, .player_action = 25};
+    if (!hit || !run || !root || !floor) return 0;
+    if (floor->started) {
+        memcpy(hit->hurt_target, hit->previous, sizeof hit->hurt_target);
+        hit->cast.action = BFM_CAST_GROUND;
+        hit->guarding = 0;
+        hit->tracking_fall = 1;
+        bfm_woods_player_hit_blink(hit->receiver, 0);
+    }
+    if (!bfm_woods_player_hit_step(hit->receiver, run, &inactive, &hit->frame)) return 0;
+    bfm_forest_damage_digits_advance(&hit->credit);
+    if (floor->bp_credit) {
+        bfm_forest_damage_digits_start_data(&hit->credit, &hit->credit_palette, floor->effect_root,
+                                            floor->bp_credit);
+        hit->credit.bp_credit = 1;
+    }
+    if (floor->recovered) hit->tracking_fall = 0;
+    if (floor->blink_fields) bfm_woods_player_hit_blink(hit->receiver, floor->blink_fields);
+    return 1;
+}
+
 const int16_t *bfm_switchback_hit_target(BfmSwitchbackHit *hit, BfmVillageMotion *motion)
 {
     const BfmVillagePlayer *p = bfm_village_motion_player(motion);
     memcpy(hit->previous, hit->last, sizeof hit->previous);
     memcpy(hit->last, p->root.xyz, sizeof hit->last);
-    return hit->frame.pose ? hit->hurt_target : p->root.xyz;
+    return hit->tracking_fall || hit->frame.pose ? hit->hurt_target : p->root.xyz;
 }
 
 int bfm_switchback_hit_body(const BfmSwitchbackHit *hit, const uint8_t *main,
