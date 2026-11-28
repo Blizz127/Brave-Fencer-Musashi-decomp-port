@@ -2791,7 +2791,7 @@ static BfmVillageMotion *open_switchback_or_shaft(const uint8_t *scene, size_t b
     const uint8_t *main, size_t main_bytes, int shaft, unsigned entrance, const uint8_t *saved,
     const MusashiDiscMedia *disc)
 {
-    if (!scene || !main || !disc || entrance > (shaft ? 0u : 1u)) return NULL;
+    if (!scene || !main || !disc || entrance > 1) return NULL;
     BfmVillageMotion *m = calloc(1, sizeof *m);
     if (!m) return NULL;
     m->scene = (Region){scene, bytes, scene_base};
@@ -2805,7 +2805,8 @@ static BfmVillageMotion *open_switchback_or_shaft(const uint8_t *scene, size_t b
         !load_field_jumps(m, room, disc)) goto fail;
     if (shaft) {
         if (!bfm_village_mine_shaft_gates_open(&m->shaft_gates, scene, bytes, m->room) ||
-            read32(m->shaft_gates.gate[0].door) != UINT32_C(0x00013044)) goto fail;
+            read32(m->shaft_gates.gate[0].door) != UINT32_C(0x00013044) ||
+            read32(m->shaft_gates.gate[1].door) != UINT32_C(0x00003046)) goto fail;
         m->woods_route.room = 0x3045;
     } else if (!register_switchback_gates(m, room)) goto fail;
     uint32_t exit_walk = shaft ? UINT32_C(0x80181e3c) : UINT32_C(0x80184708);

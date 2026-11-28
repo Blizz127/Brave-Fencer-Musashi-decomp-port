@@ -129,7 +129,8 @@ BfmVillageMineEntrance *bfm_village_mine_entrance_open_at(const MusashiDiscMedia
     int corridor = entry->scene_member == 108 &&
         (station == UINT32_C(0x00003044) || station == UINT32_C(0x00013044));
     int shaft = entry->scene_member == 109 &&
-        (station == UINT32_C(0x00003045) || station == UINT32_C(0x00ff3045));
+        (station == UINT32_C(0x00003045) || station == UINT32_C(0x00013045) ||
+         station == UINT32_C(0x00ff3045));
     if (!entrance && !corridor && !shaft) return NULL;
     BfmVillageMineEntrance *mine = calloc(1, sizeof *mine);
     if (!mine) return NULL;
@@ -174,7 +175,8 @@ BfmVillageMineEntrance *bfm_village_mine_entrance_open_at(const MusashiDiscMedia
             mine->motion = bfm_village_motion_mine_shaft_saved(mine->scene, bytes, main,
                 main_bytes, entry->state.destination, disc);
         else
-            mine->motion = bfm_village_motion_mine_shaft(mine->scene, bytes, main, main_bytes, 0, disc);
+            mine->motion = bfm_village_motion_mine_shaft(mine->scene, bytes, main, main_bytes,
+                entry->state.destination[2], disc);
         const BfmVillagePlayer *p = bfm_village_mine_entrance_player(mine);
         if (!p || !p->pose.pose) goto fail;
         MineShaft *field = mine->shaft;
