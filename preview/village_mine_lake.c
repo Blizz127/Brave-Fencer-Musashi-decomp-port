@@ -114,8 +114,11 @@ int bfm_village_mine_lake_player(BfmVillageMineLake *lake, BfmGameplayRun *run, 
     bfm_village_motion_mine_lake_fields(lake->motion, lake->fields, tick);
     int claimed = bfm_mine_lake_hurt_step(lake->hurt, run, input, (unsigned)pad_yaw, tick);
     if (claimed < 0) return 0;
-    return bfm_mine_lake_blade_player(lake->blade, lake->motion, run, lake->save,
-                                      input, pad_yaw, claimed);
+    if (!bfm_mine_lake_blade_player(lake->blade, lake->motion, run, lake->save,
+                                    input, pad_yaw, claimed)) return 0;
+    unsigned sound = bfm_village_motion_mine_lake_take_sound(lake->motion);
+    if (sound && emit) emit(context, sound, 0);
+    return 1;
 }
 
 static int other_actor(void *context, unsigned slot)

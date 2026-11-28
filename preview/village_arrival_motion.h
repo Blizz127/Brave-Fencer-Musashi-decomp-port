@@ -88,6 +88,8 @@ struct BfmVillageMineLakeFields;
 void bfm_village_motion_mine_lake_fields(BfmVillageMotion *motion,
     const struct BfmVillageMineLakeFields *fields, unsigned actor_tick);
 /* Supply the current posted by the preceding actor turn, or NULL. */
+/* Consume the walking, braking or landing cue selected on this field. */
+unsigned bfm_village_motion_mine_lake_take_sound(BfmVillageMotion *motion);
 void bfm_village_motion_mine_lake_begin_field(BfmVillageMotion *motion, const int16_t current[3]);
 struct BfmVillageMinePit;
 uint16_t bfm_village_motion_mine_pit_material(const BfmVillageMotion *motion);

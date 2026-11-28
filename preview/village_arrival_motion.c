@@ -77,6 +77,7 @@ struct BfmVillageMotion {
     int shaft_lake_open;
     const BfmVillageMineLakeFields *lake_fields;
     unsigned lake_field_tick;
+    unsigned lake_step_foot, lake_ground_sound;
     BfmShaftBladeData *lake_blade_data;
     BfmShaftJumpBlade lake_blade;
     BfmShaftBladeFrame lake_blade_frame;
@@ -1308,6 +1309,27 @@ static int woods_departure(BfmVillageMotion *m, const uint8_t *gate, int camera,
     return ordinary_input(m,x,y,camera,action,NULL);
 }
 
+/* The lake overlays its surface-specific sound lists on the room image.
+ * Walking alternates feet on the body animation's contact marker; braking
+ * and landing use separate lists and leave the next foot unchanged. */
+static void lake_ground_sound(BfmVillageMotion *m, int walking, int braking, int landing)
+{
+    unsigned surface = m->material >> 13;
+    uint32_t address;
+    if (landing) {
+        address = 0x80184864u + 2 * surface;
+    } else if (braking) {
+        address = 0x80184854u + 2 * surface;
+    } else if (walking && m->player.pose.body_contact == 8) {
+        address = 0x80184824u + 4 * surface + (m->lake_step_foot ? 0u : 2u);
+        m->lake_step_foot ^= 1u;
+    } else {
+        return;
+    }
+    const uint8_t *row = at(&m->scene, address, 2);
+    if (row) m->lake_ground_sound = (uint16_t)read16(row);
+}
+
 static int advance(BfmVillageMotion *m, int stick_x, int stick_y, int camera,
                    struct BfmGameplayRun *run, int idle_allowed)
 {
@@ -1518,6 +1540,9 @@ static int advance(BfmVillageMotion *m, int stick_x, int stick_y, int camera,
     int gait = gait_input && m->walking && !m->airborne && !m->landed && !m->transfer;
     if (!bfm_bedroom_motion_step_field(m->ordinary, gait || station_stride || lake_landed || lake_liftoff ? BFM_BEDROOM_NONE : action,
                                        run, stance, &p->pose)) return 0;
+    if (lake_player)
+        lake_ground_sound(m, (m->walking || station_stride) && !m->airborne && !m->landed,
+                          !was_braking && m->brake, lake_landed);
     if (gait || station_stride) {
         unsigned slot = 6;
         if (station_stride) {
@@ -3112,6 +3137,14 @@ void bfm_village_motion_mine_lake_fields(BfmVillageMotion *m,
     m->lake_field_tick = actor_tick;
 }
 
+unsigned bfm_village_motion_mine_lake_take_sound(BfmVillageMotion *m)
+{
+    if (!m) return 0;
+    unsigned sound = m->lake_ground_sound;
+    m->lake_ground_sound = 0;
+    return sound;
+}
+
 void bfm_village_motion_mine_lake_begin_field(BfmVillageMotion *m, const int16_t current[3])
 {
     if (!m || m->woods_route.room != 0x3046) return;
@@ -3120,6 +3153,7 @@ void bfm_village_motion_mine_lake_begin_field(BfmVillageMotion *m, const int16_t
     m->lake_blade_frame = (BfmShaftBladeFrame){0};
     m->lake_current_posted = current != NULL;
     if (current) memcpy(m->lake_current, current, sizeof m->lake_current);
+    m->lake_ground_sound = 0;
 }
 
 BfmVillageMotion *bfm_village_motion_mine_shaft_saved(const uint8_t *scene, size_t bytes,
