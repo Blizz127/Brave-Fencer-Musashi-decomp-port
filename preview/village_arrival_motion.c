@@ -442,9 +442,15 @@ static int displace(BfmVillageMotion *m, const uint32_t velocity[3], int require
         }
         /* The shaft rotor carries the raw foot after the player publishes the body. */
         const int16_t *previous_foot = m->mine_fan ? m->mine_action_foot : m->player.root.xyz;
-        if (m->mine_fan)
-            bfm_mine_shaft_fan_body(m->mine_fan, (int)m->rider - 1, previous_foot,
-                                    candidate.xyz, m->shaft_tick, m->airborne);
+        if (m->mine_fan) {
+            int side_hit = bfm_mine_shaft_fan_body(m->mine_fan, (int)m->rider - 1,
+                previous_foot, candidate.xyz, m->shaft_tick, m->airborne);
+            if (m->airborne && side_hit) {
+                /* The ankle cancels local motion after this stride. Gravity and wind
+                 * continue to act on the separate ballistic accumulator. */
+                m->speed = m->jump.side_q16 = m->jump.vertical_q16 = 0;
+            }
+        }
         if (m->mine_props)
             bfm_village_mine_props_body(m->mine_props, m->player.root.xyz, candidate.xyz,
                                         m->mine_props_tick, m->airborne);
