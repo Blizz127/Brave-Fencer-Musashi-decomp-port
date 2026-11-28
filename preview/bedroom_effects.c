@@ -402,6 +402,12 @@ static int render_layers(const Sources *s, Layer layers[], unsigned count,
     return 1;
 }
 
+/* The field transition keys off these three selectors during preparation. */
+static int transition_key_off_target(unsigned command)
+{
+    return command == 1096 || command == 1097 || command == 2285;
+}
+
 static int prepare(const Sources *s, unsigned command, Clip *clip)
 {
     uint32_t address;
@@ -439,7 +445,7 @@ static int prepare(const Sources *s, unsigned command, Clip *clip)
         address += sizeof d;
     }
     if (command == BFM_WOODS_CHARGE_SOUND || command == SHRINE_APPEAR ||
-        command == BFM_EARTH_SCROLL_RINGS_SOUND) {
+        command == BFM_EARTH_SCROLL_RINGS_SOUND || transition_key_off_target(command)) {
         if (command == BFM_WOODS_CHARGE_SOUND) {
             if (count != 1 || !layers[0].gate || layers[0].slide || layers[0].modulated) goto done;
             layers[0].gate_samples = field_sample(layers[0].gate);
@@ -469,7 +475,7 @@ done:
 static int finish_sequence(const Sources *s, Layer notes[], unsigned count,
                            unsigned command, Clip *clip, BfmDecodedSpuSample *shared_instrument)
 {
-    if (!s->menu_sequences)
+    if (!s->menu_sequences && !transition_key_off_target(command))
         return render_layers(s, notes, count, command, clip);
 
     MenuSequence *sequence = calloc(1, sizeof *sequence + 2 * count * sizeof *notes);
@@ -1170,15 +1176,21 @@ void bfm_bedroom_effects_start(BfmBedroomEffects *e, unsigned command)
     if (command >= BFM_WOODS_TERRAIN_HIT_FIRST && command <= BFM_WOODS_TERRAIN_HIT_LAST &&
         (e->terrain_aliases & (1u << (command - BFM_WOODS_TERRAIN_HIT_FIRST))))
         clip_command = BFM_WOODS_GUARD_SOUND;
-    if (command == BFM_WOODS_STOP_CHARGE_SOUND || command == BFM_EARTH_SCROLL_STOP_RINGS_SOUND) {
+    if (command == BFM_WOODS_STOP_CHARGE_SOUND || command == BFM_EARTH_SCROLL_STOP_RINGS_SOUND ||
+        ((command >> 16) == 1 && transition_key_off_target(command & 0xffffu))) {
         for (unsigned i = 0; i < VOICES; ++i) {
             Playback *p = &e->playing[i];
-            if (p->clip && p->clip->tone && p->command == (command & 0xffffu)) {
-                for (unsigned j = 0; j < p->clip->tone->count; ++j) {
-                    Layer *layer = &p->layers[j];
-                    if (layer->delay) layer->done = 1;
-                    else bfm_spu_envelope_release(&layer->envelope);
-                }
+            if (!p->clip || p->command != (command & 0xffffu)) continue;
+            MenuSequence *sequence = p->clip->menu_sequence;
+            if (!sequence && !p->clip->tone) {
+                p->clip = NULL;
+                continue;
+            }
+            unsigned count = sequence ? sequence->count : p->clip->tone->count;
+            Layer *notes = sequence ? sequence->notes + count : p->layers;
+            for (unsigned j = 0; j < count; ++j) {
+                if (notes[j].delay) notes[j].done = 1;
+                else bfm_spu_envelope_release(&notes[j].envelope);
             }
         }
         return;
@@ -1187,7 +1199,8 @@ void bfm_bedroom_effects_start(BfmBedroomEffects *e, unsigned command)
         /* Repeated menu commands and rapid Gunshot fire restart the active
          * instance of that command. Surface aliases keep separate cursors
          * even when the mounted sample is the same. */
-        if (e->replace_matching || i >= 3 || command == BFM_FOREST_GUNSHOT_SOUND) {
+        if (e->replace_matching || i >= 3 || e->clips[i].menu_sequence ||
+            command == BFM_FOREST_GUNSHOT_SOUND) {
             for (unsigned j=0; j<VOICES; ++j) {
                 Playback *p = &e->playing[j];
                 if (p->clip && p->command == command &&

@@ -397,6 +397,13 @@ void bfm_desktop_voice_room_effects(DesktopVoice *v, const BfmBedroomSound *even
     if (v->device) SDL_LockAudioDevice(v->device);
     for (size_t i = 0; i < count; ++i) {
         const BfmBedroomSound *event = &events[i];
+        if (event->bank == BFM_ROOM_ACTIVE_BANKS) {
+            if (!event->effects && (event->command >> 16) == 1) {
+                for (unsigned bank = 0; bank < BFM_ROOM_BANK_COUNT; ++bank)
+                    bfm_bedroom_effects_start(v->room_effects[bank], event->command);
+            }
+            continue;
+        }
         if (!event->effects || !event->command || (unsigned)event->bank >= BFM_ROOM_BANK_COUNT) continue;
         v->room_effects[event->bank] = event->effects;
         bfm_bedroom_effects_start(event->effects, event->command);
