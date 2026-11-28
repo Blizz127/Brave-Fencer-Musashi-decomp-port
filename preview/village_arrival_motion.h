@@ -13,6 +13,7 @@
 #include "field_rest.h"
 
 typedef struct BfmVillageMotion BfmVillageMotion;
+struct BfmVillageMineGate;
 
 typedef enum {
     BFM_VILLAGE_RIDE, BFM_VILLAGE_DROP, BFM_VILLAGE_IMPACT,
@@ -64,8 +65,22 @@ BfmVillageMotion *bfm_village_motion_box_field(const uint8_t *scene, size_t byte
  * hands walking and jumping back to the normal field controller. */
 BfmVillageMotion *bfm_village_motion_valley(const uint8_t *scene, size_t bytes,
     const uint8_t *main, size_t main_bytes, const uint8_t destination[36], const MusashiDiscMedia *disc);
+/* From the lower Grillin gate, the mine's own entrance row positions Musashi. */
+BfmVillageMotion *bfm_village_motion_mine(const uint8_t *scene, size_t bytes,
+    const uint8_t *main, size_t main_bytes, unsigned entrance, unsigned story,
+    const MusashiDiscMedia *disc);
+int bfm_village_motion_mine_orb(const BfmVillageMotion *motion, unsigned orb,
+                                uint16_t tiles[512][1024]);
+struct BfmVillageMineProps;
+void bfm_village_motion_mine_props(BfmVillageMotion *motion, const struct BfmVillageMineProps *props,
+                                   unsigned actor_tick);
+int bfm_village_motion_step_mine_field(BfmVillageMotion *motion, int x, int y, int camera_yaw,
+    int cross_pressed, int cross_held, struct BfmGameplayRun *run);
 struct BfmValleyBincho;
 struct BfmValleyGateDoor;
+int bfm_village_motion_can_examine(const BfmVillageMotion *motion);
+void bfm_village_motion_mine_gate(BfmVillageMotion *motion, const struct BfmVillageMineGate *gate,
+                                 unsigned actor_tick);
 void bfm_village_motion_valley_obstacles(BfmVillageMotion *motion,
     const struct BfmValleyBincho *bincho, const struct BfmValleyGateDoor *door);
 struct BfmHellsValleyBoulders;
@@ -120,6 +135,7 @@ int bfm_village_motion_staged_program(BfmVillageMotion *motion, const BfmBedroom
 /* Start the body again even when the previous speech uses the same program. */
 int bfm_village_motion_restart_staged_program(BfmVillageMotion *motion, const BfmBedroomRoot *root,
                                               uint32_t program, int *ended);
+int bfm_village_motion_finish_staged_program(BfmVillageMotion *motion);
 int bfm_village_motion_staged_action(BfmVillageMotion *motion, const BfmBedroomRoot *root,
                                     BfmBedroomAction action);
 /* Transfer the complete live coordinate to and from a scripted field mover.
@@ -134,6 +150,8 @@ int bfm_village_motion_place(BfmVillageMotion *motion, const BfmBedroomRoot *roo
 /* Return a staged actor to ordinary control at his current physical position.
  * Unlike a new placement, this retains fractions and the last fall velocity. */
 int bfm_village_motion_release_staged(BfmVillageMotion *motion);
+/* A director after the player's actor pass releases input without a second animation tick. */
+int bfm_village_motion_release_staged_field(BfmVillageMotion *motion);
 const BfmVillagePlayer *bfm_village_motion_player(const BfmVillageMotion *motion);
 /* Once per gameplay update. Pad axes are -127..127, right and down positive.
  * Camera yaw is target minus eye in X/Z, with +Z at zero. */
@@ -154,6 +172,11 @@ int bfm_village_motion_bank_thorn(BfmVillageMotion *motion, BfmForestBankThornHu
 struct BfmGameplayRun;
 int bfm_village_motion_step_field(BfmVillageMotion *motion, int stick_x, int stick_y,
                                   int camera_yaw, struct BfmGameplayRun *run);
+/* Consume an already accepted grounded examine instead of ordinary movement.
+ * The same field advances the body and face once before scripted takeover. */
+int bfm_village_motion_examine_tick(BfmVillageMotion *motion, struct BfmGameplayRun *run);
+/* The western mine exit starts its pad script when the outgoing room station attaches it. */
+void bfm_village_motion_woods_exit_script(BfmVillageMotion *motion, int enabled);
 /* After contact at the reciprocal woods passage, follow its mounted facing
  * and scripted pad until the room transition replaces the departing field. */
 int bfm_village_motion_woods_departure_step(BfmVillageMotion *motion, int camera_yaw,
