@@ -26,12 +26,14 @@ static int body_bounds(const uint8_t *scene, size_t bytes, const uint8_t *model,
     return 1;
 }
 
-int bfm_woods_3026_box_hit_mount(const uint8_t *scene, size_t bytes, BfmWoods3026BoxHit *out)
+static int mount_box(const uint8_t *scene, size_t bytes, uint32_t room_address,
+                     uint32_t profile_address, uint32_t segment_address, uint32_t destination,
+                     BfmWoods3026BoxHit *out)
 {
     if (!scene || !out) return 0;
-    const uint8_t *room = scene_data(scene, bytes, UINT32_C(0x801961e8), 0xbc);
-    const uint8_t *profiles = scene_data(scene, bytes, UINT32_C(0x801e8554), 2 * 52);
-    const uint8_t *segment = scene_data(scene, bytes, UINT32_C(0x801e8670), 16);
+    const uint8_t *room = scene_data(scene, bytes, room_address, 0xbc);
+    const uint8_t *profiles = scene_data(scene, bytes, profile_address, 2 * 52);
+    const uint8_t *segment = scene_data(scene, bytes, segment_address, 16);
     if (!room || !profiles || !segment) return 0;
 
     uint32_t first = u32le(room + 0xb4), next = u32le(room + 0xb8);
@@ -56,7 +58,7 @@ int bfm_woods_3026_box_hit_mount(const uint8_t *scene, size_t bytes, BfmWoods302
     if (!body_bounds(scene, bytes, profiles, &mounted.bounds) ||
         !body_bounds(scene, bytes, profiles + 52, &mounted.lid_bounds)) return 0;
     mounted.destination = scene_data(scene, bytes, u32le(box_row + 16), 36);
-    if (!mounted.destination || u32le(mounted.destination) != UINT32_C(0x00ff3026)) return 0;
+    if (!mounted.destination || u32le(mounted.destination) != destination) return 0;
     int16_t position[3];
     for (unsigned axis = 0; axis < 3; ++axis) {
         mounted.use_segment[0][axis] = s16le(segment + 2 * axis);
@@ -68,6 +70,18 @@ int bfm_woods_3026_box_hit_mount(const uint8_t *scene, size_t bytes, BfmWoods302
     bfm_forest_actor_root((mounted.yaw + 2048) & 4095, position, &mounted.lid_root);
     *out = mounted;
     return 1;
+}
+
+int bfm_woods_3026_box_hit_mount(const uint8_t *scene, size_t bytes, BfmWoods3026BoxHit *out)
+{
+    return mount_box(scene, bytes, UINT32_C(0x801961e8), UINT32_C(0x801e8554), UINT32_C(0x801e8670),
+                     UINT32_C(0x00ff3026), out);
+}
+
+int bfm_woods_3026_box_hit_mount_shaft(const uint8_t *scene, size_t bytes, BfmWoods3026BoxHit *out)
+{
+    return mount_box(scene, bytes, UINT32_C(0x80181f28), UINT32_C(0x80197174), UINT32_C(0x80197290),
+                     UINT32_C(0x00ff3045), out);
 }
 
 int bfm_woods_3026_box_can_use(const BfmWoods3026BoxHit *box, const BfmFieldInput *input,

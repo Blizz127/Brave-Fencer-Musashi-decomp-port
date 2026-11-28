@@ -22,6 +22,8 @@ typedef struct {
  * Failure leaves out untouched. */
 int bfm_woods_3026_box_hit_mount(const uint8_t *scene, size_t bytes, BfmWoods3026BoxHit *out);
 
+int bfm_woods_3026_box_hit_mount_shaft(const uint8_t *scene, size_t bytes, BfmWoods3026BoxHit *out);
+
 /* Use the last completed player model for the ray and the ordinary field
  * position for the Box's facing check. interaction_busy is the active field
  * interaction lock. A successful use opens the offer; it does not accept it. */

@@ -8,6 +8,8 @@ enum { BFM_WOODS_3026_BOX_OPEN = 32 };
 
 /* SC02.CD member 11. The decoded models and pose keys outlive the scene. */
 BfmWoods3026BoxArt *bfm_woods_3026_box_art_load(const uint8_t *scene, size_t bytes);
+/* The mine shaft mounts its own two models and lid keys from SC03/109. */
+BfmWoods3026BoxArt *bfm_woods_3026_box_art_load_shaft(const uint8_t *scene, size_t bytes);
 void bfm_woods_3026_box_art_free(BfmWoods3026BoxArt *art);
 /* Append both pieces to the prepared room figure queue. Zero selects the
  * closed pose. Opening steps forward one key per tick; closing retraces it. */

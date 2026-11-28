@@ -18,6 +18,9 @@ typedef struct {
 int bfm_woods_box_route_open(BfmWoodsBoxRoute *route, unsigned room,
                             const uint8_t *scene, size_t bytes);
 
+/* Mount the lower-level Memory Box and its own interaction script from SC03/109. */
+int bfm_woods_box_route_open_shaft(BfmWoodsBoxRoute *route, const uint8_t *scene, size_t bytes);
+
 const uint8_t *bfm_woods_passage_actor(const BfmWoodsBoxRoute *route, const uint8_t *door);
 
 /* Read the mounted contact for the Cleft mountain and valley paths.

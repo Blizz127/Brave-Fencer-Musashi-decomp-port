@@ -19,9 +19,9 @@ static const uint8_t *mounted(const uint8_t *scene, size_t bytes, uint32_t addre
     return scene + (address - origin);
 }
 
-static const uint8_t *box_placement(const uint8_t *scene, size_t bytes)
+static const uint8_t *box_placement(const uint8_t *scene, size_t bytes, uint32_t room_address)
 {
-    const uint8_t *room = mounted(scene, bytes, UINT32_C(0x801961e8), 0xbc);
+    const uint8_t *room = mounted(scene, bytes, room_address, 0xbc);
     if (!room) return NULL;
     uint32_t first = u32le(room + 0xb4), end = u32le(room + 0xb8);
     if (end <= first || (end - first) % 20) return NULL;
@@ -36,12 +36,12 @@ static const uint8_t *box_placement(const uint8_t *scene, size_t bytes)
     return NULL;
 }
 
-static int read_lid_keys(BfmWoods3026BoxArt *art, const uint8_t *scene, size_t bytes)
+static int read_lid_keys(BfmWoods3026BoxArt *art, const uint8_t *scene, size_t bytes, uint32_t keys)
 {
     const unsigned ticks = BFM_WOODS_3026_BOX_OPEN;
-    const uint8_t *idle = mounted(scene, bytes, UINT32_C(0x801e38a0), 16);
-    const uint8_t *open = mounted(scene, bytes, UINT32_C(0x801e38b0), (ticks + 1) * 8);
-    const uint8_t *close = mounted(scene, bytes, UINT32_C(0x801e39b8), (ticks + 1) * 8);
+    const uint8_t *idle = mounted(scene, bytes, keys, 16);
+    const uint8_t *open = mounted(scene, bytes, keys + 16, (ticks + 1) * 8);
+    const uint8_t *close = mounted(scene, bytes, keys + 16 + (ticks + 1) * 8, (ticks + 1) * 8);
     if (!idle || !open || !close || u32le(idle + 8) || u32le(idle + 12) != 0xffff ||
         u32le(open + ticks * 8) || u32le(open + ticks * 8 + 4) != 0xfffe ||
         u32le(close + ticks * 8) || u32le(close + ticks * 8 + 4) != 0xfffe) return 0;
@@ -57,14 +57,15 @@ static int read_lid_keys(BfmWoods3026BoxArt *art, const uint8_t *scene, size_t b
     return 1;
 }
 
-BfmWoods3026BoxArt *bfm_woods_3026_box_art_load(const uint8_t *scene, size_t bytes)
+static BfmWoods3026BoxArt *load_art(const uint8_t *scene, size_t bytes, uint32_t room,
+                                    uint32_t profiles_at, uint32_t keys)
 {
-    const uint8_t *row = box_placement(scene, bytes);
-    const uint8_t *profiles = mounted(scene, bytes, UINT32_C(0x801e8554), 2 * 52);
+    const uint8_t *row = box_placement(scene, bytes, room);
+    const uint8_t *profiles = mounted(scene, bytes, profiles_at, 2 * 52);
     if (!row || !profiles) return NULL;
     BfmWoods3026BoxArt *art = calloc(1, sizeof *art);
     if (!art) return NULL;
-    if (!read_lid_keys(art, scene, bytes)) goto fail;
+    if (!read_lid_keys(art, scene, bytes, keys)) goto fail;
     int16_t xyz[3] = {s16le(row), s16le(row + 2), s16le(row + 4)};
     for (unsigned i = 0; i < 2; ++i) {
         unsigned count;
@@ -78,6 +79,16 @@ BfmWoods3026BoxArt *bfm_woods_3026_box_art_load(const uint8_t *scene, size_t byt
 fail:
     bfm_woods_3026_box_art_free(art);
     return NULL;
+}
+
+BfmWoods3026BoxArt *bfm_woods_3026_box_art_load(const uint8_t *scene, size_t bytes)
+{
+    return load_art(scene, bytes, UINT32_C(0x801961e8), UINT32_C(0x801e8554), UINT32_C(0x801e38a0));
+}
+
+BfmWoods3026BoxArt *bfm_woods_3026_box_art_load_shaft(const uint8_t *scene, size_t bytes)
+{
+    return load_art(scene, bytes, UINT32_C(0x80181f28), UINT32_C(0x80197174), UINT32_C(0x80197734));
 }
 
 void bfm_woods_3026_box_art_free(BfmWoods3026BoxArt *art)

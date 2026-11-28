@@ -103,7 +103,35 @@ const uint8_t *bfm_woods_box_arrival(const BfmWoodsBoxRoute *route,
     return NULL;
 }
 
-static const uint32_t box_program = UINT32_C(0x801e85bc);
+int bfm_woods_box_route_open_shaft(BfmWoodsBoxRoute *out, const uint8_t *scene, size_t bytes)
+{
+    if (!out || !scene) return 0;
+    const uint8_t *binding = mounted(scene, bytes, UINT32_C(0x8017e300), 4);
+    const uint8_t *placement = mounted(scene, bytes, UINT32_C(0x8018210c), 20);
+    if (!binding || u32le(binding) != UINT32_C(0x80181f28) || !placement ||
+        u16le(placement+6) != 483 || u16le(placement+8) != 0) return 0;
+    const uint8_t *destination = mounted(scene, bytes, u32le(placement+16), 36);
+    const uint8_t *script = mounted(scene, bytes, UINT32_C(0x801971dc), 0x98);
+    if (!destination || u32le(destination) != UINT32_C(0x00ff3045) || !script) return 0;
+    *out = (BfmWoodsBoxRoute){
+        .room=0x3045, .box_actor=placement, .box_destination=destination, .box_script=script
+    };
+    return 1;
+}
+
+typedef struct {
+    uint32_t program, open, close, choice, remember;
+} BoxActions;
+
+static const BoxActions mountain_box = {
+    UINT32_C(0x801e85bc), UINT32_C(0x80190460), UINT32_C(0x80190470),
+    UINT32_C(0x80190480), UINT32_C(0x80190498)
+};
+
+static const BoxActions mine_box = {
+    UINT32_C(0x801971dc), UINT32_C(0x8017e150), UINT32_C(0x8017e160),
+    UINT32_C(0x8017e170), UINT32_C(0x8017e188)
+};
 
 int bfm_woods_box_use_begin(BfmWoodsBoxUse *use, const BfmWoodsBoxRoute *route,
                             const uint8_t *main, size_t main_bytes)
@@ -111,7 +139,7 @@ int bfm_woods_box_use_begin(BfmWoodsBoxUse *use, const BfmWoodsBoxRoute *route,
     if (!use || use->route || !route || !route->box_script || !route->box_destination ||
         !main) return 0;
     *use = (BfmWoodsBoxUse){ .route = route, .main = main, .main_bytes = main_bytes,
-                            .cursor = UINT32_C(0x801e8604) - box_program };
+                            .cursor = 9 * 8 };
     return 1;
 }
 
@@ -149,6 +177,7 @@ int bfm_woods_box_use_step(BfmWoodsBoxUse *use, BfmGameplayRun *run,
 
     /* The live room's short field script supplies its own messages, delays
      * and sound command. Only the three Box actions operate on native state. */
+    const BoxActions *actions = use->route->room == 0x3045 ? &mine_box : &mountain_box;
     for (unsigned commands = 0; commands < 0x98 / 8 && use->cursor <= 0x98 - 8; ++commands) {
         const uint8_t *item = use->route->box_script + use->cursor;
         uint32_t op = u32le(item), arg = u32le(item + 4);
@@ -168,22 +197,22 @@ int bfm_woods_box_use_step(BfmWoodsBoxUse *use, BfmGameplayRun *run,
             use->wait = arg;
             return 1;
         case 51:
-            if (arg == UINT32_C(0x80190460)) {
+            if (arg == actions->open) {
                 if (use->lid_motion || use->openness != 0) return 0;
                 use->lid_motion = 1;
                 *cue = 1471;
-            } else if (arg == UINT32_C(0x80190470)) {
+            } else if (arg == actions->close) {
                 if (use->lid_motion || use->openness != 32) return 0;
                 use->lid_motion = -1;
-            } else if (arg == UINT32_C(0x80190498)) {
+            } else if (arg == actions->remember) {
                 if (!bfm_gameplay_remember_box(run, live, use->route->box_destination,
                                                sizeof live->destination)) return 0;
             } else return 0;
             break;
         case 54:
-            if (arg != UINT32_C(0x80190480) || use->cursor > 0x98 - 8 ||
+            if (arg != actions->choice || use->cursor > 0x98 - 8 ||
                 (use->answer != 1 && use->answer != 2)) return 0;
-            if (u32le(item + 8) != 0 || u32le(item + 12) != box_program) return 0;
+            if (u32le(item + 8) != 0 || u32le(item + 12) != actions->program) return 0;
             use->cursor = use->answer == 1 ? 0 : use->cursor + 8;
             break;
         case 65:
