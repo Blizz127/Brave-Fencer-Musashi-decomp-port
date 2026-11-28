@@ -199,7 +199,7 @@ int bfm_village_mine_lake_fields_draw(void *context, BfmBedroomFigure *figure,
     for (unsigned i = 0; i < FIXTURES; ++i) {
         fixture.root = &fields->fixtures[i];
         /* The lake fixtures darken the underlying geometry with blend mode 2. */
-        if (!bfm_bedroom_figure_add_lit_translucent(figure, view, &fixture, NULL, 2)) return 0;
+        if (!bfm_bedroom_figure_add_translucent(figure, view, &fixture, 2)) return 0;
     }
     for (unsigned i = 0; i < CAPTIVES; ++i) {
         const BfmWoodsLardwickField *f = &fields->captives[i].field;

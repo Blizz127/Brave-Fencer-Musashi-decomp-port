@@ -891,7 +891,7 @@ int bfm_bedroom_figure_add_floor_shadow(BfmBedroomFigure *figure, const BfmBedro
 static int add_actor(BfmBedroomFigure *figure, const BfmBedroomView *view,
                      const BfmForestActor *actor, const BfmBedroomRoot *ground,
                      const uint8_t shadow[12], unsigned shadow_size,
-                     const BfmBedroomLight lights[3], unsigned blend, PartDepth depth)
+                     const BfmBedroomLight lights[3], const unsigned *blend, PartDepth depth)
 {
     if (!figure || !view || !actor || !actor->mesh || !actor->pose || !actor->root ||
         figure->next || !figure->surface.pixels || view->focal <= 0 || view->focal > UINT16_MAX)
@@ -942,10 +942,12 @@ static int add_actor(BfmBedroomFigure *figure, const BfmBedroomView *view,
     if (lights) {
         memcpy(figure->direction, direction, sizeof direction);
         memcpy(figure->color, color, sizeof color);
+    }
+    if (blend) {
         for (size_t i = first_body; i < figure->count; ++i) {
             BfmForestRasterMaterial *material = &figure->faces[i].material;
             material->translucent = 1;
-            material->page = (uint16_t)((material->page & ~0x60u) | (blend << 5));
+            material->page = (uint16_t)((material->page & ~0x60u) | (*blend << 5));
         }
     }
     qsort(figure->faces, figure->count, sizeof(*figure->faces), back_to_front);
@@ -956,25 +958,31 @@ int bfm_bedroom_figure_add_actor(BfmBedroomFigure *figure, const BfmBedroomView 
                      const BfmForestActor *actor, const BfmBedroomRoot *ground,
                      const uint8_t shadow[12], unsigned shadow_size)
 {
-    return add_actor(figure, view, actor, ground, shadow, shadow_size, NULL, 0, DEPTH_AVERAGE);
+    return add_actor(figure, view, actor, ground, shadow, shadow_size, NULL, NULL, DEPTH_AVERAGE);
 }
 
 int bfm_bedroom_figure_add_far_ft4_actor(BfmBedroomFigure *figure, const BfmBedroomView *view,
                      const BfmForestActor *actor)
 {
-    return add_actor(figure, view, actor, NULL, NULL, 0, NULL, 0, DEPTH_FAR_FT4);
+    return add_actor(figure, view, actor, NULL, NULL, 0, NULL, NULL, DEPTH_FAR_FT4);
 }
 
 int bfm_bedroom_figure_add_far_unlit_actor(BfmBedroomFigure *figure, const BfmBedroomView *view,
                      const BfmForestActor *actor)
 {
-    return add_actor(figure, view, actor, NULL, NULL, 0, NULL, 0, DEPTH_FAR_UNLIT_TEXTURED);
+    return add_actor(figure, view, actor, NULL, NULL, 0, NULL, NULL, DEPTH_FAR_UNLIT_TEXTURED);
+}
+
+int bfm_bedroom_figure_add_translucent(BfmBedroomFigure *figure, const BfmBedroomView *view,
+                     const BfmForestActor *actor, unsigned blend)
+{
+    return blend <= 3 && add_actor(figure, view, actor, NULL, NULL, 0, NULL, &blend, DEPTH_AVERAGE);
 }
 
 int bfm_bedroom_figure_add_lit_translucent(BfmBedroomFigure *figure, const BfmBedroomView *view,
                      const BfmForestActor *actor, const BfmBedroomLight lights[3], unsigned blend)
 {
-    return lights && blend <= 3 && add_actor(figure, view, actor, NULL, NULL, 0, lights, blend, DEPTH_AVERAGE);
+    return lights && blend <= 3 && add_actor(figure, view, actor, NULL, NULL, 0, lights, &blend, DEPTH_AVERAGE);
 }
 
 int bfm_bedroom_figure_add_morph(BfmBedroomFigure *figure, const BfmBedroomView *view,
