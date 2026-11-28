@@ -48,6 +48,9 @@ int bfm_forest_pose_load(const MusashiDiscMedia *disc, uint32_t frame_address,
 int bfm_forest_pose_decode(const uint8_t *bytes, size_t size, BfmForestPose *pose);
 /* Apply the field model's level heading and integral world position. */
 void bfm_forest_actor_root(unsigned yaw, const int16_t position[3], BfmForestTransform *root);
+/* Build the completed field player's independently normalized level axes.
+ * Keep the previously published world translation for strike and contact rays. */
+void bfm_forest_upright_model(unsigned yaw, BfmForestTransform *model);
 /* Apply pitch about the model's local X axis before its world heading. */
 void bfm_forest_actor_pitch_yaw(unsigned pitch, unsigned yaw, const int16_t position[3],
                                 BfmForestTransform *root);

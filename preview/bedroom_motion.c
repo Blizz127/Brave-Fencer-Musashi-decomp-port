@@ -17,6 +17,7 @@ typedef struct {
 typedef struct {
     uint32_t program;
     unsigned cursor, remaining, interval, pose_count;
+    unsigned strike, window;
     enum { STREAM_ACTIVE, STREAM_LOOP, STREAM_HOLD, STREAM_END } boundary;
 } Channel;
 
@@ -139,6 +140,10 @@ static int advance(BfmBedroomMotion *m, Channel *channel, int body)
             if (!body) return 0;
             m->frame.show_lumina = 0;
             break;
+        case 20: /* Toggle the contact window of a mounted strike program. */
+            if (!body || !channel->strike) return 0;
+            channel->window ^= 1;
+            break;
         default:
             if (body) {
                 m->frame.pose = data(m, command, PART_POSE_BYTES);
@@ -170,12 +175,13 @@ static int select_body(BfmBedroomMotion *m, unsigned index)
     return previous == m->body.program || advance(m, &m->body, 1);
 }
 
-static int restart_body(BfmBedroomMotion *motion, uint32_t program, unsigned cursor)
+static int start_body_at(BfmBedroomMotion *motion, uint32_t program, unsigned cursor, int strike)
 {
     if (!motion || !program) return 0;
     BfmBedroomMotion next = *motion;
     start(&next.body, program);
     next.body.cursor = cursor;
+    next.body.strike = strike;
     next.activity = QUIET;
     next.frame.draw_current = 1;
     if (!advance(&next, &next.body, 1)) return 0;
@@ -186,7 +192,7 @@ static int restart_body(BfmBedroomMotion *motion, uint32_t program, unsigned cur
 int bfm_bedroom_motion_direct(BfmBedroomMotion *motion, uint32_t program)
 {
     return motion && program && (motion->body.program == program ||
-                                 restart_body(motion, program, 0));
+                                 start_body_at(motion, program, 0, 0));
 }
 
 int bfm_bedroom_motion_step_then_restart(BfmBedroomMotion *motion, uint32_t program,
@@ -196,7 +202,7 @@ int bfm_bedroom_motion_step_then_restart(BfmBedroomMotion *motion, uint32_t prog
     BfmBedroomMotion next = *motion;
     BfmBedroomPose previous;
     if (!bfm_bedroom_motion_step(&next, BFM_BEDROOM_NONE, &previous) ||
-        !restart_body(&next, program, 0)) return 0;
+        !start_body_at(&next, program, 0, 0)) return 0;
     bfm_bedroom_motion_publish_upright(&next, frame);
     *motion = next;
     return 1;
@@ -220,7 +226,7 @@ int bfm_bedroom_motion_field_gait(BfmBedroomMotion *m, unsigned slot, int enteri
                 cursor = m->body.cursor;
             }
         }
-        if (!restart_body(m, program, cursor)) return 0;
+        if (!start_body_at(m, program, cursor, 0)) return 0;
     }
     if (entering && !select_slot(m, &m->face, m->face_bank, slot == 10 ? 28 : 33)) return 0;
     bfm_bedroom_motion_publish_upright(m, frame);
@@ -232,6 +238,35 @@ int bfm_bedroom_motion_direct_slot(BfmBedroomMotion *motion, unsigned slot)
     uint32_t program;
     return motion && slot < 40 && word(motion, motion->body_bank + 4 * slot, &program) &&
            bfm_bedroom_motion_direct(motion, program);
+}
+
+BfmBedroomBodyCursor bfm_bedroom_motion_body_cursor(const BfmBedroomMotion *motion)
+{
+    return motion ? (BfmBedroomBodyCursor){motion->body.program, motion->body.cursor}
+                  : (BfmBedroomBodyCursor){0};
+}
+
+int bfm_bedroom_motion_strike_slot(BfmBedroomMotion *motion, unsigned slot)
+{
+    uint32_t program;
+    return motion && slot < 40 && word(motion, motion->body_bank + 4*slot, &program) &&
+           start_body_at(motion, program, 0, 1);
+}
+
+int bfm_bedroom_motion_restore_body(BfmBedroomMotion *motion, BfmBedroomBodyCursor saved)
+{
+    return saved.cursor <= 255 && start_body_at(motion, saved.program, saved.cursor, 0);
+}
+
+int bfm_bedroom_motion_strike_next(const BfmBedroomMotion *motion, const uint8_t **next_pose)
+{
+    if (!motion || !motion->body.strike || !next_pose) return 0;
+    *next_pose = NULL;
+    if (!motion->body.window) return 1;
+    BfmBedroomMotion preview = *motion;
+    if (!advance(&preview, &preview.body, 1) || preview.body.boundary == STREAM_END) return 0;
+    *next_pose = preview.frame.pose;
+    return 1;
 }
 
 int bfm_bedroom_motion_looped(const BfmBedroomMotion *motion)

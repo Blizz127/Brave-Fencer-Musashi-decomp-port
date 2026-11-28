@@ -63,6 +63,19 @@ int bfm_bedroom_motion_step_then_restart(BfmBedroomMotion *motion, uint32_t prog
 int bfm_bedroom_motion_field_gait(BfmBedroomMotion *motion, unsigned slot, int entering,
                                   BfmBedroomPose *frame);
 int bfm_bedroom_motion_direct_slot(BfmBedroomMotion *motion, unsigned slot);
+typedef struct {
+    uint32_t program;
+    unsigned cursor; /* The next command in the mounted body program. */
+} BfmBedroomBodyCursor;
+BfmBedroomBodyCursor bfm_bedroom_motion_body_cursor(const BfmBedroomMotion *motion);
+/* A field weapon can interrupt the body after its usual step. Its mounted
+ * script opens and closes a strike window while the face keeps its clock.
+ * Restoring the saved cursor consumes the next body key immediately. */
+int bfm_bedroom_motion_strike_slot(BfmBedroomMotion *motion, unsigned slot);
+int bfm_bedroom_motion_restore_body(BfmBedroomMotion *motion, BfmBedroomBodyCursor saved);
+/* A closed weapon window returns a null next packet. Previewing an open
+ * window reads the following key without advancing either live channel. */
+int bfm_bedroom_motion_strike_next(const BfmBedroomMotion *motion, const uint8_t **next_pose);
 /* A looping program can display a key and signal its wrap in the same field. */
 int bfm_bedroom_motion_looped(const BfmBedroomMotion *motion);
 /* Select the resting body after an END, before this field's face advances. */

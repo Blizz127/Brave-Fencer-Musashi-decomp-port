@@ -202,6 +202,20 @@ void bfm_forest_camera_orbit_axis(int pitch, int yaw, int axis[3])
     normalize_axis(axis);
 }
 
+void bfm_forest_upright_model(unsigned yaw, BfmForestTransform *model)
+{
+    if (!model) return;
+    int heading = (int)(yaw & 4095u);
+    int right[3], forward[3];
+    bfm_forest_camera_orbit_axis(0, (heading + 1024) & 4095, right);
+    bfm_forest_camera_orbit_axis(0, heading, forward);
+    for (unsigned axis = 0; axis < 3; ++axis) {
+        model->rotation[axis][0] = (int16_t)right[axis];
+        model->rotation[axis][1] = axis == 1 ? 4096 : 0;
+        model->rotation[axis][2] = (int16_t)forward[axis];
+    }
+}
+
 static int setup_cameras(BfmForestWalk *w)
 {
     D_80126B5E=(u16)w->cached[0]; D_80126B62=(u16)w->cached[1]; D_80126B66=(u16)w->cached[2];
