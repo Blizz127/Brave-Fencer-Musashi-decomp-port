@@ -189,6 +189,11 @@ add_executable(musashi_native_boot
     village_illness_grocery.c
     village_illness_grocery_cast.c
     village_illness_wid.c
+    village_illness_mine_gate.c
+    village_mine_entrance.c
+    village_mine_view.c
+    village_mine_props.c
+    village_illness_mine_hero.c
     village_illness_windmill.c
     field_forced_bag.c
     field_inventory_actions.c

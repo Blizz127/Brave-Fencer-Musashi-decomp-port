@@ -35,6 +35,7 @@ static const struct RoomCue {
     {0x26, 0x125, 3, 50, 0}, {0x1c, 0x118, 3, 37, 0},
     {0x1d, 0x119, 3, 38, 0}, {0x1e, 0x11a, 3, 39, 0},
     {0x2f, 0x130, 3, 45, 0}, {0x30, 0x131, 3, 45, 1},
+    {0x49, 0x145, 2, 40, 0},  /* Binchotite Mine entrance. */
     {0x93, 0x18a, 3, 72, 0},  /* Jon and Leno in upper Grillin. */
 };
 

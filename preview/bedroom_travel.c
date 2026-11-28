@@ -285,6 +285,15 @@ BfmBedroomTravel *bfm_bedroom_travel_from_root(const uint8_t *scene, size_t byte
     return t;
 }
 
+int bfm_bedroom_travel_seed_position(BfmBedroomTravel *t, const int32_t xyz[3])
+{
+    if (!t || !xyz || t->root.busy) return 0;
+    for (unsigned i = 0; i < 3; ++i)
+        if (floor_div(xyz[i], Q) != t->root.xyz[i]) return 0;
+    for (unsigned i = 0; i < 3; ++i) t->position[i] = xyz[i];
+    return 1;
+}
+
 void bfm_bedroom_travel_free(BfmBedroomTravel *t)
 {
     free(t);

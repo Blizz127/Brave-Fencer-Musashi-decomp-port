@@ -9,9 +9,10 @@
 #include "village_arrival_motion.h"
 
 typedef struct BfmVillageIllnessLower BfmVillageIllnessLower;
+struct ForestVoice;
 
-/* Continue and the return from the inn both use the mounted entrance 10.
- * The caller keeps entry, main and tiles alive and owns the returned HUD. */
+/* Continue and the inn use entrance 10. The mine returns through entrance 15.
+ * The caller retains entry, main and tiles, and owns the HUD if requested. */
 BfmVillageIllnessLower *bfm_village_illness_lower_open(const MusashiDiscMedia *disc,
     BfmBedroomEntry *entry, const uint8_t *main, size_t bytes, uint16_t tiles[512][1024],
     BfmForestHud **hud);
@@ -26,6 +27,8 @@ int bfm_village_illness_lower_draw(BfmVillageIllnessLower *street, unsigned scen
     const uint8_t flags[64], unsigned draw_page, uint32_t pixels[240][320]);
 
 const BfmForestMessageFrame *bfm_village_illness_lower_page(const BfmVillageIllnessLower *street);
+struct ForestVoice *bfm_village_illness_lower_voice(const BfmVillageIllnessLower *street, unsigned *generation);
+int bfm_village_illness_lower_take_voice_stop(BfmVillageIllnessLower *street, unsigned *generation);
 int bfm_village_illness_lower_draw_window(const BfmVillageIllnessLower *street, uint32_t pixels[240][320]);
 int bfm_village_illness_lower_bag_active(const BfmVillageIllnessLower *street);
 int bfm_village_illness_lower_menu_serviced(const BfmVillageIllnessLower *street);

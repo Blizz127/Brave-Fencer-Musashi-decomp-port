@@ -70,7 +70,7 @@ typedef struct {
 /* The first half holds the prepared sequence and the second its live notes.
  * Each lower-village command restarts its own instance on retrigger. */
 typedef struct {
-    unsigned count;
+    unsigned count, owned_samples;
     uint8_t pitch_table[256];
     uint16_t levels[SEQUENCE_FIELDS+1];
     Layer notes[];
@@ -467,7 +467,7 @@ done:
 }
 
 static int finish_sequence(const Sources *s, Layer notes[], unsigned count,
-                           unsigned command, Clip *clip, BfmDecodedSpuSample *instrument)
+                           unsigned command, Clip *clip, BfmDecodedSpuSample *shared_instrument)
 {
     if (!s->menu_sequences)
         return render_layers(s, notes, count, command, clip);
@@ -481,32 +481,59 @@ static int finish_sequence(const Sources *s, Layer notes[], unsigned count,
         memcpy(sequence->levels, notes[0].sequence_levels, sizeof sequence->levels);
         for (unsigned i = 0; i < count; ++i) sequence->notes[i].sequence_levels = sequence->levels;
     }
-    /* The mounted sequence decoder keeps one instrument across this track. */
-    *instrument = (BfmDecodedSpuSample){0};
+    /* Compact phrases share their decoded instrument. Fixed records can
+     * name a different bank and instrument on each note. */
+    sequence->owned_samples = shared_instrument ? 1 : count;
+    if (shared_instrument) {
+        *shared_instrument = (BfmDecodedSpuSample){0};
+    } else {
+        for (unsigned i = 0; i < count; ++i) notes[i].sample = (BfmDecodedSpuSample){0};
+    }
     clip->id = command;
     clip->menu_sequence = sequence;
     return 1;
 }
 
-static int prepare_pickup_note(const Sources *s, unsigned command, const uint8_t track[12], Clip *clip)
+/* Fixed records hold an interval, an independent gate and a complete
+ * instrument. A zero interval ends scheduling with the current note. */
+static int prepare_fixed_sequence(const Sources *s, unsigned command, const uint8_t track[12], Clip *clip)
 {
-    uint8_t note[20];
-    Layer voice = {0};
-    if (!read_data(s, word(track), note, sizeof note) || half(note) || !half(note+2) ||
-        !half(note+6) || half(note+6) >= 127*256 || note[8] >= 128 || note[9] || note[13] ||
-        !read_data(s, word(note+16), voice.control, sizeof voice.control) ||
-        half(voice.control) != 6 || half(voice.control+16) != half(note+2) ||
-        !instrument_open(s, note[10], note[11], &voice)) return 0;
-    voice.key = (int)half(note+6);
-    voice.pitch = pitch(s->pitch, &voice);
-    voice.sequence_gain = half(s->volume+2*note[8])*127u >> 7;
-    voice.gain = sequence_level(&voice, 0);
-    voice.modulated = 1;
-    voice.ntsc_fields = 1;
-    voice.gate_samples = field_sample(half(note+2));
-    int ok = voice.pitch && finish_sequence(s, &voice, 1, command, clip, &voice.sample);
-    bfm_spu_sample_free(&voice.sample);
-    return ok;
+    enum { MAX_NOTES = 66 };
+    Layer notes[MAX_NOTES] = {0};
+    uint32_t cursor = word(track);
+    unsigned field = 0;
+    int result = 0;
+    for (unsigned i = 0; i < MAX_NOTES; ++i, cursor += 20) {
+        uint8_t note[20];
+        if (!read_data(s, cursor, note, sizeof note)) break;
+        unsigned interval = half(note), gate = half(note+2), key = half(note+6);
+        if (!key || key >= 127*256 || note[8] >= 128 || note[9] || note[13] ||
+            interval > SEQUENCE_FIELDS - field || gate > SEQUENCE_FIELDS - field) break;
+        Layer *voice = &notes[i];
+        if (word(note+16)) {
+            if (!read_data(s, word(note+16), voice->control, sizeof voice->control) ||
+                half(voice->control) != 6 || !gate || half(voice->control+16) != gate) break;
+            voice->modulated = 1;
+        }
+        if (!instrument_open(s, note[10], note[11], voice) ||
+            (!gate && voice->sample.loop_start < voice->sample.frames)) break;
+        voice->key = (int)key;
+        voice->pitch = pitch(s->pitch, voice);
+        if (!voice->pitch) break;
+        voice->sequence_start = field;
+        voice->sequence_gain = half(s->volume+2*note[8])*127u >> 7;
+        voice->gain = sequence_level(voice, field);
+        voice->ntsc_fields = 1;
+        voice->delay = field_sample(field);
+        voice->gate_samples = field_sample(field + gate) - voice->delay;
+        if (!interval) {
+            result = finish_sequence(s, notes, i+1, command, clip, NULL);
+            break;
+        }
+        field += interval;
+    }
+    for (unsigned i = 0; i < MAX_NOTES; ++i) bfm_spu_sample_free(&notes[i].sample);
+    return result;
 }
 
 static int prepare_sequence(const Sources *s, unsigned command, Clip *clip)
@@ -517,8 +544,8 @@ static int prepare_sequence(const Sources *s, unsigned command, Clip *clip)
     if (!select_command(s, command, entry, NULL) || (entry[0] & 0x7f) != 5 || entry[2]) return 0;
     uint32_t tracks = entry[1] ? word(s->data+s->bytes-4) : 0x80068a54u;
     if (!read_data(s, tracks+12*entry[3], track, sizeof track)) return 0;
-    if (!track[8] && command == BFM_ROOM_AWARD_SOUND)
-        return prepare_pickup_note(s, command, track, clip);
+    if (!track[8] && (command == BFM_ROOM_AWARD_SOUND || command == BFM_VILLAGE_MINE_UNLOCK_SOUND))
+        return prepare_fixed_sequence(s, command, track, clip);
     if (track[8] != 0x10 && track[8] != 0x12) return 0;
     uint32_t cursor = word(track), repeat_start = 0;
     unsigned repeats = 0, count = 0, field = 0, attenuation = 0;
@@ -689,7 +716,8 @@ BfmBedroomEffects *bfm_village_illness_effects_load(const MusashiDiscMedia *disc
      * own bank. The inventory uses MAIN/2, including both voices of Heal. */
     static const unsigned commands[] = {
         1300, 1301, BFM_ROOM_AWARD_SOUND,
-        0x467, BFM_FIELD_MENU_ROW_SOUND, 0x46d, 0x46b, 0x46c, 0x469,
+        BFM_ROOM_MOVE_SOUND, BFM_ROOM_ACCEPT_SOUND, BFM_VILLAGE_MINE_STRIKE_SOUND,
+        BFM_VILLAGE_MINE_UNLOCK_SOUND, 0x467, BFM_FIELD_MENU_ROW_SOUND, 0x46d, 0x46b, 0x46c, 0x469,
         BFM_FIELD_MENU_COMMIT_SOUND, BFM_FIELD_MENU_ERROR_SOUND,
         0x463, 0x464, 0x465, RESCUE_BP_STRIKE, HEAL_ARPEGGIO
     };
@@ -1090,7 +1118,8 @@ void bfm_bedroom_effects_free(BfmBedroomEffects *e)
             free(clip->tone);
         }
         if (clip->menu_sequence) {
-            bfm_spu_sample_free(&clip->menu_sequence->notes[0].sample);
+            for (unsigned j = 0; j < clip->menu_sequence->owned_samples; ++j)
+                bfm_spu_sample_free(&clip->menu_sequence->notes[j].sample);
             free(clip->menu_sequence);
         }
         free(clip->mono);

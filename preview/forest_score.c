@@ -12,7 +12,7 @@
 enum { VOICES = 24, SAMPLES = 256, CHANNELS = 16, DEVICE_RATE = 44100 };
 enum { FULL_VOLUME = 16384, DUCK_STEP = 546, SOUND_FIELD_SAMPLES = DEVICE_RATE / 60 };
 enum ScoreFamily { OTHER_SCORE, LIBRARY_SCORE, VILLAGE_SCORE, MAZE_SCORE, BANK_SCORE, WOODS_SCORE, TWINPEAK_SCORE, FINE_PITCH_SCORE, JON_RETURN_SCORE,
-                   HELLS_VALLEY_SCORE };
+                   HELLS_VALLEY_SCORE, MINE_SCORE };
 
 typedef struct {
     const BfmDecodedSpuSample *sample;
@@ -64,7 +64,7 @@ static int uses_fine_tuning(enum ScoreFamily family)
 static int uses_pitch_tables(enum ScoreFamily family)
 {
     return family == WOODS_SCORE || family == TWINPEAK_SCORE || family == JON_RETURN_SCORE ||
-           family == HELLS_VALLEY_SCORE || uses_fine_tuning(family);
+           family == HELLS_VALLEY_SCORE || family == MINE_SCORE || uses_fine_tuning(family);
 }
 
 static unsigned note_pitch(const Orchestra *o, const Note *note, unsigned wheel)
@@ -488,6 +488,7 @@ BfmForestScore *bfm_archive_score_load(const MusashiDiscMedia *disc, unsigned ra
         (!strcmp(archive, "SC04.CD") && member == 13)) score->orchestra.family = MAZE_SCORE;
     if (!strcmp(archive, "SC02.CD") && member == 34) score->orchestra.family = BANK_SCORE;
     if (!strcmp(archive, "SC02.CD") && member == 23) score->orchestra.family = WOODS_SCORE;
+    if (!strcmp(archive, "SC02.CD") && member == 40 && track == 0) score->orchestra.family = MINE_SCORE;
     if (uses_pitch_tables(score->orchestra.family)) {
         if (!bfm_bedroom_resident_data(disc, UINT32_C(0x8006ab30), score->orchestra.pitch_tables,
                                        sizeof(score->orchestra.pitch_tables))) goto fail;

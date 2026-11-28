@@ -30,6 +30,8 @@ int bfm_bedroom_travel_air_shadow(const uint8_t *scene, size_t bytes,
 /* Take over an already positioned field actor for a scripted walk. */
 BfmBedroomTravel *bfm_bedroom_travel_from_root(const uint8_t *scene, size_t bytes,
                                                uint32_t room, const BfmBedroomRoot *root);
+/* Carry the controlled foot's fractions into a newly created scripted walk. */
+int bfm_bedroom_travel_seed_position(BfmBedroomTravel *travel, const int32_t xyz[3]);
 void bfm_bedroom_travel_free(BfmBedroomTravel *travel);
 const BfmBedroomRoot *bfm_bedroom_travel_root(const BfmBedroomTravel *travel);
 const int64_t *bfm_bedroom_travel_position(const BfmBedroomTravel *travel);

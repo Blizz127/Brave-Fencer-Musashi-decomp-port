@@ -62,6 +62,9 @@ int bfm_bedroom_motion_step_then_restart(BfmBedroomMotion *motion, uint32_t prog
 int bfm_bedroom_motion_direct_slot(BfmBedroomMotion *motion, unsigned slot);
 /* A looping program can display a key and signal its wrap in the same field. */
 int bfm_bedroom_motion_looped(const BfmBedroomMotion *motion);
+/* Select the resting body after an END, before this field's face advances. */
+int bfm_bedroom_motion_finish_program(BfmBedroomMotion *motion, BfmBedroomPose *frame);
+void bfm_bedroom_motion_release_draw(BfmBedroomMotion *motion, BfmBedroomPose *frame);
 BfmBodyMarker bfm_bedroom_motion_marker(const BfmBedroomMotion *motion);
 /* Release a hold at the program's current interval. The next animation
  * pass advances the restored clock. A terminal marker cannot resume. */
@@ -69,6 +72,10 @@ int bfm_bedroom_motion_resume(BfmBedroomMotion *motion);
 /* Select the ordinary standing entry before this field's animation pass.
  * While the entry plays, refresh its tired flag before subsequent updates. */
 int bfm_bedroom_motion_reenter_stance(BfmBedroomMotion *motion, int tired);
+/* Advance the old body and face, then install the grounded interaction
+ * stance and leave its neutral face ready for the next field. */
+int bfm_bedroom_motion_examine_tick(BfmBedroomMotion *motion, int tired, int show_fusion,
+                                    BfmBedroomPose *frame);
 /* A field ability selects its face after the shared pre-step, then hands
  * control back to the grounded standing initializer when its body ends. */
 int bfm_bedroom_motion_ability_pose(BfmBedroomMotion *motion, unsigned face_slot, int finished,

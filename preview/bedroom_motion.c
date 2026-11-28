@@ -211,6 +211,24 @@ int bfm_bedroom_motion_looped(const BfmBedroomMotion *motion)
     return motion && motion->body.boundary == STREAM_LOOP;
 }
 
+int bfm_bedroom_motion_finish_program(BfmBedroomMotion *motion, BfmBedroomPose *frame)
+{
+    if (!frame || bfm_bedroom_motion_marker(motion) != BFM_BODY_END) return 0;
+    BfmBedroomMotion next = *motion;
+    if (!select_body(&next, 0)) return 0;
+    next.activity = QUIET;
+    next.frame.draw_current = 0;
+    *frame = next.frame;
+    *motion = next;
+    return 1;
+}
+
+void bfm_bedroom_motion_release_draw(BfmBedroomMotion *motion, BfmBedroomPose *frame)
+{
+    motion->frame.draw_current = 0;
+    frame->draw_current = 0;
+}
+
 BfmBodyMarker bfm_bedroom_motion_marker(const BfmBedroomMotion *motion)
 {
     if (motion && motion->body.boundary == STREAM_HOLD) return BFM_BODY_HOLD;
@@ -230,6 +248,29 @@ static int pair(BfmBedroomMotion *m, unsigned body, unsigned face)
 {
     return select_body(m, body) &&
            select_slot(m, &m->face, m->face_bank, face);
+}
+
+int bfm_bedroom_motion_examine_tick(BfmBedroomMotion *motion, int tired, int show_fusion,
+                                    BfmBedroomPose *frame)
+{
+    if (!motion || !frame) return 0;
+    BfmBedroomMotion next = *motion;
+    next.frame.knock_contact = next.frame.body_contact = next.frame.finished = 0;
+    /* The shared animation pass precedes Square admission. The outgoing
+     * standing/walking action selects the neutral face without ticking it. */
+    if (!advance(&next,&next.body,1) || !advance(&next,&next.face,0) ||
+        !pair(&next,tired ? 5 : 4,tired ? 28 : 17) ||
+        !select_slot(&next,&next.face,next.face_bank,17)) return 0;
+    next.activity = QUIET;
+    next.tired = tired;
+    next.rest_phase = RESTING;
+    next.rest_cycles = 0;
+    next.frame.draw_current = 0;
+    next.frame.show_weapon = show_fusion;
+    next.frame.show_lumina = 0;
+    *motion = next;
+    *frame = next.frame;
+    return 1;
 }
 
 BfmBedroomMotion *bfm_bedroom_motion_open(const uint8_t *scene, size_t scene_bytes,

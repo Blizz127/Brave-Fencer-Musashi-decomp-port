@@ -4,6 +4,7 @@
 #include "musashi_disc_media.h"
 
 typedef struct BfmBedroomEffects BfmBedroomEffects;
+enum { BFM_VILLAGE_MINE_STRIKE_SOUND = 0x7e0, BFM_VILLAGE_MINE_UNLOCK_SOUND = 0x7a0 };
 enum { BFM_ROOM_AWARD_SOUND = 0x6a6, BFM_ROOM_MOVE_SOUND = 0x62f, BFM_ROOM_ACCEPT_SOUND = 0x630 };
 enum { BFM_FOREST_SWING_SOUND = 0x400, BFM_FOREST_HIT_SOUND = 0x437,
        BFM_FOREST_GUNSHOT_SOUND = 0x476 };

@@ -213,7 +213,8 @@ BfmSqvResult bfm_sqv_archive_track_load(const MusashiDiscMedia *disc, const char
                            member == 67 || member == 72)) ||
                  (sc02 && member == 25) ||
                  (!strcmp(archive, "SC06.CD") && member == 38);
-    int triple = (sc01 && (member == PALACE_MEMBER || member == 75)) || (sc03 && member == 68);
+    int triple = (sc01 && (member == PALACE_MEMBER || member == 75)) ||
+                 (sc02 && member == 40) || (sc03 && member == 68);
     int two_tracks = (sc02 && (member == 23 || member == 34)) ||
                      (sc03 && (member == 0 || member == 45)) || (!strcmp(archive, "SC04.CD") && member == 13);
     if (!single && !two_tracks && !triple) return BFM_SQV_UNSUPPORTED;
