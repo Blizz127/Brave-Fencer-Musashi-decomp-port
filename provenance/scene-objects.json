@@ -163,6 +163,12 @@
       "file": "extracted/overlays/sc03/0107.bin",
       "base": 2148694360,
       "sha256": "e86ac8360807db552291599b9bcf3dd93aa501f53694a3f3a1da0941cc3b66b9"
+    },
+    "sc03_0110": {
+      "kind": "blob",
+      "file": "extracted/overlays/sc03/0110.pac0.bin",
+      "base": 2148696408,
+      "sha256": "2530ad26e43af7cfe4f7914a396592e113bb33b5b6e5ba1929126afd8eab73ab"
     }
   },
   "matches": [
@@ -8778,6 +8784,19 @@
       "origin": "Independently reconstructed from USA SC03.CD member 107. The western gallery camera follows the selected zone angles and radius and centers its target along Z.",
       "source_sha256": "016d0cb929b38b384277e62946ab6e0214daff79e90f311ec6a649958aef0b0b",
       "span_sha256": "8aa789ae5c55f939b070b382cc30103bc3c857d1facb1f7159704a0cc3547352"
+    },
+    {
+      "name": "func_8017E934",
+      "region": "sc03_0110",
+      "vram": 2149050676,
+      "size": 60,
+      "source": "src/overlays/sc03_0110/8017e934.c",
+      "recovery": "c",
+      "extent": "function",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 0110. Dispatches the lake return job by its one-byte state and returns the selected step\u2019s progress result to the stage runner.",
+      "source_sha256": "ca94ee10e29c4f33f12b9d33efc4cc1115877fac9d20edadbdbec6ce84917be9",
+      "span_sha256": "4f1145de23b0bdffb4d1c8741462eb91ffbc5174fd070a45313e88142d74d3e5"
     }
   ]
 }
