@@ -18,6 +18,7 @@ struct BfmNightmareRoom {
     uint8_t *scene, *main;
     const MusashiDiscMedia *disc;
     uint32_t room_address;
+    const BfmNightmareLayout *layout;
     BfmNightmareDeparture *departure;
     BfmForestMessageArt *ink;
     ForestVoice *voice;
@@ -53,11 +54,12 @@ void bfm_nightmare_room_free(BfmNightmareRoom *room)
 BfmNightmareRoom *bfm_nightmare_room_open(const MusashiDiscMedia *disc,
                                           const BfmBedroomEntry *entry)
 {
-    if (!disc || !entry || entry->scene_member != 3 || u32le(entry->state.destination) != 0x3012)
-        return NULL;
+    const BfmNightmareLayout *layout = bfm_nightmare_layout(entry);
+    if (!disc || !layout) return NULL;
     BfmNightmareRoom *room = calloc(1, sizeof *room);
     if (!room) return NULL;
-    size_t bytes, main_bytes;
+    size_t bytes = 0, main_bytes;
+    room->layout = layout;
     room->scene = bfm_scene_unpack_pac0(disc, "SC03.CD", entry->scene_member,
                                         BFM_FIELD_SCENE_CAPACITY, BFM_FIELD_SCENE_CAPACITY, &bytes);
     uint32_t address;
@@ -71,7 +73,7 @@ BfmNightmareRoom *bfm_nightmare_room_open(const MusashiDiscMedia *disc,
     room->main = bfm_bedroom_player_data(disc, &main_bytes);
     room->motion = bfm_bedroom_motion_open(room->scene, bytes, room->main, main_bytes, address);
     room->hero = bfm_bedroom_figure_load(disc, room->scene, bytes, address,
-                                          UINT32_C(0x801810f0), UINT32_C(0x80181e5c));
+                                          layout->figure, layout->face);
     /* The grounded player starts with the ordinary face before the field
      * script takes over the body. The sleeping clip leaves this face alone. */
     if (!room->motion || !room->hero ||
@@ -80,7 +82,7 @@ BfmNightmareRoom *bfm_nightmare_room_open(const MusashiDiscMedia *disc,
         !bfm_bedroom_motion_reenter_stance(room->motion, 0) ||
         !bfm_bedroom_motion_step(room->motion, BFM_BEDROOM_NIGHTMARE_SLEEP, &room->pose)) goto fail;
     memcpy(room->flags, entry->state.flags, sizeof room->flags);
-    enum { script = 0x80182f50u - 0x80128158u };
+    size_t script = layout->script - 0x80128158u;
     if (bytes < script + 16 || u32le(room->scene + script + 4) != UINT32_C(0x8016f6e0) ||
         u32le(room->scene + script + 12) != UINT32_C(0x8017e950)) goto fail;
     room->script_delay = u32le(room->scene + script + 8);
@@ -103,7 +105,8 @@ BfmNightmareStep bfm_nightmare_room_step(BfmNightmareRoom *room)
     if (room->phase == CLOSE_SHOT) return BFM_NIGHTMARE_CLOSE_SHOT;
     BfmNightmareWake wake = room->wake;
     if (room->update == 146) {
-        if (!bfm_nightmare_wake_start(&wake, room->scene, room->scene_bytes, room->root.xyz))
+        if (!bfm_nightmare_wake_start(&wake, room->scene, room->scene_bytes,
+                                      room->layout->flash, room->root.xyz))
             return BFM_NIGHTMARE_ERROR;
     } else {
         bfm_nightmare_wake_step(&wake);
@@ -137,10 +140,10 @@ BfmNightmareStep bfm_nightmare_room_step(BfmNightmareRoom *room)
 static int begin_departure(BfmNightmareRoom *room)
 {
     BfmNightmareDeparture *departure = bfm_nightmare_departure_open(room->scene, room->scene_bytes,
-                room->room_address, room->motion, room->field, &room->root, &room->pose);
+                room->room_address, room->layout, room->motion, room->field, &room->root, &room->pose);
     if (!departure) return 0;
     BfmForestMessageArt *ink = bfm_castle_message_art_load(room->disc, room->scene, room->scene_bytes,
-                                      (const uint16_t (*)[1024])room->tiles, 0x5783cu);
+                                      (const uint16_t (*)[1024])room->tiles, room->layout->window - 0x80128158u);
     ForestVoice *voice = ink ? bfm_defeat_voice_load(room->disc) : NULL;
     if (!voice) {
         bfm_forest_message_art_free(ink);
@@ -168,6 +171,11 @@ BfmNightmareStep bfm_nightmare_room_step_field(BfmNightmareRoom *room, int confi
     }
     event->destination = room->exit;
     return room->exit ? BFM_NIGHTMARE_TRANSFER : BFM_NIGHTMARE_DEPARTING;
+}
+
+uint16_t bfm_nightmare_room_number(const BfmNightmareRoom *room)
+{
+    return room ? room->layout->number : 0;
 }
 
 ForestVoice *bfm_nightmare_room_voice(BfmNightmareRoom *room)

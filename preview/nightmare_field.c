@@ -3,6 +3,27 @@
 #include "forest_pose.h"
 #include "../pc_port/forest_player_bytes.h"
 
+const BfmNightmareLayout *bfm_nightmare_layout(const BfmBedroomEntry *entry)
+{
+    static const BfmNightmareLayout early = {
+        .number = 0x3012, .street_exit = 0x000a1010, .binding = 0x8017f278,
+        .script = 0x80182f50, .camera = 0x8017ee04, .figure = 0x801810f0,
+        .face = 0x80181e5c, .flash = 0x80182cb0, .landing_sounds = 0x80181dbc,
+        .seated_body = 0x80182d58, .message = 0x801830b0, .window = 0x8017f994
+    };
+    static const BfmNightmareLayout illness = {
+        .number = 0x3054, .street_exit = 0x000a1052, .binding = 0x8017f22c,
+        .script = 0x80182f04, .camera = 0x8017edb8, .figure = 0x801810a4,
+        .face = 0x80181e10, .flash = 0x80182c64, .landing_sounds = 0x80181d70,
+        .seated_body = 0x80182d0c, .message = 0x80183058, .window = 0x8017f948
+    };
+    if (!entry) return NULL;
+    uint32_t number = u32le(entry->state.destination);
+    if (entry->scene_member == 3 && number == early.number) return &early;
+    if (entry->scene_member == 126 && number == illness.number) return &illness;
+    return NULL;
+}
+
 static const uint8_t *mounted(const uint8_t *scene, size_t bytes, uint32_t address, size_t count)
 {
     const uint32_t base = UINT32_C(0x80128158);
@@ -13,10 +34,10 @@ static const uint8_t *mounted(const uint8_t *scene, size_t bytes, uint32_t addre
 int bfm_nightmare_entrance(const uint8_t *scene, size_t bytes, const BfmBedroomEntry *entry,
                            uint32_t *room_address, int16_t xyz[3], unsigned *yaw)
 {
-    if (!entry || !room_address || !xyz || !yaw || entry->scene_member != 3 ||
-        u32le(entry->state.destination) != 0x3012) return 0;
+    const BfmNightmareLayout *layout = bfm_nightmare_layout(entry);
+    if (!layout || !room_address || !xyz || !yaw) return 0;
 
-    const uint8_t *slot = mounted(scene, bytes, UINT32_C(0x8017f278), 4);
+    const uint8_t *slot = mounted(scene, bytes, layout->binding, 4);
     if (!slot) return 0;
     uint32_t address = u32le(slot);
     const uint8_t *room = mounted(scene, bytes, address, 0xcc);
@@ -24,10 +45,10 @@ int bfm_nightmare_entrance(const uint8_t *scene, size_t bytes, const BfmBedroomE
     const uint8_t *entrances = mounted(scene, bytes, u32le(room + 0xc8), 4);
     if (!entrances) return 0;
     const uint8_t *entrance = mounted(scene, bytes, u32le(entrances), 36);
-    const uint8_t *script = mounted(scene, bytes, UINT32_C(0x80182f50), 4);
-    if (!entrance || u32le(entrance) != 0x3012 ||
+    const uint8_t *script = mounted(scene, bytes, layout->script, 4);
+    if (!entrance || u32le(entrance) != layout->number ||
         u32le(entrance + 8) != UINT32_C(0x8017e6c8) ||
-        u32le(entrance + 24) != UINT32_C(0x8017ee04) ||
+        u32le(entrance + 24) != layout->camera ||
         !script || u32le(script) != UINT32_C(0x8017e77c)) return 0;
 
     *room_address = address;

@@ -13,6 +13,7 @@ enum DeparturePhase {
 
 struct BfmNightmareDeparture {
     const uint8_t *scene, *destination;
+    const BfmNightmareLayout *layout;
     size_t bytes;
     BfmBedroomMotion *motion;
     BfmBedroomField *field;
@@ -28,7 +29,7 @@ struct BfmNightmareDeparture {
 
 static const uint32_t scene_base = UINT32_C(0x80128158);
 /* The next mounted record bounds each message, including the last one. */
-static const uint32_t text_bounds[] = { 0x801830b0u, 0x801830d8u, 0x8018310cu, 0x8018312cu };
+static const unsigned text_bounds[] = {0, 40, 92, 124};
 
 static const uint8_t *mounted(const BfmNightmareDeparture *d, uint32_t address, size_t size)
 {
@@ -38,12 +39,13 @@ static const uint8_t *mounted(const BfmNightmareDeparture *d, uint32_t address, 
 }
 
 BfmNightmareDeparture *bfm_nightmare_departure_open(const uint8_t *scene, size_t bytes,
-                                 uint32_t room_address, BfmBedroomMotion *motion,
+                                 uint32_t room_address, const BfmNightmareLayout *layout, BfmBedroomMotion *motion,
                                  BfmBedroomField *field, BfmBedroomRoot *root, BfmBedroomPose *pose)
 {
-    if (!scene || !motion || !field || !root || !pose) return NULL;
+    if (!layout || !scene || !motion || !field || !root || !pose) return NULL;
     BfmNightmareDeparture *d = calloc(1, sizeof *d);
     if (!d) return NULL;
+    d->layout = layout;
     d->scene = scene;
     d->bytes = bytes;
     d->motion = motion;
@@ -51,14 +53,14 @@ BfmNightmareDeparture *bfm_nightmare_departure_open(const uint8_t *scene, size_t
     d->root = root;
     d->pose = pose;
     /* Only the room's operands are data here. The event itself is host code. */
-    const uint8_t *script = mounted(d, 0x80182f50u, 48);
+    const uint8_t *script = mounted(d, layout->script, 48);
     if (!script || u32le(script + 24) > 65535u ||
         u16le(script + 38) != 0) goto fail;
     d->walk_delay = u32le(script + 24);
     for (unsigned axis = 0; axis < 3; ++axis) d->waypoint[axis] = s16le(script + 32 + 2 * axis);
     d->destination = mounted(d, u32le(script + 44), 36);
-    if (!d->destination || u32le(d->destination) != UINT32_C(0x000a1010)) goto fail;
-    const uint8_t *landing_sounds = mounted(d, 0x80181dbcu, 14);
+    if (!d->destination || u32le(d->destination) != layout->street_exit) goto fail;
+    const uint8_t *landing_sounds = mounted(d, layout->landing_sounds, 14);
     if (!landing_sounds) goto fail;
     d->floor_cue = u16le(landing_sounds);
     d->bed_cue = u16le(landing_sounds + 6 * 2);
@@ -103,7 +105,7 @@ static int open_line(BfmNightmareDeparture *d, unsigned line)
 {
     if (line >= sizeof text_bounds / sizeof *text_bounds - 1) return 0;
     size_t extent = text_bounds[line + 1] - text_bounds[line];
-    const uint8_t *text = mounted(d, text_bounds[line], extent);
+    const uint8_t *text = mounted(d, d->layout->message + text_bounds[line], extent);
     if (!text) return 0;
     BfmForestMessage *page = bfm_field_message_borrow(text, extent);
     if (!page) return 0;
@@ -126,6 +128,8 @@ int bfm_nightmare_departure_step(BfmNightmareDeparture *d, ForestVoice *voice,
     if (!d || !voice || !generation || !event || d->phase == FAILED) return 0;
     *event = (BfmNightmareRoomEvent){0};
     if (d->phase == FINISHED) return 1;
+    /* The early inn suspends its wake actor during a competing transfer. */
+    other_transfer = other_transfer && d->layout->number == 0x3012;
     unsigned previous_status = bfm_forest_voice_status(voice);
     bfm_forest_voice_step(voice);
     event->voice_stopped = previous_status != BFM_FOREST_VOICE_IDLE &&
@@ -152,7 +156,7 @@ int bfm_nightmare_departure_step(BfmNightmareDeparture *d, ForestVoice *voice,
         if (other_transfer) break;
         zoom(d);
         if (d->radius < 400) {
-            if (!open_line(d, 0) || !bfm_bedroom_motion_direct(d->motion, 0x80182d58u)) goto failed;
+            if (!open_line(d, 0) || !bfm_bedroom_motion_direct(d->motion, d->layout->seated_body)) goto failed;
             event->cue = 0x7e7;
             d->phase = SEATED;
         }

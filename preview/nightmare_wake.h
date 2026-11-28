@@ -14,7 +14,7 @@ typedef struct {
 /* Start on the player update that spawns the flash. It stays at the initial
  * world position as the player recovers. Step once per subsequent update. */
 int bfm_nightmare_wake_start(BfmNightmareWake *effect, const uint8_t *scene,
-                             size_t bytes, const int16_t player[3]);
+                             size_t bytes, uint32_t address, const int16_t player[3]);
 void bfm_nightmare_wake_step(BfmNightmareWake *effect);
 
 /* Return one card to append to the field's figure queue when visible. */

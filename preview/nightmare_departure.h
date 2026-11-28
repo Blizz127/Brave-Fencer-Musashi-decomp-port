@@ -6,6 +6,7 @@
 #include "bedroom_motion.h"
 #include "bedroom_travel.h"
 #include "nightmare_room.h"
+#include "nightmare_field.h"
 
 typedef struct BfmNightmareDeparture BfmNightmareDeparture;
 
@@ -13,7 +14,7 @@ typedef struct BfmNightmareDeparture BfmNightmareDeparture;
  * first on the close-shot update, after the wake effect and wide-view waits
  * have completed (active player update 171). */
 BfmNightmareDeparture *bfm_nightmare_departure_open(const uint8_t *scene, size_t bytes,
-                                 uint32_t room_address, BfmBedroomMotion *motion,
+                                 uint32_t room_address, const BfmNightmareLayout *layout, BfmBedroomMotion *motion,
                                  BfmBedroomField *field, BfmBedroomRoot *root, BfmBedroomPose *pose);
 void bfm_nightmare_departure_free(BfmNightmareDeparture *d);
 /* Advances the room's OUT voice service and applies each window's requests.

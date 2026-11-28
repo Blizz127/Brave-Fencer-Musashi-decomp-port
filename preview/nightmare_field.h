@@ -5,6 +5,15 @@
 #include "bedroom_field.h"
 #include "bedroom_record.h"
 
+/* Each recovery room mounts its own scene resources and return descriptor. */
+typedef struct {
+    uint16_t number;
+    uint32_t street_exit, binding, script, camera;
+    uint32_t figure, face, flash, landing_sounds, seated_body, message, window;
+} BfmNightmareLayout;
+
+const BfmNightmareLayout *bfm_nightmare_layout(const BfmBedroomEntry *entry);
+
 /* Resolve entrance zero in the mounted SC03 recovery room. On failure all
  * outputs retain their prior values. */
 int bfm_nightmare_entrance(const uint8_t *scene, size_t bytes, const BfmBedroomEntry *entry,

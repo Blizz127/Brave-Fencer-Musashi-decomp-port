@@ -36,6 +36,7 @@ typedef struct {
  * room transfer takes precedence at the authored camera and speech waits. */
 BfmNightmareStep bfm_nightmare_room_step_field(BfmNightmareRoom *room, int confirm, int reveal,
                                                int other_transfer, BfmNightmareRoomEvent *event);
+uint16_t bfm_nightmare_room_number(const BfmNightmareRoom *room);
 ForestVoice *bfm_nightmare_room_voice(BfmNightmareRoom *room);
 unsigned bfm_nightmare_room_generation(const BfmNightmareRoom *room);
 int bfm_nightmare_room_exit_camera(BfmNightmareRoom *room);

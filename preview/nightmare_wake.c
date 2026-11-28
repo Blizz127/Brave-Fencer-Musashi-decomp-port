@@ -9,10 +9,11 @@ static int64_t floor_q12(int64_t value)
 }
 
 int bfm_nightmare_wake_start(BfmNightmareWake *effect, const uint8_t *scene,
-                             size_t bytes, const int16_t player[3])
+                             size_t bytes, uint32_t address, const int16_t player[3])
 {
-    enum { shape_offset = 0x80182cb0u - 0x80128158u };
-    if (!effect || !scene || !player || bytes < shape_offset + 12) return 0;
+    if (address < 0x80128158u) return 0;
+    size_t shape_offset = address - 0x80128158u;
+    if (!effect || !scene || !player || shape_offset > bytes || bytes - shape_offset < 12) return 0;
     const uint8_t *shape = scene + shape_offset;
     int texel_x = s16le(shape + 4);
     int x = 656 + texel_x/4 - (texel_x%4 < 0);
