@@ -29,7 +29,7 @@ typedef struct {
 struct BfmVillageGround {
     Slice tables[TABLE_COUNT];
     int origin_x, origin_z, width, depth;
-    unsigned exit_material, passage_wall, passage_quad_pair;
+    unsigned exit_material, passage_wall;
     uint32_t lower_room;
     int recheck_bank_floor, summit_contacts;
 };
@@ -76,11 +76,8 @@ BfmVillageGround *bfm_village_ground_open(const uint8_t *scene, size_t bytes, ui
     if (room == UINT32_C(0x8018ea38) || room == UINT32_C(0x801910e4) ||
         room == UINT32_C(0x801961e8) || room == UINT32_C(0x8018c890) ||
         room == UINT32_C(0x80186620) || room == UINT32_C(0x8018615c) ||
-        room == UINT32_C(0x80184870))
+        room == UINT32_C(0x80184870) || room == UINT32_C(0x80181f28))
         view.passage_wall = 0x203;
-    /* The switchback mounts the western gallery receiver. Its opposite
-     * gate has a separate pair of marked quads and a different destination. */
-    if (room == UINT32_C(0x80184870)) view.passage_quad_pair = 0x8178;
     view.origin_x = read16(grid);
     view.origin_z = read16(grid + 2);
     view.width = read16(grid + 4);
@@ -226,8 +223,7 @@ static int slide(const BfmVillageGround *g, const int start[3], int end[3], uint
                 if ((face.planes[0].normal[1] && !bank_wall) || !crosses(&face, start, end)) continue;
                 /* Marked passage walls report a crossing while allowing
                  * the regular stride to reach the far side of the plane. */
-                if (g->passage_wall && face.material == g->passage_wall &&
-                    (!g->passage_quad_pair || (token & ~1u) == g->passage_quad_pair)) {
+                if (g->passage_wall && face.material == g->passage_wall) {
                     passage = 1;
                     continue;
                 }

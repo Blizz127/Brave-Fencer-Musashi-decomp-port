@@ -11,6 +11,8 @@
 #include "forest_bank_hop_pose.h"
 #include "field_input.h"
 #include "field_rest.h"
+#include "woods_3026_box_hit.h"
+#include "village_mine_shaft_fan.h"
 
 typedef struct BfmVillageMotion BfmVillageMotion;
 struct BfmVillageMineGate;
@@ -70,9 +72,21 @@ BfmVillageMotion *bfm_village_motion_valley(const uint8_t *scene, size_t bytes,
 BfmVillageMotion *bfm_village_motion_mine(const uint8_t *scene, size_t bytes,
     const uint8_t *main, size_t main_bytes, unsigned entrance, unsigned story,
     const MusashiDiscMedia *disc);
-/* Room 3044 slot zero uses the western switchback's own fixed station. */
+/* Enter the switchback from the western gallery or the eastern shaft. */
 BfmVillageMotion *bfm_village_motion_switchback(const uint8_t *scene, size_t bytes,
     const uint8_t *main, size_t main_bytes, unsigned entrance, const MusashiDiscMedia *disc);
+/* The upper west passage and the recorded Memory Box have separate stations. */
+BfmVillageMotion *bfm_village_motion_mine_shaft(const uint8_t *scene, size_t bytes,
+    const uint8_t *main, size_t main_bytes, unsigned entrance, const MusashiDiscMedia *disc);
+BfmVillageMotion *bfm_village_motion_mine_shaft_saved(const uint8_t *scene, size_t bytes,
+    const uint8_t *main, size_t main_bytes, const uint8_t destination[36],
+    const MusashiDiscMedia *disc);
+int bfm_village_motion_mine_shaft_box(BfmVillageMotion *motion, const BfmWoods3026BoxHit *box,
+                                      unsigned field_tick, const int16_t previous[3]);
+/* Begin before ordinary movement and turn the rotor after the player is published. */
+void bfm_village_motion_mine_shaft_begin_field(BfmVillageMotion *motion, BfmMineShaftFan *fan,
+                                               unsigned field_tick);
+int bfm_village_motion_mine_shaft_turn_fan(BfmVillageMotion *motion, BfmMineShaftFanFrame *frame);
 int bfm_village_motion_mine_orb(const BfmVillageMotion *motion, unsigned orb,
                                 uint16_t tiles[512][1024]);
 struct BfmVillageMineProps;
