@@ -157,13 +157,29 @@ static void queue_mounted_effect(BfmBedroom *room, BfmBedroomEffects *effects,
     room->sounds[room->sound_count++] = (BfmBedroomSound){effects, command, bank};
 }
 
-static void reopen_mine_effects(BfmBedroom *room, uint16_t mounted)
+static BfmBedroomEffects *shaft_or_lake_effects(BfmBedroom *room, uint16_t mounted)
+{
+    if (mounted == 0x3045) {
+        if (!room->shaft_effects) room->shaft_effects = bfm_mine_shaft_effects_load(room->disc);
+        return room->shaft_effects;
+    }
+    if (mounted == 0x3046) {
+        if (!room->lake_effects) room->lake_effects = bfm_mine_lake_effects_load(room->disc);
+        return room->lake_effects;
+    }
+    return NULL;
+}
+
+static int reopen_mine_effects(BfmBedroom *room, uint16_t mounted)
 {
     uint16_t source = room->mine_effects_closed_in;
+    if (((source == 0x3045 && mounted == 0x3046) || (source == 0x3046 && mounted == 0x3045)) &&
+        !shaft_or_lake_effects(room, mounted)) return 0;
     if ((source == 0x1052 && mounted == 0x3043) || (source == 0x3043 && mounted == 0x1052) ||
         (source >= 0x3043 && source <= 0x3046 && mounted >= 0x3043 && mounted <= 0x3046 &&
          (mounted == source + 1 || mounted == source - 1)))
         room->mine_effects_closed_in = 0;
+    return 1;
 }
 
 static int queue_mine_lake_sounds(BfmBedroom *room)
@@ -171,8 +187,7 @@ static int queue_mine_lake_sounds(BfmBedroom *room)
     unsigned events[BFM_MINE_LAKE_SOUNDS];
     unsigned count = bfm_village_arrival_take_lake_sounds(room->village, events);
     if (!count || room->mine_effects_closed_in) return 1;
-    if (!room->lake_effects) room->lake_effects = bfm_mine_lake_effects_load(room->disc);
-    if (!room->lake_effects) return 0;
+    if (!shaft_or_lake_effects(room, 0x3046)) return 0;
     for (unsigned i = 0; i < count; ++i)
         queue_mounted_effect(room, room->lake_effects, BFM_ROOM_MINE_LAKE_BANK, events[i]);
     return 1;
@@ -1257,7 +1272,7 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
     if (bfm_village_arrival_take_illness_voice_stop(room->village, &stopped_generation))
         result = BFM_BEDROOM_VOICE_STOPPED;
     uint16_t mounted = bfm_village_arrival_room(room->village);
-    reopen_mine_effects(room, mounted);
+    if (!reopen_mine_effects(room, mounted)) return 0;
     switch (bfm_village_arrival_mine_exit_event(room->village)) {
     case BFM_NIGHTMARE_STOP_OPTICAL:
         bfm_forest_voice_stop(mine_voice);
@@ -1352,8 +1367,7 @@ static int village_step(BfmBedroom *room, int confirm_edge, int reveal_edge, int
     unsigned shaft_events[BFM_MINE_SHAFT_SOUNDS];
     unsigned shaft_count = bfm_village_arrival_take_shaft_sounds(room->village, shaft_events);
     if (shaft_count && !room->mine_effects_closed_in) {
-        if (!room->shaft_effects) room->shaft_effects = bfm_mine_shaft_effects_load(room->disc);
-        if (!room->shaft_effects) return 0;
+        if (!shaft_or_lake_effects(room, 0x3045)) return 0;
         for (unsigned i = 0; i < shaft_count; ++i)
             queue_mounted_effect(room, room->shaft_effects, BFM_ROOM_MINE_SHAFT_BANK, shaft_events[i]);
     }
