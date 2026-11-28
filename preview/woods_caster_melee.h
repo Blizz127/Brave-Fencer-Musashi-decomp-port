@@ -32,6 +32,9 @@ BfmWoodsCasterMelee *bfm_woods_caster_melee_open(const MusashiDiscMedia *disc,
 /* Mount Hell's Valley's ordinary Fusion and Lumina attack tables. */
 BfmWoodsCasterMelee *bfm_valley_melee_open(const MusashiDiscMedia *disc,
     const uint8_t *scene, size_t scene_bytes, const uint8_t *main, size_t main_bytes);
+/* SC03/110 has its own mounted move and power tables. */
+BfmWoodsCasterMelee *bfm_mine_lake_melee_open(const MusashiDiscMedia *disc,
+    const uint8_t *scene, size_t scene_bytes, const uint8_t *main, size_t main_bytes);
 /* Mount Twinpeak's ordinary Fusion and Lumina slots for field-script input. */
 BfmWoodsCasterMelee *bfm_woods_twinpeak_melee_open(const MusashiDiscMedia *disc,
     const uint8_t *scene, size_t scene_bytes, const uint8_t *main, size_t main_bytes);
@@ -41,6 +44,10 @@ void bfm_woods_caster_melee_free(BfmWoodsCasterMelee *melee);
  * the hero's ground movement; a recovery cancel releases it on this step.
  * A single strength applies to all rays in one field update. */
 int bfm_woods_caster_melee_step(BfmWoodsCasterMelee *melee, BfmGameplayRun *run,
+    const BfmBedroomRoot *root, const BfmWoodsCasterMeleeInput *input,
+    BfmWoodsCasterMeleeFrame *frame);
+/* SC03/110 submits the current mounted key to its rig in this same field. */
+int bfm_mine_lake_melee_step(BfmWoodsCasterMelee *melee, BfmGameplayRun *run,
     const BfmBedroomRoot *root, const BfmWoodsCasterMeleeInput *input,
     BfmWoodsCasterMeleeFrame *frame);
 int bfm_woods_caster_melee_cut_finishing(const BfmWoodsCasterMelee *melee);

@@ -141,6 +141,16 @@ BfmWoodsCasterMelee *bfm_valley_melee_open(const MusashiDiscMedia *disc,
                           UINT32_C(0x80184228), UINT32_C(0x801843cc));
 }
 
+BfmWoodsCasterMelee *bfm_mine_lake_melee_open(const MusashiDiscMedia *disc,
+    const uint8_t *scene, size_t scene_bytes, const uint8_t *main, size_t main_bytes)
+{
+    const size_t binding = UINT32_C(0x80181d20) - UINT32_C(0x80128158);
+    if (!scene || scene_bytes < binding + 4 || u32le(scene + binding) != UINT32_C(0x80185a50))
+        return NULL;
+    return ordinary_melee(disc, scene, scene_bytes, main, main_bytes,
+                          UINT32_C(0x80183c2c), UINT32_C(0x80183dd0));
+}
+
 BfmWoodsCasterMelee *bfm_woods_twinpeak_melee_open(const MusashiDiscMedia *disc,
     const uint8_t *scene, size_t scene_bytes, const uint8_t *main, size_t main_bytes)
 {
@@ -203,6 +213,13 @@ static void start(BfmWoodsCasterMelee *s, unsigned action, unsigned variant,
     frame->sound = action == 6 ? 1109 : variant == 2 ? 1094 : 1024;
 }
 
+static const StrikeClip *active_clip(const BfmWoodsCasterMelee *s)
+{
+    unsigned which = s->action == 19 ? CHARGED : s->variant >= 4 ? LUMINA :
+                     s->variant < 2 ? FUSION_FIRST : s->variant - 1;
+    return &s->clips[which];
+}
+
 int bfm_woods_caster_melee_step(BfmWoodsCasterMelee *s, BfmGameplayRun *run,
     const BfmBedroomRoot *root, const BfmWoodsCasterMeleeInput *input,
     BfmWoodsCasterMeleeFrame *frame)
@@ -227,9 +244,7 @@ int bfm_woods_caster_melee_step(BfmWoodsCasterMelee *s, BfmGameplayRun *run,
         else if (input->triangle_edge && bfm_gameplay_story_flag(run, 128)) start(s, 6, 0, frame);
         return 1;
     }
-    unsigned which = s->action == 19 ? CHARGED : s->variant >= 4 ? LUMINA :
-                     s->variant < 2 ? FUSION_FIRST : s->variant - 1;
-    const StrikeClip *clip = &s->clips[which];
+    const StrikeClip *clip = active_clip(s);
     if (++s->key >= clip->count) {
         if (s->action == 19) frame->face_slot = 17;
         s->action = 0;
@@ -297,6 +312,22 @@ int bfm_woods_caster_melee_step(BfmWoodsCasterMelee *s, BfmGameplayRun *run,
         frame->pose = draw->pose;
         frame->show_fusion = !(input->actor_flags & 4) && !bfm_gameplay_story_flag(run, 303);
         frame->show_lumina = draw->show_lumina;
+    }
+    return 1;
+}
+
+int bfm_mine_lake_melee_step(BfmWoodsCasterMelee *s, BfmGameplayRun *run,
+    const BfmBedroomRoot *root, const BfmWoodsCasterMeleeInput *input,
+    BfmWoodsCasterMeleeFrame *frame)
+{
+    if (!bfm_woods_caster_melee_step(s, run, root, input, frame)) return 0;
+    if (frame->action) {
+        /* The lake's draw-list visitor consumes the joint packet that the
+           player published this field, including the first key on a press. */
+        const StrikeKey *current = &active_clip(s)->keys[s->key];
+        frame->pose = current->pose;
+        frame->show_fusion = !(input->actor_flags & 4) && !bfm_gameplay_story_flag(run, 303);
+        frame->show_lumina = current->show_lumina;
     }
     return 1;
 }
