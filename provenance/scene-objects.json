@@ -8765,6 +8765,19 @@
       "origin": "Independently reconstructed from USA SC03.CD member 107. The sign returns to its idle state after its script finishes.",
       "source_sha256": "231565dbd6caf95a496ed4d6a1e37f30230cb65922cea2aafa6d0f2b868afe6b",
       "span_sha256": "da7257fef41710bcf414e63d031eaf90f2632b54a2563624139c446d2ccf30ad"
+    },
+    {
+      "name": "func_8017D4C8",
+      "region": "sc03_0107",
+      "vram": 2149045448,
+      "size": 84,
+      "source": "src/overlays/sc03_0107/8017d4c8.c",
+      "extent": "function",
+      "recovery": "c",
+      "optimization": "-O2",
+      "origin": "Independently reconstructed from USA SC03.CD member 107. The western gallery camera follows the selected zone angles and radius and centers its target along Z.",
+      "source_sha256": "016d0cb929b38b384277e62946ab6e0214daff79e90f311ec6a649958aef0b0b",
+      "span_sha256": "8aa789ae5c55f939b070b382cc30103bc3c857d1facb1f7159704a0cc3547352"
     }
   ]
 }
