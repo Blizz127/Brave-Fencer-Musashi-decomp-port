@@ -109,6 +109,51 @@ static int field_axis(int negative, int positive, int analog) {
     return analog * 127 / (analog < 0 ? 32768 : 32767);
 }
 
+static uint16_t keyboard_directions(const Player *p) {
+    uint16_t pad = 0;
+    if (p->keys[SDL_SCANCODE_UP]) pad |= PAD_UP;
+    if (p->keys[SDL_SCANCODE_DOWN]) pad |= PAD_DOWN;
+    if (p->keys[SDL_SCANCODE_LEFT]) pad |= PAD_LEFT;
+    if (p->keys[SDL_SCANCODE_RIGHT]) pad |= PAD_RIGHT;
+    return pad;
+}
+
+static int charge_axis(int analog) {
+    /* The charge action reads a filtered eight-bit console axis. */
+    int wire = (analog + 32768) / 256;
+    if (wire < 8) return -128;
+    if (wire >= 248) return 127;
+    if (wire > 80 && wire < 176) return 0;
+    return wire - 128;
+}
+
+static void sample_field_axes(const Player *p, BfmFieldInput *field) {
+    uint16_t pad = keyboard_directions(p) | (p->digital & (PAD_UP | PAD_RIGHT | PAD_DOWN | PAD_LEFT));
+    field->x = field_axis(pad & PAD_LEFT, pad & PAD_RIGHT, p->axis_x);
+    field->y = field_axis(pad & PAD_UP, pad & PAD_DOWN, p->axis_y);
+    BfmChargeDirection charge = {.sampled = 1};
+    if (pad) {
+        charge.x = 127 * (!!(pad & PAD_RIGHT) - !!(pad & PAD_LEFT));
+        charge.y = 127 * (!!(pad & PAD_DOWN) - !!(pad & PAD_UP));
+        /* The digital direction query rejects Up with both horizontal directions. */
+        if ((pad & (PAD_UP | PAD_LEFT | PAD_RIGHT)) == (PAD_UP | PAD_LEFT | PAD_RIGHT)) charge.y = 0;
+    } else {
+        charge.x = charge_axis(p->axis_x);
+        charge.y = charge_axis(p->axis_y);
+    }
+    field->charge_direction = charge;
+    /* A D-pad direction selects the digital movement handler even when the
+     * pad also has sticks. Keyboard arrows provide the same directional bits. */
+    field->movement_pad = BFM_FIELD_PAD_DIGITAL;
+    if (!pad && p->controller) {
+        SDL_GameController *handle = p->controller->handle;
+        SDL_GameControllerButtonBind x = SDL_GameControllerGetBindForAxis(handle, SDL_CONTROLLER_AXIS_LEFTX);
+        SDL_GameControllerButtonBind y = SDL_GameControllerGetBindForAxis(handle, SDL_CONTROLLER_AXIS_LEFTY);
+        if (x.bindType == SDL_CONTROLLER_BINDTYPE_AXIS && y.bindType == SDL_CONTROLLER_BINDTYPE_AXIS)
+            field->movement_pad = BFM_FIELD_PAD_ANALOG;
+    }
+}
+
 static uint16_t controller_mask(const Player *p) {
     uint16_t current = p->digital;
     if (p->axis_l2 > 16000) current |= PAD_L2;
@@ -125,7 +170,7 @@ static void clear_presses(Player *p) {
 }
 
 static void update_input(Player *p, int keyboard_event) {
-    uint16_t current = controller_mask(p);
+    uint16_t current = controller_mask(p) | keyboard_directions(p);
     if (p->keys[SDL_SCANCODE_Q]) current |= PAD_L2;
     if (p->keys[SDL_SCANCODE_E]) current |= PAD_R2;
     if (p->keys[SDL_SCANCODE_RSHIFT]) current |= BFM_FOREST_R1;
@@ -133,10 +178,6 @@ static void update_input(Player *p, int keyboard_event) {
     if (p->keys[SDL_SCANCODE_RETURN] || p->keys[SDL_SCANCODE_KP_ENTER]) current |= PAD_START;
     if (p->keys[SDL_SCANCODE_SPACE] || p->keys[SDL_SCANCODE_X]) current |= PAD_CROSS;
     if (p->keys[SDL_SCANCODE_Z] || p->keys[SDL_SCANCODE_BACKSPACE]) current |= PAD_CIRCLE;
-    if (p->keys[SDL_SCANCODE_UP]) current |= PAD_UP;
-    if (p->keys[SDL_SCANCODE_DOWN]) current |= PAD_DOWN;
-    if (p->keys[SDL_SCANCODE_LEFT]) current |= PAD_LEFT;
-    if (p->keys[SDL_SCANCODE_RIGHT]) current |= PAD_RIGHT;
     if (p->keys[SDL_SCANCODE_T]) current |= PAD_TRIANGLE;
     if (p->keys[SDL_SCANCODE_A]) current |= PAD_SQUARE;
     uint16_t edges = current & (uint16_t)~p->held;
@@ -747,11 +788,7 @@ static int play(Player *p, char *error, size_t size) {
                         unsigned scene_input = service ? 0 : pressed;
                         int direction = (scene_input & PAD_UP) ? -1 : !!(scene_input & PAD_DOWN);
                         int held = (p->held & PAD_UP) ? -1 : !!(p->held & PAD_DOWN);
-                        int x = field_axis(p->keys[SDL_SCANCODE_LEFT] || (p->digital & PAD_LEFT),
-                                           p->keys[SDL_SCANCODE_RIGHT] || (p->digital & PAD_RIGHT), p->axis_x);
-                        int y = field_axis(p->keys[SDL_SCANCODE_UP] || (p->digital & PAD_UP),
-                                           p->keys[SDL_SCANCODE_DOWN] || (p->digital & PAD_DOWN), p->axis_y);
-                        BfmFieldInput field = {.x=x, .y=y, .square_pressed=scene_input & PAD_SQUARE,
+                        BfmFieldInput field = {.square_pressed=scene_input & PAD_SQUARE,
                                                .pressed_directions=scene_input & (PAD_UP|PAD_DOWN|PAD_LEFT|PAD_RIGHT),
                                                .shoulder_held=!service && (p->held & BFM_FOREST_R1),
                                                .select_pressed=scene_input & PAD_SELECT,
@@ -765,6 +802,7 @@ static int play(Player *p, char *error, size_t size) {
                                                .cross_held=!service && (p->held & PAD_CROSS),
                                                .held_faces=service ? 0 : p->held &
                                                    (PAD_TRIANGLE | PAD_CIRCLE | PAD_CROSS | PAD_SQUARE)};
+                        sample_field_axes(p, &field);
                         int result = bfm_bedroom_step_field(p->bedroom,
                                     scene_input & (PAD_CIRCLE | PAD_CROSS | PAD_TRIANGLE),
                                     scene_input & PAD_CIRCLE, direction, held, scene_input & PAD_CROSS,
