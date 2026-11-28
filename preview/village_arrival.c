@@ -1310,6 +1310,11 @@ unsigned bfm_village_arrival_take_illness_sounds(BfmVillageArrival *a, unsigned 
     return a && a->illness_lower ? bfm_village_illness_lower_take_sounds(a->illness_lower, sounds) : 0;
 }
 
+unsigned bfm_village_arrival_take_mine_hit_sound(BfmVillageArrival *a)
+{
+    return a && a->mine ? bfm_village_mine_entrance_take_hit_sound(a->mine) : 0;
+}
+
 unsigned bfm_village_arrival_take_upper_sound(BfmVillageArrival *a)
 {
     return a && a->earth_return && bfm_village_arrival_room(a) == 0x1011

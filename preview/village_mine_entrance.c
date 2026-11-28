@@ -2,6 +2,7 @@
 #include "village_mine_entrance.h"
 #include "village_mine_props.h"
 #include "village_switchback_props.h"
+#include "village_switchback_hit.h"
 #include "village_mine_view.h"
 #include "field_rest.h"
 #include "forest_message_art.h"
@@ -17,6 +18,10 @@ struct BfmVillageMineEntrance {
     BfmVillageMineView *view;
     BfmVillageMineProps *props;
     BfmVillageSwitchbackProps *switchback;
+    BfmSwitchbackHit *hit;
+    BfmMineLungeHit incoming;
+    const uint8_t *main;
+    size_t main_bytes;
     BfmSaveRecord *save;
     BfmForestMessage *window;
     BfmForestMessageArt *art;
@@ -48,6 +53,7 @@ void bfm_village_mine_entrance_free(BfmVillageMineEntrance *mine)
     bfm_forest_message_art_free(mine->art);
     bfm_village_motion_free(mine->motion);
     bfm_village_mine_props_free(mine->props);
+    bfm_switchback_hit_free(mine->hit);
     bfm_village_switchback_props_free(mine->switchback);
     bfm_village_mine_view_free(mine->view);
     free(mine->scene);
@@ -91,7 +97,10 @@ BfmVillageMineEntrance *bfm_village_mine_entrance_open_at(const MusashiDiscMedia
         if (!p || !p->pose.pose) goto fail;
         mine->view = bfm_village_mine_corridor_view_open(disc, mine->scene, bytes, tiles);
         mine->switchback = bfm_village_switchback_props_open(mine->scene, bytes, p->root.xyz, world_tick);
-        if (!mine->view || !mine->switchback ||
+        mine->main = main;
+        mine->main_bytes = main_bytes;
+        mine->hit = bfm_switchback_hit_open(disc, mine->scene, bytes, p->root.xyz);
+        if (!mine->view || !mine->switchback || !mine->hit ||
             !bfm_village_motion_mine_orb(mine->motion, mine->orb, tiles)) goto fail;
         bfm_village_motion_woods_exit_script(mine->motion, 0);
         bfm_village_mine_corridor_view_follow(mine->view, p->root.xyz, p->root.yaw, 1, 0);
@@ -143,7 +152,10 @@ int bfm_village_mine_entrance_step(BfmVillageMineEntrance *mine, BfmGameplayRun 
                         (mine->save->flags[127 / 8] & (1u << (127 % 8)));
     bfm_village_motion_mine_props(mine->motion, mine->props, actor_tick);
     int pad_yaw = bfm_village_mine_view_pad_yaw(mine->view);
-    if (!bfm_village_motion_step_mine_field(mine->motion, input.x, input.y, pad_yaw,
+    int locked = mine->hit ? bfm_switchback_hit_step(mine->hit, mine->motion, run, mine->save,
+                                                       input, (unsigned)pad_yaw, &mine->incoming) : 0;
+    if (locked < 0) return 0;
+    if (!locked && !bfm_village_motion_step_mine_field(mine->motion, input.x, input.y, pad_yaw,
             input.cross_pressed, input.cross_held, run)) return 0;
     if (clock_running) {
         bfm_village_clock_step(mine->save, 0);
@@ -151,7 +163,9 @@ int bfm_village_mine_entrance_step(BfmVillageMineEntrance *mine, BfmGameplayRun 
     }
     if (mine->switchback) {
         int scripted = !p->controlled && !bfm_village_motion_ingress_clock_running(mine->motion);
-        if (!bfm_village_switchback_props_step(mine->switchback, p->root.xyz, actor_tick, run, scripted)) return 0;
+        const int16_t *target = bfm_switchback_hit_target(mine->hit, mine->motion);
+        if (!bfm_village_switchback_props_step_target(mine->switchback, p->root.xyz,
+                scripted ? NULL : target, actor_tick, run, &mine->incoming)) return 0;
         bfm_village_mine_corridor_view_follow(mine->view, p->root.xyz, p->root.yaw, 0, input.camera_pressed);
     } else {
         bfm_village_mine_view_follow(mine->view, p->root.xyz, 0);
@@ -185,14 +199,30 @@ int bfm_village_mine_entrance_step_departure(BfmVillageMineEntrance *mine, BfmGa
     return bfm_village_mine_entrance_step(mine, run, (BfmFieldInput){0}, actor_tick);
 }
 
+unsigned bfm_village_mine_entrance_take_hit_sound(BfmVillageMineEntrance *mine)
+{
+    return mine ? bfm_switchback_hit_take_sound(mine->hit) : 0;
+}
+
+static int draw_switchback(void *context, BfmBedroomFigure *figure, const BfmBedroomView *view)
+{
+    BfmVillageMineEntrance *mine = context;
+    return bfm_village_switchback_props_draw(mine->switchback, figure, view) &&
+           bfm_switchback_hit_draw(mine->hit, figure, view);
+}
+
 int bfm_village_mine_entrance_draw(BfmVillageMineEntrance *mine, uint32_t pixels[240][320])
 {
     const BfmVillagePlayer *p = bfm_village_mine_entrance_player(mine);
     if (!p || !pixels || !bfm_village_motion_face(mine->motion, mine->tiles)) return 0;
     unsigned scale = mine->save->progress[0x23] & 0x80 ? BFM_HERO_MINI_SCALE : BFM_HERO_NORMAL_SCALE;
-    if (mine->switchback)
-        return bfm_village_mine_view_draw(mine->view, &p->root, &p->pose, mine->save->flags,
-            mine->age, scale, pixels, bfm_village_switchback_props_draw, mine->switchback);
+    if (mine->switchback) {
+        BfmBedroomPose body = p->pose;
+        unsigned visible = bfm_village_field_visible(&body, mine->save->flags);
+        if (!bfm_switchback_hit_body(mine->hit, mine->main, mine->main_bytes, &body, &visible)) return 0;
+        return bfm_village_mine_view_draw_parts(mine->view, &p->root, &body, mine->save->flags,
+            mine->age, visible, scale, pixels, draw_switchback, mine);
+    }
     return bfm_village_mine_view_draw(mine->view, &p->root, &p->pose, mine->save->flags,
         mine->age, scale, pixels, bfm_village_mine_props_draw, mine->props);
 }

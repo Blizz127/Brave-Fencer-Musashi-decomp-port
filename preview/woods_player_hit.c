@@ -11,7 +11,8 @@ struct BfmWoodsPlayerHit {
     BfmForestHurt hurt;
     BfmForestDamageDigits digits;
     uint16_t damage;
-    uint8_t palette;
+    uint8_t palette, bp_palette;
+    int enable_bp_drain, draining_bp;
     unsigned blink, recoil;
     int airborne, guard_closed, in_water;
     int16_t local_axis[2];
@@ -39,6 +40,12 @@ BfmWoodsPlayerHit *bfm_woods_player_hit_open_palette(const MusashiDiscMedia *dis
     hit->disc = disc;
     hit->palette = palette;
     return hit;
+}
+
+void bfm_woods_player_hit_enable_bp_drain(BfmWoodsPlayerHit *hit, uint8_t palette)
+{
+    hit->enable_bp_drain = 1;
+    hit->bp_palette = palette;
 }
 
 void bfm_woods_player_hit_free(BfmWoodsPlayerHit *hit)
@@ -158,9 +165,13 @@ static void finish_hurt(BfmWoodsPlayerHit *hit, BfmGameplayRun *run, uint32_t pl
                         BfmWoodsPlayerHitContact contact, BfmWoodsPlayerHitFrame *frame)
 {
     unsigned damage = hit->damage;
-    if (player_flags & UINT32_C(0x02000000))
-        damage = bfm_forest_status_values(&run->player).max_hp;
-    bfm_forest_status_debit(&run->player, damage);
+    if (hit->draining_bp) {
+        bfm_forest_status_spend_bp(&run->player, damage);
+    } else {
+        if (player_flags & UINT32_C(0x02000000))
+            damage = bfm_forest_status_values(&run->player).max_hp;
+        bfm_forest_status_debit(&run->player, damage);
+    }
     hit->hurt.active = 0;
     hit->blink = HIT_PROTECTION_FIELDS;
     frame->movement_locked = 1;
@@ -197,8 +208,10 @@ int bfm_woods_player_hit_step(BfmWoodsPlayerHit *hit, BfmGameplayRun *run,
     if (hit->blink) frame->hide_body = (--hit->blink & 1u) != 0;
     bfm_forest_damage_digits_advance(&hit->digits);
     const BfmBedroomRoot *root = input->root;
+    unsigned type = input->hit_flags & 0xffu;
+    int drains_bp = hit->enable_bp_drain && type == 17;
     if (!ignore_hit && !hit->hurt.active && !hit->recoil &&
-        (input->hit_flags & 0xffu) == 1 &&
+        (type == 1 || drains_bp) &&
         input->receives_damage && bfm_forest_status_values(&run->player).hp > 0) {
         if (!(input->hit_flags & 0x4000) && input->guard_ready && faces_attack(root->yaw, input->attacker_yaw)) {
             BfmForestTransform relative;
@@ -211,10 +224,12 @@ int bfm_woods_player_hit_step(BfmWoodsPlayerHit *hit, BfmGameplayRun *run,
         } else if (input->player_action != 25 && input->player_action != 26 &&
                    (!input->protected_action || (input->protected_action & UINT32_C(0x02000000)))) {
             uint16_t damage = 0;
-            if (input->power && !bfm_forest_hit_damage(hit->disc, &run->player,
+            if (drains_bp) damage = (uint16_t)input->power;
+            else if (input->power && !bfm_forest_hit_damage(hit->disc, &run->player,
                     input->player_flags, input->power, &damage)) return 0;
             if (!bfm_forest_hurt_begin(&hit->hurt, root->yaw, input->attacker_yaw)) return 0;
             hit->damage = damage;
+            hit->draining_bp = drains_bp;
             hit->airborne = input->airborne;
             /* This field has already sampled the previous blink parity. */
             hit->blink = 0;
@@ -222,6 +237,7 @@ int bfm_woods_player_hit_step(BfmWoodsPlayerHit *hit, BfmGameplayRun *run,
             frame->release_carry = input->carrying;
             frame->sound = 1105;
             hurt_number(hit, run, &hit->digits, root->xyz, damage);
+            if (drains_bp && damage) hit->digits.palette = hit->bp_palette;
             if ((input->hit_flags & 0x1000) && !frame->miniature) {
                 bfm_woods_ring_mini_apply(&run->player);
                 frame->applied_mini = 1;

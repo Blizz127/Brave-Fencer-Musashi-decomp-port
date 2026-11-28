@@ -27,6 +27,7 @@ int bfm_village_mine_entrance_step(BfmVillageMineEntrance *mine, BfmGameplayRun 
  * Use neutral ordinary updates while the host prepares this station. */
 int bfm_village_mine_entrance_step_departure(BfmVillageMineEntrance *mine, BfmGameplayRun *run,
     unsigned actor_tick);
+unsigned bfm_village_mine_entrance_take_hit_sound(BfmVillageMineEntrance *mine);
 int bfm_village_mine_entrance_draw(BfmVillageMineEntrance *mine, uint32_t pixels[240][320]);
 
 const BfmForestMessageFrame *bfm_village_mine_entrance_page(const BfmVillageMineEntrance *mine);

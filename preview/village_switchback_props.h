@@ -4,6 +4,7 @@
 
 #include "bedroom_figure.h"
 #include "gameplay_run.h"
+#include "village_mine_corridor_387.h"
 
 typedef struct BfmVillageSwitchbackProps BfmVillageSwitchbackProps;
 
@@ -13,6 +14,8 @@ BfmVillageSwitchbackProps *bfm_village_switchback_props_open(const uint8_t *scen
 void bfm_village_switchback_props_free(BfmVillageSwitchbackProps *props);
 int bfm_village_switchback_props_step(BfmVillageSwitchbackProps *props, const int16_t hero[3],
     unsigned world_tick, BfmGameplayRun *run, int suppress_tracking);
+int bfm_village_switchback_props_step_target(BfmVillageSwitchbackProps *props, const int16_t hero[3],
+    const int16_t target[3], unsigned world_tick, BfmGameplayRun *run, BfmMineLungeHit *hit);
 int bfm_village_switchback_props_draw(void *context, BfmBedroomFigure *figure, const BfmBedroomView *view);
 
 #endif

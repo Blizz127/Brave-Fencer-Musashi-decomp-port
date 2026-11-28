@@ -52,6 +52,7 @@ unsigned bfm_village_arrival_woods_score_selector(const BfmVillageArrival *a);
 int bfm_village_arrival_field_score(const BfmVillageArrival *a, unsigned village_score);
 unsigned bfm_village_arrival_take_score_command(BfmVillageArrival *a);
 unsigned bfm_village_arrival_take_illness_sounds(BfmVillageArrival *a, unsigned sounds[2]);
+unsigned bfm_village_arrival_take_mine_hit_sound(BfmVillageArrival *a);
 unsigned bfm_village_arrival_take_upper_sound(BfmVillageArrival *a);
 int bfm_village_arrival_take_retired_window(BfmVillageArrival *arrival);
 unsigned bfm_village_arrival_take_box_voice(BfmVillageArrival *arrival);

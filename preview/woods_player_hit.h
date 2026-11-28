@@ -63,6 +63,8 @@ void bfm_woods_player_hit_free(BfmWoodsPlayerHit *hit);
  * separately latched item restriction to bfm_woods_revive_prepare. */
 int bfm_woods_player_hit_can_check_defeat(const BfmGameplayRun *run,
                                          const BfmWoodsPlayerHitInput *input);
+/* Enable hit class 17 using the room's mounted BP-loss palette. */
+void bfm_woods_player_hit_enable_bp_drain(BfmWoodsPlayerHit *hit, uint8_t palette);
 /* Recovery from an environmental hit uses the ordinary field immunity clock. */
 void bfm_woods_player_hit_blink(BfmWoodsPlayerHit *hit, unsigned fields);
 

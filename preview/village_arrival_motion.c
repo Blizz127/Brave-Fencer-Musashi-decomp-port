@@ -1676,6 +1676,7 @@ int bfm_village_motion_woods_reaction(BfmVillageMotion *m, BfmWoodsLilies *lilie
 {
     if (!m || !contact || !m->player.controlled ||
         (m->room != (lilies ? UINT32_C(0x8018ea38) : UINT32_C(0x801910e4)) &&
+         !(m->woods_route.room == 0x3044 && !lilies) &&
          !(m->mountain_jump && !lilies && kind != BFM_WOODS_GUARD_RECOIL &&
            m->woods_route.room == 0x3026)) ||
         (unsigned)kind > BFM_WOODS_GUARD_RECOIL ||
@@ -1833,7 +1834,7 @@ static int resolve_woods_footing(BfmVillageMotion *m, int tired, int blade_held)
      * by treating its feet as resting on the terrain underneath. */
     int valley_return = m->valley_rocks && !m->airborne && !m->rider;
     if (m->room != UINT32_C(0x801910e4) &&
-        !valley_return &&
+        !valley_return && m->woods_route.room != 0x3044 &&
         !(m->woods_route.room == 0x3026 && m->mountain_jump) &&
         (m->room != UINT32_C(0x8018ea38) || !m->lilies)) return 0;
     BfmVillageMotion next = *m;
@@ -2736,6 +2737,35 @@ void bfm_village_motion_mine_props(BfmVillageMotion *m, const BfmVillageMineProp
 {
     m->mine_props = props;
     m->mine_props_tick = tick;
+}
+
+int bfm_village_motion_switchback_stance(BfmVillageMotion *m, unsigned facing,
+    unsigned stride_yaw, int moving, int tired, int *supported)
+{
+    if (!m || !supported || m->woods_route.room != 0x3044 || !m->player.controlled) return 0;
+    BfmVillageMotion next = *m;
+    begin_field(&next);
+    *supported = 0;
+    if (!next.transfer) {
+        BfmWoodsMotionContact contact = {0};
+        /* The pad bearing selects a local stride. The separate model bearing
+         * projects that stride back into the room before the floor sweep. */
+        ForestPlayerState stride = {0};
+        stride.field_2c.word = moving ? -4*Q : 0;
+        if (!bfm_forest_level_velocity(&stride, 0, (int16_t)(stride_yaw-facing), 0)) return 0;
+        stride.field_24.word = (int32_t)stride.velocity[0];
+        stride.field_2c.word = (int32_t)stride.velocity[2];
+        if (!bfm_forest_level_velocity(&stride, 0, (int16_t)facing, 0) ||
+            !displace(&next, stride.velocity, 1, &contact, NULL)) return 0;
+        next.player.root.yaw = facing & 4095u;
+        next.landed = next.brake = next.walking = 0;
+        next.speed = next.fall_speed = 0;
+        *supported = !contact.lost_support && !(contact.slope & 0x4000u);
+        if (!publish_root(&next)) return 0;
+        if (!*supported && !bfm_village_motion_woods_finish_hurt(&next, tired)) return 0;
+    }
+    *m = next;
+    return 1;
 }
 
 int bfm_village_motion_step_mine_field(BfmVillageMotion *m, int x, int y, int camera_yaw,

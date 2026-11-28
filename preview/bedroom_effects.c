@@ -877,6 +877,11 @@ static BfmBedroomEffects *forest_field_effects(const MusashiDiscMedia *disc, uns
             valid = prepare_bank_field(&s, &player, effects);
         } else if (room == 0x302b) {
             valid = prepare_valley_field(&s, &player, effects);
+        } else if (room == 0x3044) {
+            s.common = bfm_archive_sound_bank_load(disc, "MAIN.CD", 2);
+            valid = s.common && prepare(&s, BFM_WOODS_HURT_SOUND, &effects->clips[0]) &&
+                    prepare(&s, BFM_WOODS_GUARD_SOUND, &effects->clips[1]);
+            effects->replace_matching = 1;
         } else if (room == 0x3043) {
             valid = prepare(&s, BFM_MINE_POLE_SOUND, &effects->clips[0]);
             effects->replace_matching = 1;
@@ -909,6 +914,11 @@ BfmBedroomEffects *bfm_maze_guide_effects_load(const MusashiDiscMedia *disc)
 BfmBedroomEffects *bfm_valley_effects_load(const MusashiDiscMedia *disc)
 {
     return forest_field_effects(disc, 0x302b, 31);
+}
+
+BfmBedroomEffects *bfm_switchback_effects_load(const MusashiDiscMedia *disc)
+{
+    return forest_field_effects(disc, 0x3044, 108);
 }
 
 BfmBedroomEffects *bfm_mine_pole_sound_load(const MusashiDiscMedia *disc)

@@ -39,11 +39,18 @@ BfmVillageSwitchbackProps *bfm_village_switchback_props_open(const uint8_t *scen
 int bfm_village_switchback_props_step(BfmVillageSwitchbackProps *props, const int16_t hero[3],
     unsigned world_tick, BfmGameplayRun *run, int suppress_tracking)
 {
+    return bfm_village_switchback_props_step_target(props, hero, suppress_tracking ? NULL : hero,
+                                                  world_tick, run, NULL);
+}
+
+int bfm_village_switchback_props_step_target(BfmVillageSwitchbackProps *props, const int16_t hero[3],
+    const int16_t target[3], unsigned world_tick, BfmGameplayRun *run, BfmMineLungeHit *hit)
+{
     if (!props || !hero || !run) return 0;
+    if (hit) *hit = (BfmMineLungeHit){0};
     /* The fixed placement has its own actor slot. Its shadow child runs
      * immediately afterwards and follows the parent's new ground position. */
-    bfm_village_mine_corridor_387_step(props->creature, hero,
-        suppress_tracking ? NULL : hero, run, world_tick, NULL);
+    bfm_village_mine_corridor_387_step(props->creature, hero, target, run, world_tick, hit);
     if (props->shadow.active)
         bfm_village_mine_corridor_387_shadow_step(props->creature, &props->shadow);
     return 1;

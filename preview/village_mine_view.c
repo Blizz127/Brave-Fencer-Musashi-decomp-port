@@ -280,11 +280,21 @@ int bfm_village_mine_view_draw(BfmVillageMineView *view, const BfmBedroomRoot *r
     uint32_t pixels[240][320],
     int (*submit)(void *, BfmBedroomFigure *, const BfmBedroomView *), void *actor)
 {
+    if (!pose || !flags) return 0;
+    return bfm_village_mine_view_draw_parts(view, root, pose, flags, age,
+        bfm_village_field_visible(pose, flags), scale_q12, pixels, submit, actor);
+}
+
+int bfm_village_mine_view_draw_parts(BfmVillageMineView *view, const BfmBedroomRoot *root,
+    const BfmBedroomPose *pose, const uint8_t flags[64], unsigned age, unsigned visible,
+    unsigned scale_q12, uint32_t pixels[240][320],
+    int (*submit)(void *, BfmBedroomFigure *, const BfmBedroomView *), void *actor)
+{
     if (!view || !root || !pose || !flags || !pixels) return 0;
     for (unsigned y = 0; y < 240; ++y)
         for (unsigned x = 0; x < 320; ++x) pixels[y][x] = UINT32_C(0xff000000);
     if (!bfm_village_field_prepare_scaled(&view->field, &view->camera, root, pose, flags,
-        age, bfm_village_field_visible(pose, flags), scale_q12, view->tiles, &pixels[0][0])) return 0;
+        age, visible, scale_q12, view->tiles, &pixels[0][0])) return 0;
     const BfmBedroomView *projection = bfm_bedroom_field_view(view->field.field);
     if (submit && !submit(actor, view->field.hero, projection)) return 0;
     bfm_bedroom_field_draw(view->field.field, view->tiles, &pixels[0][0],

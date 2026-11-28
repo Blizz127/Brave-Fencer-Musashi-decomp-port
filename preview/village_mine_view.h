@@ -29,4 +29,9 @@ int bfm_village_mine_view_draw(BfmVillageMineView *view, const BfmBedroomRoot *r
     uint32_t pixels[240][320],
     int (*submit)(void *, BfmBedroomFigure *, const BfmBedroomView *), void *actor);
 
+int bfm_village_mine_view_draw_parts(BfmVillageMineView *view, const BfmBedroomRoot *root,
+    const BfmBedroomPose *pose, const uint8_t flags[64], unsigned age, unsigned visible,
+    unsigned scale_q12, uint32_t pixels[240][320],
+    int (*submit)(void *, BfmBedroomFigure *, const BfmBedroomView *), void *actor);
+
 #endif
